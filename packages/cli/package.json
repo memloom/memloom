@@ -17,11 +17,20 @@
       "import": "./dist/index.js"
     }
   },
+  "bin": {
+    "memloom": "./dist/bin.js"
+  },
   "files": [
     "dist"
   ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@electric-sql/pglite": "^0.4.6",
+    "@electric-sql/pglite-socket": "^0.0.14",
+    "@memloom/core": "workspace:*",
+    "@memloom/server": "workspace:*"
   }
 }
