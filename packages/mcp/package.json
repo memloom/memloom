@@ -17,11 +17,19 @@
       "import": "./dist/index.js"
     }
   },
+  "bin": {
+    "memloom-mcp": "./dist/bin.js"
+  },
   "files": [
     "dist"
   ],
   "scripts": {
     "build": "tsup",
     "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@memloom/core": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.24.0"
   }
 }
