@@ -1,0 +1,31 @@
+{
+  "name": "memloom-monorepo",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "memloom — a memory engine for AI agents. Monorepo root.",
+  "license": "Apache-2.0",
+  "author": "Kostek Sytnyk <kostek@versuno.ai>",
+  "homepage": "https://memloom.dev",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/memloom/memloom.git"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.29.3",
+  "scripts": {
+    "build": "pnpm -r --if-present build",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "lint": "biome check .",
+    "format": "biome format --write .",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.2.0",
+    "tsup": "^8.5.0",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.0"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "@memloom/viewer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "memloom minimal viewer UI (Vite + React): graph, conflicts, console-lite. Phase 6.",
+  "license": "Apache-2.0"
+}
