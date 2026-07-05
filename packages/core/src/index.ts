@@ -1,5 +1,8 @@
 // Ports (interfaces)
 
+export type { BenchCorpus, BenchDoc, BenchQuery } from "./benchmark.js";
+// Retrieval benchmark + metrics
+export { runBenchmark } from "./benchmark.js";
 // Providers
 export { HashingEmbeddingProvider, NullLLMProvider } from "./hashing-provider.js";
 export type { ReleaseLock } from "./lock.js";
@@ -7,6 +10,8 @@ export { acquireDataDirLock } from "./lock.js";
 export type { MemloomConfig } from "./memloom.js";
 // The engine facade
 export { Memloom, SENTINEL_OWNER } from "./memloom.js";
+export type { EvalReport, QueryResult } from "./metrics.js";
+export { evaluate, mean, recallAtK, reciprocalRank } from "./metrics.js";
 // Migrations
 export { migrate } from "./migrate.js";
 export type { Migration } from "./migrations.js";

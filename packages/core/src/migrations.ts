@@ -48,4 +48,60 @@ export const MIGRATIONS: Migration[] = [
       -- sequential cosine scan. A per-tier HNSW/IVFFlat index is added for the server tier.
     `,
   },
+  {
+    id: "0002_hybrid_fuse",
+    sql: /* sql */ `
+      -- Reciprocal-rank fusion over two arms: vector (cosine) and keyword (FTS). Returns the
+      -- fused top-K as (id, rrf_score). Pure 'language sql' — no plpgsql (D2), so it runs
+      -- identically on PGLite. The entity arm is added in Phase 4. Weights default to the
+      -- eval-tuned winner (keyword up-weighted; FTS abstains on lexical misses, so this is
+      -- free). Callers that want vector-only pass p_use_keyword => false.
+      CREATE OR REPLACE FUNCTION memloom_fuse(
+        p_q           text,
+        p_emb         vector(1024),
+        p_owner       uuid,
+        p_limit       int     DEFAULT 10,
+        p_pool        int     DEFAULT 50,
+        p_k           int     DEFAULT 60,
+        p_use_vector  boolean DEFAULT true,
+        p_use_keyword boolean DEFAULT true,
+        p_w_vector    float   DEFAULT 1.0,
+        p_w_keyword   float   DEFAULT 2.0
+      )
+      RETURNS TABLE (id uuid, rrf_score double precision)
+      LANGUAGE sql STABLE AS $fn$
+        WITH vec AS (
+          SELECT mo.id, row_number() OVER (ORDER BY mo.embedding <=> p_emb) AS rnk
+          FROM memory_objects mo
+          WHERE p_use_vector
+            AND mo.owner_id = p_owner AND mo.status = 'active' AND mo.embedding IS NOT NULL
+          ORDER BY mo.embedding <=> p_emb
+          LIMIT p_pool
+        ),
+        kw AS (
+          SELECT mo.id, row_number() OVER (
+            ORDER BY ts_rank(mo.search_tsv, websearch_to_tsquery('simple', p_q)) DESC
+          ) AS rnk
+          FROM memory_objects mo
+          WHERE p_use_keyword
+            AND mo.owner_id = p_owner AND mo.status = 'active'
+            AND mo.search_tsv @@ websearch_to_tsquery('simple', p_q)
+          LIMIT p_pool
+        ),
+        fused AS (
+          SELECT u.id AS fid, sum(u.w / (p_k + u.rnk)) AS score
+          FROM (
+            SELECT vec.id, vec.rnk, p_w_vector AS w FROM vec
+            UNION ALL
+            SELECT kw.id, kw.rnk, p_w_keyword AS w FROM kw
+          ) u
+          GROUP BY u.id
+        )
+        SELECT fused.fid, fused.score
+        FROM fused
+        ORDER BY fused.score DESC
+        LIMIT p_limit
+      $fn$;
+    `,
+  },
 ];

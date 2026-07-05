@@ -28,6 +28,7 @@ interface MemoryRow {
   asserted_at: string;
   created_at: string;
   similarity?: number;
+  rrf_score?: number;
 }
 
 function mapRow(row: MemoryRow): Memory {
@@ -42,6 +43,7 @@ function mapRow(row: MemoryRow): Memory {
     assertedAt: row.asserted_at,
     createdAt: row.created_at,
     ...(row.similarity !== undefined ? { similarity: Number(row.similarity) } : {}),
+    ...(row.rrf_score !== undefined ? { rrfScore: Number(row.rrf_score) } : {}),
   };
 }
 
@@ -92,7 +94,11 @@ export class Memloom {
     return { id };
   }
 
-  /** Recall active memories by meaning (pure vector top-K in Phase 1). */
+  /**
+   * Recall active memories, ranked by hybrid retrieval: vector (meaning) and keyword (exact)
+   * arms fused with reciprocal-rank fusion. `similarity` is the cosine signal alone;
+   * `rrfScore` is the fused rank a result should be ordered by. Results arrive fused-order.
+   */
   async recall(query: string, opts: RecallOptions = {}): Promise<Memory[]> {
     const owner = opts.ownerId ?? SENTINEL_OWNER;
     const limit = opts.limit ?? 10;
@@ -101,14 +107,14 @@ export class Memloom {
     const qvec = toVectorLiteral(embedding);
 
     const rows = await this.#storage.query<MemoryRow>(
-      `SELECT id, owner_id, status, memory_type, canonical, content, summary,
-              asserted_at, created_at,
-              1 - (embedding <=> $1::vector) AS similarity
-       FROM memory_objects
-       WHERE owner_id = $2 AND status = 'active' AND embedding IS NOT NULL
-       ORDER BY embedding <=> $1::vector
-       LIMIT $3`,
-      [qvec, owner, limit],
+      `SELECT mo.id, mo.owner_id, mo.status, mo.memory_type, mo.canonical, mo.content,
+              mo.summary, mo.asserted_at, mo.created_at,
+              1 - (mo.embedding <=> $1::vector) AS similarity,
+              f.rrf_score
+       FROM memloom_fuse($2, $1::vector, $3, $4) f
+       JOIN memory_objects mo ON mo.id = f.id
+       ORDER BY f.rrf_score DESC`,
+      [qvec, query, owner, limit],
     );
     return rows.map(mapRow);
   }

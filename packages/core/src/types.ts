@@ -10,8 +10,10 @@ export interface Memory {
   summary: string | null;
   assertedAt: string;
   createdAt: string;
-  /** Cosine similarity to the query, present on recall results. */
+  /** Cosine similarity to the query (the meaning signal alone), present on recall results. */
   similarity?: number;
+  /** Fused reciprocal-rank-fusion score; the order recall results should be trusted in. */
+  rrfScore?: number;
 }
 
 export interface SaveInput {

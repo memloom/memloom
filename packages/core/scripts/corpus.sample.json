@@ -1,0 +1,26 @@
+{
+  "docs": [
+    { "key": "db", "content": "the staging database is postgres running on fly.io" },
+    {
+      "key": "prod-db",
+      "content": "production runs on a managed postgres cluster with read replicas"
+    },
+    { "key": "standup", "content": "the daily engineering stand-up is at 9am eastern" },
+    { "key": "deploy", "content": "we deploy to production on fridays after code review" },
+    { "key": "editor", "content": "the team prefers tabs over spaces in the editor config" },
+    { "key": "auth", "content": "auth uses short-lived JWTs minted from API keys" },
+    {
+      "key": "err",
+      "content": "the error ERR_4517_TIMEOUT means the auth handshake exceeded its deadline"
+    },
+    { "key": "cache", "content": "we cache brain queries in redis for five minutes" }
+  ],
+  "queries": [
+    { "text": "what database do we use for staging", "relevant": ["db"] },
+    { "text": "when is the daily standup", "relevant": ["standup"] },
+    { "text": "when do we ship to production", "relevant": ["deploy"] },
+    { "text": "how does authentication work", "relevant": ["auth"] },
+    { "text": "ERR_4517_TIMEOUT", "relevant": ["err"] },
+    { "text": "tabs or spaces", "relevant": ["editor"] }
+  ]
+}
