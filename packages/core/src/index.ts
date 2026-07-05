@@ -4,7 +4,11 @@ export type { BenchCorpus, BenchDoc, BenchQuery } from "./benchmark.js";
 // Retrieval benchmark + metrics
 export { runBenchmark } from "./benchmark.js";
 // Providers
-export { HashingEmbeddingProvider, NullLLMProvider } from "./hashing-provider.js";
+export {
+  HashingEmbeddingProvider,
+  NullLLMProvider,
+  ScriptedLLMProvider,
+} from "./hashing-provider.js";
 export type { ReleaseLock } from "./lock.js";
 export { acquireDataDirLock } from "./lock.js";
 export type { MemloomConfig } from "./memloom.js";
@@ -28,10 +32,14 @@ export type { EmbeddingProvider, LLMProvider } from "./providers.js";
 export type { StorageAdapter } from "./storage.js";
 // Domain types
 export type {
+  Conflict,
+  ConflictCandidate,
   Memory,
   MemoryStatus,
   RecallOptions,
+  ResolveDecision,
   SaveInput,
+  SaveOutcome,
   SaveResult,
 } from "./types.js";
 

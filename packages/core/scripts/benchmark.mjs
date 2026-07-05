@@ -33,6 +33,7 @@ const memloom = new Memloom({
   storage,
   embedding: new OpenRouterEmbeddings({ apiKey }),
   llm: new OpenRouterLLM({ apiKey }),
+  dedup: false, // seed the benchmark corpus raw so dedup can't merge similar docs
 });
 await memloom.init();
 

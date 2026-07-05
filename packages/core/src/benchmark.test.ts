@@ -33,6 +33,7 @@ describe("benchmark harness", () => {
       storage,
       embedding: new HashingEmbeddingProvider(1024),
       llm: new NullLLMProvider(),
+      dedup: false, // seed the labeled corpus raw
     });
     await m.init();
 

@@ -60,3 +60,17 @@ export class NullLLMProvider implements LLMProvider {
     );
   }
 }
+
+// A deterministic LLM stand-in for tests: you supply a function that turns a prompt into a
+// response string, so the full parse/route path runs without a live model.
+export class ScriptedLLMProvider implements LLMProvider {
+  readonly #respond: (prompt: string) => string;
+
+  constructor(respond: (prompt: string) => string) {
+    this.#respond = respond;
+  }
+
+  async complete(prompt: string): Promise<string> {
+    return this.#respond(prompt);
+  }
+}

@@ -1,13 +1,27 @@
 import { createHash } from "node:crypto";
+import { type Candidate, classify } from "./dedup.js";
 import { migrate } from "./migrate.js";
 import type { EmbeddingProvider, LLMProvider } from "./providers.js";
+import { addEdge, deactivateEdgesTouching, markStale, reactivate } from "./resolve.js";
 import type { StorageAdapter } from "./storage.js";
-import type { Memory, RecallOptions, SaveInput, SaveResult } from "./types.js";
+import type {
+  Conflict,
+  ConflictCandidate,
+  Memory,
+  RecallOptions,
+  ResolveDecision,
+  SaveInput,
+  SaveResult,
+} from "./types.js";
 import { toVectorLiteral } from "./vector.js";
 
 // The fixed owner for the single-user embedded tier. Multi-tenant hosts pass a real
 // ownerId per call; the column exists everywhere so the schema is sync/cloud-ready.
 export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
+
+// Dedup only considers existing memories at least this similar to the incoming one.
+const CANDIDATE_THRESHOLD = 0.5;
+const CANDIDATE_LIMIT = 5;
 
 // All config is injected — core never reads process.env or global state (build-plan
 // architectural rule 2).
@@ -15,6 +29,8 @@ export interface MemloomConfig {
   storage: StorageAdapter;
   embedding: EmbeddingProvider;
   llm: LLMProvider;
+  /** Run the belief pipeline (dedup + conflict detection) on save. Default true. */
+  dedup?: boolean;
 }
 
 interface MemoryRow {
@@ -51,15 +67,17 @@ export class Memloom {
   readonly #storage: StorageAdapter;
   readonly #embedding: EmbeddingProvider;
   readonly #llm: LLMProvider;
+  readonly #dedup: boolean;
 
   constructor(config: MemloomConfig) {
     this.#storage = config.storage;
     this.#embedding = config.embedding;
     this.#llm = config.llm;
+    this.#dedup = config.dedup ?? true;
   }
 
   /** The injected dependencies, exposed read-only for host wiring and tests. */
-  get deps(): Readonly<MemloomConfig> {
+  get deps(): Readonly<Omit<MemloomConfig, "dedup">> {
     return { storage: this.#storage, embedding: this.#embedding, llm: this.#llm };
   }
 
@@ -68,30 +86,63 @@ export class Memloom {
     await migrate(this.#storage);
   }
 
-  // Phase 1 — the spine. No dedup/entities yet (those are Phases 3-4); a save is a plain
-  // insert of the embedded content.
+  /**
+   * Save a memory. With dedup on (default), the belief pipeline runs: an exact or classified
+   * duplicate is merged (nothing new stored), a contradiction keeps both memories active and
+   * records a conflict for the owner to resolve, and anything else is added.
+   */
   async save(input: SaveInput): Promise<SaveResult> {
     const owner = input.ownerId ?? SENTINEL_OWNER;
     const [embedding] = await this.#embedding.embed([input.content]);
     if (!embedding) throw new Error("memloom: embedding provider returned no vector");
     const hash = createHash("sha256").update(input.content).digest("hex");
 
-    const rows = await this.#storage.query<{ id: string }>(
-      `INSERT INTO memory_objects (owner_id, memory_type, canonical, content, content_hash, embedding)
-       VALUES ($1, $2, $3, $4, $5, $6::vector)
-       RETURNING id`,
-      [
-        owner,
-        input.memoryType ?? "fact",
-        input.canonical ?? null,
-        input.content,
-        hash,
-        toVectorLiteral(embedding),
-      ],
+    if (!this.#dedup) {
+      const id = await this.#insert(owner, input, embedding, hash);
+      return { id, outcome: "added" };
+    }
+
+    // Exact duplicate — cheap short-circuit, no LLM needed.
+    const exact = await this.#storage.query<{ id: string }>(
+      "SELECT id FROM memory_objects WHERE owner_id = $1 AND status = 'active' AND content_hash = $2 LIMIT 1",
+      [owner, hash],
     );
-    const id = rows[0]?.id;
-    if (!id) throw new Error("memloom: insert returned no id");
-    return { id };
+    if (exact[0]) return { id: exact[0].id, outcome: "merged" };
+
+    const candidates = await this.#findCandidates(owner, embedding, hash);
+    if (candidates.length === 0) {
+      const id = await this.#insert(owner, input, embedding, hash);
+      return { id, outcome: "added" };
+    }
+
+    const classifications = await classify(
+      this.#llm,
+      { canonical: input.canonical, content: input.content },
+      candidates,
+    );
+
+    const identical = classifications.find((c) => c.relation === "identical");
+    if (identical) return { id: identical.candidateId, outcome: "merged" };
+
+    const id = await this.#insert(owner, input, embedding, hash);
+
+    const contradictions = classifications.filter((c) => c.relation === "contradictory");
+    if (contradictions.length > 0) {
+      const conflictCandidates: ConflictCandidate[] = contradictions.map((cl) => {
+        const cand = candidates.find((c) => c.id === cl.candidateId);
+        return {
+          id: cl.candidateId,
+          canonical: cand?.canonical ?? null,
+          content: cand?.content ?? "",
+          relation: cl.relation,
+          reason: cl.reason,
+        };
+      });
+      const conflictId = await this.#recordConflict(owner, id, input, conflictCandidates);
+      return { id, outcome: "conflict", conflictId };
+    }
+
+    return { id, outcome: "added" };
   }
 
   /**
@@ -117,5 +168,218 @@ export class Memloom {
       [qvec, query, owner, limit],
     );
     return rows.map(mapRow);
+  }
+
+  /** Pending conflicts for the owner, newest first. */
+  async conflicts(ownerId: string = SENTINEL_OWNER): Promise<Conflict[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      incoming_id: string;
+      incoming_canonical: string | null;
+      incoming_content: string;
+      candidates: ConflictCandidate[];
+      created_at: string;
+    }>(
+      `SELECT id, incoming_id, incoming_canonical, incoming_content, candidates, created_at
+       FROM memory_dedup_decisions
+       WHERE owner_id = $1 AND action = 'conflict' AND resolution_action IS NULL
+       ORDER BY created_at DESC`,
+      [ownerId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      createdAt: r.created_at,
+      incoming: { id: r.incoming_id, canonical: r.incoming_canonical, content: r.incoming_content },
+      candidates: r.candidates,
+    }));
+  }
+
+  /** Resolve a pending conflict. Every action is reversible via revertConflict. */
+  async resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void> {
+    const [row] = await this.#storage.query<{
+      owner_id: string;
+      incoming_id: string;
+      candidates: ConflictCandidate[];
+    }>("SELECT owner_id, incoming_id, candidates FROM memory_dedup_decisions WHERE id = $1", [
+      conflictId,
+    ]);
+    if (!row) throw new Error(`memloom: no conflict ${conflictId}`);
+    const owner = row.owner_id;
+    const incoming = row.incoming_id;
+    const candidateIds = row.candidates.map((c) => c.id);
+
+    switch (decision.action) {
+      case "keep_new": {
+        await markStale(this.#storage, candidateIds);
+        for (const loser of candidateIds)
+          await addEdge(this.#storage, owner, incoming, loser, "replaces");
+        await this.#attachResolution(conflictId, "supersede", incoming, candidateIds);
+        break;
+      }
+      case "keep_existing": {
+        const winner = decision.candidateId;
+        await markStale(this.#storage, [incoming]);
+        await addEdge(this.#storage, owner, winner, incoming, "replaces");
+        await this.#attachResolution(conflictId, "supersede", winner, [incoming]);
+        break;
+      }
+      case "keep_both": {
+        for (const cand of candidateIds)
+          await addEdge(this.#storage, owner, incoming, cand, "distinct");
+        await this.#attachResolution(conflictId, "keep_both", null, []);
+        break;
+      }
+      case "merge": {
+        const [embedding] = await this.#embedding.embed([decision.content]);
+        if (!embedding) throw new Error("memloom: embedding provider returned no vector");
+        const hash = createHash("sha256").update(decision.content).digest("hex");
+        const winner = await this.#insert(
+          owner,
+          {
+            content: decision.content,
+            ...(decision.canonical ? { canonical: decision.canonical } : {}),
+          },
+          embedding,
+          hash,
+        );
+        const losers = [incoming, ...candidateIds];
+        await markStale(this.#storage, losers);
+        for (const loser of losers) await addEdge(this.#storage, owner, winner, loser, "replaces");
+        await this.#attachResolution(conflictId, "merge", winner, losers);
+        break;
+      }
+    }
+  }
+
+  /** Undo a resolution: restore staled memories, deactivate the edges it created, re-queue it. */
+  async revertConflict(conflictId: string): Promise<void> {
+    const [row] = await this.#storage.query<{
+      owner_id: string;
+      incoming_id: string;
+      candidates: ConflictCandidate[];
+      resolution_action: string | null;
+      resolution_winner_id: string | null;
+      resolution_loser_ids: string[] | null;
+    }>(
+      `SELECT owner_id, incoming_id, candidates, resolution_action, resolution_winner_id, resolution_loser_ids
+       FROM memory_dedup_decisions WHERE id = $1`,
+      [conflictId],
+    );
+    if (!row) throw new Error(`memloom: no conflict ${conflictId}`);
+    if (!row.resolution_action) return; // already pending
+
+    const owner = row.owner_id;
+    const candidateIds = row.candidates.map((c) => c.id);
+    const losers = row.resolution_loser_ids ?? [];
+
+    switch (row.resolution_action) {
+      case "supersede": {
+        await reactivate(this.#storage, losers);
+        await deactivateEdgesTouching(this.#storage, owner, "replaces", losers);
+        break;
+      }
+      case "keep_both": {
+        await deactivateEdgesTouching(this.#storage, owner, "distinct", [
+          row.incoming_id,
+          ...candidateIds,
+        ]);
+        break;
+      }
+      case "merge": {
+        await reactivate(this.#storage, [row.incoming_id, ...candidateIds]);
+        if (row.resolution_winner_id) {
+          await markStale(this.#storage, [row.resolution_winner_id]);
+          await deactivateEdgesTouching(this.#storage, owner, "replaces", [
+            row.resolution_winner_id,
+          ]);
+        }
+        break;
+      }
+    }
+
+    await this.#storage.query(
+      `UPDATE memory_dedup_decisions
+       SET resolution_action = NULL, resolution_winner_id = NULL,
+           resolution_loser_ids = NULL, resolved_at = NULL
+       WHERE id = $1`,
+      [conflictId],
+    );
+  }
+
+  // --- internals ---
+
+  async #insert(
+    owner: string,
+    input: { content: string; canonical?: string; memoryType?: string },
+    embedding: number[],
+    hash: string,
+  ): Promise<string> {
+    const rows = await this.#storage.query<{ id: string }>(
+      `INSERT INTO memory_objects (owner_id, memory_type, canonical, content, content_hash, embedding)
+       VALUES ($1, $2, $3, $4, $5, $6::vector)
+       RETURNING id`,
+      [
+        owner,
+        input.memoryType ?? "fact",
+        input.canonical ?? null,
+        input.content,
+        hash,
+        toVectorLiteral(embedding),
+      ],
+    );
+    const id = rows[0]?.id;
+    if (!id) throw new Error("memloom: insert returned no id");
+    return id;
+  }
+
+  async #findCandidates(owner: string, embedding: number[], hash: string): Promise<Candidate[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      canonical: string | null;
+      content: string;
+      similarity: number;
+    }>(
+      `SELECT id, canonical, content, 1 - (embedding <=> $1::vector) AS similarity
+       FROM memory_objects
+       WHERE owner_id = $2 AND status = 'active' AND embedding IS NOT NULL AND content_hash <> $3
+       ORDER BY embedding <=> $1::vector
+       LIMIT $4`,
+      [toVectorLiteral(embedding), owner, hash, CANDIDATE_LIMIT],
+    );
+    return rows
+      .map((r) => ({ ...r, similarity: Number(r.similarity) }))
+      .filter((r) => r.similarity >= CANDIDATE_THRESHOLD);
+  }
+
+  async #recordConflict(
+    owner: string,
+    incomingId: string,
+    input: SaveInput,
+    candidates: ConflictCandidate[],
+  ): Promise<string> {
+    const [row] = await this.#storage.query<{ id: string }>(
+      `INSERT INTO memory_dedup_decisions
+         (owner_id, action, incoming_id, incoming_canonical, incoming_content, candidates)
+       VALUES ($1, 'conflict', $2, $3, $4, $5::jsonb)
+       RETURNING id`,
+      [owner, incomingId, input.canonical ?? null, input.content, JSON.stringify(candidates)],
+    );
+    if (!row) throw new Error("memloom: failed to record conflict");
+    return row.id;
+  }
+
+  async #attachResolution(
+    conflictId: string,
+    action: "supersede" | "keep_both" | "merge",
+    winnerId: string | null,
+    loserIds: string[],
+  ): Promise<void> {
+    await this.#storage.query(
+      `UPDATE memory_dedup_decisions
+       SET resolution_action = $2, resolution_winner_id = $3,
+           resolution_loser_ids = $4::jsonb, resolved_at = now()
+       WHERE id = $1`,
+      [conflictId, action, winnerId, JSON.stringify(loserIds)],
+    );
   }
 }

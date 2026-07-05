@@ -24,6 +24,7 @@ describe("hybrid retrieval", () => {
       storage,
       embedding: new HashingEmbeddingProvider(1024),
       llm: new NullLLMProvider(),
+      dedup: false, // retrieval tests seed raw
     });
     await m.init();
     return m;

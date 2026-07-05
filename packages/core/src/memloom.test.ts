@@ -26,6 +26,7 @@ for (const factory of factories) {
         storage,
         embedding: new HashingEmbeddingProvider(1024),
         llm: new NullLLMProvider(),
+        dedup: false, // spine tests exercise save/recall directly, not the belief pipeline
       });
       await memloom.init();
       return memloom;

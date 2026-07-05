@@ -104,4 +104,46 @@ export const MIGRATIONS: Migration[] = [
       $fn$;
     `,
   },
+  {
+    id: "0003_beliefs",
+    sql: /* sql */ `
+      -- Typed relationships between memories. 'replaces' (supersession), 'distinct' (kept
+      -- both on purpose), plus 'mention' etc. later. active=false soft-deletes an edge so a
+      -- conflict decision can be reverted.
+      CREATE TABLE IF NOT EXISTS memory_edges (
+        id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id   uuid NOT NULL,
+        from_id    uuid NOT NULL,
+        to_id      uuid NOT NULL,
+        relation   text NOT NULL,
+        active     boolean NOT NULL DEFAULT true,
+        metadata   jsonb NOT NULL DEFAULT '{}'::jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS memory_edges_from_idx ON memory_edges (from_id) WHERE active;
+      CREATE INDEX IF NOT EXISTS memory_edges_to_idx ON memory_edges (to_id) WHERE active;
+
+      -- The conflict log + human-in-the-loop resolution record. A contradiction keeps both
+      -- memories active and writes one row here (resolution_action NULL = pending). The owner
+      -- resolves it; every resolution is reversible (revert nulls the resolution fields and
+      -- restores state).
+      CREATE TABLE IF NOT EXISTS memory_dedup_decisions (
+        id                   uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id             uuid NOT NULL,
+        action               text NOT NULL,              -- 'conflict'
+        incoming_id          uuid,
+        incoming_canonical   text,
+        incoming_content     text,
+        candidates           jsonb NOT NULL DEFAULT '[]'::jsonb,
+        resolution_action    text,                       -- 'supersede' | 'keep_both' | 'merge'
+        resolution_winner_id uuid,
+        resolution_loser_ids jsonb,                      -- array of memory ids
+        resolved_at          timestamptz,
+        created_at           timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS memory_dedup_unresolved_idx
+        ON memory_dedup_decisions (owner_id, created_at DESC)
+        WHERE action = 'conflict' AND resolution_action IS NULL;
+    `,
+  },
 ];
