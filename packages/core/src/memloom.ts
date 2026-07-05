@@ -1,18 +1,48 @@
+import { createHash } from "node:crypto";
+import { migrate } from "./migrate.js";
 import type { EmbeddingProvider, LLMProvider } from "./providers.js";
 import type { StorageAdapter } from "./storage.js";
+import type { Memory, RecallOptions, SaveInput, SaveResult } from "./types.js";
+import { toVectorLiteral } from "./vector.js";
+
+// The fixed owner for the single-user embedded tier. Multi-tenant hosts pass a real
+// ownerId per call; the column exists everywhere so the schema is sync/cloud-ready.
+export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
 
 // All config is injected — core never reads process.env or global state (build-plan
-// architectural rule 2). This is what lets a host (a multi-tenant platform) hand core a
-// pooled connection + its own keys and consume @memloom/core directly.
+// architectural rule 2).
 export interface MemloomConfig {
   storage: StorageAdapter;
   embedding: EmbeddingProvider;
   llm: LLMProvider;
 }
 
-export interface SaveInput {
+interface MemoryRow {
+  id: string;
+  owner_id: string;
+  status: Memory["status"];
+  memory_type: string;
+  canonical: string | null;
   content: string;
-  canonical?: string;
+  summary: string | null;
+  asserted_at: string;
+  created_at: string;
+  similarity?: number;
+}
+
+function mapRow(row: MemoryRow): Memory {
+  return {
+    id: row.id,
+    ownerId: row.owner_id,
+    status: row.status,
+    memoryType: row.memory_type,
+    canonical: row.canonical,
+    content: row.content,
+    summary: row.summary,
+    assertedAt: row.asserted_at,
+    createdAt: row.created_at,
+    ...(row.similarity !== undefined ? { similarity: Number(row.similarity) } : {}),
+  };
 }
 
 export class Memloom {
@@ -31,12 +61,55 @@ export class Memloom {
     return { storage: this.#storage, embedding: this.#embedding, llm: this.#llm };
   }
 
-  // Phase 1 — the spine (save -> embed -> vector recall).
-  async save(_input: SaveInput): Promise<never> {
-    throw new Error("Memloom.save is not implemented yet (build-plan Phase 1).");
+  /** Run pending migrations. Idempotent; call once after constructing. */
+  async init(): Promise<void> {
+    await migrate(this.#storage);
   }
 
-  async recall(_query: string): Promise<never> {
-    throw new Error("Memloom.recall is not implemented yet (build-plan Phase 1).");
+  // Phase 1 — the spine. No dedup/entities yet (those are Phases 3-4); a save is a plain
+  // insert of the embedded content.
+  async save(input: SaveInput): Promise<SaveResult> {
+    const owner = input.ownerId ?? SENTINEL_OWNER;
+    const [embedding] = await this.#embedding.embed([input.content]);
+    if (!embedding) throw new Error("memloom: embedding provider returned no vector");
+    const hash = createHash("sha256").update(input.content).digest("hex");
+
+    const rows = await this.#storage.query<{ id: string }>(
+      `INSERT INTO memory_objects (owner_id, memory_type, canonical, content, content_hash, embedding)
+       VALUES ($1, $2, $3, $4, $5, $6::vector)
+       RETURNING id`,
+      [
+        owner,
+        input.memoryType ?? "fact",
+        input.canonical ?? null,
+        input.content,
+        hash,
+        toVectorLiteral(embedding),
+      ],
+    );
+    const id = rows[0]?.id;
+    if (!id) throw new Error("memloom: insert returned no id");
+    return { id };
+  }
+
+  /** Recall active memories by meaning (pure vector top-K in Phase 1). */
+  async recall(query: string, opts: RecallOptions = {}): Promise<Memory[]> {
+    const owner = opts.ownerId ?? SENTINEL_OWNER;
+    const limit = opts.limit ?? 10;
+    const [embedding] = await this.#embedding.embed([query]);
+    if (!embedding) throw new Error("memloom: embedding provider returned no vector");
+    const qvec = toVectorLiteral(embedding);
+
+    const rows = await this.#storage.query<MemoryRow>(
+      `SELECT id, owner_id, status, memory_type, canonical, content, summary,
+              asserted_at, created_at,
+              1 - (embedding <=> $1::vector) AS similarity
+       FROM memory_objects
+       WHERE owner_id = $2 AND status = 'active' AND embedding IS NOT NULL
+       ORDER BY embedding <=> $1::vector
+       LIMIT $3`,
+      [qvec, owner, limit],
+    );
+    return rows.map(mapRow);
   }
 }
