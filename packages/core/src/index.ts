@@ -19,7 +19,7 @@ export { evaluate, mean, recallAtK, reciprocalRank } from "./metrics.js";
 // Migrations
 export { migrate } from "./migrate.js";
 export type { Migration } from "./migrations.js";
-export { MIGRATIONS } from "./migrations.js";
+export { buildMigrations } from "./migrations.js";
 export type {
   OpenRouterEmbeddingsOptions,
   OpenRouterLLMOptions,

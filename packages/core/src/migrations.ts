@@ -8,10 +8,14 @@ export interface Migration {
   sql: string;
 }
 
-export const MIGRATIONS: Migration[] = [
-  {
-    id: "0001_init",
-    sql: /* sql */ `
+// Migrations are parameterized by embedding dimension so the vector(N) columns always match
+// the provider's output (qwen3-embedding-8b = 4096, OpenAI small = 1536, the test provider =
+// 1024). The dimension is fixed per store at init; changing models means re-embedding.
+export function buildMigrations(dims: number): Migration[] {
+  return [
+    {
+      id: "0001_init",
+      sql: /* sql */ `
       CREATE EXTENSION IF NOT EXISTS vector;
 
       -- The belief store. Every row is one atomic memory.
@@ -26,7 +30,7 @@ export const MIGRATIONS: Migration[] = [
         content       text NOT NULL,
         summary       text,
         content_hash  text,
-        embedding     vector(1024),
+        embedding     vector(${dims}),
         metadata      jsonb NOT NULL DEFAULT '{}'::jsonb,
         asserted_at   timestamptz NOT NULL DEFAULT now(),
         stale_since   timestamptz,
@@ -47,10 +51,10 @@ export const MIGRATIONS: Migration[] = [
       -- No vector index at personal scale: the spike measured ~52ms over 4000 rows on a
       -- sequential cosine scan. A per-tier HNSW/IVFFlat index is added for the server tier.
     `,
-  },
-  {
-    id: "0002_hybrid_fuse",
-    sql: /* sql */ `
+    },
+    {
+      id: "0002_hybrid_fuse",
+      sql: /* sql */ `
       -- Reciprocal-rank fusion over two arms: vector (cosine) and keyword (FTS). Returns the
       -- fused top-K as (id, rrf_score). Pure 'language sql' — no plpgsql (D2), so it runs
       -- identically on PGLite. The entity arm is added in Phase 4. Weights default to the
@@ -58,7 +62,7 @@ export const MIGRATIONS: Migration[] = [
       -- free). Callers that want vector-only pass p_use_keyword => false.
       CREATE OR REPLACE FUNCTION memloom_fuse(
         p_q           text,
-        p_emb         vector(1024),
+        p_emb         vector(${dims}),
         p_owner       uuid,
         p_limit       int     DEFAULT 10,
         p_pool        int     DEFAULT 50,
@@ -103,10 +107,10 @@ export const MIGRATIONS: Migration[] = [
         LIMIT p_limit
       $fn$;
     `,
-  },
-  {
-    id: "0003_beliefs",
-    sql: /* sql */ `
+    },
+    {
+      id: "0003_beliefs",
+      sql: /* sql */ `
       -- Typed relationships between memories. 'replaces' (supersession), 'distinct' (kept
       -- both on purpose), plus 'mention' etc. later. active=false soft-deletes an edge so a
       -- conflict decision can be reverted.
@@ -145,10 +149,10 @@ export const MIGRATIONS: Migration[] = [
         ON memory_dedup_decisions (owner_id, created_at DESC)
         WHERE action = 'conflict' AND resolution_action IS NULL;
     `,
-  },
-  {
-    id: "0004_entities",
-    sql: /* sql */ `
+    },
+    {
+      id: "0004_entities",
+      sql: /* sql */ `
       -- Entities the indexer extracts from memories. Resolved by (owner, name, type) so the
       -- same entity is one row; memories link to it via a 'mention' edge in memory_edges.
       CREATE TABLE IF NOT EXISTS memory_entities (
@@ -156,7 +160,7 @@ export const MIGRATIONS: Migration[] = [
         owner_id    uuid NOT NULL,
         name        text NOT NULL,
         entity_type text NOT NULL DEFAULT 'thing',
-        embedding   vector(1024),
+        embedding   vector(${dims}),
         created_at  timestamptz NOT NULL DEFAULT now()
       );
       CREATE INDEX IF NOT EXISTS memory_entities_owner_idx ON memory_entities (owner_id);
@@ -177,7 +181,7 @@ export const MIGRATIONS: Migration[] = [
 
       CREATE OR REPLACE FUNCTION memloom_fuse(
         p_q           text,
-        p_emb         vector(1024),
+        p_emb         vector(${dims}),
         p_owner       uuid,
         p_limit       int     DEFAULT 10,
         p_pool        int     DEFAULT 50,
@@ -245,5 +249,6 @@ export const MIGRATIONS: Migration[] = [
         LIMIT p_limit
       $fn$;
     `,
-  },
-];
+    },
+  ];
+}

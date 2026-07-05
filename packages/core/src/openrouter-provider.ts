@@ -22,6 +22,9 @@ export class OpenRouterEmbeddings implements EmbeddingProvider {
   constructor(opts: OpenRouterEmbeddingsOptions) {
     this.#apiKey = opts.apiKey;
     this.#model = opts.model ?? "qwen/qwen3-embedding-8b";
+    // qwen3-embedding-8b is natively 4096 but supports Matryoshka truncation: we request
+    // `dimensions` in the embed call, so 1024 is real, smaller, and proven. Override for a
+    // model with different support; the schema follows this value at init.
     this.dims = opts.dims ?? 1024;
     this.#baseUrl = opts.baseUrl ?? OPENROUTER_BASE;
   }
@@ -36,7 +39,7 @@ export class OpenRouterEmbeddings implements EmbeddingProvider {
           Authorization: `Bearer ${this.#apiKey}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ model: this.#model, input: batch }),
+        body: JSON.stringify({ model: this.#model, input: batch, dimensions: this.dims }),
       });
       if (!res.ok) {
         throw new Error(`OpenRouter embeddings failed: ${res.status} ${await res.text()}`);

@@ -89,7 +89,7 @@ export class Memloom {
 
   /** Run pending migrations. Idempotent; call once after constructing. */
   async init(): Promise<void> {
-    await migrate(this.#storage);
+    await migrate(this.#storage, this.#embedding.dims);
   }
 
   /**
