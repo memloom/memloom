@@ -54,6 +54,35 @@ export interface Conflict {
   candidates: ConflictCandidate[];
 }
 
+export interface Entity {
+  id: string;
+  name: string;
+  entityType: string;
+}
+
+export interface GraphMemory {
+  id: string;
+  canonical: string | null;
+  content: string;
+}
+
+export interface GraphEdge {
+  from: string;
+  to: string;
+  relation: string;
+}
+
+// The memory graph the viewer renders: memories + entities as nodes, edges between them.
+export interface Graph {
+  memories: GraphMemory[];
+  entities: Entity[];
+  edges: GraphEdge[];
+}
+
+export interface IndexResult {
+  indexed: number;
+}
+
 // The four human-in-the-loop resolution actions. All reversible.
 export type ResolveDecision =
   | { action: "keep_new" } // supersede: the new memory wins, existing ones go stale

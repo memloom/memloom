@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { type Candidate, classify } from "./dedup.js";
+import { extractEntities } from "./entities.js";
 import { migrate } from "./migrate.js";
 import type { EmbeddingProvider, LLMProvider } from "./providers.js";
 import { addEdge, deactivateEdgesTouching, markStale, reactivate } from "./resolve.js";
@@ -7,6 +8,11 @@ import type { StorageAdapter } from "./storage.js";
 import type {
   Conflict,
   ConflictCandidate,
+  Entity,
+  Graph,
+  GraphEdge,
+  GraphMemory,
+  IndexResult,
   Memory,
   RecallOptions,
   ResolveDecision,
@@ -170,6 +176,62 @@ export class Memloom {
     return rows.map(mapRow);
   }
 
+  /**
+   * Index unprocessed memories: extract entities, resolve them, and link each memory to its
+   * entities with a 'mention' edge. Idempotent — only touches memories not yet indexed.
+   */
+  async index(ownerId: string = SENTINEL_OWNER): Promise<IndexResult> {
+    const pending = await this.#storage.query<{ id: string; content: string }>(
+      `SELECT id, content FROM memory_objects
+       WHERE owner_id = $1 AND status = 'active' AND indexed_at IS NULL
+       ORDER BY created_at`,
+      [ownerId],
+    );
+
+    for (const memory of pending) {
+      const entities = await extractEntities(this.#llm, memory.content);
+      for (const entity of entities) {
+        const entityId = await this.#resolveEntity(ownerId, entity.name, entity.type);
+        await addEdge(this.#storage, ownerId, memory.id, entityId, "mention");
+      }
+      await this.#storage.query("UPDATE memory_objects SET indexed_at = now() WHERE id = $1", [
+        memory.id,
+      ]);
+    }
+    return { indexed: pending.length };
+  }
+
+  /** The memory graph for the owner: active memories, entities, and the active edges between. */
+  async graph(ownerId: string = SENTINEL_OWNER): Promise<Graph> {
+    const memories = await this.#storage.query<GraphMemory>(
+      `SELECT id, canonical, content FROM memory_objects
+       WHERE owner_id = $1 AND status = 'active'`,
+      [ownerId],
+    );
+    const entityRows = await this.#storage.query<{ id: string; name: string; entity_type: string }>(
+      "SELECT id, name, entity_type FROM memory_entities WHERE owner_id = $1",
+      [ownerId],
+    );
+    const edgeRows = await this.#storage.query<{
+      from_id: string;
+      to_id: string;
+      relation: string;
+    }>("SELECT from_id, to_id, relation FROM memory_edges WHERE owner_id = $1 AND active", [
+      ownerId,
+    ]);
+    const entities: Entity[] = entityRows.map((e) => ({
+      id: e.id,
+      name: e.name,
+      entityType: e.entity_type,
+    }));
+    const edges: GraphEdge[] = edgeRows.map((e) => ({
+      from: e.from_id,
+      to: e.to_id,
+      relation: e.relation,
+    }));
+    return { memories, entities, edges };
+  }
+
   /** Pending conflicts for the owner, newest first. */
   async conflicts(ownerId: string = SENTINEL_OWNER): Promise<Conflict[]> {
     const rows = await this.#storage.query<{
@@ -330,6 +392,23 @@ export class Memloom {
     const id = rows[0]?.id;
     if (!id) throw new Error("memloom: insert returned no id");
     return id;
+  }
+
+  async #resolveEntity(owner: string, name: string, type: string): Promise<string> {
+    const existing = await this.#storage.query<{ id: string }>(
+      "SELECT id FROM memory_entities WHERE owner_id = $1 AND lower(name) = lower($2) AND entity_type = $3 LIMIT 1",
+      [owner, name, type],
+    );
+    if (existing[0]) return existing[0].id;
+    const [embedding] = await this.#embedding.embed([name]);
+    if (!embedding) throw new Error("memloom: embedding provider returned no vector");
+    const [row] = await this.#storage.query<{ id: string }>(
+      `INSERT INTO memory_entities (owner_id, name, entity_type, embedding)
+       VALUES ($1, $2, $3, $4::vector) RETURNING id`,
+      [owner, name, type, toVectorLiteral(embedding)],
+    );
+    if (!row) throw new Error("memloom: failed to insert entity");
+    return row.id;
   }
 
   async #findCandidates(owner: string, embedding: number[], hash: string): Promise<Candidate[]> {

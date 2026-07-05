@@ -74,11 +74,15 @@ describe("hybrid retrieval", () => {
     const qvec = toVectorLiteral(qemb ?? []);
 
     const withKeyword = await storage.query<{ id: string }>(
-      "SELECT id FROM memloom_fuse($1, $2::vector, $3, 10, 50, 60, true, true)",
+      `SELECT id FROM memloom_fuse(
+         p_q => $1, p_emb => $2::vector, p_owner => $3,
+         p_use_keyword => true, p_use_entity => false)`,
       ["quokka", qvec, SENTINEL_OWNER],
     );
     const vectorOnly = await storage.query<{ id: string }>(
-      "SELECT id FROM memloom_fuse($1, $2::vector, $3, 10, 50, 60, true, false)",
+      `SELECT id FROM memloom_fuse(
+         p_q => $1, p_emb => $2::vector, p_owner => $3,
+         p_use_keyword => false, p_use_entity => false)`,
       ["quokka", qvec, SENTINEL_OWNER],
     );
 

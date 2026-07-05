@@ -146,4 +146,104 @@ export const MIGRATIONS: Migration[] = [
         WHERE action = 'conflict' AND resolution_action IS NULL;
     `,
   },
+  {
+    id: "0004_entities",
+    sql: /* sql */ `
+      -- Entities the indexer extracts from memories. Resolved by (owner, name, type) so the
+      -- same entity is one row; memories link to it via a 'mention' edge in memory_edges.
+      CREATE TABLE IF NOT EXISTS memory_entities (
+        id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id    uuid NOT NULL,
+        name        text NOT NULL,
+        entity_type text NOT NULL DEFAULT 'thing',
+        embedding   vector(1024),
+        created_at  timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS memory_entities_owner_idx ON memory_entities (owner_id);
+      CREATE UNIQUE INDEX IF NOT EXISTS memory_entities_owner_name_type_idx
+        ON memory_entities (owner_id, lower(name), entity_type);
+
+      -- Tracks which memories the indexer has processed (extracted entities from).
+      ALTER TABLE memory_objects ADD COLUMN IF NOT EXISTS indexed_at timestamptz;
+
+      -- Rebuild memloom_fuse with a third arm: entity-anchored. Entities close to the query
+      -- (cosine >= p_anchor_sim) anchor it; memories mentioning those anchors are pulled in,
+      -- ranked by mention count. The abstention gate (p_anchor_sim) is the key: the arm only
+      -- fires when the query clearly names an entity, so it never drags unrelated results.
+      DROP FUNCTION IF EXISTS memloom_fuse(
+        text, vector, uuid, integer, integer, integer, boolean, boolean,
+        double precision, double precision
+      );
+
+      CREATE OR REPLACE FUNCTION memloom_fuse(
+        p_q           text,
+        p_emb         vector(1024),
+        p_owner       uuid,
+        p_limit       int     DEFAULT 10,
+        p_pool        int     DEFAULT 50,
+        p_anchor      int     DEFAULT 10,
+        p_k           int     DEFAULT 60,
+        p_use_vector  boolean DEFAULT true,
+        p_use_keyword boolean DEFAULT true,
+        p_use_entity  boolean DEFAULT true,
+        p_anchor_sim  float   DEFAULT 0.45,
+        p_w_vector    float   DEFAULT 1.0,
+        p_w_keyword   float   DEFAULT 2.0,
+        p_w_entity    float   DEFAULT 1.0
+      )
+      RETURNS TABLE (id uuid, rrf_score double precision)
+      LANGUAGE sql STABLE AS $fn$
+        WITH vec AS (
+          SELECT mo.id, row_number() OVER (ORDER BY mo.embedding <=> p_emb) AS rnk
+          FROM memory_objects mo
+          WHERE p_use_vector
+            AND mo.owner_id = p_owner AND mo.status = 'active' AND mo.embedding IS NOT NULL
+          ORDER BY mo.embedding <=> p_emb
+          LIMIT p_pool
+        ),
+        kw AS (
+          SELECT mo.id, row_number() OVER (
+            ORDER BY ts_rank(mo.search_tsv, websearch_to_tsquery('simple', p_q)) DESC
+          ) AS rnk
+          FROM memory_objects mo
+          WHERE p_use_keyword
+            AND mo.owner_id = p_owner AND mo.status = 'active'
+            AND mo.search_tsv @@ websearch_to_tsquery('simple', p_q)
+          LIMIT p_pool
+        ),
+        anchors AS (
+          SELECT me.id AS eid
+          FROM memory_entities me
+          WHERE p_use_entity AND me.owner_id = p_owner AND me.embedding IS NOT NULL
+            AND (1 - (me.embedding <=> p_emb)) >= p_anchor_sim
+          ORDER BY me.embedding <=> p_emb
+          LIMIT p_anchor
+        ),
+        ent AS (
+          SELECT e.from_id AS id,
+                 row_number() OVER (ORDER BY count(DISTINCT e.to_id) DESC) AS rnk
+          FROM memory_edges e
+          JOIN anchors a ON a.eid = e.to_id
+          JOIN memory_objects mo ON mo.id = e.from_id AND mo.status = 'active'
+          WHERE e.owner_id = p_owner AND e.relation = 'mention' AND e.active
+          GROUP BY e.from_id
+          ORDER BY count(DISTINCT e.to_id) DESC
+          LIMIT p_pool
+        ),
+        fused AS (
+          SELECT u.id AS fid, sum(u.w / (p_k + u.rnk)) AS score
+          FROM (
+            SELECT vec.id, vec.rnk, p_w_vector  AS w FROM vec
+            UNION ALL SELECT kw.id,  kw.rnk,  p_w_keyword FROM kw
+            UNION ALL SELECT ent.id, ent.rnk, p_w_entity FROM ent
+          ) u
+          GROUP BY u.id
+        )
+        SELECT fused.fid, fused.score
+        FROM fused
+        ORDER BY fused.score DESC
+        LIMIT p_limit
+      $fn$;
+    `,
+  },
 ];

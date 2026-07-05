@@ -34,6 +34,11 @@ export type { StorageAdapter } from "./storage.js";
 export type {
   Conflict,
   ConflictCandidate,
+  Entity,
+  Graph,
+  GraphEdge,
+  GraphMemory,
+  IndexResult,
   Memory,
   MemoryStatus,
   RecallOptions,
