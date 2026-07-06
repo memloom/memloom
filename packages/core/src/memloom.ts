@@ -91,6 +91,35 @@ export class Memloom implements MemoryEngine {
   /** Run pending migrations. Idempotent; call once after constructing. */
   async init(): Promise<void> {
     await migrate(this.#storage, this.#embedding.dims);
+    await this.#checkEmbeddingFingerprint();
+  }
+
+  // A store's vectors are only comparable to vectors from the same provider+model+dims. The
+  // first init stamps the store; any later init with a different fingerprint is refused —
+  // otherwise recall degrades silently (offline-embedded and cloud-embedded memories look
+  // fine individually but never match each other).
+  async #checkEmbeddingFingerprint(): Promise<void> {
+    const current = this.#embedding.fingerprint;
+    const rows = await this.#storage.query<{ value: string }>(
+      "SELECT value FROM _memloom_meta WHERE key = 'embedding_fingerprint'",
+    );
+    const stored = rows[0]?.value;
+    if (stored === undefined) {
+      await this.#storage.query(
+        `INSERT INTO _memloom_meta (key, value) VALUES ('embedding_fingerprint', $1)
+         ON CONFLICT (key) DO NOTHING`,
+        [current],
+      );
+      return;
+    }
+    if (stored !== current) {
+      throw new Error(
+        `this store's memories were embedded with "${stored}", but the engine is now configured ` +
+          `with "${current}". Different embedding providers/models produce incompatible vector ` +
+          "spaces, so recall would silently return garbage. Either restore the previous embedding " +
+          "config, or start fresh by deleting the data directory.",
+      );
+    }
   }
 
   /**

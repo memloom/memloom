@@ -26,9 +26,11 @@ function tokenize(text: string): string[] {
 
 export class HashingEmbeddingProvider implements EmbeddingProvider {
   readonly dims: number;
+  readonly fingerprint: string;
 
   constructor(dims = 1024) {
     this.dims = dims;
+    this.fingerprint = `hashing:${dims}`;
   }
 
   async embed(texts: readonly string[]): Promise<number[][]> {

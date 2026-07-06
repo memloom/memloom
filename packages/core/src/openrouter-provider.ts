@@ -45,6 +45,7 @@ export interface OpenRouterEmbeddingsOptions {
 
 export class OpenRouterEmbeddings implements EmbeddingProvider {
   readonly dims: number;
+  readonly fingerprint: string;
   readonly #apiKey: string;
   readonly #model: string;
   readonly #baseUrl: string;
@@ -61,6 +62,8 @@ export class OpenRouterEmbeddings implements EmbeddingProvider {
     // For the default model we know Nebius is the fast host; a custom model gets no preference
     // unless the caller states one.
     this.#provider = opts.provider ?? (opts.model === undefined ? "nebius" : undefined);
+    // The routing host doesn't change the vector space — model + dims do.
+    this.fingerprint = `openrouter:${this.#model}@${this.dims}`;
   }
 
   async embed(texts: readonly string[]): Promise<number[][]> {

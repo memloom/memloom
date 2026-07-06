@@ -80,7 +80,19 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
         llm: new NullLLMProvider(),
         dedup: false,
       });
-  await memloom.init();
+  try {
+    await memloom.init();
+  } catch (err) {
+    // Most likely the embedding-fingerprint guard (store embedded under a different config).
+    // Release everything so the next attempt isn't blocked by our lock.
+    await db.close();
+    await release();
+    console.error(`memloom: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(`  data dir: ${dir}`);
+    console.error(`  config:   ${configPath()}`);
+    process.exitCode = 1;
+    return;
+  }
 
   const shutdown = async () => {
     await pgServer.stop();

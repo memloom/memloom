@@ -250,5 +250,18 @@ export function buildMigrations(dims: number): Migration[] {
       $fn$;
     `,
     },
+    {
+      // Store-level facts that must survive restarts. First use: the embedding fingerprint,
+      // so a store embedded with one provider/model refuses to open under another (mixed
+      // vector spaces make similarity silently meaningless).
+      id: "0005_meta",
+      sql: `
+      CREATE TABLE _memloom_meta (
+        key text PRIMARY KEY,
+        value text NOT NULL,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+    `,
+    },
   ];
 }
