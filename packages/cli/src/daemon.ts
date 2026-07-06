@@ -61,7 +61,7 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   await memloom.init();
 
   const httpServer = nodeServe({
-    fetch: createServer(memloom).fetch,
+    fetch: createServer(memloom, { log: true }).fetch,
     port: httpPort,
     hostname: "127.0.0.1",
   });

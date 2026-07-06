@@ -7,8 +7,25 @@ import { Hono } from "hono";
 // store, giving one owner of the single PGLite connection (D1). Same request/response shapes
 // as the hosted public API, so clients can point at local or cloud.
 
-export function createServer(memloom: Memloom): Hono {
+export interface ServerOptions {
+  /** Log each request (method, path, status, timing) to stdout. Off by default (tests). */
+  log?: boolean;
+}
+
+export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   const app = new Hono();
+
+  if (opts.log) {
+    app.use("*", async (c, next) => {
+      const start = Date.now();
+      await next();
+      if (c.req.path !== "/health") {
+        console.log(
+          `${new Date().toISOString()}  ${c.req.method} ${c.req.path} ${c.res.status} ${Date.now() - start}ms`,
+        );
+      }
+    });
+  }
 
   app.get("/health", (c) => c.json({ ok: true }));
 
