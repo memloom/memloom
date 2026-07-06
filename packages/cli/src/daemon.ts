@@ -57,6 +57,10 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   const embedDims = process.env.OPENROUTER_EMBED_DIMS
     ? Number(process.env.OPENROUTER_EMBED_DIMS)
     : undefined;
+  // Prefer a specific OpenRouter host for embeddings (latency varies 20x between hosts of the
+  // same model). Defaults to nebius for the default model — mirrors OpenRouterEmbeddings.
+  const embedProvider =
+    process.env.OPENROUTER_EMBED_PROVIDER ?? (embedModel ? undefined : "nebius");
   const llmModel = process.env.OPENROUTER_LLM_MODEL;
 
   const memloom = apiKey
@@ -66,6 +70,7 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
           apiKey,
           ...(embedModel ? { model: embedModel } : {}),
           ...(embedDims ? { dims: embedDims } : {}),
+          ...(embedProvider ? { provider: embedProvider } : {}),
         }),
         llm: new OpenRouterLLM({ apiKey, ...(llmModel ? { model: llmModel } : {}) }),
       })
@@ -94,10 +99,15 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   // PGLite is single-connection: while a wire client (Drizzle Studio, psql) is attached it holds
   // an exclusive lock, and every HTTP API call silently queues behind it. Warn loudly, because
   // from the outside this looks like memloom hanging.
+  const warnedClients = new Set<string>();
   pgServer.addEventListener("connection", (event) => {
     const info = (event as CustomEvent<{ clientAddress: string; clientPort: number }>).detail;
+    // pglite-socket dispatches the connection event twice on the direct-attach path; warn once.
+    const key = `${info.clientAddress}:${info.clientPort}`;
+    if (warnedClients.has(key)) return;
+    warnedClients.add(key);
     console.log(
-      `${new Date().toISOString()}  ⚠ Postgres client connected (${info.clientAddress}:${info.clientPort}). ` +
+      `${new Date().toISOString()}  ⚠ Postgres client connected (${key}). ` +
         "The HTTP API (Claude/MCP/CLI saves + recalls) is PAUSED until it disconnects — close Drizzle Studio/psql when done inspecting.",
     );
   });
@@ -112,7 +122,7 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   console.log(`  config     ${configPath()}`);
   if (apiKey) {
     console.log(
-      `  mode       cloud (${embedModel ?? "qwen/qwen3-embedding-8b"} @ ${embedDims ?? 1024} dims, ${llmModel ?? "google/gemini-2.5-flash"})`,
+      `  mode       cloud (${embedModel ?? "qwen/qwen3-embedding-8b"} @ ${embedDims ?? 1024} dims${embedProvider ? ` via ${embedProvider}` : ""}, ${llmModel ?? "google/gemini-2.5-flash"})`,
     );
   } else {
     console.log(

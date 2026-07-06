@@ -20,6 +20,10 @@ export interface ServerOptions {
   onShutdown?: () => Promise<void>;
 }
 
+// How long the store probe waits before declaring the store locked. `select 1` on a free store
+// answers in single-digit milliseconds; anything slower means something is holding the lock.
+const STORE_PROBE_TIMEOUT_MS = 1_500;
+
 // Request-body schemas. Bad input fails here with a 400 that names the offending field, instead
 // of leaking through to the store or an embeddings call as a confusing 500.
 const saveSchema = z.object({
@@ -106,6 +110,31 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   }
 
   app.get("/health", (c) => c.json({ ok: true }));
+
+  // Fail fast when the store is unreachable: a connected Postgres wire client (Drizzle Studio,
+  // psql) holds PGLite's exclusive lock and every query queues behind it. Probing BEFORE the
+  // handler turns an indefinite silent hang into an actionable 503 — and skips paying for an
+  // embedding call whose result would only sit in the queue.
+  app.use("/memory/*", async (c, next) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const locked = await Promise.race([
+      memloom.ping().then(() => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), STORE_PROBE_TIMEOUT_MS);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (locked) {
+      return c.json(
+        {
+          error:
+            "the store is locked by a connected Postgres wire client (Drizzle Studio, psql, a DB panel). " +
+            "PGLite is single-connection — disconnect that client and retry.",
+        },
+        503,
+      );
+    }
+    await next();
+  });
 
   if (opts.onShutdown) {
     const shutdown = opts.onShutdown;

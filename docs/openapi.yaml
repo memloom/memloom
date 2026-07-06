@@ -54,6 +54,8 @@ paths:
                 $ref: "#/components/schemas/SaveResult"
         "400":
           $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/StoreLocked"
   /memory/query:
     post:
       summary: Recall memories
@@ -81,6 +83,8 @@ paths:
       responses:
         "400":
           $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/StoreLocked"
         "200":
           description: Ranked memories.
           content:
@@ -223,6 +227,19 @@ paths:
                     example: true
 components:
   responses:
+    StoreLocked:
+      description: |
+        The store is held by a connected Postgres wire client (Drizzle Studio, psql). PGLite is
+        single-connection — disconnect that client and retry. All `/memory/*` endpoints can
+        return this.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: the store is locked by a connected Postgres wire client (Drizzle Studio, psql, a DB panel). PGLite is single-connection — disconnect that client and retry.
     ValidationError:
       description: The request body failed validation. `issues` names each offending field.
       content:

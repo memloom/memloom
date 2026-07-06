@@ -94,6 +94,15 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
+   * Cheap liveness probe of the store. When a Postgres wire client (Drizzle Studio, psql) is
+   * attached to the daemon it holds PGLite's exclusive lock and this queues — the server races
+   * it against a timeout to fail fast instead of hanging every request.
+   */
+  async ping(): Promise<void> {
+    await this.#storage.query("select 1");
+  }
+
+  /**
    * Save a memory. With dedup on (default), the belief pipeline runs: an exact or classified
    * duplicate is merged (nothing new stored), a contradiction keeps both memories active and
    * records a conflict for the owner to resolve, and anything else is added.

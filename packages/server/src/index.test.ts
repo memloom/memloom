@@ -133,6 +133,29 @@ describe("server", () => {
     expect(((await notJson.json()) as { error: string }).error).toContain("valid JSON");
   });
 
+  it("responds 503 fast when the store is locked instead of hanging", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+    });
+    await memloom.init();
+    // Simulate a wire client holding PGLite's exclusive lock: the probe never resolves.
+    (memloom as unknown as { ping: () => Promise<void> }).ping = () => new Promise(() => {});
+    const server = createServer(memloom);
+
+    const res = await server.request("/memory/query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: "anything" }),
+    });
+    expect(res.status).toBe(503);
+    expect(((await res.json()) as { error: string }).error).toContain("Postgres wire client");
+  });
+
   it("engine errors surface as JSON 500, not bare text", async () => {
     const storage = await PgliteAdapter.open();
     cleanups.push(() => storage.close());

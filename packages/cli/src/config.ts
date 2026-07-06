@@ -28,6 +28,10 @@ const CONFIG_TEMPLATE = `# memloom configuration. The daemon (\`memloom serve\`)
 # OPENROUTER_EMBED_MODEL=qwen/qwen3-embedding-8b
 # OPENROUTER_EMBED_DIMS=1024
 # OPENROUTER_LLM_MODEL=google/gemini-2.5-flash
+
+# Preferred OpenRouter host for embeddings (latency varies a lot between hosts of the same
+# model; nebius is the fast one for the default model and is used automatically):
+# OPENROUTER_EMBED_PROVIDER=nebius
 `;
 
 /** Create the home + a commented config template if missing. Returns the config path. */

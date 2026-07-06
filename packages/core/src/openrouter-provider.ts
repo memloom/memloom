@@ -35,6 +35,12 @@ export interface OpenRouterEmbeddingsOptions {
   model?: string;
   dims?: number;
   baseUrl?: string;
+  /**
+   * OpenRouter provider slug to prefer (e.g. "nebius"), with fallbacks allowed. Embedding
+   * latency varies wildly between providers for the same model (DeepInfra has been seen taking
+   * 16s where Nebius takes well under a second), so pinning matters.
+   */
+  provider?: string;
 }
 
 export class OpenRouterEmbeddings implements EmbeddingProvider {
@@ -42,6 +48,7 @@ export class OpenRouterEmbeddings implements EmbeddingProvider {
   readonly #apiKey: string;
   readonly #model: string;
   readonly #baseUrl: string;
+  readonly #provider: string | undefined;
 
   constructor(opts: OpenRouterEmbeddingsOptions) {
     this.#apiKey = opts.apiKey;
@@ -51,6 +58,9 @@ export class OpenRouterEmbeddings implements EmbeddingProvider {
     // model with different support; the schema follows this value at init.
     this.dims = opts.dims ?? 1024;
     this.#baseUrl = opts.baseUrl ?? OPENROUTER_BASE;
+    // For the default model we know Nebius is the fast host; a custom model gets no preference
+    // unless the caller states one.
+    this.#provider = opts.provider ?? (opts.model === undefined ? "nebius" : undefined);
   }
 
   async embed(texts: readonly string[]): Promise<number[][]> {
@@ -60,7 +70,14 @@ export class OpenRouterEmbeddings implements EmbeddingProvider {
       const json = (await postJson(
         `${this.#baseUrl}/embeddings`,
         this.#apiKey,
-        { model: this.#model, input: batch, dimensions: this.dims },
+        {
+          model: this.#model,
+          input: batch,
+          dimensions: this.dims,
+          ...(this.#provider
+            ? { provider: { order: [this.#provider], allow_fallbacks: true } }
+            : {}),
+        },
         "embeddings",
       )) as { data: { embedding: number[] }[] };
       for (const item of json.data) out.push(item.embedding);

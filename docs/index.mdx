@@ -35,9 +35,9 @@ Any CLI command auto-starts the daemon if it isn't running. Stop it cleanly with
 <Warning>
 **The Postgres wire pauses the API.** PGLite is a single-connection database: while a DB client
 (Drizzle Studio, psql, an IDE database panel) is connected on port 54329, it holds an exclusive
-lock and **every HTTP API call queues behind it** — saves and recalls from Claude appear to hang
-with no error. The `serve` terminal logs a warning when a wire client connects. Disconnect the DB
-client to resume.
+lock. Memory endpoints detect this and answer **503 "store is locked by a connected Postgres wire
+client"** instead of hanging; the `serve` terminal also warns when a wire client connects.
+Disconnect the DB client to resume.
 </Warning>
 
 ## Configuration
@@ -48,6 +48,7 @@ client to resume.
 OPENROUTER_API_KEY=sk-or-...          # enables cloud mode
 OPENROUTER_EMBED_MODEL=qwen/qwen3-embedding-8b   # default
 OPENROUTER_EMBED_DIMS=1024                       # default (Matryoshka truncation)
+OPENROUTER_EMBED_PROVIDER=nebius                 # default host for the default model (fastest)
 OPENROUTER_LLM_MODEL=google/gemini-2.5-flash     # default
 ```
 
@@ -68,5 +69,5 @@ curl -s http://127.0.0.1:4319/memory/query \
 ```
 
 The `serve` terminal logs every request twice: `→` on arrival and `←` with status + duration on
-completion. An arrival with no completion means the request is stuck — usually a connected
-Postgres wire client (see the warning above) or a slow provider call (those time out after 60s).
+completion. A locked store answers 503 within ~1.5s (see the warning above); a stalled provider
+call times out after 60s with the provider's error in the response.
