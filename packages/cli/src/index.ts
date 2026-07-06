@@ -7,6 +7,7 @@ const HELP = `memloom — a memory engine you own, running on your machine
 Usage: memloom <command> [args]
 
   serve                run the store daemon (HTTP API + Postgres wire). The single owner.
+  stop                 stop the running daemon gracefully (releases the store cleanly)
   init                 ensure the daemon is running and the store is ready
   save <text...>       save a memory
   recall <text...>     recall memories by meaning
@@ -36,6 +37,19 @@ export async function run(argv: readonly string[]): Promise<void> {
     case "serve":
       await startDaemon();
       return; // runs until Ctrl+C
+
+    case "stop": {
+      try {
+        const res = await fetch("http://127.0.0.1:4319/admin/shutdown", {
+          method: "POST",
+          signal: AbortSignal.timeout(3000),
+        });
+        console.log(res.ok ? "memloom daemon stopped." : `daemon answered ${res.status}.`);
+      } catch {
+        console.log("no daemon running on http://127.0.0.1:4319.");
+      }
+      return;
+    }
 
     case "init": {
       const config = ensureConfig(); // create ~/.memloom + config.env template first

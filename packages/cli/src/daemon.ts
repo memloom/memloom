@@ -46,7 +46,9 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   loadConfigEnv();
 
   const dir = dataDir();
-  const release = await acquireDataDirLock(dir);
+  // waitMs rides out the stale window of a force-killed daemon's leftover lock (15s), so
+  // "kill then serve" just works instead of erroring on a lock that's about to expire.
+  const release = await acquireDataDirLock(dir, { waitMs: 20_000 });
   const db = await PGlite.create({ dataDir: dir, extensions: { vector } });
   const storage = PgliteAdapter.fromInstance(db);
 
@@ -75,8 +77,16 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
       });
   await memloom.init();
 
+  const shutdown = async () => {
+    await pgServer.stop();
+    httpServer.close();
+    await db.close();
+    await release();
+    process.exit(0);
+  };
+
   const httpServer = nodeServe({
-    fetch: createServer(memloom, { log: true }).fetch,
+    fetch: createServer(memloom, { log: true, onShutdown: shutdown }).fetch,
     port: httpPort,
     hostname: "127.0.0.1",
   });
@@ -102,13 +112,6 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   }
   console.log("Ctrl+C to stop.");
 
-  const shutdown = async () => {
-    await pgServer.stop();
-    httpServer.close();
-    await db.close();
-    await release();
-    process.exit(0);
-  };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }

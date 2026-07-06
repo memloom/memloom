@@ -38,6 +38,33 @@ describe("server", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  it("shutdown endpoint acks then invokes the hook", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+    });
+    await memloom.init();
+
+    let stopped = false;
+    const server = createServer(memloom, {
+      onShutdown: async () => {
+        stopped = true;
+      },
+    });
+    const res = await server.request("/admin/shutdown", { method: "POST" });
+    expect(res.status).toBe(200);
+    await new Promise((r) => setTimeout(r, 250));
+    expect(stopped).toBe(true);
+
+    // Without the hook, the route does not exist at all.
+    const bare = createServer(memloom);
+    expect((await bare.request("/admin/shutdown", { method: "POST" })).status).toBe(404);
+  });
+
   it("save then query round-trips", async () => {
     const server = await app();
     const saved = await server.request("/memory/save", {

@@ -10,6 +10,12 @@ import { Hono } from "hono";
 export interface ServerOptions {
   /** Log each request (method, path, status, timing) to stdout. Off by default (tests). */
   log?: boolean;
+  /**
+   * Graceful shutdown hook. When set, POST /admin/shutdown responds ok and then invokes it —
+   * this is how `memloom stop` stops the daemon cleanly (releasing the data-dir lock) instead
+   * of the user force-killing the process and leaving a stale lock behind.
+   */
+  onShutdown?: () => Promise<void>;
 }
 
 export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
@@ -28,6 +34,15 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   }
 
   app.get("/health", (c) => c.json({ ok: true }));
+
+  if (opts.onShutdown) {
+    const shutdown = opts.onShutdown;
+    app.post("/admin/shutdown", (c) => {
+      // Respond first, then shut down so the client gets its ack.
+      setTimeout(() => void shutdown(), 100);
+      return c.json({ ok: true, stopping: true });
+    });
+  }
 
   app.post("/memory/save", async (c) => {
     const body = await c.req.json<{ content: string; canonical?: string }>();
