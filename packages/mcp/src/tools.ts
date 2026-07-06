@@ -1,10 +1,10 @@
-import type { Memloom, ResolveDecision } from "@memloom/core";
+import type { MemoryEngine, ResolveDecision } from "@memloom/core";
 
 // The MCP tool implementations, kept as pure functions over a Memloom so they're testable
 // without an MCP transport. server.ts wires them to the protocol.
 
 export async function saveMemory(
-  memloom: Memloom,
+  memloom: MemoryEngine,
   args: { content: string; canonical?: string },
 ): Promise<string> {
   const result = await memloom.save({
@@ -21,7 +21,7 @@ export async function saveMemory(
 }
 
 export async function recallMemory(
-  memloom: Memloom,
+  memloom: MemoryEngine,
   args: { query: string; limit?: number },
 ): Promise<string> {
   const results = await memloom.recall(args.query, { limit: args.limit ?? 10 });
@@ -31,7 +31,7 @@ export async function recallMemory(
     .join("\n");
 }
 
-export async function listConflicts(memloom: Memloom): Promise<string> {
+export async function listConflicts(memloom: MemoryEngine): Promise<string> {
   const conflicts = await memloom.conflicts();
   if (conflicts.length === 0) return "No pending conflicts.";
   return conflicts
@@ -45,7 +45,7 @@ export async function listConflicts(memloom: Memloom): Promise<string> {
 }
 
 export async function resolveConflict(
-  memloom: Memloom,
+  memloom: MemoryEngine,
   args: {
     conflictId: string;
     action: "keep_new" | "keep_existing" | "keep_both" | "merge";

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { type Candidate, classify } from "./dedup.js";
+import type { MemoryEngine } from "./engine.js";
 import { extractEntities } from "./entities.js";
 import { migrate } from "./migrate.js";
 import type { EmbeddingProvider, LLMProvider } from "./providers.js";
@@ -69,7 +70,7 @@ function mapRow(row: MemoryRow): Memory {
   };
 }
 
-export class Memloom {
+export class Memloom implements MemoryEngine {
   readonly #storage: StorageAdapter;
   readonly #embedding: EmbeddingProvider;
   readonly #llm: LLMProvider;

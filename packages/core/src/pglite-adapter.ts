@@ -32,6 +32,15 @@ export class PgliteAdapter implements StorageAdapter {
     this.#release = release;
   }
 
+  /**
+   * Wrap an already-open PGLite instance (no new instance, no lock). Used by the daemon to
+   * share one PGLite between the HTTP engine and the Postgres-wire socket. The caller owns the
+   * instance's lifecycle and lock.
+   */
+  static fromInstance(db: PGlite): PgliteAdapter {
+    return new PgliteAdapter(db, undefined);
+  }
+
   /** Open an embedded store. Omit `dataDir` for an in-memory database (tests). */
   static async open(opts: { dataDir?: string } = {}): Promise<PgliteAdapter> {
     const release = opts.dataDir ? await acquireDataDirLock(opts.dataDir) : undefined;

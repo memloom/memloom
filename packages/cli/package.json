@@ -30,6 +30,7 @@
   "dependencies": {
     "@electric-sql/pglite": "^0.4.6",
     "@electric-sql/pglite-socket": "^0.0.14",
+    "@hono/node-server": "^1.13.0",
     "@memloom/core": "workspace:*",
     "@memloom/server": "workspace:*"
   }

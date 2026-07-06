@@ -34,6 +34,9 @@ importers:
       '@electric-sql/pglite-socket':
         specifier: ^0.0.14
         version: 0.0.14(@electric-sql/pglite@0.4.6)
+      '@hono/node-server':
+        specifier: ^1.13.0
+        version: 1.19.14(hono@4.12.27)
       '@memloom/core':
         specifier: workspace:*
         version: link:../core
@@ -69,6 +72,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.12.0
         version: 1.29.0(zod@3.25.76)
+      memloom:
+        specifier: workspace:*
+        version: link:../cli
       zod:
         specifier: ^3.24.0
         version: 3.25.76

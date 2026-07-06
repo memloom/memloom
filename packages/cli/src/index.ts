@@ -1,23 +1,24 @@
-import { serve } from "@memloom/server";
-import { openStore, storeDir } from "./config.js";
-import { runPgServer } from "./pg.js";
+import { storeDir } from "./config.js";
+import { connect } from "./connect.js";
+import { startDaemon } from "./daemon.js";
 
 const HELP = `memloom — a memory engine you own, running on your machine
 
 Usage: memloom <command> [args]
 
-  init                 create the local store (${"~/.memloom"}) and run migrations
+  serve                run the store daemon (HTTP API + Postgres wire). The single owner.
+  init                 ensure the daemon is running and the store is ready
   save <text...>       save a memory
   recall <text...>     recall memories by meaning
   index                extract entities from unindexed memories
   conflicts            list pending conflicts
-  serve [port]         run the local HTTP server (default 4319)
-  pg [port]            serve the store over Postgres for a DB client (default 5432)
   help                 show this help
 
-Set OPENROUTER_API_KEY for real embeddings + LLM dedup/entities. Without it, memloom runs
-in offline mode (deterministic embeddings, no dedup) — good for populating and inspecting.
+The CLI and the MCP talk to the daemon over HTTP, so many clients share one store safely.
+Any command auto-starts the daemon if it isn't running. Inspect the data by pointing Drizzle
+Studio / psql at the daemon's Postgres wire: postgresql://postgres@127.0.0.1:54329/postgres
 
+Set OPENROUTER_API_KEY (in the daemon's environment) for real embeddings + LLM dedup/entities.
 Store location: ${storeDir()}`;
 
 export async function run(argv: readonly string[]): Promise<void> {
@@ -31,70 +32,56 @@ export async function run(argv: readonly string[]): Promise<void> {
       console.log(HELP);
       return;
 
+    case "serve":
+      await startDaemon();
+      return; // runs until Ctrl+C
+
     case "init": {
-      const store = await openStore();
-      console.log(`memloom store ready at ${storeDir()}${store.offline ? "  (offline mode)" : ""}`);
-      await store.close();
+      await connect(); // starts the daemon if needed
+      console.log(`memloom is running. store: ${storeDir()}`);
+      console.log(
+        "HTTP api http://127.0.0.1:4319 · Postgres postgresql://postgres@127.0.0.1:54329/postgres",
+      );
       return;
     }
 
     case "save": {
       const content = rest.join(" ").trim();
       if (!content) throw new Error("usage: memloom save <text>");
-      const store = await openStore();
-      const result = await store.memloom.save({ content });
+      const engine = await connect();
+      const result = await engine.save({ content });
       console.log(
         `${result.outcome}  ${result.id}${result.conflictId ? `  conflict=${result.conflictId}` : ""}`,
       );
-      await store.close();
       return;
     }
 
     case "recall": {
       const query = rest.join(" ").trim();
       if (!query) throw new Error("usage: memloom recall <text>");
-      const store = await openStore();
-      const results = await store.memloom.recall(query);
+      const engine = await connect();
+      const results = await engine.recall(query);
       if (results.length === 0) console.log("(no memories)");
-      for (const m of results) {
-        console.log(`[sim ${(m.similarity ?? 0).toFixed(2)}]  ${m.content}`);
-      }
-      await store.close();
+      for (const m of results) console.log(`[sim ${(m.similarity ?? 0).toFixed(2)}]  ${m.content}`);
       return;
     }
 
     case "index": {
-      const store = await openStore();
-      const { indexed } = await store.memloom.index();
+      const engine = await connect();
+      const { indexed } = await engine.index();
       console.log(`indexed ${indexed} memories`);
-      await store.close();
       return;
     }
 
     case "conflicts": {
-      const store = await openStore();
-      const conflicts = await store.memloom.conflicts();
+      const engine = await connect();
+      const conflicts = await engine.conflicts();
       if (conflicts.length === 0) console.log("no pending conflicts");
       for (const c of conflicts) {
         console.log(`\nconflict ${c.id}`);
         console.log(`  NEW:      ${c.incoming.content}`);
         for (const cand of c.candidates) console.log(`  EXISTING: ${cand.content}`);
       }
-      await store.close();
-      return;
-    }
-
-    case "serve": {
-      const port = rest[0] ? Number(rest[0]) : 4319;
-      const store = await openStore(); // held for the server's lifetime (do not close)
-      serve(store.memloom, port);
-      console.log(`memloom server on http://127.0.0.1:${port}  (Ctrl+C to stop)`);
-      return;
-    }
-
-    case "pg": {
-      const port = rest[0] ? Number(rest[0]) : 5432;
-      await runPgServer(port);
       return;
     }
 
@@ -104,3 +91,5 @@ export async function run(argv: readonly string[]): Promise<void> {
       process.exitCode = 1;
   }
 }
+
+export { connect } from "./connect.js";

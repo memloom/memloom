@@ -1,13 +1,15 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { openStore } from "./config.js";
+import { connect } from "memloom";
 import { buildServer } from "./server.js";
 
-// memloom MCP server over stdio. Register in an MCP client (e.g. Claude Desktop) as:
+// memloom MCP server over stdio. Routes through the `memloom serve` daemon (auto-started by
+// connect() if needed), so it never opens the store directly — no lock conflicts with the CLI
+// or a DB client. Register in Claude Desktop as:
 //   { "command": "node", "args": ["<path>/dist/bin.js"], "env": { "OPENROUTER_API_KEY": "..." } }
 
 async function main() {
-  const store = await openStore();
-  const server = buildServer(store.memloom);
+  const engine = await connect();
+  const server = buildServer(engine);
   await server.connect(new StdioServerTransport());
 }
 

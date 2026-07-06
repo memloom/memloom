@@ -1,4 +1,4 @@
-import type { Memloom } from "@memloom/core";
+import type { MemoryEngine } from "@memloom/core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { listConflicts, recallMemory, resolveConflict, saveMemory } from "./tools.js";
@@ -6,7 +6,7 @@ import { listConflicts, recallMemory, resolveConflict, saveMemory } from "./tool
 // Wire the tool functions to the MCP protocol. Descriptions tell the calling agent when to
 // reach for each tool and how memloom behaves (dedup + human-in-the-loop conflicts).
 
-export function buildServer(memloom: Memloom): McpServer {
+export function buildServer(memloom: MemoryEngine): McpServer {
   const server = new McpServer({ name: "memloom", version: "0.0.0" });
 
   server.tool(

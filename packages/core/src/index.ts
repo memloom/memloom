@@ -3,16 +3,19 @@
 export type { BenchCorpus, BenchDoc, BenchQuery } from "./benchmark.js";
 // Retrieval benchmark + metrics
 export { runBenchmark } from "./benchmark.js";
+export type { MemoryEngine } from "./engine.js";
 // Providers
 export {
   HashingEmbeddingProvider,
   NullLLMProvider,
   ScriptedLLMProvider,
 } from "./hashing-provider.js";
+export type { FetchLike, HttpResponse } from "./http-client.js";
+export { HttpMemloomClient } from "./http-client.js";
 export type { ReleaseLock } from "./lock.js";
 export { acquireDataDirLock } from "./lock.js";
 export type { MemloomConfig } from "./memloom.js";
-// The engine facade
+// The engine facade + contract
 export { Memloom, SENTINEL_OWNER } from "./memloom.js";
 export type { EvalReport, QueryResult } from "./metrics.js";
 export { evaluate, mean, recallAtK, reciprocalRank } from "./metrics.js";
