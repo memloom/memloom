@@ -52,6 +52,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/SaveResult"
+        "400":
+          $ref: "#/components/responses/ValidationError"
   /memory/query:
     post:
       summary: Recall memories
@@ -77,6 +79,8 @@ paths:
                   description: Maximum results (default 10).
                   example: 5
       responses:
+        "400":
+          $ref: "#/components/responses/ValidationError"
         "200":
           description: Ranked memories.
           content:
@@ -162,6 +166,8 @@ paths:
             schema:
               $ref: "#/components/schemas/ResolveDecision"
       responses:
+        "400":
+          $ref: "#/components/responses/ValidationError"
         "200":
           description: Resolution applied.
           content:
@@ -216,6 +222,28 @@ paths:
                     type: boolean
                     example: true
 components:
+  responses:
+    ValidationError:
+      description: The request body failed validation. `issues` names each offending field.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: invalid request body
+              issues:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    path:
+                      type: string
+                      example: query
+                    message:
+                      type: string
+                      example: query must be a non-empty string
   schemas:
     SaveInput:
       type: object

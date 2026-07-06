@@ -27,6 +27,7 @@
   "dependencies": {
     "@hono/node-server": "^1.13.0",
     "@memloom/core": "workspace:*",
-    "hono": "^4.6.0"
+    "hono": "^4.6.0",
+    "zod": "^3.25.76"
   }
 }

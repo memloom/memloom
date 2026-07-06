@@ -97,6 +97,67 @@ describe("server", () => {
     expect(memories[0]?.content).toContain("staging database");
   });
 
+  it("rejects bad request bodies with a 400 naming the field", async () => {
+    const server = await app();
+
+    // The real-world mistake: a resolve payload posted to /memory/query.
+    const wrongShape = await server.request("/memory/query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "supersede", winnerId: "x" }),
+    });
+    expect(wrongShape.status).toBe(400);
+    const queryErr = (await wrongShape.json()) as { issues: Array<{ path: string }> };
+    expect(queryErr.issues.some((i) => i.path === "query")).toBe(true);
+
+    const emptySave = await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "" }),
+    });
+    expect(emptySave.status).toBe(400);
+
+    const badAction = await server.request("/memory/conflicts/some-id/resolve", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "supersede" }),
+    });
+    expect(badAction.status).toBe(400);
+
+    const notJson = await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "not json",
+    });
+    expect(notJson.status).toBe(400);
+    expect(((await notJson.json()) as { error: string }).error).toContain("valid JSON");
+  });
+
+  it("engine errors surface as JSON 500, not bare text", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+    });
+    await memloom.init();
+    const server = createServer(memloom);
+
+    // Resolving a conflict that doesn't exist throws inside the engine.
+    const res = await server.request(
+      "/memory/conflicts/00000000-0000-0000-0000-000000000001/resolve",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action: "keep_both" }),
+      },
+    );
+    expect(res.status).toBe(500);
+    expect(typeof ((await res.json()) as { error: string }).error).toBe("string");
+  });
+
   it("index then graph exposes entities", async () => {
     const server = await app();
     await server.request("/memory/save", {

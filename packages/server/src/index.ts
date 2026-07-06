@@ -1,7 +1,8 @@
 import { serve as nodeServe } from "@hono/node-server";
-import type { Memloom, ResolveDecision } from "@memloom/core";
-import { Hono } from "hono";
+import type { Memloom } from "@memloom/core";
+import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
+import { z } from "zod";
 
 // The local HTTP server: a thin wrapper around @memloom/core so the browser-based viewer (and
 // any HTTP client) can reach the engine. The CLI/MCP route through this when it holds the
@@ -17,6 +18,61 @@ export interface ServerOptions {
    * of the user force-killing the process and leaving a stale lock behind.
    */
   onShutdown?: () => Promise<void>;
+}
+
+// Request-body schemas. Bad input fails here with a 400 that names the offending field, instead
+// of leaking through to the store or an embeddings call as a confusing 500.
+const saveSchema = z.object({
+  content: z.string().min(1, "content must be a non-empty string"),
+  canonical: z.string().optional(),
+  memoryType: z.string().optional(),
+  ownerId: z.string().uuid().optional(),
+});
+
+const querySchema = z.object({
+  query: z.string().min(1, "query must be a non-empty string"),
+  limit: z.number().int().positive().optional(),
+});
+
+const resolveSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("keep_new") }),
+  z.object({ action: z.literal("keep_existing"), candidateId: z.string().min(1) }),
+  z.object({ action: z.literal("keep_both") }),
+  z.object({
+    action: z.literal("merge"),
+    content: z.string().min(1, "merge needs the reconciled content"),
+    canonical: z.string().optional(),
+  }),
+]);
+
+/** Parse + validate a JSON body; returns the typed value or a 400 JSON response. */
+async function parseBody<S extends z.ZodTypeAny>(
+  c: Context,
+  schema: S,
+): Promise<{ ok: true; data: z.infer<S> } | { ok: false; res: Response }> {
+  let raw: unknown;
+  try {
+    raw = await c.req.json();
+  } catch {
+    return { ok: false, res: c.json({ error: "request body must be valid JSON" }, 400) };
+  }
+  const parsed = schema.safeParse(raw);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      res: c.json(
+        {
+          error: "invalid request body",
+          issues: parsed.error.issues.map((i) => ({
+            path: i.path.join(".") || "(body)",
+            message: i.message,
+          })),
+        },
+        400,
+      ),
+    };
+  }
+  return { ok: true, data: parsed.data };
 }
 
 export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
@@ -61,13 +117,15 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   }
 
   app.post("/memory/save", async (c) => {
-    const body = await c.req.json<{ content: string; canonical?: string }>();
-    return c.json(await memloom.save(body));
+    const body = await parseBody(c, saveSchema);
+    if (!body.ok) return body.res;
+    return c.json(await memloom.save(body.data));
   });
 
   app.post("/memory/query", async (c) => {
-    const body = await c.req.json<{ query: string; limit?: number }>();
-    const memories = await memloom.recall(body.query, { limit: body.limit });
+    const body = await parseBody(c, querySchema);
+    if (!body.ok) return body.res;
+    const memories = await memloom.recall(body.data.query, { limit: body.data.limit });
     return c.json({ memories });
   });
 
@@ -78,14 +136,24 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.get("/memory/conflicts", async (c) => c.json({ conflicts: await memloom.conflicts() }));
 
   app.post("/memory/conflicts/:id/resolve", async (c) => {
-    const decision = await c.req.json<ResolveDecision>();
-    await memloom.resolveConflict(c.req.param("id"), decision);
+    const body = await parseBody(c, resolveSchema);
+    if (!body.ok) return body.res;
+    await memloom.resolveConflict(c.req.param("id"), body.data);
     return c.json({ ok: true });
   });
 
   app.post("/memory/conflicts/:id/revert", async (c) => {
     await memloom.revertConflict(c.req.param("id"));
     return c.json({ ok: true });
+  });
+
+  // Engine/provider failures come back as JSON with the real message instead of Hono's bare
+  // "Internal Server Error" text (they still land in the request log via the ← line).
+  app.onError((err, c) => {
+    const message = err instanceof Error ? err.message : String(err);
+    if (opts.log)
+      console.error(`${new Date().toISOString()}  ✖ ${c.req.method} ${c.req.path} — ${message}`);
+    return c.json({ error: message }, 500);
   });
 
   return app;
