@@ -27,8 +27,19 @@ export async function recallMemory(
   const results = await memloom.recall(args.query, { limit: args.limit ?? 10 });
   if (results.length === 0) return "No memories found.";
   return results
-    .map((m, i) => `${i + 1}. [similarity ${(m.similarity ?? 0).toFixed(2)}] ${m.content}`)
-    .join("\n");
+    .map((m) => {
+      // Title: the canonical form when the memory has one, else the content's first words.
+      const title =
+        m.canonical ?? (m.content.length > 60 ? `${m.content.slice(0, 57)}...` : m.content);
+      const saved = new Date(m.createdAt).toISOString().slice(0, 16).replace("T", " ");
+      return [
+        title,
+        `- ${m.content}`,
+        `- saved ${saved} UTC`,
+        `- similarity ${(m.similarity ?? 0).toFixed(2)}`,
+      ].join("\n");
+    })
+    .join("\n---\n");
 }
 
 export async function listConflicts(memloom: MemoryEngine): Promise<string> {

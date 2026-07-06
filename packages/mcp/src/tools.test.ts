@@ -41,6 +41,29 @@ describe("mcp tools", () => {
     expect(recalled).toContain("staging database");
   });
 
+  it("recall_memory formats items as title / content / saved / similarity lists", async () => {
+    const m = await fresh();
+    await saveMemory(m, {
+      content: "the staging database is postgres",
+      canonical: "staging DB engine",
+    });
+    await saveMemory(m, { content: "the staging database lives in Frankfurt" });
+
+    const recalled = await recallMemory(m, { query: "staging database" });
+    const items = recalled.split("\n---\n");
+    expect(items).toHaveLength(2);
+
+    // The canonical becomes the title; without one, the content leads.
+    const titled = items.find((i) => i.startsWith("staging DB engine")) as string;
+    const lines = titled.split("\n");
+    expect(lines[1]).toBe("- the staging database is postgres");
+    expect(lines[2]).toMatch(/^- saved \d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC$/);
+    expect(lines[3]).toMatch(/^- similarity \d\.\d{2}$/);
+
+    const untitled = items.find((i) => !i.startsWith("staging DB engine")) as string;
+    expect(untitled.startsWith("the staging database lives in Frankfurt")).toBe(true);
+  });
+
   it("save_memory reports a conflict, list + resolve work", async () => {
     const m = await fresh();
     await saveMemory(m, { content: "the deploy window is friday afternoon" });
