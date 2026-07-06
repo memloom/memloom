@@ -1,3 +1,5 @@
+import { readFile } from "node:fs/promises";
+import { extname, join, normalize, resolve, sep } from "node:path";
 import { serve as nodeServe } from "@hono/node-server";
 import type { Memloom } from "@memloom/core";
 import { type Context, Hono } from "hono";
@@ -18,7 +20,24 @@ export interface ServerOptions {
    * of the user force-killing the process and leaving a stale lock behind.
    */
   onShutdown?: () => Promise<void>;
+  /**
+   * Absolute directory of the viewer bundle (index.html + assets). When set, GET requests that
+   * no API route claims are served from it, so the daemon is API + viewer on one port.
+   */
+  staticDir?: string;
 }
+
+const MIME: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".png": "image/png",
+  ".ico": "image/x-icon",
+  ".json": "application/json",
+  ".map": "application/json",
+  ".woff2": "font/woff2",
+};
 
 // How long the store probe waits before declaring the store locked. `select 1` on a free store
 // answers in single-digit milliseconds; anything slower means something is holding the lock.
@@ -95,13 +114,15 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   if (opts.log) {
     app.use("*", async (c, next) => {
       const start = Date.now();
-      // Log on arrival AND on completion: a request stuck on a hung provider call or a locked
-      // store would otherwise be invisible ("no requests in the terminal" while it hangs).
-      if (c.req.path !== "/health") {
+      // Log API traffic only (viewer asset requests are noise). Log on arrival AND on
+      // completion: a request stuck on a hung provider call or a locked store would otherwise
+      // be invisible ("no requests in the terminal" while it hangs).
+      const isApi = c.req.path.startsWith("/memory") || c.req.path.startsWith("/admin");
+      if (isApi) {
         console.log(`${new Date().toISOString()}  → ${c.req.method} ${c.req.path}`);
       }
       await next();
-      if (c.req.path !== "/health") {
+      if (isApi) {
         console.log(
           `${new Date().toISOString()}  ← ${c.req.method} ${c.req.path} ${c.res.status} ${Date.now() - start}ms`,
         );
@@ -175,6 +196,31 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     await memloom.revertConflict(c.req.param("id"));
     return c.json({ ok: true });
   });
+
+  // The viewer bundle, mounted last so every API route wins first. Unknown paths fall back to
+  // index.html (the shell handles them) — standard single-page-app serving.
+  if (opts.staticDir) {
+    const root = resolve(opts.staticDir);
+    app.get("*", async (c) => {
+      const reqPath = c.req.path === "/" ? "/index.html" : c.req.path;
+      const file = normalize(join(root, reqPath));
+      // Path traversal guard: whatever the URL says, we only ever read inside the bundle dir.
+      if (file !== root && !file.startsWith(root + sep)) return c.notFound();
+      try {
+        const data = await readFile(file);
+        return c.body(data, 200, {
+          "content-type": MIME[extname(file)] ?? "application/octet-stream",
+        });
+      } catch {
+        try {
+          const index = await readFile(join(root, "index.html"));
+          return c.html(index.toString("utf8"));
+        } catch {
+          return c.notFound();
+        }
+      }
+    });
+  }
 
   // Engine/provider failures come back as JSON with the real message instead of Hono's bare
   // "Internal Server Error" text (they still land in the request log via the ← line).

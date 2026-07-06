@@ -59,9 +59,11 @@ export class OpenRouterEmbeddings implements EmbeddingProvider {
     // model with different support; the schema follows this value at init.
     this.dims = opts.dims ?? 1024;
     this.#baseUrl = opts.baseUrl ?? OPENROUTER_BASE;
-    // For the default model we know Nebius is the fast host; a custom model gets no preference
-    // unless the caller states one.
-    this.#provider = opts.provider ?? (opts.model === undefined ? "nebius" : undefined);
+    // For the default model we know Nebius is the fast host; a different model gets no
+    // preference unless the caller states one. Keyed by VALUE, not absence — configs often
+    // spell out the default model explicitly.
+    this.#provider =
+      opts.provider ?? (this.#model === "qwen/qwen3-embedding-8b" ? "nebius" : undefined);
     // The routing host doesn't change the vector space — model + dims do.
     this.fingerprint = `openrouter:${this.#model}@${this.dims}`;
   }

@@ -1,13 +1,26 @@
+import { spawn } from "node:child_process";
 import { configPath, dataDir, ensureConfig, memloomHome } from "./config.js";
 import { connect } from "./connect.js";
 import { startDaemon } from "./daemon.js";
+
+// Best-effort browser open; the printed URL is the fallback on exotic setups.
+function openBrowser(url: string): void {
+  const [cmd, args] =
+    process.platform === "win32"
+      ? ["cmd", ["/c", "start", "", url]]
+      : process.platform === "darwin"
+        ? ["open", [url]]
+        : ["xdg-open", [url]];
+  spawn(cmd, args as string[], { detached: true, stdio: "ignore" }).unref();
+}
 
 const HELP = `memloom — a memory engine you own, running on your machine
 
 Usage: memloom <command> [args]
 
-  serve                run the store daemon (HTTP API + Postgres wire). The single owner.
+  serve                run the store daemon (HTTP API + viewer + Postgres wire). The single owner.
   stop                 stop the running daemon gracefully (releases the store cleanly)
+  ui                   open the viewer (graph, conflicts, console) in your browser
   init                 ensure the daemon is running and the store is ready
   save <text...>       save a memory
   recall <text...>     recall memories by meaning
@@ -37,6 +50,14 @@ export async function run(argv: readonly string[]): Promise<void> {
     case "serve":
       await startDaemon();
       return; // runs until Ctrl+C
+
+    case "ui": {
+      await connect(); // make sure the daemon (which serves the viewer) is up
+      const url = "http://127.0.0.1:4319";
+      openBrowser(url);
+      console.log(`viewer: ${url}`);
+      return;
+    }
 
     case "stop": {
       try {

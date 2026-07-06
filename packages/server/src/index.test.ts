@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   HashingEmbeddingProvider,
   Memloom,
@@ -179,6 +182,42 @@ describe("server", () => {
     );
     expect(res.status).toBe(500);
     expect(typeof ((await res.json()) as { error: string }).error).toBe("string");
+  });
+
+  it("serves the viewer bundle without shadowing the API", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+    });
+    await memloom.init();
+
+    const dir = mkdtempSync(join(tmpdir(), "memloom-viewer-"));
+    cleanups.push(async () => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, "index.html"), "<html><body>viewer</body></html>");
+    mkdirSync(join(dir, "assets"));
+    writeFileSync(join(dir, "assets", "app.js"), "console.log(1)");
+
+    const server = createServer(memloom, { staticDir: dir });
+
+    const index = await server.request("/");
+    expect(index.status).toBe(200);
+    expect(await index.text()).toContain("viewer");
+
+    const asset = await server.request("/assets/app.js");
+    expect(asset.status).toBe(200);
+    expect(asset.headers.get("content-type")).toContain("javascript");
+
+    // Unknown paths fall back to the SPA shell; the API still wins over static.
+    expect(await (await server.request("/some/route")).text()).toContain("viewer");
+    expect(await (await server.request("/health")).json()).toEqual({ ok: true });
+
+    // Traversal never escapes the bundle dir.
+    const evil = await server.request("/..%2f..%2fsecrets.txt");
+    expect(await evil.text()).toContain("viewer"); // falls back to index, no file read outside
   });
 
   it("index then graph exposes entities", async () => {

@@ -4,3 +4,6 @@ dist/
 .env
 .env.local
 .DS_Store
+
+# embedded viewer bundle (copied from apps/viewer/dist at build time)
+packages/cli/viewer/

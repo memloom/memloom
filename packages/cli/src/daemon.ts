@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite/vector";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
@@ -58,9 +60,13 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
     ? Number(process.env.OPENROUTER_EMBED_DIMS)
     : undefined;
   // Prefer a specific OpenRouter host for embeddings (latency varies 20x between hosts of the
-  // same model). Defaults to nebius for the default model — mirrors OpenRouterEmbeddings.
+  // same model). Defaults to nebius for the default model (even when the config spells it out
+  // explicitly) — mirrors OpenRouterEmbeddings.
   const embedProvider =
-    process.env.OPENROUTER_EMBED_PROVIDER ?? (embedModel ? undefined : "nebius");
+    process.env.OPENROUTER_EMBED_PROVIDER ??
+    ((embedModel ?? "qwen/qwen3-embedding-8b") === "qwen/qwen3-embedding-8b"
+      ? "nebius"
+      : undefined);
   const llmModel = process.env.OPENROUTER_LLM_MODEL;
 
   const memloom = apiKey
@@ -102,8 +108,17 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
     process.exit(0);
   };
 
+  // The viewer bundle ships inside this package (copied from apps/viewer at build time);
+  // when present the daemon serves it at / so `memloom ui` is one process, one port.
+  const viewerDir = fileURLToPath(new URL("../viewer", import.meta.url));
+  const staticDir = existsSync(viewerDir) ? viewerDir : undefined;
+
   const httpServer = nodeServe({
-    fetch: createServer(memloom, { log: true, onShutdown: shutdown }).fetch,
+    fetch: createServer(memloom, {
+      log: true,
+      onShutdown: shutdown,
+      ...(staticDir ? { staticDir } : {}),
+    }).fetch,
     port: httpPort,
     hostname: "127.0.0.1",
   });
@@ -127,6 +142,9 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
 
   console.log("memloom serving:");
   console.log(`  HTTP API   http://127.0.0.1:${httpPort}          (CLI + MCP route here)`);
+  if (staticDir) {
+    console.log(`  Viewer     http://127.0.0.1:${httpPort}          (\`memloom ui\` opens it)`);
+  }
   console.log(
     `  Postgres   postgresql://postgres@127.0.0.1:${pgPort}/postgres   (Drizzle Studio, psql)`,
   );

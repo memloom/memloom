@@ -3,6 +3,22 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "memloom minimal viewer UI (Vite + React): graph, conflicts, console-lite. Phase 6.",
-  "license": "Apache-2.0"
+  "description": "memloom viewer (Vite + React): graph, conflicts, console over the local daemon API.",
+  "license": "Apache-2.0",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-force-graph-2d": "^1.29.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "vite": "^7.0.0"
+  }
 }

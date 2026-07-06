@@ -32,6 +32,15 @@ describe("OpenRouterEmbeddings request body", () => {
     expect(body.provider).toEqual({ order: ["nebius"], allow_fallbacks: true });
   });
 
+  it("explicitly-spelled default model still prefers nebius", async () => {
+    const fetch = mockFetch(1024);
+    vi.stubGlobal("fetch", fetch);
+
+    await new OpenRouterEmbeddings({ apiKey: "k", model: "qwen/qwen3-embedding-8b" }).embed(["x"]);
+    const body = JSON.parse((fetch.mock.calls[0]?.[1] as { body: string }).body);
+    expect(body.provider).toEqual({ order: ["nebius"], allow_fallbacks: true });
+  });
+
   it("custom model: no provider preference unless stated", async () => {
     const fetch = mockFetch(768);
     vi.stubGlobal("fetch", fetch);
