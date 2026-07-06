@@ -204,6 +204,104 @@ paths:
                   ok:
                     type: boolean
                     example: true
+  /context/add:
+    post:
+      summary: Ingest a file as context
+      description: |
+        Extract, chunk, embed, and store a .md/.txt/.pdf file from the daemon's machine.
+        Documents are **mirrors** of files: re-adding an unchanged file is a no-op
+        (`unchanged`), a changed file replaces its chunks (`updated`). Markdown chunks carry
+        their heading breadcrumb; PDF chunks keep their page number. Chunks surface in normal
+        `/memory/query` results with a `source`.
+      operationId: contextAdd
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  description: Absolute path to a .md, .txt, or .pdf file on this machine.
+                  example: C:\Users\me\notes\setup.md
+      responses:
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          $ref: "#/components/responses/StoreLocked"
+        "200":
+          description: What happened to the document.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documentId:
+                    type: string
+                  outcome:
+                    type: string
+                    enum: [added, updated, unchanged]
+                  title:
+                    type: string
+                    example: Deploy Guide
+                  chunks:
+                    type: integer
+                    example: 12
+  /context/documents:
+    get:
+      summary: List context documents
+      operationId: listContextDocuments
+      responses:
+        "200":
+          description: Ingested documents, most recently updated first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documents:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        path:
+                          type: string
+                        title:
+                          type: string
+                        kind:
+                          type: string
+                          enum: [md, txt, pdf]
+                        chunkCount:
+                          type: integer
+                        updatedAt:
+                          type: string
+                          format: date-time
+  /context/documents/{id}:
+    delete:
+      summary: Remove a context document
+      description: Deletes the document and all of its chunks (cascade). The source file on disk is untouched.
+      operationId: removeContextDocument
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
   /admin/shutdown:
     post:
       summary: Stop the daemon
@@ -276,7 +374,14 @@ components:
           example: Acme $100 MRR milestone
         memoryType:
           type: string
-          description: Free-form type tag (default `fact`).
+          enum: [fact, preference, episode, procedure]
+          default: fact
+          description: >-
+            The kind of memory (defaults to `fact`):
+            `fact` — a stable truth about the world or the user;
+            `preference` — how the user likes things done;
+            `episode` — a time-bound event or decision;
+            `procedure` — reusable how-to steps.
           example: fact
         ownerId:
           type: string
@@ -307,6 +412,9 @@ components:
           enum: [active, stale]
         memoryType:
           type: string
+          description: >-
+            The kind of memory: one of `fact`, `preference`, `episode`, `procedure`. Recall
+            results for ingested context chunks carry the sentinel `context` (see `kind`).
           example: fact
         canonical:
           type: string
@@ -330,6 +438,29 @@ components:
           type: number
           description: Fused reciprocal-rank-fusion score. Rank-based and small by design — use it for ordering, not as a percentage.
           example: 0.0328
+        kind:
+          type: string
+          enum: [memory, context]
+          description: Whether this result is a saved memory or a chunk of an ingested context document.
+        source:
+          type: object
+          description: Present on context-chunk results — where the text came from.
+          properties:
+            documentId:
+              type: string
+            title:
+              type: string
+              example: Deploy Guide
+            path:
+              type: string
+            headingPath:
+              type: string
+              nullable: true
+              example: Deploy Guide > Database
+            page:
+              type: integer
+              nullable: true
+              description: 1-based PDF page.
     Conflict:
       type: object
       properties:

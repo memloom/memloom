@@ -1,4 +1,4 @@
-import type { MemoryEngine } from "@memloom/core";
+import { MEMORY_TYPES, type MemoryEngine } from "@memloom/core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { listConflicts, recallMemory, resolveConflict, saveMemory } from "./tools.js";
@@ -11,18 +11,25 @@ export function buildServer(memloom: MemoryEngine): McpServer {
 
   server.tool(
     "save_memory",
-    "Save a durable memory the user owns (a fact, preference, decision, or procedure). " +
-      "memloom dedupes automatically and flags contradictions instead of overwriting, so just " +
-      "save what is worth remembering; the response says if it created a conflict to resolve.",
-    { content: z.string(), canonical: z.string().optional() },
+    "Save a durable memory the user owns. Set `type` to classify it: fact (a stable truth), " +
+      "preference (how the user likes things), episode (a time-bound event or decision), or " +
+      "procedure (reusable how-to steps); defaults to fact. memloom dedupes automatically and " +
+      "flags contradictions instead of overwriting, so just save what is worth remembering; the " +
+      "response says if it created a conflict to resolve.",
+    {
+      content: z.string(),
+      canonical: z.string().optional(),
+      type: z.enum(MEMORY_TYPES).optional(),
+    },
     async (args) => ({ content: [{ type: "text", text: await saveMemory(memloom, args) }] }),
   );
 
   server.tool(
     "recall_memory",
-    "Recall the user's memories by meaning, ranked by hybrid retrieval (semantic + exact " +
-      "keyword + entity). Exact identifiers like file paths, config keys, or error codes make " +
-      "excellent queries. Only active (non-superseded) memories are returned.",
+    "Recall the user's memories AND ingested context documents by meaning, ranked by hybrid " +
+      "retrieval (semantic + exact keyword + entity). Exact identifiers like file paths, " +
+      "config keys, or error codes make excellent queries. Document results say which file " +
+      "and section they came from. Only active (non-superseded) memories are returned.",
     { query: z.string(), limit: z.number().optional() },
     async (args) => ({ content: [{ type: "text", text: await recallMemory(memloom, args) }] }),
   );

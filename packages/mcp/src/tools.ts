@@ -1,15 +1,16 @@
-import type { MemoryEngine, ResolveDecision } from "@memloom/core";
+import type { MemoryEngine, MemoryType, ResolveDecision } from "@memloom/core";
 
 // The MCP tool implementations, kept as pure functions over a Memloom so they're testable
 // without an MCP transport. server.ts wires them to the protocol.
 
 export async function saveMemory(
   memloom: MemoryEngine,
-  args: { content: string; canonical?: string },
+  args: { content: string; canonical?: string; type?: MemoryType },
 ): Promise<string> {
   const result = await memloom.save({
     content: args.content,
     ...(args.canonical ? { canonical: args.canonical } : {}),
+    ...(args.type ? { memoryType: args.type } : {}),
   });
   if (result.outcome === "conflict") {
     return `Saved (id ${result.id}), but it CONTRADICTS an existing memory. Both are kept; the user should resolve conflict ${result.conflictId} (keep new / keep existing / keep both / merge).`;
@@ -32,12 +33,24 @@ export async function recallMemory(
       const title =
         m.canonical ?? (m.content.length > 60 ? `${m.content.slice(0, 57)}...` : m.content);
       const saved = new Date(m.createdAt).toISOString().slice(0, 16).replace("T", " ");
-      return [
+      const lines = [
         title,
         `- ${m.content}`,
         `- saved ${saved} UTC`,
         `- similarity ${(m.similarity ?? 0).toFixed(2)}`,
-      ].join("\n");
+      ];
+      // Context chunks carry provenance — always show where the text came from.
+      if (m.source) {
+        const where = [
+          `- from ${m.source.title}`,
+          m.source.headingPath ? `› ${m.source.headingPath}` : "",
+          m.source.page != null ? `(p. ${m.source.page})` : "",
+        ]
+          .filter(Boolean)
+          .join(" ");
+        lines.push(where);
+      }
+      return lines.join("\n");
     })
     .join("\n---\n");
 }

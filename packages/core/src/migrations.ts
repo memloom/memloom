@@ -263,5 +263,148 @@ export function buildMigrations(dims: number): Migration[] {
       );
     `,
     },
+    {
+      // The context connector (P7): files mirrored into chunked, embedded, searchable rows.
+      // Documents are mirrors of files on disk — re-adding a changed file REPLACES its chunks
+      // (no belief pipeline, no HITL); content_hash makes re-adds idempotent.
+      id: "0006_context",
+      sql: /* sql */ `
+      CREATE TABLE context_documents (
+        id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id     uuid NOT NULL,
+        path         text NOT NULL,
+        title        text NOT NULL,
+        kind         text NOT NULL,
+        content_hash text NOT NULL,
+        chunk_count  int  NOT NULL DEFAULT 0,
+        created_at   timestamptz NOT NULL DEFAULT now(),
+        updated_at   timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE UNIQUE INDEX context_documents_owner_path_idx ON context_documents (owner_id, path);
+
+      CREATE TABLE context_chunks (
+        id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        document_id  uuid NOT NULL REFERENCES context_documents(id) ON DELETE CASCADE,
+        owner_id     uuid NOT NULL,
+        chunk_index  int  NOT NULL,
+        content      text NOT NULL,
+        heading_path text,
+        page         int,
+        embedding    vector(${dims}),
+        search_tsv   tsvector GENERATED ALWAYS AS (to_tsvector('simple', content)) STORED,
+        created_at   timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (document_id, chunk_index)
+      );
+      CREATE INDEX context_chunks_owner_idx ON context_chunks (owner_id);
+      CREATE INDEX context_chunks_tsv_idx ON context_chunks USING gin (search_tsv);
+
+      -- Rebuild memloom_fuse: the vector and keyword arms now rank memories and context
+      -- chunks TOGETHER (one ranking over the union per arm), and the function reports which
+      -- table each id came from. The entity arm stays memories-only (no entity extraction
+      -- over chunks in v1).
+      DROP FUNCTION IF EXISTS memloom_fuse(
+        text, vector, uuid, int, int, int, int, boolean, boolean, boolean,
+        double precision, double precision, double precision, double precision
+      );
+
+      CREATE OR REPLACE FUNCTION memloom_fuse(
+        p_q           text,
+        p_emb         vector(${dims}),
+        p_owner       uuid,
+        p_limit       int     DEFAULT 10,
+        p_pool        int     DEFAULT 50,
+        p_anchor      int     DEFAULT 10,
+        p_k           int     DEFAULT 60,
+        p_use_vector  boolean DEFAULT true,
+        p_use_keyword boolean DEFAULT true,
+        p_use_entity  boolean DEFAULT true,
+        p_anchor_sim  float   DEFAULT 0.45,
+        p_w_vector    float   DEFAULT 1.0,
+        p_w_keyword   float   DEFAULT 2.0,
+        p_w_entity    float   DEFAULT 1.0
+      )
+      RETURNS TABLE (id uuid, rrf_score double precision, src text)
+      LANGUAGE sql STABLE AS $fn$
+        WITH vec AS (
+          SELECT u.id, u.src, row_number() OVER (ORDER BY u.dist) AS rnk
+          FROM (
+            SELECT mo.id, 'memory'::text AS src, mo.embedding <=> p_emb AS dist
+            FROM memory_objects mo
+            WHERE mo.owner_id = p_owner AND mo.status = 'active' AND mo.embedding IS NOT NULL
+            UNION ALL
+            SELECT cc.id, 'chunk'::text, cc.embedding <=> p_emb
+            FROM context_chunks cc
+            WHERE cc.owner_id = p_owner AND cc.embedding IS NOT NULL
+          ) u
+          WHERE p_use_vector
+          ORDER BY u.dist
+          LIMIT p_pool
+        ),
+        kw AS (
+          SELECT u.id, u.src, row_number() OVER (ORDER BY u.rank DESC) AS rnk
+          FROM (
+            SELECT mo.id, 'memory'::text AS src,
+                   ts_rank(mo.search_tsv, websearch_to_tsquery('simple', p_q)) AS rank
+            FROM memory_objects mo
+            WHERE mo.owner_id = p_owner AND mo.status = 'active'
+              AND mo.search_tsv @@ websearch_to_tsquery('simple', p_q)
+            UNION ALL
+            SELECT cc.id, 'chunk'::text,
+                   ts_rank(cc.search_tsv, websearch_to_tsquery('simple', p_q))
+            FROM context_chunks cc
+            WHERE cc.owner_id = p_owner
+              AND cc.search_tsv @@ websearch_to_tsquery('simple', p_q)
+          ) u
+          WHERE p_use_keyword
+          ORDER BY u.rank DESC
+          LIMIT p_pool
+        ),
+        anchors AS (
+          SELECT me.id AS eid
+          FROM memory_entities me
+          WHERE p_use_entity AND me.owner_id = p_owner AND me.embedding IS NOT NULL
+            AND (1 - (me.embedding <=> p_emb)) >= p_anchor_sim
+          ORDER BY me.embedding <=> p_emb
+          LIMIT p_anchor
+        ),
+        ent AS (
+          SELECT e.from_id AS id, 'memory'::text AS src,
+                 row_number() OVER (ORDER BY count(DISTINCT e.to_id) DESC) AS rnk
+          FROM memory_edges e
+          JOIN anchors a ON a.eid = e.to_id
+          JOIN memory_objects mo ON mo.id = e.from_id AND mo.status = 'active'
+          WHERE e.owner_id = p_owner AND e.relation = 'mention' AND e.active
+          GROUP BY e.from_id
+          ORDER BY count(DISTINCT e.to_id) DESC
+          LIMIT p_pool
+        ),
+        fused AS (
+          SELECT u.id AS fid, u.src AS fsrc, sum(u.w / (p_k + u.rnk)) AS score
+          FROM (
+            SELECT vec.id, vec.src, vec.rnk, p_w_vector  AS w FROM vec
+            UNION ALL SELECT kw.id,  kw.src,  kw.rnk,  p_w_keyword FROM kw
+            UNION ALL SELECT ent.id, ent.src, ent.rnk, p_w_entity FROM ent
+          ) u
+          GROUP BY u.id, u.src
+        )
+        SELECT fused.fid, fused.score, fused.fsrc
+        FROM fused
+        ORDER BY fused.score DESC
+        LIMIT p_limit
+      $fn$;
+    `,
+    },
+    {
+      // Close the memory_type column to the saveable taxonomy (mirrors the hosted platform's type_hint:
+      // fact | preference | episode | procedure). Kept in sync with MEMORY_TYPES in types.ts and
+      // the zod enum on the HTTP surface. Context chunks live in context_chunks (no memory_type
+      // column), so the "context" recall sentinel never reaches this constraint.
+      id: "0007_memory_type_enum",
+      sql: /* sql */ `
+      ALTER TABLE memory_objects
+        ADD CONSTRAINT memory_objects_memory_type_check
+        CHECK (memory_type IN ('fact', 'preference', 'episode', 'procedure'));
+    `,
+    },
   ];
 }

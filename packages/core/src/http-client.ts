@@ -1,6 +1,9 @@
 import type { MemoryEngine } from "./engine.js";
 import type {
   Conflict,
+  ContextAddInput,
+  ContextAddResult,
+  ContextDocument,
   Graph,
   IndexResult,
   Memory,
@@ -79,5 +82,18 @@ export class HttpMemloomClient implements MemoryEngine {
 
   async revertConflict(conflictId: string): Promise<void> {
     await this.#post(`/memory/conflicts/${conflictId}/revert`, {});
+  }
+
+  contextAdd(input: ContextAddInput): Promise<ContextAddResult> {
+    return this.#post<ContextAddResult>("/context/add", input);
+  }
+
+  async contextList(): Promise<ContextDocument[]> {
+    const { documents } = await this.#json<{ documents: ContextDocument[] }>("/context/documents");
+    return documents;
+  }
+
+  async contextRemove(documentId: string): Promise<void> {
+    await this.#json(`/context/documents/${documentId}`, { method: "DELETE" });
   }
 }

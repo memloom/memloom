@@ -3,7 +3,12 @@
 export type { BenchCorpus, BenchDoc, BenchQuery } from "./benchmark.js";
 // Retrieval benchmark + metrics
 export { runBenchmark } from "./benchmark.js";
+// Context connector building blocks
+export type { Chunk, ChunkOptions } from "./chunker.js";
+export { chunkMarkdown, chunkText } from "./chunker.js";
 export type { MemoryEngine } from "./engine.js";
+export type { ContextKind, ExtractedFile, ExtractedUnit } from "./extract.js";
+export { detectKind, extractFile } from "./extract.js";
 // Providers
 export {
   HashingEmbeddingProvider,
@@ -37,6 +42,10 @@ export type { StorageAdapter } from "./storage.js";
 export type {
   Conflict,
   ConflictCandidate,
+  ContextAddInput,
+  ContextAddOutcome,
+  ContextAddResult,
+  ContextDocument,
   Entity,
   Graph,
   GraphEdge,
@@ -44,12 +53,16 @@ export type {
   IndexResult,
   Memory,
   MemoryStatus,
+  MemoryType,
   RecallOptions,
+  RecallSource,
   ResolveDecision,
   SaveInput,
   SaveOutcome,
   SaveResult,
 } from "./types.js";
+// The saveable memory taxonomy (fact | preference | episode | procedure).
+export { MEMORY_TYPES } from "./types.js";
 
 // Utilities
 export { toVectorLiteral } from "./vector.js";

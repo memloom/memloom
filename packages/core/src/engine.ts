@@ -1,5 +1,8 @@
 import type {
   Conflict,
+  ContextAddInput,
+  ContextAddResult,
+  ContextDocument,
   Graph,
   IndexResult,
   Memory,
@@ -20,4 +23,8 @@ export interface MemoryEngine {
   conflicts(ownerId?: string): Promise<Conflict[]>;
   resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void>;
   revertConflict(conflictId: string): Promise<void>;
+  /** Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors — re-add replaces. */
+  contextAdd(input: ContextAddInput): Promise<ContextAddResult>;
+  contextList(ownerId?: string): Promise<ContextDocument[]>;
+  contextRemove(documentId: string, ownerId?: string): Promise<void>;
 }

@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import { chunkMarkdown, chunkText } from "./chunker.js";
 import { type Candidate, classify } from "./dedup.js";
 import type { MemoryEngine } from "./engine.js";
 import { extractEntities } from "./entities.js";
+import { extractFile } from "./extract.js";
 import { migrate } from "./migrate.js";
 import type { EmbeddingProvider, LLMProvider } from "./providers.js";
 import { addEdge, deactivateEdgesTouching, markStale, reactivate } from "./resolve.js";
@@ -9,12 +11,16 @@ import type { StorageAdapter } from "./storage.js";
 import type {
   Conflict,
   ConflictCandidate,
+  ContextAddInput,
+  ContextAddResult,
+  ContextDocument,
   Entity,
   Graph,
   GraphEdge,
   GraphMemory,
   IndexResult,
   Memory,
+  MemoryType,
   RecallOptions,
   ResolveDecision,
   SaveInput,
@@ -44,7 +50,7 @@ interface MemoryRow {
   id: string;
   owner_id: string;
   status: Memory["status"];
-  memory_type: string;
+  memory_type: Memory["memoryType"];
   canonical: string | null;
   content: string;
   summary: string | null;
@@ -52,6 +58,48 @@ interface MemoryRow {
   created_at: string;
   similarity?: number;
   rrf_score?: number;
+}
+
+interface RecallRow extends Partial<MemoryRow> {
+  id: string;
+  src: "memory" | "chunk";
+  rrf_score: number;
+  similarity: number;
+  c_owner_id: string | null;
+  c_content: string | null;
+  c_heading_path: string | null;
+  c_page: number | null;
+  c_created_at: string | null;
+  d_id: string | null;
+  d_title: string | null;
+  d_path: string | null;
+}
+
+function mapRecallRow(row: RecallRow): Memory {
+  if (row.src === "chunk") {
+    return {
+      id: row.id,
+      ownerId: row.c_owner_id ?? "",
+      status: "active",
+      memoryType: "context",
+      canonical: null,
+      content: row.c_content ?? "",
+      summary: null,
+      assertedAt: row.c_created_at ?? "",
+      createdAt: row.c_created_at ?? "",
+      similarity: Number(row.similarity),
+      rrfScore: Number(row.rrf_score),
+      kind: "context",
+      source: {
+        documentId: row.d_id ?? "",
+        title: row.d_title ?? "",
+        path: row.d_path ?? "",
+        headingPath: row.c_heading_path,
+        page: row.c_page,
+      },
+    };
+  }
+  return { ...mapRow(row as MemoryRow), rrfScore: Number(row.rrf_score), kind: "memory" };
 }
 
 function mapRow(row: MemoryRow): Memory {
@@ -132,6 +180,126 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
+   * Ingest a file (.md/.txt/.pdf) as context: extract, chunk, embed, store. Documents are
+   * MIRRORS of files — no belief pipeline, no conflicts; re-adding a changed file replaces
+   * its chunks in one transaction, and an unchanged file (same content hash) is a no-op.
+   */
+  async contextAdd(input: ContextAddInput): Promise<ContextAddResult> {
+    const owner = input.ownerId ?? SENTINEL_OWNER;
+    const file = await extractFile(input.path, (bytes) =>
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+
+    const existing = await this.#storage.query<{
+      id: string;
+      content_hash: string;
+      chunk_count: number;
+    }>(
+      "SELECT id, content_hash, chunk_count FROM context_documents WHERE owner_id = $1 AND path = $2",
+      [owner, input.path],
+    );
+    const prior = existing[0];
+    if (prior && prior.content_hash === file.contentHash) {
+      return {
+        documentId: prior.id,
+        outcome: "unchanged",
+        title: file.title,
+        chunks: prior.chunk_count,
+      };
+    }
+
+    const chunks = file.units.flatMap((unit) =>
+      file.kind === "md"
+        ? chunkMarkdown(unit.text).map((c) => ({ ...c, page: unit.page }))
+        : chunkText(unit.text).map((content) => ({ content, headingPath: null, page: unit.page })),
+    );
+    // Embed before the transaction — provider calls are slow and can fail; the store swap
+    // below stays a short, all-or-nothing write.
+    const embeddings =
+      chunks.length > 0 ? await this.#embedding.embed(chunks.map((c) => c.content)) : [];
+
+    return await this.#storage.tx(async (tx) => {
+      let documentId: string;
+      if (prior) {
+        await tx.query("DELETE FROM context_chunks WHERE document_id = $1", [prior.id]);
+        await tx.query(
+          `UPDATE context_documents
+           SET title = $2, kind = $3, content_hash = $4, chunk_count = $5, updated_at = now()
+           WHERE id = $1`,
+          [prior.id, file.title, file.kind, file.contentHash, chunks.length],
+        );
+        documentId = prior.id;
+      } else {
+        const inserted = await tx.query<{ id: string }>(
+          `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count)
+           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+          [owner, input.path, file.title, file.kind, file.contentHash, chunks.length],
+        );
+        const row = inserted[0];
+        if (!row) throw new Error("memloom: context document insert returned no id");
+        documentId = row.id;
+      }
+
+      for (let i = 0; i < chunks.length; i++) {
+        const chunk = chunks[i];
+        const emb = embeddings[i];
+        if (!chunk || !emb) throw new Error("memloom: embedding count mismatch during ingest");
+        await tx.query(
+          `INSERT INTO context_chunks (document_id, owner_id, chunk_index, content, heading_path, page, embedding)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::vector)`,
+          [
+            documentId,
+            owner,
+            i,
+            chunk.content,
+            chunk.headingPath,
+            chunk.page,
+            toVectorLiteral(emb),
+          ],
+        );
+      }
+
+      return {
+        documentId,
+        outcome: prior ? ("updated" as const) : ("added" as const),
+        title: file.title,
+        chunks: chunks.length,
+      };
+    });
+  }
+
+  async contextList(ownerId: string = SENTINEL_OWNER): Promise<ContextDocument[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      path: string;
+      title: string;
+      kind: string;
+      chunk_count: number;
+      updated_at: string;
+    }>(
+      `SELECT id, path, title, kind, chunk_count, updated_at
+       FROM context_documents WHERE owner_id = $1 ORDER BY updated_at DESC`,
+      [ownerId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      path: r.path,
+      title: r.title,
+      kind: r.kind,
+      chunkCount: Number(r.chunk_count),
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  async contextRemove(documentId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    const deleted = await this.#storage.query<{ id: string }>(
+      "DELETE FROM context_documents WHERE id = $1 AND owner_id = $2 RETURNING id",
+      [documentId, ownerId],
+    );
+    if (deleted.length === 0) throw new Error(`no context document ${documentId}`);
+  }
+
+  /**
    * Save a memory. With dedup on (default), the belief pipeline runs: an exact or classified
    * duplicate is merged (nothing new stored), a contradiction keeps both memories active and
    * records a conflict for the owner to resolve, and anything else is added.
@@ -202,17 +370,25 @@ export class Memloom implements MemoryEngine {
     if (!embedding) throw new Error("memloom: embedding provider returned no vector");
     const qvec = toVectorLiteral(embedding);
 
-    const rows = await this.#storage.query<MemoryRow>(
-      `SELECT mo.id, mo.owner_id, mo.status, mo.memory_type, mo.canonical, mo.content,
+    // The fuse ranks memories and context chunks together; join whichever table each id
+    // came from and map to one result shape (chunks carry a source for provenance).
+    const rows = await this.#storage.query<RecallRow>(
+      `SELECT f.id, f.src, f.rrf_score,
+              1 - (COALESCE(mo.embedding, cc.embedding) <=> $1::vector) AS similarity,
+              mo.owner_id, mo.status, mo.memory_type, mo.canonical, mo.content,
               mo.summary, mo.asserted_at, mo.created_at,
-              1 - (mo.embedding <=> $1::vector) AS similarity,
-              f.rrf_score
+              cc.owner_id AS c_owner_id, cc.content AS c_content,
+              cc.heading_path AS c_heading_path, cc.page AS c_page,
+              cc.created_at AS c_created_at,
+              cd.id AS d_id, cd.title AS d_title, cd.path AS d_path
        FROM memloom_fuse($2, $1::vector, $3, $4) f
-       JOIN memory_objects mo ON mo.id = f.id
+       LEFT JOIN memory_objects mo ON f.src = 'memory' AND mo.id = f.id
+       LEFT JOIN context_chunks cc ON f.src = 'chunk' AND cc.id = f.id
+       LEFT JOIN context_documents cd ON cd.id = cc.document_id
        ORDER BY f.rrf_score DESC`,
       [qvec, query, owner, limit],
     );
-    return rows.map(mapRow);
+    return rows.map(mapRecallRow);
   }
 
   /**
@@ -411,7 +587,7 @@ export class Memloom implements MemoryEngine {
 
   async #insert(
     owner: string,
-    input: { content: string; canonical?: string; memoryType?: string },
+    input: { content: string; canonical?: string; memoryType?: MemoryType },
     embedding: number[],
     hash: string,
   ): Promise<string> {

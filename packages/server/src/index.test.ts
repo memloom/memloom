@@ -100,6 +100,27 @@ describe("server", () => {
     expect(memories[0]?.content).toContain("staging database");
   });
 
+  it("accepts a valid memoryType and rejects one outside the taxonomy", async () => {
+    const server = await app();
+
+    const ok = await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "prefers pnpm over npm", memoryType: "preference" }),
+    });
+    expect(ok.status).toBe(200);
+    expect(((await ok.json()) as { outcome: string }).outcome).toBe("added");
+
+    const bad = await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "x", memoryType: "banana" }),
+    });
+    expect(bad.status).toBe(400);
+    const err = (await bad.json()) as { issues: Array<{ path: string }> };
+    expect(err.issues.some((i) => i.path === "memoryType")).toBe(true);
+  });
+
   it("rejects bad request bodies with a 400 naming the field", async () => {
     const server = await app();
 
@@ -218,6 +239,52 @@ describe("server", () => {
     // Traversal never escapes the bundle dir.
     const evil = await server.request("/..%2f..%2fsecrets.txt");
     expect(await evil.text()).toContain("viewer"); // falls back to index, no file read outside
+  });
+
+  it("context routes: add a file, recall it with a source, list, remove", async () => {
+    const server = await app();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-ctx-http-"));
+    cleanups.push(async () => rmSync(dir, { recursive: true, force: true }));
+    const filePath = join(dir, "runbook.md");
+    writeFileSync(filePath, "# Runbook\n## Restarts\nrestart the ingest worker with systemctl");
+
+    const added = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: filePath }),
+    });
+    expect(added.status).toBe(200);
+    const addResult = (await added.json()) as { outcome: string; documentId: string };
+    expect(addResult.outcome).toBe("added");
+
+    const queried = await server.request("/memory/query", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ query: "restart ingest worker" }),
+    });
+    const { memories } = (await queried.json()) as {
+      memories: Array<{ kind?: string; source?: { title: string } }>;
+    };
+    const chunk = memories.find((m) => m.kind === "context");
+    expect(chunk?.source?.title).toBe("Runbook");
+
+    const listed = await server.request("/context/documents");
+    expect(((await listed.json()) as { documents: unknown[] }).documents).toHaveLength(1);
+
+    const removed = await server.request(`/context/documents/${addResult.documentId}`, {
+      method: "DELETE",
+    });
+    expect(removed.status).toBe(200);
+    const relisted = await server.request("/context/documents");
+    expect(((await relisted.json()) as { documents: unknown[] }).documents).toHaveLength(0);
+
+    // Validation still guards the new surface.
+    const bad = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(bad.status).toBe(400);
   });
 
   it("index then graph exposes entities", async () => {

@@ -10,6 +10,14 @@ export interface Memory {
   createdAt: string;
   similarity?: number;
   rrfScore?: number;
+  kind?: "memory" | "context";
+  source?: {
+    documentId: string;
+    title: string;
+    path: string;
+    headingPath: string | null;
+    page: number | null;
+  };
 }
 
 export interface GraphMemory {

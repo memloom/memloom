@@ -46,6 +46,15 @@
             ]
           },
           {
+            "group": "Context",
+            "openapi": "openapi.yaml",
+            "pages": [
+              "POST /context/add",
+              "GET /context/documents",
+              "DELETE /context/documents/{id}"
+            ]
+          },
+          {
             "group": "Conflicts",
             "openapi": "openapi.yaml",
             "pages": [

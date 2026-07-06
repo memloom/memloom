@@ -127,6 +127,14 @@ export function ConsoleView({
               <div className="recallMeta">
                 similarity {(m.similarity ?? 0).toFixed(2)} · saved{" "}
                 {new Date(m.createdAt).toLocaleString()}
+                {m.source && (
+                  <>
+                    {" · from "}
+                    {m.source.title}
+                    {m.source.headingPath ? ` › ${m.source.headingPath}` : ""}
+                    {m.source.page != null ? ` (p. ${m.source.page})` : ""}
+                  </>
+                )}
               </div>
               <div className="simBar">
                 <div

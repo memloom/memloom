@@ -19,6 +19,35 @@ memloom recall "staging database"
 (`memloom stop`, then `memloom serve`) to switch from offline mode to real embeddings, semantic
 dedup, and contradiction detection.
 
+## Memory types
+
+Every saved memory has a `memoryType` — the same taxonomy across every client, so a memory means
+the same thing whether the CLI, MCP, or a raw HTTP call wrote it. Pass it on save (defaults to
+`fact`):
+
+| Type | What it holds | Example |
+| --- | --- | --- |
+| `fact` | A stable truth about the world or the user | *the staging database runs on Postgres* |
+| `preference` | How the user likes things done | *prefers pnpm over npm* |
+| `episode` | A time-bound event or decision | *shipped the viewer on 2026-07-05* |
+| `procedure` | Reusable how-to steps | *to release: bump VERSION, tag, push* |
+
+Recall results for ingested context chunks aren't saved memories: they carry the sentinel type
+`context`, and their `kind` field is `context` rather than `memory`.
+
+## Context: bring your files
+
+```bash
+memloom context add ./docs        # ingest .md/.txt/.pdf files (directories scan recursively)
+memloom recall "how do we restart the ingest worker"
+```
+
+Files are chunked (markdown heading-aware — each chunk carries its heading breadcrumb; PDFs
+keep page numbers), embedded, and fused into the **same recall** as memories. Results from
+files always say where they came from: `from runbook.md › Ops > Restarts (p. 3)`. Documents
+are mirrors: re-adding an unchanged file is a no-op, a changed file replaces its chunks.
+`memloom context list` / `memloom context remove <id>` manage them.
+
 ## The daemon
 
 `memloom serve` is the single owner of the store. Everything else is a client:

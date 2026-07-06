@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { serve as nodeServe } from "@hono/node-server";
-import type { Memloom } from "@memloom/core";
+import { MEMORY_TYPES, type Memloom } from "@memloom/core";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { z } from "zod";
@@ -48,13 +48,18 @@ const STORE_PROBE_TIMEOUT_MS = 1_500;
 const saveSchema = z.object({
   content: z.string().min(1, "content must be a non-empty string"),
   canonical: z.string().optional(),
-  memoryType: z.string().optional(),
+  memoryType: z.enum(MEMORY_TYPES).optional(),
   ownerId: z.string().uuid().optional(),
 });
 
 const querySchema = z.object({
   query: z.string().min(1, "query must be a non-empty string"),
   limit: z.number().int().positive().optional(),
+});
+
+const contextAddSchema = z.object({
+  path: z.string().min(1, "path must be a non-empty string"),
+  ownerId: z.string().uuid().optional(),
 });
 
 const resolveSchema = z.discriminatedUnion("action", [
@@ -117,7 +122,10 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       // Log API traffic only (viewer asset requests are noise). Log on arrival AND on
       // completion: a request stuck on a hung provider call or a locked store would otherwise
       // be invisible ("no requests in the terminal" while it hangs).
-      const isApi = c.req.path.startsWith("/memory") || c.req.path.startsWith("/admin");
+      const isApi =
+        c.req.path.startsWith("/memory") ||
+        c.req.path.startsWith("/context") ||
+        c.req.path.startsWith("/admin");
       if (isApi) {
         console.log(`${new Date().toISOString()}  → ${c.req.method} ${c.req.path}`);
       }
@@ -136,7 +144,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // psql) holds PGLite's exclusive lock and every query queues behind it. Probing BEFORE the
   // handler turns an indefinite silent hang into an actionable 503 — and skips paying for an
   // embedding call whose result would only sit in the queue.
-  app.use("/memory/*", async (c, next) => {
+  const probeStore = async (c: Context, next: () => Promise<void>) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const locked = await Promise.race([
       memloom.ping().then(() => false),
@@ -155,7 +163,9 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       );
     }
     await next();
-  });
+  };
+  app.use("/memory/*", probeStore);
+  app.use("/context/*", probeStore);
 
   if (opts.onShutdown) {
     const shutdown = opts.onShutdown;
@@ -194,6 +204,19 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   app.post("/memory/conflicts/:id/revert", async (c) => {
     await memloom.revertConflict(c.req.param("id"));
+    return c.json({ ok: true });
+  });
+
+  app.post("/context/add", async (c) => {
+    const body = await parseBody(c, contextAddSchema);
+    if (!body.ok) return body.res;
+    return c.json(await memloom.contextAdd(body.data));
+  });
+
+  app.get("/context/documents", async (c) => c.json({ documents: await memloom.contextList() }));
+
+  app.delete("/context/documents/:id", async (c) => {
+    await memloom.contextRemove(c.req.param("id"));
     return c.json({ ok: true });
   });
 
