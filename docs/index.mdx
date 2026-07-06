@@ -1,0 +1,72 @@
+---
+title: "memloom"
+description: "A memory engine you own, running on your machine"
+---
+
+memloom is a local-first memory engine for AI agents: one Postgres-native store on your machine,
+shared by every client — CLI, MCP (Claude Desktop, Claude Code, Cursor, …), a browser viewer, and
+plain HTTP.
+
+## Quickstart
+
+```bash
+memloom init      # creates ~/.memloom (store + config.env), starts the daemon
+memloom save "the staging database runs on Postgres"
+memloom recall "staging database"
+```
+
+`init` prints the path to `config.env`. Set `OPENROUTER_API_KEY` there and restart the daemon
+(`memloom stop`, then `memloom serve`) to switch from offline mode to real embeddings, semantic
+dedup, and contradiction detection.
+
+## The daemon
+
+`memloom serve` is the single owner of the store. Everything else is a client:
+
+| Surface | Where |
+| --- | --- |
+| HTTP API | `http://127.0.0.1:4319` — what the CLI, MCP, and this docs playground call |
+| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres` — for Drizzle Studio, psql, TablePlus |
+| Data | `~/.memloom/data` |
+| Config | `~/.memloom/config.env` |
+
+Any CLI command auto-starts the daemon if it isn't running. Stop it cleanly with `memloom stop`.
+
+<Warning>
+**The Postgres wire pauses the API.** PGLite is a single-connection database: while a DB client
+(Drizzle Studio, psql, an IDE database panel) is connected on port 54329, it holds an exclusive
+lock and **every HTTP API call queues behind it** — saves and recalls from Claude appear to hang
+with no error. The `serve` terminal logs a warning when a wire client connects. Disconnect the DB
+client to resume.
+</Warning>
+
+## Configuration
+
+`~/.memloom/config.env`, dotenv-style. Real environment variables win over the file.
+
+```bash
+OPENROUTER_API_KEY=sk-or-...          # enables cloud mode
+OPENROUTER_EMBED_MODEL=qwen/qwen3-embedding-8b   # default
+OPENROUTER_EMBED_DIMS=1024                       # default (Matryoshka truncation)
+OPENROUTER_LLM_MODEL=google/gemini-2.5-flash     # default
+```
+
+<Note>
+Offline and cloud embeddings live in different vector spaces. If you switch modes, start from a
+fresh store (delete `~/.memloom/data`) — mixed embeddings make similarity meaningless.
+</Note>
+
+## Testing the API by hand
+
+With the daemon running, use the interactive playground on any endpoint page in the
+[API Reference](/api-reference) — requests go straight to `http://127.0.0.1:4319`. Or curl:
+
+```bash
+curl -s http://127.0.0.1:4319/memory/query \
+  -H "content-type: application/json" \
+  -d '{"query": "staging database"}'
+```
+
+The `serve` terminal logs every request twice: `→` on arrival and `←` with status + duration on
+completion. An arrival with no completion means the request is stuck — usually a connected
+Postgres wire client (see the warning above) or a slow provider call (those time out after 60s).

@@ -38,6 +38,19 @@ describe("server", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  it("allows local browser origins via CORS, refuses foreign ones", async () => {
+    const server = await app();
+    const local = await server.request("/health", {
+      headers: { origin: "http://localhost:3000" },
+    });
+    expect(local.headers.get("access-control-allow-origin")).toBe("http://localhost:3000");
+
+    const foreign = await server.request("/health", {
+      headers: { origin: "https://evil.example.com" },
+    });
+    expect(foreign.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
   it("shutdown endpoint acks then invokes the hook", async () => {
     const storage = await PgliteAdapter.open();
     cleanups.push(() => storage.close());

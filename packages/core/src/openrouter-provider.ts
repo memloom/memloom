@@ -5,6 +5,30 @@ import type { EmbeddingProvider, LLMProvider } from "./providers.js";
 
 const OPENROUTER_BASE = "https://openrouter.ai/api/v1";
 const EMBED_BATCH = 64;
+// Without a deadline, a stalled provider call hangs a save/recall forever (and the daemon's
+// request never completes, so nothing surfaces in the log). Fail loudly instead.
+const REQUEST_TIMEOUT_MS = 60_000;
+
+async function postJson(url: string, apiKey: string, body: unknown, what: string) {
+  let res: { ok: boolean; status: number; text(): Promise<string>; json(): Promise<unknown> };
+  try {
+    res = await fetch(url, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (err) {
+    if (err instanceof Error && err.name === "TimeoutError") {
+      throw new Error(`OpenRouter ${what} timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+    }
+    throw err;
+  }
+  if (!res.ok) {
+    throw new Error(`OpenRouter ${what} failed: ${res.status} ${await res.text()}`);
+  }
+  return res.json();
+}
 
 export interface OpenRouterEmbeddingsOptions {
   apiKey: string;
@@ -33,18 +57,12 @@ export class OpenRouterEmbeddings implements EmbeddingProvider {
     const out: number[][] = [];
     for (let i = 0; i < texts.length; i += EMBED_BATCH) {
       const batch = texts.slice(i, i + EMBED_BATCH);
-      const res = await fetch(`${this.#baseUrl}/embeddings`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${this.#apiKey}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ model: this.#model, input: batch, dimensions: this.dims }),
-      });
-      if (!res.ok) {
-        throw new Error(`OpenRouter embeddings failed: ${res.status} ${await res.text()}`);
-      }
-      const json = (await res.json()) as { data: { embedding: number[] }[] };
+      const json = (await postJson(
+        `${this.#baseUrl}/embeddings`,
+        this.#apiKey,
+        { model: this.#model, input: batch, dimensions: this.dims },
+        "embeddings",
+      )) as { data: { embedding: number[] }[] };
       for (const item of json.data) out.push(item.embedding);
     }
     return out;
@@ -69,21 +87,12 @@ export class OpenRouterLLM implements LLMProvider {
   }
 
   async complete(prompt: string): Promise<string> {
-    const res = await fetch(`${this.#baseUrl}/chat/completions`, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${this.#apiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: this.#model,
-        messages: [{ role: "user", content: prompt }],
-      }),
-    });
-    if (!res.ok) {
-      throw new Error(`OpenRouter completion failed: ${res.status} ${await res.text()}`);
-    }
-    const json = (await res.json()) as { choices: { message: { content: string } }[] };
+    const json = (await postJson(
+      `${this.#baseUrl}/chat/completions`,
+      this.#apiKey,
+      { model: this.#model, messages: [{ role: "user", content: prompt }] },
+      "completion",
+    )) as { choices: { message: { content: string } }[] };
     return json.choices[0]?.message.content ?? "";
   }
 }

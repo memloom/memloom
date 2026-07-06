@@ -1,6 +1,7 @@
 import { serve as nodeServe } from "@hono/node-server";
 import type { Memloom, ResolveDecision } from "@memloom/core";
 import { Hono } from "hono";
+import { cors } from "hono/cors";
 
 // The local HTTP server: a thin wrapper around @memloom/core so the browser-based viewer (and
 // any HTTP client) can reach the engine. The CLI/MCP route through this when it holds the
@@ -21,13 +22,28 @@ export interface ServerOptions {
 export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   const app = new Hono();
 
+  // Browser clients (the viewer in dev, docs playground) run on another localhost port. Allow
+  // only local origins — a permissive `*` would let any public web page drive the daemon.
+  app.use(
+    "*",
+    cors({
+      origin: (origin) =>
+        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ? origin : null,
+    }),
+  );
+
   if (opts.log) {
     app.use("*", async (c, next) => {
       const start = Date.now();
+      // Log on arrival AND on completion: a request stuck on a hung provider call or a locked
+      // store would otherwise be invisible ("no requests in the terminal" while it hangs).
+      if (c.req.path !== "/health") {
+        console.log(`${new Date().toISOString()}  → ${c.req.method} ${c.req.path}`);
+      }
       await next();
       if (c.req.path !== "/health") {
         console.log(
-          `${new Date().toISOString()}  ${c.req.method} ${c.req.path} ${c.res.status} ${Date.now() - start}ms`,
+          `${new Date().toISOString()}  ← ${c.req.method} ${c.req.path} ${c.res.status} ${Date.now() - start}ms`,
         );
       }
     });

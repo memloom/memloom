@@ -1,0 +1,403 @@
+openapi: 3.1.0
+info:
+  title: memloom local API
+  version: 0.1.0
+  description: |
+    The HTTP API served by the `memloom serve` daemon on your machine. The CLI, the MCP server,
+    and the viewer all route through this API — the daemon is the single owner of the store, so
+    every client shares one consistent view of your memories.
+
+    No authentication: the daemon binds to `127.0.0.1` only and is reachable solely from your
+    own machine. Browser clients on other localhost ports are allowed via CORS.
+servers:
+  - url: http://127.0.0.1:4319
+    description: Local memloom daemon
+paths:
+  /health:
+    get:
+      summary: Health check
+      description: Returns ok when the daemon is up. Used by clients to detect a running daemon.
+      operationId: health
+      responses:
+        "200":
+          description: Daemon is running.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+  /memory/save:
+    post:
+      summary: Save a memory
+      description: |
+        Save a memory through the belief pipeline: exact-duplicate detection, semantic dedup, and
+        contradiction detection. Instead of overwriting, a contradiction keeps **both** memories
+        active and returns `outcome: conflict` with a `conflictId` for you to resolve.
+
+        In offline mode (no `OPENROUTER_API_KEY`) dedup is off and every save is `added`.
+      operationId: saveMemory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SaveInput"
+      responses:
+        "200":
+          description: The save decision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SaveResult"
+  /memory/query:
+    post:
+      summary: Recall memories
+      description: |
+        Hybrid retrieval over active memories: vector similarity + exact keyword + entity match,
+        fused with reciprocal-rank fusion. Trust the result **order** (`rrfScore` is rank-based
+        and small by design, ~0.03 max); `similarity` is the cosine meaning-signal alone.
+      operationId: queryMemory
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [query]
+              properties:
+                query:
+                  type: string
+                  description: What to recall, in natural language or exact identifiers.
+                  example: what are my plans for today
+                limit:
+                  type: integer
+                  description: Maximum results (default 10).
+                  example: 5
+      responses:
+        "200":
+          description: Ranked memories.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  memories:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Memory"
+  /memory/index:
+    post:
+      summary: Index memories (extract entities)
+      description: |
+        Extract entities from memories that have not been indexed yet and link them into the
+        graph. Runs the LLM extractor; a no-op in offline mode.
+      operationId: indexMemories
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: How many memories were indexed in this run.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  indexed:
+                    type: integer
+                    example: 3
+  /memory/graph:
+    get:
+      summary: Get the memory graph
+      description: All active memories, extracted entities, and the edges between them — the data the viewer renders.
+      operationId: getGraph
+      responses:
+        "200":
+          description: The graph.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Graph"
+  /memory/conflicts:
+    get:
+      summary: List pending conflicts
+      description: Contradictions the belief pipeline flagged that you have not resolved yet. Both sides stay active until you decide.
+      operationId: listConflicts
+      responses:
+        "200":
+          description: Pending conflicts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conflicts:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Conflict"
+  /memory/conflicts/{id}/resolve:
+    post:
+      summary: Resolve a conflict
+      description: |
+        Apply one of the four human-in-the-loop resolutions. Every resolution is non-destructive
+        (losers go `stale`, never deleted) and reversible via the revert endpoint.
+      operationId: resolveConflict
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The conflict id from the save response or the conflicts list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ResolveDecision"
+      responses:
+        "200":
+          description: Resolution applied.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+  /memory/conflicts/{id}/revert:
+    post:
+      summary: Revert a resolution
+      description: Undo a previous resolution — staled memories come back to active and the conflict returns to the pending list.
+      operationId: revertConflict
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Resolution reverted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+  /admin/shutdown:
+    post:
+      summary: Stop the daemon
+      description: |
+        Gracefully stop the daemon (what `memloom stop` calls): acknowledges, then closes the
+        Postgres wire server, the HTTP server, the store, and releases the data-dir lock.
+      operationId: shutdown
+      responses:
+        "200":
+          description: Shutdown acknowledged; the daemon exits right after responding.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+                  stopping:
+                    type: boolean
+                    example: true
+components:
+  schemas:
+    SaveInput:
+      type: object
+      required: [content]
+      properties:
+        content:
+          type: string
+          description: The memory text to save.
+          example: Acme reached $100 MRR.
+        canonical:
+          type: string
+          description: Optional short canonical form used for exact-duplicate detection.
+          example: Acme $100 MRR milestone
+        memoryType:
+          type: string
+          description: Free-form type tag (default `fact`).
+          example: fact
+        ownerId:
+          type: string
+          description: Owner UUID. Defaults to the fixed single-user sentinel in the embedded tier.
+    SaveResult:
+      type: object
+      required: [id, outcome]
+      properties:
+        id:
+          type: string
+          description: Id of the saved (or merged-into) memory.
+        outcome:
+          type: string
+          enum: [added, merged, conflict]
+          description: What the belief pipeline did.
+        conflictId:
+          type: string
+          description: Present when `outcome` is `conflict` — resolve it via the conflicts endpoints.
+    Memory:
+      type: object
+      properties:
+        id:
+          type: string
+        ownerId:
+          type: string
+        status:
+          type: string
+          enum: [active, stale]
+        memoryType:
+          type: string
+          example: fact
+        canonical:
+          type: string
+          nullable: true
+        content:
+          type: string
+        summary:
+          type: string
+          nullable: true
+        assertedAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        similarity:
+          type: number
+          description: Cosine similarity to the query (meaning signal alone). Present on recall results.
+          example: 0.85
+        rrfScore:
+          type: number
+          description: Fused reciprocal-rank-fusion score. Rank-based and small by design — use it for ordering, not as a percentage.
+          example: 0.0328
+    Conflict:
+      type: object
+      properties:
+        id:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+        incoming:
+          type: object
+          properties:
+            id:
+              type: string
+            canonical:
+              type: string
+              nullable: true
+            content:
+              type: string
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              canonical:
+                type: string
+                nullable: true
+              content:
+                type: string
+              relation:
+                type: string
+                example: contradictory
+              reason:
+                type: string
+                description: The classifier's explanation of why these contradict.
+    ResolveDecision:
+      oneOf:
+        - type: object
+          title: keep_new
+          required: [action]
+          properties:
+            action:
+              type: string
+              enum: [keep_new]
+              description: The new memory wins; existing candidates go stale.
+        - type: object
+          title: keep_existing
+          required: [action, candidateId]
+          properties:
+            action:
+              type: string
+              enum: [keep_existing]
+            candidateId:
+              type: string
+              description: The existing memory that wins; the new one goes stale.
+        - type: object
+          title: keep_both
+          required: [action]
+          properties:
+            action:
+              type: string
+              enum: [keep_both]
+              description: Mark them distinct; both stay active.
+        - type: object
+          title: merge
+          required: [action, content]
+          properties:
+            action:
+              type: string
+              enum: [merge]
+            content:
+              type: string
+              description: The reconciled memory text that supersedes both.
+            canonical:
+              type: string
+    Graph:
+      type: object
+      properties:
+        memories:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              canonical:
+                type: string
+                nullable: true
+              content:
+                type: string
+        entities:
+          type: array
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              name:
+                type: string
+                example: Postgres
+              entityType:
+                type: string
+                example: technology
+        edges:
+          type: array
+          items:
+            type: object
+            properties:
+              from:
+                type: string
+              to:
+                type: string
+              relation:
+                type: string
+                example: mentions

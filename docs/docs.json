@@ -1,0 +1,66 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "memloom",
+  "colors": {
+    "primary": "#d97706",
+    "light": "#f59e0b",
+    "dark": "#b45309"
+  },
+  "api": {
+    "playground": {
+      "display": "interactive"
+    },
+    "params": {
+      "expanded": "all"
+    },
+    "examples": {
+      "languages": ["curl", "javascript", "python"],
+      "defaults": "required",
+      "prefill": true,
+      "autogenerate": true
+    }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Getting Started",
+            "pages": ["index"]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Memory",
+            "openapi": "openapi.yaml",
+            "pages": [
+              "POST /memory/save",
+              "POST /memory/query",
+              "POST /memory/index",
+              "GET /memory/graph"
+            ]
+          },
+          {
+            "group": "Conflicts",
+            "openapi": "openapi.yaml",
+            "pages": [
+              "GET /memory/conflicts",
+              "POST /memory/conflicts/{id}/resolve",
+              "POST /memory/conflicts/{id}/revert"
+            ]
+          },
+          {
+            "group": "Daemon",
+            "openapi": "openapi.yaml",
+            "pages": ["GET /health", "POST /admin/shutdown"]
+          }
+        ]
+      }
+    ]
+  }
+}

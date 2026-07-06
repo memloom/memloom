@@ -91,6 +91,16 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
     hostname: "127.0.0.1",
   });
   const pgServer = new PGLiteSocketServer({ db, port: pgPort, host: "127.0.0.1" });
+  // PGLite is single-connection: while a wire client (Drizzle Studio, psql) is attached it holds
+  // an exclusive lock, and every HTTP API call silently queues behind it. Warn loudly, because
+  // from the outside this looks like memloom hanging.
+  pgServer.addEventListener("connection", (event) => {
+    const info = (event as CustomEvent<{ clientAddress: string; clientPort: number }>).detail;
+    console.log(
+      `${new Date().toISOString()}  ⚠ Postgres client connected (${info.clientAddress}:${info.clientPort}). ` +
+        "The HTTP API (Claude/MCP/CLI saves + recalls) is PAUSED until it disconnects — close Drizzle Studio/psql when done inspecting.",
+    );
+  });
   await pgServer.start();
 
   console.log("memloom serving:");
