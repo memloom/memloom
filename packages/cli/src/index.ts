@@ -1,4 +1,4 @@
-import { storeDir } from "./config.js";
+import { configPath, dataDir, ensureConfig, memloomHome } from "./config.js";
 import { connect } from "./connect.js";
 import { startDaemon } from "./daemon.js";
 
@@ -18,8 +18,9 @@ The CLI and the MCP talk to the daemon over HTTP, so many clients share one stor
 Any command auto-starts the daemon if it isn't running. Inspect the data by pointing Drizzle
 Studio / psql at the daemon's Postgres wire: postgresql://postgres@127.0.0.1:54329/postgres
 
-Set OPENROUTER_API_KEY (in the daemon's environment) for real embeddings + LLM dedup/entities.
-Store location: ${storeDir()}`;
+Configuration lives in ${configPath()} (created by init). Set OPENROUTER_API_KEY there for
+real embeddings + LLM dedup/entities; restart the daemon after changing it.
+Home: ${memloomHome()}  ·  data: ${memloomHome()}/data`;
 
 export async function run(argv: readonly string[]): Promise<void> {
   const [command, ...rest] = argv;
@@ -37,8 +38,10 @@ export async function run(argv: readonly string[]): Promise<void> {
       return; // runs until Ctrl+C
 
     case "init": {
+      const config = ensureConfig(); // create ~/.memloom + config.env template first
       await connect(); // starts the daemon if needed
-      console.log(`memloom is running. store: ${storeDir()}`);
+      console.log(`memloom is running. data: ${dataDir()}`);
+      console.log(`config: ${config}  (set OPENROUTER_API_KEY there, then restart the daemon)`);
       console.log(
         "HTTP api http://127.0.0.1:4319 · Postgres postgresql://postgres@127.0.0.1:54329/postgres",
       );

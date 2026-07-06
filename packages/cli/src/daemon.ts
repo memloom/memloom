@@ -12,7 +12,7 @@ import {
   PgliteAdapter,
 } from "@memloom/core";
 import { createServer } from "@memloom/server";
-import { storeDir } from "./config.js";
+import { configPath, dataDir, ensureConfig, loadConfigEnv } from "./config.js";
 
 export const HTTP_PORT = 4319;
 // A distinctive port so it never collides with a local Postgres on 5432.
@@ -40,17 +40,32 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
     return;
   }
 
-  const dir = storeDir();
+  // Config lives in ~/.memloom/config.env — the ONE place the key/models need to be set,
+  // regardless of which process spawned the daemon. Real env vars win over the file.
+  ensureConfig();
+  loadConfigEnv();
+
+  const dir = dataDir();
   const release = await acquireDataDirLock(dir);
   const db = await PGlite.create({ dataDir: dir, extensions: { vector } });
   const storage = PgliteAdapter.fromInstance(db);
 
   const apiKey = process.env.OPENROUTER_API_KEY;
+  const embedModel = process.env.OPENROUTER_EMBED_MODEL;
+  const embedDims = process.env.OPENROUTER_EMBED_DIMS
+    ? Number(process.env.OPENROUTER_EMBED_DIMS)
+    : undefined;
+  const llmModel = process.env.OPENROUTER_LLM_MODEL;
+
   const memloom = apiKey
     ? new Memloom({
         storage,
-        embedding: new OpenRouterEmbeddings({ apiKey }),
-        llm: new OpenRouterLLM({ apiKey }),
+        embedding: new OpenRouterEmbeddings({
+          apiKey,
+          ...(embedModel ? { model: embedModel } : {}),
+          ...(embedDims ? { dims: embedDims } : {}),
+        }),
+        llm: new OpenRouterLLM({ apiKey, ...(llmModel ? { model: llmModel } : {}) }),
       })
     : new Memloom({
         storage,
@@ -73,11 +88,18 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   console.log(
     `  Postgres   postgresql://postgres@127.0.0.1:${pgPort}/postgres   (Drizzle Studio, psql)`,
   );
-  console.log(`  store      ${dir}`);
-  if (!apiKey)
+  console.log(`  data       ${dir}`);
+  console.log(`  config     ${configPath()}`);
+  if (apiKey) {
     console.log(
-      "  mode       offline (no OPENROUTER_API_KEY): deterministic embeddings, dedup off",
+      `  mode       cloud (${embedModel ?? "qwen/qwen3-embedding-8b"} @ ${embedDims ?? 1024} dims, ${llmModel ?? "google/gemini-2.5-flash"})`,
     );
+  } else {
+    console.log(
+      "  mode       OFFLINE — no OPENROUTER_API_KEY (deterministic embeddings, dedup off).",
+    );
+    console.log(`             Set it in ${configPath()} and restart to enable real recall.`);
+  }
   console.log("Ctrl+C to stop.");
 
   const shutdown = async () => {
