@@ -13,7 +13,7 @@ export type ContextKind = "md" | "txt" | "pdf";
 // content hash, so `context add` re-ingests files whose bytes didn't change instead of
 // no-op'ing on the stale chunks. md is untouched at 1 (no suffix → existing docs stay
 // unchanged, no re-embedding spend).
-const PIPELINE_VERSION: Record<ContextKind, number> = { md: 1, txt: 2, pdf: 2 };
+const PIPELINE_VERSION: Record<ContextKind, number> = { md: 1, txt: 3, pdf: 3 };
 
 export interface ExtractedUnit {
   text: string;

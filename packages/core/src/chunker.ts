@@ -164,15 +164,17 @@ function pointKeyword(rest: string): string | null {
     if (tokens.length >= 4 || !/^[\p{Lu}\p{N}]+[.,]?$/u.test(token)) break;
     tokens.push(token);
   }
-  if (tokens.length === 0 || !/\p{Lu}/u.test(tokens[0] as string)) return null;
+  // The first token must be a real word ("DEFINICJA", "UWAGA"), not a stray capital like
+  // the Polish preposition "O" — single letters make noise breadcrumbs ("3. O").
+  const first = tokens[0];
+  if (!first || !/\p{Lu}/u.test(first) || first.replace(/[.,]$/, "").length < 3) return null;
   const keyword = tokens.join(" ");
   return keyword.length <= 40 ? keyword : null;
 }
 
 interface OutlineSection {
   title: string | null;
-  firstNum: string | null;
-  lastNum: string | null;
+  num: string | null;
   keyword: string | null;
   text: string;
 }
@@ -196,69 +198,48 @@ function outlineSections(text: string): OutlineSection[] {
     const point = POINT_START.exec(line);
     if (point) {
       flush();
-      const num = point[1] as string;
       current = {
         title,
-        firstNum: num,
-        lastNum: num,
+        num: point[1] as string,
         keyword: pointKeyword(line.slice((point[0] as string).length - 1).trim()),
         text: line,
       };
       continue;
     }
-    if (!current) current = { title, firstNum: null, lastNum: null, keyword: null, text: "" };
+    if (!current) current = { title, num: null, keyword: null, text: "" };
     current.text = current.text.length > 0 ? `${current.text}\n${line}` : line;
   }
   flush();
   return sections;
 }
 
-// Merge consecutive point sections under the same title up to `target`, so short points
-// (single definitions, one-line exercises) don't become micro-chunks.
-function mergeOutline(sections: OutlineSection[], target: number): OutlineSection[] {
-  const merged: OutlineSection[] = [];
-  for (const section of sections) {
-    const prev = merged[merged.length - 1];
-    const joinable =
-      prev &&
-      prev.title === section.title &&
-      prev.firstNum !== null &&
-      section.firstNum !== null &&
-      prev.text.length + section.text.length + 1 <= target;
-    if (prev && joinable) {
-      prev.text = `${prev.text}\n${section.text}`;
-      prev.lastNum = section.lastNum;
-      prev.keyword = null; // a range of points has no single keyword
-    } else {
-      merged.push({ ...section });
-    }
-  }
-  return merged;
-}
-
 function outlineBreadcrumb(section: OutlineSection): string | null {
-  let label: string | null = null;
-  if (section.firstNum !== null) {
-    label =
-      section.firstNum === section.lastNum
-        ? section.keyword
-          ? `${section.firstNum}. ${section.keyword}`
-          : `${section.firstNum}.`
-        : `${section.firstNum}.–${section.lastNum}.`;
-  }
+  const label =
+    section.num !== null
+      ? section.keyword
+        ? `${section.num}. ${section.keyword}`
+        : `${section.num}.`
+      : null;
   const parts = [section.title, label].filter((p): p is string => p !== null);
   return parts.length > 0 ? parts.join(" > ") : null;
 }
 
 /**
  * Chunk plain text (or an extracted PDF page) along its outline: ALL-CAPS title lines and
- * numbered points are section boundaries; short points merge up to `target`; each chunk is
- * prefixed with its "TITLE > 2. DEFINICJA 2." breadcrumb. Text without any such structure
- * degrades to plain `chunkText`.
+ * numbered points are section boundaries. One point = one chunk (split further only past
+ * the cap), each prefixed with its "TITLE > 2. DEFINICJA 2." breadcrumb. Text without any
+ * such structure degrades to plain `chunkText`.
  */
 export function chunkOutline(text: string, opts: ChunkOptions = {}): Chunk[] {
-  const target = opts.target ?? DEFAULTS.target;
-  return mergeOutline(outlineSections(text), target).flatMap((section) => {
+  const sections = outlineSections(text);
+  // In a structured document, a tiny unlabeled fragment between points is extraction debris
+  // (e.g. a formula numerator whose baseline floats above its point) — not worth a chunk.
+  // An unstructured document (single section) always survives, however small.
+  const kept =
+    sections.length > 1
+      ? sections.filter((s) => s.num !== null || s.title !== null || s.text.trim().length >= 25)
+      : sections;
+  return kept.flatMap((section) => {
     const breadcrumb = outlineBreadcrumb(section);
     return chunkText(section.text, opts).map((piece) => ({
       content: breadcrumb ? `${breadcrumb}\n\n${piece}` : piece,

@@ -74,8 +74,8 @@ describe("extractFile (pdf geometry)", () => {
     const mdPath = join(dir, "salted.md");
     writeFileSync(mdPath, "# content");
 
-    expect((await extractFile(pdfPath, hash)).contentHash).toMatch(/#p2$/);
-    expect((await extractFile(txtPath, hash)).contentHash).toMatch(/#p2$/);
+    expect((await extractFile(pdfPath, hash)).contentHash).toMatch(/#p3$/);
+    expect((await extractFile(txtPath, hash)).contentHash).toMatch(/#p3$/);
     expect((await extractFile(mdPath, hash)).contentHash).not.toContain("#");
   });
 });
