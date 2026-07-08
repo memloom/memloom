@@ -182,6 +182,9 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     return c.json(await memloom.save(body.data));
   });
 
+  // Browsing counterpart to /memory/query: all active memories, newest first.
+  app.get("/memory/list", async (c) => c.json({ memories: await memloom.memories() }));
+
   app.post("/memory/query", async (c) => {
     const body = await parseBody(c, querySchema);
     if (!body.ok) return body.res;
@@ -214,6 +217,11 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   });
 
   app.get("/context/documents", async (c) => c.json({ documents: await memloom.contextList() }));
+
+  // Drill-down for an expanded document node in the viewer: chunks + chunk-level edges.
+  app.get("/context/documents/:id/chunks", async (c) =>
+    c.json(await memloom.contextChunks(c.req.param("id"))),
+  );
 
   app.delete("/context/documents/:id", async (c) => {
     await memloom.contextRemove(c.req.param("id"));

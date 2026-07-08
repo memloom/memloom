@@ -4,6 +4,7 @@ import type {
   ContextAddInput,
   ContextAddResult,
   ContextDocument,
+  DocumentChunks,
   Graph,
   IndexResult,
   Memory,
@@ -55,6 +56,11 @@ export class HttpMemloomClient implements MemoryEngine {
     return this.#post<SaveResult>("/memory/save", input);
   }
 
+  async memories(): Promise<Memory[]> {
+    const { memories } = await this.#json<{ memories: Memory[] }>("/memory/list");
+    return memories;
+  }
+
   async recall(query: string, opts?: RecallOptions): Promise<Memory[]> {
     const { memories } = await this.#post<{ memories: Memory[] }>("/memory/query", {
       query,
@@ -91,6 +97,10 @@ export class HttpMemloomClient implements MemoryEngine {
   async contextList(): Promise<ContextDocument[]> {
     const { documents } = await this.#json<{ documents: ContextDocument[] }>("/context/documents");
     return documents;
+  }
+
+  contextChunks(documentId: string): Promise<DocumentChunks> {
+    return this.#json<DocumentChunks>(`/context/documents/${documentId}/chunks`);
   }
 
   async contextRemove(documentId: string): Promise<void> {

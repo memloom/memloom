@@ -100,6 +100,30 @@ describe("server", () => {
     expect(memories[0]?.content).toContain("staging database");
   });
 
+  it("lists active memories with their type and date", async () => {
+    const server = await app();
+    for (const body of [
+      { content: "the staging database runs on Postgres" },
+      { content: "prefers pnpm over npm", memoryType: "preference" },
+    ]) {
+      await server.request("/memory/save", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    }
+
+    const res = await server.request("/memory/list");
+    expect(res.status).toBe(200);
+    const { memories } = (await res.json()) as {
+      memories: Array<{ content: string; memoryType: string; createdAt: string }>;
+    };
+    expect(memories).toHaveLength(2);
+    const pref = memories.find((m) => m.content.includes("pnpm"));
+    expect(pref?.memoryType).toBe("preference");
+    for (const m of memories) expect(new Date(m.createdAt).getTime()).not.toBeNaN();
+  });
+
   it("accepts a valid memoryType and rejects one outside the taxonomy", async () => {
     const server = await app();
 
@@ -270,6 +294,17 @@ describe("server", () => {
 
     const listed = await server.request("/context/documents");
     expect(((await listed.json()) as { documents: unknown[] }).documents).toHaveLength(1);
+
+    // Drill-down: the chunks route returns the document's chunks (edges need indexing first).
+    const drilled = await server.request(`/context/documents/${addResult.documentId}/chunks`);
+    expect(drilled.status).toBe(200);
+    const { chunks, edges } = (await drilled.json()) as {
+      chunks: Array<{ content: string; headingPath: string | null }>;
+      edges: unknown[];
+    };
+    expect(chunks.length).toBeGreaterThan(0);
+    expect(chunks[0]?.content).toContain("restart the ingest worker");
+    expect(Array.isArray(edges)).toBe(true);
 
     const removed = await server.request(`/context/documents/${addResult.documentId}`, {
       method: "DELETE",

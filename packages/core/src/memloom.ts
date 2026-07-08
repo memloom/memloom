@@ -14,8 +14,10 @@ import type {
   ContextAddInput,
   ContextAddResult,
   ContextDocument,
+  DocumentChunks,
   Entity,
   Graph,
+  GraphDocument,
   GraphEdge,
   GraphMemory,
   IndexResult,
@@ -221,6 +223,13 @@ export class Memloom implements MemoryEngine {
     return await this.#storage.tx(async (tx) => {
       let documentId: string;
       if (prior) {
+        // memory_edges has no FK to chunks, so the cascade won't clean mention edges — do it
+        // here or the graph rollup keeps counting edges from deleted chunks.
+        await tx.query(
+          `DELETE FROM memory_edges
+           WHERE from_id IN (SELECT id FROM context_chunks WHERE document_id = $1)`,
+          [prior.id],
+        );
         await tx.query("DELETE FROM context_chunks WHERE document_id = $1", [prior.id]);
         await tx.query(
           `UPDATE context_documents
@@ -291,12 +300,73 @@ export class Memloom implements MemoryEngine {
     }));
   }
 
-  async contextRemove(documentId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
-    const deleted = await this.#storage.query<{ id: string }>(
-      "DELETE FROM context_documents WHERE id = $1 AND owner_id = $2 RETURNING id",
+  /**
+   * One document at chunk granularity: its chunks in order, plus their chunk -> entity
+   * mention edges. The graph() rollup keeps documents to one node; this is the drill-down
+   * the viewer fetches when a document node is expanded.
+   */
+  async contextChunks(
+    documentId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<DocumentChunks> {
+    const doc = await this.#storage.query<{ id: string }>(
+      "SELECT id FROM context_documents WHERE id = $1 AND owner_id = $2",
       [documentId, ownerId],
     );
-    if (deleted.length === 0) throw new Error(`no context document ${documentId}`);
+    if (!doc[0]) throw new Error(`no context document ${documentId}`);
+
+    const chunkRows = await this.#storage.query<{
+      id: string;
+      chunk_index: number;
+      content: string;
+      heading_path: string | null;
+      page: number | null;
+    }>(
+      `SELECT id, chunk_index, content, heading_path, page
+       FROM context_chunks WHERE document_id = $1 ORDER BY chunk_index`,
+      [documentId],
+    );
+    const edgeRows = await this.#storage.query<{
+      from_id: string;
+      to_id: string;
+      relation: string;
+    }>(
+      `SELECT e.from_id, e.to_id, e.relation
+       FROM memory_edges e
+       JOIN context_chunks cc ON cc.id = e.from_id
+       WHERE cc.document_id = $1 AND e.relation = 'mention' AND e.active`,
+      [documentId],
+    );
+
+    return {
+      chunks: chunkRows.map((c) => ({
+        id: c.id,
+        chunkIndex: Number(c.chunk_index),
+        content: c.content,
+        headingPath: c.heading_path,
+        page: c.page,
+      })),
+      edges: edgeRows.map((e) => ({ from: e.from_id, to: e.to_id, relation: e.relation })),
+    };
+  }
+
+  async contextRemove(documentId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    await this.#storage.tx(async (tx) => {
+      // Mention edges first: no FK from memory_edges to chunks, so the document cascade
+      // would orphan them (entities stay — they may be mentioned elsewhere). Owner-scoped
+      // because this runs before the ownership check on the document itself.
+      await tx.query(
+        `DELETE FROM memory_edges
+         WHERE owner_id = $2 AND from_id IN (
+           SELECT id FROM context_chunks WHERE document_id = $1 AND owner_id = $2)`,
+        [documentId, ownerId],
+      );
+      const deleted = await tx.query<{ id: string }>(
+        "DELETE FROM context_documents WHERE id = $1 AND owner_id = $2 RETURNING id",
+        [documentId, ownerId],
+      );
+      if (deleted.length === 0) throw new Error(`no context document ${documentId}`);
+    });
   }
 
   /**
@@ -358,6 +428,19 @@ export class Memloom implements MemoryEngine {
     return { id, outcome: "added" };
   }
 
+  /** All active memories, newest first. The browsing counterpart to query-driven recall. */
+  async memories(ownerId: string = SENTINEL_OWNER): Promise<Memory[]> {
+    const rows = await this.#storage.query<MemoryRow>(
+      `SELECT id, owner_id, status, memory_type, canonical, content, summary,
+              asserted_at, created_at
+       FROM memory_objects
+       WHERE owner_id = $1 AND status = 'active'
+       ORDER BY created_at DESC`,
+      [ownerId],
+    );
+    return rows.map(mapRow);
+  }
+
   /**
    * Recall active memories, ranked by hybrid retrieval: vector (meaning) and keyword (exact)
    * arms fused with reciprocal-rank fusion. `similarity` is the cosine signal alone;
@@ -392,8 +475,11 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
-   * Index unprocessed memories: extract entities, resolve them, and link each memory to its
-   * entities with a 'mention' edge. Idempotent — only touches memories not yet indexed.
+   * Index unprocessed memories AND context chunks: extract entities, resolve them, and link
+   * each source to its entities with a 'mention' edge in the shared edge table. Idempotent —
+   * only touches rows not yet indexed. Chunks stay outside the belief pipeline; their edges
+   * are how context connects to memory (rolled up per document in graph()). One LLM call per
+   * row, so a large PDF makes indexing proportionally slower.
    */
   async index(ownerId: string = SENTINEL_OWNER): Promise<IndexResult> {
     const pending = await this.#storage.query<{ id: string; content: string }>(
@@ -402,24 +488,43 @@ export class Memloom implements MemoryEngine {
        ORDER BY created_at`,
       [ownerId],
     );
-
     for (const memory of pending) {
-      const entities = await extractEntities(this.#llm, memory.content);
-      for (const entity of entities) {
-        const entityId = await this.#resolveEntity(ownerId, entity.name, entity.type);
-        await addEdge(this.#storage, ownerId, memory.id, entityId, "mention");
-      }
+      await this.#linkEntities(ownerId, memory.id, memory.content);
       await this.#storage.query("UPDATE memory_objects SET indexed_at = now() WHERE id = $1", [
         memory.id,
       ]);
     }
-    return { indexed: pending.length };
+
+    const pendingChunks = await this.#storage.query<{ id: string; content: string }>(
+      `SELECT id, content FROM context_chunks
+       WHERE owner_id = $1 AND indexed_at IS NULL
+       ORDER BY created_at, chunk_index`,
+      [ownerId],
+    );
+    for (const chunk of pendingChunks) {
+      await this.#linkEntities(ownerId, chunk.id, chunk.content);
+      await this.#storage.query("UPDATE context_chunks SET indexed_at = now() WHERE id = $1", [
+        chunk.id,
+      ]);
+    }
+
+    return { indexed: pending.length, chunksIndexed: pendingChunks.length };
   }
 
-  /** The memory graph for the owner: active memories, entities, and the active edges between. */
+  /**
+   * The memory graph for the owner: one graph, two granularities. Active memories, entities,
+   * and context documents as nodes. Chunk-level mention edges never leave the store — they
+   * roll up to one weighted document -> entity edge, so a 300-chunk PDF is one node, not a
+   * hairball (Zep/Cognee link raw content at fine grain but nobody renders chunks).
+   */
   async graph(ownerId: string = SENTINEL_OWNER): Promise<Graph> {
-    const memories = await this.#storage.query<GraphMemory>(
-      `SELECT id, canonical, content FROM memory_objects
+    const memoryRows = await this.#storage.query<{
+      id: string;
+      canonical: string | null;
+      content: string;
+      memory_type: GraphMemory["memoryType"];
+    }>(
+      `SELECT id, canonical, content, memory_type FROM memory_objects
        WHERE owner_id = $1 AND status = 'active'`,
       [ownerId],
     );
@@ -427,24 +532,56 @@ export class Memloom implements MemoryEngine {
       "SELECT id, name, entity_type FROM memory_entities WHERE owner_id = $1",
       [ownerId],
     );
+    const documents = await this.#storage.query<GraphDocument>(
+      "SELECT id, title, path FROM context_documents WHERE owner_id = $1",
+      [ownerId],
+    );
+    // Memory-anchored edges only — chunk edges are represented by the rollup below.
     const edgeRows = await this.#storage.query<{
       from_id: string;
       to_id: string;
       relation: string;
-    }>("SELECT from_id, to_id, relation FROM memory_edges WHERE owner_id = $1 AND active", [
-      ownerId,
-    ]);
+    }>(
+      `SELECT e.from_id, e.to_id, e.relation
+       FROM memory_edges e
+       JOIN memory_objects mo ON mo.id = e.from_id
+       WHERE e.owner_id = $1 AND e.active`,
+      [ownerId],
+    );
+    const docEdgeRows = await this.#storage.query<{
+      from_id: string;
+      to_id: string;
+      weight: number;
+    }>(
+      `SELECT cc.document_id AS from_id, e.to_id, count(*)::int AS weight
+       FROM memory_edges e
+       JOIN context_chunks cc ON cc.id = e.from_id
+       WHERE e.owner_id = $1 AND e.relation = 'mention' AND e.active
+       GROUP BY cc.document_id, e.to_id`,
+      [ownerId],
+    );
+
+    const memories: GraphMemory[] = memoryRows.map((m) => ({
+      id: m.id,
+      canonical: m.canonical,
+      content: m.content,
+      memoryType: m.memory_type,
+    }));
     const entities: Entity[] = entityRows.map((e) => ({
       id: e.id,
       name: e.name,
       entityType: e.entity_type,
     }));
-    const edges: GraphEdge[] = edgeRows.map((e) => ({
-      from: e.from_id,
-      to: e.to_id,
-      relation: e.relation,
-    }));
-    return { memories, entities, edges };
+    const edges: GraphEdge[] = [
+      ...edgeRows.map((e) => ({ from: e.from_id, to: e.to_id, relation: e.relation })),
+      ...docEdgeRows.map((e) => ({
+        from: e.from_id,
+        to: e.to_id,
+        relation: "mention",
+        weight: Number(e.weight),
+      })),
+    ];
+    return { memories, entities, documents, edges };
   }
 
   /** Pending conflicts for the owner, newest first. */
@@ -607,6 +744,16 @@ export class Memloom implements MemoryEngine {
     const id = rows[0]?.id;
     if (!id) throw new Error("memloom: insert returned no id");
     return id;
+  }
+
+  // Extract entities from one source (memory or context chunk) and link it to each with a
+  // 'mention' edge. The edge table has no FKs, so both node kinds share it.
+  async #linkEntities(owner: string, sourceId: string, content: string): Promise<void> {
+    const entities = await extractEntities(this.#llm, content);
+    for (const entity of entities) {
+      const entityId = await this.#resolveEntity(owner, entity.name, entity.type);
+      await addEdge(this.#storage, owner, sourceId, entityId, "mention");
+    }
   }
 
   async #resolveEntity(owner: string, name: string, type: string): Promise<string> {

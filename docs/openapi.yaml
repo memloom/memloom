@@ -96,12 +96,32 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Memory"
+  /memory/list:
+    get:
+      summary: List all active memories
+      description: |
+        Every active memory, newest first — the browsing counterpart to query-driven recall.
+        Stale (superseded) memories are excluded.
+      operationId: listMemories
+      responses:
+        "200":
+          description: The active memories.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  memories:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Memory"
   /memory/index:
     post:
-      summary: Index memories (extract entities)
+      summary: Index memories and context chunks (extract entities)
       description: |
-        Extract entities from memories that have not been indexed yet and link them into the
-        graph. Runs the LLM extractor; a no-op in offline mode.
+        Extract entities from memories AND context chunks that have not been indexed yet and
+        link them into the graph with mention edges. Runs the LLM extractor (one call per row,
+        so large documents take proportionally longer); a no-op in offline mode.
       operationId: indexMemories
       requestBody:
         required: false
@@ -111,7 +131,7 @@ paths:
               type: object
       responses:
         "200":
-          description: How many memories were indexed in this run.
+          description: How many memories and context chunks were indexed in this run.
           content:
             application/json:
               schema:
@@ -119,11 +139,19 @@ paths:
                 properties:
                   indexed:
                     type: integer
+                    description: Memories processed this run.
                     example: 3
+                  chunksIndexed:
+                    type: integer
+                    description: Context chunks processed this run.
+                    example: 12
   /memory/graph:
     get:
       summary: Get the memory graph
-      description: All active memories, extracted entities, and the edges between them — the data the viewer renders.
+      description: |
+        One graph, two granularities: active memories, extracted entities, and context
+        documents as nodes, with the edges between them. Chunk-level mention edges are rolled
+        up to one weighted document -> entity edge, so documents stay single nodes.
       operationId: getGraph
       responses:
         "200":
@@ -280,6 +308,61 @@ paths:
                         updatedAt:
                           type: string
                           format: date-time
+  /context/documents/{id}/chunks:
+    get:
+      summary: Get a document's chunks and their entity edges
+      description: |
+        One document at chunk granularity: chunks in order, plus their chunk -> entity mention
+        edges. The graph endpoint rolls these up to one weighted document -> entity edge; this
+        is the drill-down the viewer fetches when a document node is expanded.
+      operationId: getDocumentChunks
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The chunks and edges.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  chunks:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:
+                          type: string
+                        chunkIndex:
+                          type: integer
+                        content:
+                          type: string
+                        headingPath:
+                          type: string
+                          nullable: true
+                          example: Runbook > Restarts
+                        page:
+                          type: integer
+                          nullable: true
+                          description: 1-based PDF page, when the chunk came from a PDF.
+                  edges:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        from:
+                          type: string
+                          description: Chunk id.
+                        to:
+                          type: string
+                          description: Entity id.
+                        relation:
+                          type: string
+                          example: mention
   /context/documents/{id}:
     delete:
       summary: Remove a context document
@@ -552,6 +635,10 @@ components:
                 nullable: true
               content:
                 type: string
+              memoryType:
+                type: string
+                enum: [fact, preference, episode, procedure]
+                example: fact
         entities:
           type: array
           items:
@@ -565,6 +652,20 @@ components:
               entityType:
                 type: string
                 example: technology
+        documents:
+          type: array
+          description: Ingested context documents. The display granularity for context — chunk mentions roll up here.
+          items:
+            type: object
+            properties:
+              id:
+                type: string
+              title:
+                type: string
+                example: runbook.md
+              path:
+                type: string
+                example: /home/me/docs/runbook.md
         edges:
           type: array
           items:
@@ -576,4 +677,8 @@ components:
                 type: string
               relation:
                 type: string
-                example: mentions
+                example: mention
+              weight:
+                type: integer
+                description: On document -> entity edges — how many of the document's chunks mention the entity.
+                example: 3

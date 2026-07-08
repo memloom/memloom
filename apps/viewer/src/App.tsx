@@ -2,9 +2,11 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type Conflict, type Graph } from "./api";
 import { ConflictsView } from "./ConflictsView";
 import { ConsoleView } from "./ConsoleView";
+import { DocumentsView } from "./DocumentsView";
 import { GraphView } from "./GraphView";
+import { MemoriesView } from "./MemoriesView";
 
-type Tab = "graph" | "conflicts" | "console";
+type Tab = "graph" | "memories" | "documents" | "conflicts" | "console";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("graph");
@@ -36,7 +38,7 @@ export function App() {
           mem<span>loom</span>
         </div>
         <nav className="tabs">
-          {(["graph", "conflicts", "console"] as const).map((t) => (
+          {(["graph", "memories", "documents", "conflicts", "console"] as const).map((t) => (
             <button
               key={t}
               type="button"
@@ -63,6 +65,9 @@ export function App() {
                   <b>{graph.entities.length}</b> entities
                 </span>
                 <span>
+                  <b>{graph.documents.length}</b> docs
+                </span>
+                <span>
                   <b>{graph.edges.length}</b> edges
                 </span>
               </>
@@ -73,6 +78,8 @@ export function App() {
       <main className="main">
         {tab === "graph" &&
           (graph ? <GraphView graph={graph} /> : <div className="emptyState">loading…</div>)}
+        {tab === "memories" && <MemoriesView />}
+        {tab === "documents" && <DocumentsView onChanged={refresh} />}
         {tab === "conflicts" && <ConflictsView conflicts={conflicts} onChanged={refresh} />}
         {tab === "console" && (
           <ConsoleView onChanged={refresh} goToConflicts={() => setTab("conflicts")} />

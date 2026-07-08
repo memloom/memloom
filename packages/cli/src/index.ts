@@ -48,7 +48,7 @@ Usage: memloom <command> [args]
   init                 ensure the daemon is running and the store is ready
   save <text...>       save a memory
   recall <text...>     recall memories AND context by meaning
-  index                extract entities from unindexed memories
+  index                extract entities from unindexed memories and context chunks
   conflicts            list pending conflicts
   context add <path>   ingest .md/.txt/.pdf files (or a directory of them) as context
   context list         list ingested context documents
@@ -176,8 +176,8 @@ export async function run(argv: readonly string[]): Promise<void> {
 
     case "index": {
       const engine = await connect();
-      const { indexed } = await engine.index();
-      console.log(`indexed ${indexed} memories`);
+      const { indexed, chunksIndexed } = await engine.index();
+      console.log(`indexed ${indexed} memories, ${chunksIndexed} context chunks`);
       return;
     }
 

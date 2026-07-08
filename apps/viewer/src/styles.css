@@ -12,8 +12,9 @@
   --text-faint: #64748b;
   --primary: #38bdf8; /* memory-node sky — doubles as the accent */
   --entity: #c084fc; /* entity purple (circles) */
-  --warn: #f59e0b; /* replaces / conflict amber */
-  --ok: #34d399;
+  --warn: #f59e0b; /* replaces / conflict amber — also the preference type */
+  --ok: #34d399; /* documents / procedure type */
+  --episode: #5d67f5; /* episode type indigo (memory-type palette) */
   --danger: #f87171;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
@@ -197,7 +198,8 @@ button {
 }
 
 .swatchSquare,
-.swatchCircle {
+.swatchCircle,
+.swatchDiamond {
   width: 9px;
   height: 9px;
   display: inline-block;
@@ -206,6 +208,14 @@ button {
 
 .swatchCircle {
   border-radius: 50%;
+}
+
+.swatchDiamond {
+  transform: rotate(45deg) scale(0.85);
+}
+
+.swatchSmall {
+  transform: scale(0.75);
 }
 
 .sidePanel {
@@ -458,6 +468,97 @@ textarea {
 .simBarFill {
   height: 100%;
   background: var(--primary);
+}
+
+/* ---------- memories + documents tabs ---------- */
+
+.filterRow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  font-family: var(--mono);
+  font-size: 12px;
+  padding: 3px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  color: var(--text-muted);
+}
+
+.chip:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.chipActive {
+  color: var(--primary);
+  border-color: var(--primary);
+}
+
+.typeTag {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin-right: 8px;
+}
+
+.docHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.docTitle {
+  font-weight: 600;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.kindTag {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--ok);
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  padding: 1px 6px;
+}
+
+.docMeta {
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.docPath {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+
+.btnDanger:hover:not(:disabled),
+.btnDangerArmed {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.chunkList {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chunkCrumb {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ok);
+  margin-bottom: 4px;
 }
 
 .notice {

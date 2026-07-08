@@ -90,23 +90,40 @@ export interface GraphMemory {
   id: string;
   canonical: string | null;
   content: string;
+  memoryType: MemoryType;
+}
+
+// A context document as a graph node. Documents — not chunks — are the display granularity:
+// one PDF can be hundreds of chunks, and a force graph of chunks is a hairball nobody reads.
+export interface GraphDocument {
+  id: string;
+  title: string;
+  path: string;
 }
 
 export interface GraphEdge {
   from: string;
   to: string;
   relation: string;
+  /** On document -> entity edges: how many of the document's chunks mention the entity. */
+  weight?: number;
 }
 
-// The memory graph the viewer renders: memories + entities as nodes, edges between them.
+// The memory graph the viewer renders: one graph, two granularities. Memories, entities, and
+// context documents as nodes; chunk-level 'mention' edges are rolled up to document -> entity
+// so context connects to memory through the shared entity layer.
 export interface Graph {
   memories: GraphMemory[];
   entities: Entity[];
+  documents: GraphDocument[];
   edges: GraphEdge[];
 }
 
 export interface IndexResult {
+  /** Memories processed this run (entity extraction + mention edges). */
   indexed: number;
+  /** Context chunks processed this run — same extraction, edges roll up per document. */
+  chunksIndexed: number;
 }
 
 // ---- Context connector (files mirrored into chunked, searchable rows) ----
@@ -133,6 +150,22 @@ export interface ContextDocument {
   kind: string;
   chunkCount: number;
   updatedAt: string;
+}
+
+export interface ContextChunk {
+  id: string;
+  chunkIndex: number;
+  content: string;
+  headingPath: string | null;
+  /** 1-based PDF page, when the chunk came from a PDF. */
+  page: number | null;
+}
+
+// One document exploded to chunk granularity — what the viewer fetches when a document node
+// is expanded. Edges are the chunk -> entity 'mention' edges the graph rollup summarizes.
+export interface DocumentChunks {
+  chunks: ContextChunk[];
+  edges: GraphEdge[];
 }
 
 // The four human-in-the-loop resolution actions. All reversible.

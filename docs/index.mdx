@@ -48,6 +48,12 @@ files always say where they came from: `from runbook.md › Ops > Restarts (p. 3
 are mirrors: re-adding an unchanged file is a no-op, a changed file replaces its chunks.
 `memloom context list` / `memloom context remove <id>` manage them.
 
+Context joins the graph too: `memloom index` extracts entities from chunks as well as
+memories, so documents appear in the viewer's graph connected to your memories through the
+entities they share — and recall's entity arm can surface document sections by entity, not
+just by wording. The graph shows one node per **document** (chunk-level mentions roll up into
+a weighted document → entity edge), so a 300-page PDF stays one node.
+
 ## The daemon
 
 `memloom serve` is the single owner of the store. Everything else is a client:

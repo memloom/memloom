@@ -3,6 +3,7 @@ import type {
   ContextAddInput,
   ContextAddResult,
   ContextDocument,
+  DocumentChunks,
   Graph,
   IndexResult,
   Memory,
@@ -18,6 +19,8 @@ import type {
 export interface MemoryEngine {
   save(input: SaveInput): Promise<SaveResult>;
   recall(query: string, opts?: RecallOptions): Promise<Memory[]>;
+  /** All active memories, newest first — browsing, where recall is querying. */
+  memories(ownerId?: string): Promise<Memory[]>;
   index(ownerId?: string): Promise<IndexResult>;
   graph(ownerId?: string): Promise<Graph>;
   conflicts(ownerId?: string): Promise<Conflict[]>;
@@ -26,5 +29,7 @@ export interface MemoryEngine {
   /** Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors — re-add replaces. */
   contextAdd(input: ContextAddInput): Promise<ContextAddResult>;
   contextList(ownerId?: string): Promise<ContextDocument[]>;
+  /** One document at chunk granularity: chunks in order + their chunk -> entity edges. */
+  contextChunks(documentId: string, ownerId?: string): Promise<DocumentChunks>;
   contextRemove(documentId: string, ownerId?: string): Promise<void>;
 }

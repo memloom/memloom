@@ -21,7 +21,7 @@ export function ConsoleView({
   const [results, setResults] = useState<Memory[] | null>(null);
 
   const [indexing, setIndexing] = useState(false);
-  const [indexed, setIndexed] = useState<number | null>(null);
+  const [indexed, setIndexed] = useState<{ indexed: number; chunksIndexed: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function run<T>(setBusyState: (b: boolean) => void, fn: () => Promise<T>) {
@@ -156,14 +156,18 @@ export function ConsoleView({
               onClick={async () => {
                 const result = await run(setIndexing, () => api.index());
                 if (result) {
-                  setIndexed(result.indexed);
+                  setIndexed(result);
                   onChanged();
                 }
               }}
             >
-              {indexing ? "Indexing…" : "Extract entities from unindexed memories"}
+              {indexing ? "Indexing…" : "Extract entities from unindexed memories & context"}
             </button>
-            {indexed !== null && <span className="spin">indexed {indexed} memories</span>}
+            {indexed !== null && (
+              <span className="spin">
+                indexed {indexed.indexed} memories · {indexed.chunksIndexed} chunks
+              </span>
+            )}
           </div>
         </div>
       </div>

@@ -1,10 +1,14 @@
 // Thin client over the daemon's /memory/* API. Same-origin in production (the daemon serves
 // this bundle); Vite's dev proxy routes to 127.0.0.1:4319 during `pnpm dev`.
 
+// The saveable taxonomy (mirrors @memloom/core MEMORY_TYPES); recall results for context
+// chunks carry the "context" sentinel instead.
+export type MemoryType = "fact" | "preference" | "episode" | "procedure";
+
 export interface Memory {
   id: string;
   status: "active" | "stale";
-  memoryType: string;
+  memoryType: MemoryType | "context";
   canonical: string | null;
   content: string;
   createdAt: string;
@@ -24,6 +28,7 @@ export interface GraphMemory {
   id: string;
   canonical: string | null;
   content: string;
+  memoryType: MemoryType;
 }
 
 export interface Entity {
@@ -32,15 +37,47 @@ export interface Entity {
   entityType: string;
 }
 
+export interface GraphDocument {
+  id: string;
+  title: string;
+  path: string;
+}
+
+export interface ContextDocument {
+  id: string;
+  path: string;
+  title: string;
+  kind: string;
+  chunkCount: number;
+  updatedAt: string;
+}
+
+export interface ContextChunk {
+  id: string;
+  chunkIndex: number;
+  content: string;
+  headingPath: string | null;
+  page: number | null;
+}
+
+// One document exploded to chunk granularity (fetched when a document node is expanded).
+export interface DocumentChunks {
+  chunks: ContextChunk[];
+  edges: GraphEdge[];
+}
+
 export interface GraphEdge {
   from: string;
   to: string;
   relation: string;
+  /** On document -> entity edges: how many of the document's chunks mention the entity. */
+  weight?: number;
 }
 
 export interface Graph {
   memories: GraphMemory[];
   entities: Entity[];
+  documents: GraphDocument[];
   edges: GraphEdge[];
 }
 
@@ -88,10 +125,16 @@ function post<T>(path: string, body?: unknown): Promise<T> {
 
 export const api = {
   graph: () => json<Graph>("/memory/graph"),
+  memories: () => json<{ memories: Memory[] }>("/memory/list").then((r) => r.memories),
+  documents: () =>
+    json<{ documents: ContextDocument[] }>("/context/documents").then((r) => r.documents),
+  documentChunks: (id: string) => json<DocumentChunks>(`/context/documents/${id}/chunks`),
+  removeDocument: (id: string) =>
+    json<{ ok: boolean }>(`/context/documents/${id}`, { method: "DELETE" }),
   save: (input: { content: string; canonical?: string }) => post<SaveResult>("/memory/save", input),
   recall: (query: string, limit?: number) =>
     post<{ memories: Memory[] }>("/memory/query", { query, limit }).then((r) => r.memories),
-  index: () => post<{ indexed: number }>("/memory/index"),
+  index: () => post<{ indexed: number; chunksIndexed: number }>("/memory/index"),
   conflicts: () => json<{ conflicts: Conflict[] }>("/memory/conflicts").then((r) => r.conflicts),
   resolve: (id: string, decision: ResolveDecision) =>
     post<{ ok: boolean }>(`/memory/conflicts/${id}/resolve`, decision),
