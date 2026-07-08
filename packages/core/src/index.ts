@@ -5,7 +5,7 @@ export type { BenchCorpus, BenchDoc, BenchQuery } from "./benchmark.js";
 export { runBenchmark } from "./benchmark.js";
 // Context connector building blocks
 export type { Chunk, ChunkOptions } from "./chunker.js";
-export { chunkMarkdown, chunkText } from "./chunker.js";
+export { chunkMarkdown, chunkOutline, chunkText } from "./chunker.js";
 export type { MemoryEngine } from "./engine.js";
 export type { ContextKind, ExtractedFile, ExtractedUnit } from "./extract.js";
 export { detectKind, extractFile } from "./extract.js";
@@ -33,6 +33,8 @@ export type {
   OpenRouterLLMOptions,
 } from "./openrouter-provider.js";
 export { OpenRouterEmbeddings, OpenRouterLLM } from "./openrouter-provider.js";
+export type { PdfTextItem } from "./pdf-layout.js";
+export { assemblePageText } from "./pdf-layout.js";
 export { PgAdapter } from "./pg-adapter.js";
 // Storage adapters
 export { PgliteAdapter } from "./pglite-adapter.js";

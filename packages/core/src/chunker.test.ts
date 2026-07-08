@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chunkMarkdown, chunkText } from "./chunker.js";
+import { chunkMarkdown, chunkOutline, chunkText } from "./chunker.js";
 
 describe("chunkText", () => {
   it("returns short text as a single chunk", () => {
@@ -79,5 +79,52 @@ describe("chunkMarkdown", () => {
     const chunks = chunkMarkdown("plain preamble\n\n# Later");
     expect(chunks[0]?.headingPath).toBeNull();
     expect(chunks[0]?.content).toBe("plain preamble");
+  });
+});
+
+describe("chunkOutline", () => {
+  // The shape of extracted lecture notes: ALL-CAPS title, numbered points with keywords.
+  const notes = [
+    "GRANICA NIEWŁAŚCIWA FUNKCJI",
+    "1. DEFINICJA 1. Niech funkcja f będzie określona w sąsiedztwie S(x0).",
+    "Funkcja f ma w punkcie x0 granicę niewłaściwą.",
+    "2. DEFINICJA 2. Niech funkcja f będzie określona w sąsiedztwie S(x0).",
+    "Prawdziwa jest równość dla ciągów zbieżnych do x0.",
+    "3. TWIERDZENIE 1. Niech funkcje f i g będą określone w sąsiedztwie punktu x0.",
+  ].join("\n");
+
+  it("splits at numbered points under an ALL-CAPS title (small target = one chunk per point)", () => {
+    const chunks = chunkOutline(notes, { target: 120, max: 300, overlap: 0 });
+    const def2 = chunks.find((c) => c.content.includes("DEFINICJA 2."));
+    expect(def2?.headingPath).toBe("GRANICA NIEWŁAŚCIWA FUNKCJI > 2. DEFINICJA 2.");
+    expect(def2?.content.startsWith("GRANICA NIEWŁAŚCIWA FUNKCJI > 2. DEFINICJA 2.")).toBe(true);
+    // A point's follow-up line stays with its point, never in the next chunk.
+    expect(def2?.content).toContain("równość dla ciągów");
+    const thm = chunks.find((c) => c.content.includes("TWIERDZENIE 1. Niech funkcje"));
+    expect(thm?.headingPath).toBe("GRANICA NIEWŁAŚCIWA FUNKCJI > 3. TWIERDZENIE 1.");
+  });
+
+  it("merges short adjacent points up to the target with a range breadcrumb", () => {
+    const chunks = chunkOutline(notes); // default target: everything fits in one chunk
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]?.headingPath).toBe("GRANICA NIEWŁAŚCIWA FUNKCJI > 1.–3.");
+  });
+
+  it("labels bare numbered points (no keyword) with just the number", () => {
+    const sheet = ["ZADANIA", "1. Oblicz granicę funkcji.", "2. Wyznacz pole trapezu."].join("\n");
+    const chunks = chunkOutline(sheet, { target: 30, max: 100, overlap: 0 });
+    expect(chunks[0]?.headingPath).toBe("ZADANIA > 1.");
+    expect(chunks[1]?.headingPath).toBe("ZADANIA > 2.");
+  });
+
+  it("degrades to plain chunking when the text has no outline", () => {
+    const prose = "just some ordinary prose without structure of any kind.";
+    expect(chunkOutline(prose)).toEqual([{ content: prose, headingPath: null }]);
+  });
+
+  it("resets nothing across titles: points bind to the nearest title above", () => {
+    const doc = ["TYTUŁ A", "1. Pierwszy punkt.", "TYTUŁ B", "1. Inny pierwszy punkt."].join("\n");
+    const chunks = chunkOutline(doc, { target: 10, max: 100, overlap: 0 });
+    expect(chunks.map((c) => c.headingPath)).toEqual(["TYTUŁ A > 1.", "TYTUŁ B > 1."]);
   });
 });

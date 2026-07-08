@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { chunkMarkdown, chunkText } from "./chunker.js";
+import { chunkMarkdown, chunkOutline } from "./chunker.js";
 import { type Candidate, classify } from "./dedup.js";
 import type { MemoryEngine } from "./engine.js";
 import { extractEntities } from "./entities.js";
@@ -210,10 +210,13 @@ export class Memloom implements MemoryEngine {
       };
     }
 
+    // md splits at headings; txt/pdf split along their outline (ALL-CAPS titles, numbered
+    // points) so a chunk never starts mid-definition and carries a citable breadcrumb.
     const chunks = file.units.flatMap((unit) =>
-      file.kind === "md"
-        ? chunkMarkdown(unit.text).map((c) => ({ ...c, page: unit.page }))
-        : chunkText(unit.text).map((content) => ({ content, headingPath: null, page: unit.page })),
+      (file.kind === "md" ? chunkMarkdown(unit.text) : chunkOutline(unit.text)).map((c) => ({
+        ...c,
+        page: unit.page,
+      })),
     );
     // Embed before the transaction — provider calls are slow and can fail; the store swap
     // below stays a short, all-or-nothing write.

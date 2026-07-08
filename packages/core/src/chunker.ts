@@ -139,3 +139,130 @@ export function chunkMarkdown(markdown: string, opts: ChunkOptions = {}): Chunk[
     })),
   );
 }
+
+// ---------------------------------------------------------------------------------------
+// Outline chunking for plain text and PDF pages: no markdown headings, but real documents
+// (lecture notes, exercise sheets, contracts) still have structure — ALL-CAPS title lines
+// and numbered points ("2. DEFINICJA 2. …"). Split at those boundaries so a chunk never
+// starts mid-definition, and carry "TITLE > 2. DEFINICJA 2." as the breadcrumb.
+
+// An ALL-CAPS line (Unicode-aware, so Polish "GRANICA NIEWŁAŚCIWA FUNKCJI" qualifies).
+function isCapsTitle(line: string): boolean {
+  const t = line.trim();
+  if (t.length < 4 || t.length > 120) return false;
+  const letters = t.match(/\p{L}/gu) ?? [];
+  return letters.length >= 4 && !/\p{Ll}/u.test(t);
+}
+
+const POINT_START = /^\s*(\d{1,3})[.)]\s+\S/;
+
+// "DEFINICJA 1. Niech funkcja…" → "DEFINICJA 1." — the leading run of ALL-CAPS/number
+// tokens after the point number, if any.
+function pointKeyword(rest: string): string | null {
+  const tokens: string[] = [];
+  for (const token of rest.split(/\s+/)) {
+    if (tokens.length >= 4 || !/^[\p{Lu}\p{N}]+[.,]?$/u.test(token)) break;
+    tokens.push(token);
+  }
+  if (tokens.length === 0 || !/\p{Lu}/u.test(tokens[0] as string)) return null;
+  const keyword = tokens.join(" ");
+  return keyword.length <= 40 ? keyword : null;
+}
+
+interface OutlineSection {
+  title: string | null;
+  firstNum: string | null;
+  lastNum: string | null;
+  keyword: string | null;
+  text: string;
+}
+
+function outlineSections(text: string): OutlineSection[] {
+  const sections: OutlineSection[] = [];
+  let title: string | null = null;
+  let current: OutlineSection | null = null;
+
+  const flush = () => {
+    if (current && current.text.trim().length > 0) sections.push(current);
+    current = null;
+  };
+
+  for (const line of text.split(/\r?\n/)) {
+    if (isCapsTitle(line)) {
+      flush();
+      title = line.trim().replace(/\s+/g, " ");
+      continue;
+    }
+    const point = POINT_START.exec(line);
+    if (point) {
+      flush();
+      const num = point[1] as string;
+      current = {
+        title,
+        firstNum: num,
+        lastNum: num,
+        keyword: pointKeyword(line.slice((point[0] as string).length - 1).trim()),
+        text: line,
+      };
+      continue;
+    }
+    if (!current) current = { title, firstNum: null, lastNum: null, keyword: null, text: "" };
+    current.text = current.text.length > 0 ? `${current.text}\n${line}` : line;
+  }
+  flush();
+  return sections;
+}
+
+// Merge consecutive point sections under the same title up to `target`, so short points
+// (single definitions, one-line exercises) don't become micro-chunks.
+function mergeOutline(sections: OutlineSection[], target: number): OutlineSection[] {
+  const merged: OutlineSection[] = [];
+  for (const section of sections) {
+    const prev = merged[merged.length - 1];
+    const joinable =
+      prev &&
+      prev.title === section.title &&
+      prev.firstNum !== null &&
+      section.firstNum !== null &&
+      prev.text.length + section.text.length + 1 <= target;
+    if (prev && joinable) {
+      prev.text = `${prev.text}\n${section.text}`;
+      prev.lastNum = section.lastNum;
+      prev.keyword = null; // a range of points has no single keyword
+    } else {
+      merged.push({ ...section });
+    }
+  }
+  return merged;
+}
+
+function outlineBreadcrumb(section: OutlineSection): string | null {
+  let label: string | null = null;
+  if (section.firstNum !== null) {
+    label =
+      section.firstNum === section.lastNum
+        ? section.keyword
+          ? `${section.firstNum}. ${section.keyword}`
+          : `${section.firstNum}.`
+        : `${section.firstNum}.–${section.lastNum}.`;
+  }
+  const parts = [section.title, label].filter((p): p is string => p !== null);
+  return parts.length > 0 ? parts.join(" > ") : null;
+}
+
+/**
+ * Chunk plain text (or an extracted PDF page) along its outline: ALL-CAPS title lines and
+ * numbered points are section boundaries; short points merge up to `target`; each chunk is
+ * prefixed with its "TITLE > 2. DEFINICJA 2." breadcrumb. Text without any such structure
+ * degrades to plain `chunkText`.
+ */
+export function chunkOutline(text: string, opts: ChunkOptions = {}): Chunk[] {
+  const target = opts.target ?? DEFAULTS.target;
+  return mergeOutline(outlineSections(text), target).flatMap((section) => {
+    const breadcrumb = outlineBreadcrumb(section);
+    return chunkText(section.text, opts).map((piece) => ({
+      content: breadcrumb ? `${breadcrumb}\n\n${piece}` : piece,
+      headingPath: breadcrumb,
+    }));
+  });
+}

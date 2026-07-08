@@ -42,11 +42,21 @@ memloom context add ./docs        # ingest .md/.txt/.pdf files (directories scan
 memloom recall "how do we restart the ingest worker"
 ```
 
-Files are chunked (markdown heading-aware — each chunk carries its heading breadcrumb; PDFs
-keep page numbers), embedded, and fused into the **same recall** as memories. Results from
-files always say where they came from: `from runbook.md › Ops > Restarts (p. 3)`. Documents
-are mirrors: re-adding an unchanged file is a no-op, a changed file replaces its chunks.
-`memloom context list` / `memloom context remove <id>` manage them.
+Files are chunked structure-aware, embedded, and fused into the **same recall** as memories.
+Markdown splits at headings; plain text and PDFs split along their outline — ALL-CAPS title
+lines and numbered points (`2. DEFINICJA 2. …`) — so a chunk never starts mid-definition.
+Each chunk carries its breadcrumb and PDFs keep page numbers, so results from files always
+say where they came from: `from notes.pdf › GRANICA FUNKCJI > 2. DEFINICJA 2. (p. 1)`.
+
+PDF text is rebuilt from glyph geometry, not stream order — equation-heavy PDFs (Word/LaTeX
+math) come out in reading order, and 2-up print layouts (the same content twice, side by
+side) are de-duplicated. Symbols from unmapped fonts (∞, ∈, ≠) can't be recovered from the
+text layer; that would need OCR, which is out of scope.
+
+Documents are mirrors: re-adding an unchanged file is a no-op, a changed file replaces its
+chunks — and when memloom's extraction pipeline improves, the pipeline version bumps and
+`context add` re-ingests files whose bytes didn't change. `memloom context list` /
+`memloom context remove <id>` manage them.
 
 Context joins the graph too: `memloom index` extracts entities from chunks as well as
 memories, so documents appear in the viewer's graph connected to your memories through the
