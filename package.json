@@ -20,7 +20,8 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "lint": "biome check .",
     "format": "biome format --write .",
-    "test": "vitest run"
+    "test": "vitest run",
+    "release": "pnpm -r publish --access public"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.0",

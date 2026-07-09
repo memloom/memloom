@@ -2,7 +2,10 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
-import { extractFile } from "./extract.js";
+import { detectKind, extractFile, registerExtractor, supportedExtensions } from "./extract.js";
+import { HashingEmbeddingProvider, NullLLMProvider } from "./hashing-provider.js";
+import { Memloom } from "./memloom.js";
+import { PgliteAdapter } from "./pglite-adapter.js";
 
 // extractFile through the real unpdf path, with PDFs whose text items are positioned —
 // proving the geometry reconstruction end-to-end, not just on synthetic items.
@@ -77,5 +80,60 @@ describe("extractFile (pdf geometry)", () => {
     expect((await extractFile(pdfPath, hash)).contentHash).toMatch(/#p3$/);
     expect((await extractFile(txtPath, hash)).contentHash).toMatch(/#p3$/);
     expect((await extractFile(mdPath, hash)).contentHash).not.toContain("#");
+  });
+
+  it("rejects unregistered extensions with the supported list", async () => {
+    const path = join(dir, "photo.jpg");
+    writeFileSync(path, "not really a jpg");
+    await expect(extractFile(path, hash)).rejects.toThrow(/unsupported file type.*\.md/);
+  });
+});
+
+describe("extractor registry", () => {
+  it("a registered custom extractor flows end-to-end: detect, ingest, recall with source", async () => {
+    registerExtractor({
+      kind: "csv",
+      extensions: [".csv"],
+      version: 2,
+      chunker: "outline",
+      async extract(bytes) {
+        const [header, ...rows] = new TextDecoder().decode(bytes).trim().split("\n");
+        // The breadcrumb lever, extractor-side: prepend the header so retrieval sees the schema.
+        return { units: rows.map((row) => ({ text: `${header}\n${row}`, page: null })) };
+      },
+    });
+
+    expect(detectKind("data.csv")).toBe("csv");
+    expect(supportedExtensions()).toContain(".csv");
+
+    const dir = mkdtempSync(join(tmpdir(), "memloom-registry-"));
+    const path = join(dir, "deploys.csv");
+    writeFileSync(path, "service,window\ningest-worker,friday afternoon\napi,monday");
+
+    const storage = await PgliteAdapter.open();
+    try {
+      const memloom = new Memloom({
+        storage,
+        embedding: new HashingEmbeddingProvider(1024),
+        llm: new NullLLMProvider(),
+        dedup: false,
+      });
+      await memloom.init();
+
+      const added = await memloom.contextAdd({ path });
+      expect(added.outcome).toBe("added");
+      // version 2 salts the hash, so future pipeline bumps re-ingest.
+      const file = await extractFile(path, (b) => `h${b.length}`);
+      expect(file.contentHash).toMatch(/#p2$/);
+      expect(file.chunker).toBe("outline");
+
+      const results = await memloom.recall("ingest-worker deploy window");
+      const chunk = results.find((r) => r.kind === "context");
+      expect(chunk?.content).toContain("ingest-worker");
+      expect(chunk?.source?.title).toBe("deploys.csv");
+    } finally {
+      await storage.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

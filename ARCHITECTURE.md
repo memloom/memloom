@@ -56,14 +56,38 @@ Because it's one real Postgres dialect everywhere, moving up a tier is a config 
 
 - **Memory** = engine-owned atomic beliefs. Deduped, contradiction-checked, active/stale, with
   human-in-the-loop conflict resolution. If a memory changes, the engine updates its belief.
-- **Context** = source-owned documents (`.md`/`.txt`/PDF) the engine mirrors. Re-index replaces
-  on file change; no conflict machinery. If context changes, you edit the source file.
+- **Context** = source-owned documents the engine mirrors. Re-adding an unchanged file is a
+  no-op (content hash), a changed file replaces its chunks in one transaction; no conflict
+  machinery. If context changes, you edit the source file.
 
 Both feed the same entity graph and the same hybrid retrieval — one engine, two ingestion
-primitives, one recall call.
+primitives, one recall call (`memloom_fuse` unions memories and chunks in each retrieval arm).
+
+### The extraction pipeline
+
+`context add` runs: **extract → section → size-split → embed → mirror-write**.
+
+- **Extract** goes through a pluggable registry (`packages/core/src/extract.ts`). An
+  `Extractor` declares its `kind`, `extensions`, a `version`, a `chunker` strategy, and an
+  `extract(bytes, path) → units` function; `registerExtractor()` adds formats without touching
+  the engine. Built-ins: markdown, plain text, and PDF — where PDF text is rebuilt from glyph
+  *geometry* (baseline line grouping, column-gutter detection, 2-up duplicate collapse) because
+  content-stream order is scrambled for equation-heavy documents.
+- **Section** by the extractor's declared strategy: `"markdown"` splits at headings;
+  `"outline"` splits at ALL-CAPS title lines and numbered points (`2. DEFINICJA 2. …`), so a
+  chunk never starts mid-definition. Each chunk gets its breadcrumb (`Guide > Setup >
+  Postgres`) **prepended into the embedded text** — both the vector and keyword arms see the
+  heading context (the contextual-retrieval lever), and the same breadcrumb powers citations
+  (`from notes.pdf › TITLE > 2. (p. 1)`).
+- **Size-split** with the recursive character splitter (~1,600-char target, 2,048 cap, ~200
+  overlap) only when a section exceeds the cap.
+- **Mirror-write**: the extractor `version` is salted into the content hash (`#p{n}`), so when
+  an extraction pipeline improves, unchanged files re-ingest on the next `context add` instead
+  of no-op'ing on stale chunks.
 
 ## Build status
 
-The engine is being extracted phase by phase. This scaffold (Phase 0) establishes the repo,
-the package boundaries, and the two rules above. Phase 1 implements the spine
-(save → embed → vector recall) on both storage adapters.
+The engine is extracted and functional end-to-end: save → dedup/conflict funnel → hybrid
+recall (vector + keyword + entity RRF), the single-owner daemon (HTTP API, Postgres wire,
+embedded viewer), MCP server, and the context connector with the extractor registry. See
+[CHANGELOG.md](./CHANGELOG.md) for what each release contains.

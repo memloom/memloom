@@ -7,8 +7,8 @@ export { runBenchmark } from "./benchmark.js";
 export type { Chunk, ChunkOptions } from "./chunker.js";
 export { chunkMarkdown, chunkOutline, chunkText } from "./chunker.js";
 export type { MemoryEngine } from "./engine.js";
-export type { ContextKind, ExtractedFile, ExtractedUnit } from "./extract.js";
-export { detectKind, extractFile } from "./extract.js";
+export type { ContextKind, ExtractedFile, ExtractedUnit, Extractor } from "./extract.js";
+export { detectKind, extractFile, registerExtractor, supportedExtensions } from "./extract.js";
 // Providers
 export {
   HashingEmbeddingProvider,

@@ -2,22 +2,18 @@ import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { assemblePageText, type PdfTextItem } from "./pdf-layout.js";
 
-// File → text units for the context connector. Local-first, text-layer only: .md/.txt read
-// directly, PDF via unpdf (pure-JS PDF.js wrapper) with geometry-aware reading-order
-// reconstruction per page. No OCR, no cloud parsers — the same line every OSS ingestion
-// pipeline draws.
+// File → text units for the context connector, behind a pluggable extractor registry.
+// Built-ins are local-first, text-layer only: .md/.txt read directly, PDF via unpdf
+// (pure-JS PDF.js wrapper) with geometry-aware reading-order reconstruction per page.
+// No OCR, no cloud parsers — the same line every OSS ingestion pipeline draws.
+// New formats plug in via registerExtractor() — one object, no fork.
 
-export type ContextKind = "md" | "txt" | "pdf";
-
-// Bumped when a kind's extract/chunk pipeline changes: the version is salted into the
-// content hash, so `context add` re-ingests files whose bytes didn't change instead of
-// no-op'ing on the stale chunks. md is untouched at 1 (no suffix → existing docs stay
-// unchanged, no re-embedding spend).
-const PIPELINE_VERSION: Record<ContextKind, number> = { md: 1, txt: 3, pdf: 3 };
+/** The kind stored in context_documents.kind. Built-ins: "md" | "txt" | "pdf"; open set. */
+export type ContextKind = string;
 
 export interface ExtractedUnit {
   text: string;
-  /** 1-based PDF page; null for md/txt. Competitors that drop this regret it — keep it. */
+  /** 1-based PDF page; null for single-unit formats. Competitors that drop this regret it. */
   page: number | null;
 }
 
@@ -25,15 +21,42 @@ export interface ExtractedFile {
   kind: ContextKind;
   title: string;
   contentHash: string;
+  /** Section strategy the chunker applies before size-splitting. */
+  chunker: "markdown" | "outline";
   units: ExtractedUnit[];
 }
 
+/** A file format the context connector can ingest. Register one with registerExtractor(). */
+export interface Extractor {
+  /** Stored in context_documents.kind, e.g. "pdf". */
+  kind: ContextKind;
+  /** Lowercase extensions with the dot, e.g. [".pdf"]. Last registration wins per extension. */
+  extensions: string[];
+  /**
+   * Bump when this format's extract/chunk pipeline changes: the version is salted into the
+   * content hash (`#p{n}` when > 1), so `context add` re-ingests files whose bytes didn't
+   * change instead of no-op'ing on stale chunks.
+   */
+  version: number;
+  /** How chunks are sectioned: markdown headings, or outline (ALL-CAPS titles + numbered points). */
+  chunker: "markdown" | "outline";
+  extract(bytes: Uint8Array, path: string): Promise<{ title?: string; units: ExtractedUnit[] }>;
+}
+
+const registry = new Map<string, Extractor>();
+
+export function registerExtractor(extractor: Extractor): void {
+  for (const ext of extractor.extensions) registry.set(ext.toLowerCase(), extractor);
+}
+
+/** The registered extractor's kind for this path, or null if no extractor claims it. */
 export function detectKind(path: string): ContextKind | null {
-  const ext = extname(path).toLowerCase();
-  if (ext === ".md" || ext === ".markdown") return "md";
-  if (ext === ".txt") return "txt";
-  if (ext === ".pdf") return "pdf";
-  return null;
+  return registry.get(extname(path).toLowerCase())?.kind ?? null;
+}
+
+/** Every extension the registry can ingest, sorted — for help text and error messages. */
+export function supportedExtensions(): string[] {
+  return [...registry.keys()].sort();
 }
 
 function mdTitle(text: string, fallback: string): string {
@@ -41,22 +64,39 @@ function mdTitle(text: string, fallback: string): string {
   return heading?.[1]?.trim() || fallback;
 }
 
-export async function extractFile(
-  path: string,
-  hash: (bytes: Uint8Array) => string,
-): Promise<ExtractedFile> {
-  const kind = detectKind(path);
-  if (!kind) {
-    throw new Error(
-      `unsupported file type: ${basename(path)} (the context connector reads .md, .txt, and .pdf)`,
-    );
-  }
-  const bytes = new Uint8Array(await readFile(path));
-  const version = PIPELINE_VERSION[kind];
-  const contentHash = version === 1 ? hash(bytes) : `${hash(bytes)}#p${version}`;
-  const fallbackTitle = basename(path);
+function decodeText(bytes: Uint8Array): string {
+  return new TextDecoder("utf-8").decode(bytes);
+}
 
-  if (kind === "pdf") {
+// --- built-ins ---------------------------------------------------------------------------
+
+registerExtractor({
+  kind: "md",
+  extensions: [".md", ".markdown"],
+  version: 1, // v1 = unsalted hash; existing md documents stay "unchanged" on re-add
+  chunker: "markdown",
+  async extract(bytes, path) {
+    const text = decodeText(bytes);
+    return { title: mdTitle(text, basename(path)), units: [{ text, page: null }] };
+  },
+});
+
+registerExtractor({
+  kind: "txt",
+  extensions: [".txt"],
+  version: 3,
+  chunker: "outline",
+  async extract(bytes) {
+    return { units: [{ text: decodeText(bytes), page: null }] };
+  },
+});
+
+registerExtractor({
+  kind: "pdf",
+  extensions: [".pdf"],
+  version: 3,
+  chunker: "outline",
+  async extract(bytes) {
     const { getDocumentProxy } = await import("unpdf");
     const pdf = await getDocumentProxy(bytes);
     const units: ExtractedUnit[] = [];
@@ -67,10 +107,31 @@ export async function extractFile(
       const text = assemblePageText(content.items as PdfTextItem[], view[2] - view[0]);
       if (text.length > 0) units.push({ text, page: p });
     }
-    return { kind, title: fallbackTitle, contentHash, units };
-  }
+    return { units };
+  },
+});
 
-  const text = new TextDecoder("utf-8").decode(bytes);
-  const title = kind === "md" ? mdTitle(text, fallbackTitle) : fallbackTitle;
-  return { kind, title, contentHash, units: [{ text, page: null }] };
+// -----------------------------------------------------------------------------------------
+
+export async function extractFile(
+  path: string,
+  hash: (bytes: Uint8Array) => string,
+): Promise<ExtractedFile> {
+  const extractor = registry.get(extname(path).toLowerCase());
+  if (!extractor) {
+    throw new Error(
+      `unsupported file type: ${basename(path)} (the context connector reads ${supportedExtensions().join(", ")})`,
+    );
+  }
+  const bytes = new Uint8Array(await readFile(path));
+  const contentHash =
+    extractor.version === 1 ? hash(bytes) : `${hash(bytes)}#p${extractor.version}`;
+  const { title, units } = await extractor.extract(bytes, path);
+  return {
+    kind: extractor.kind,
+    title: title || basename(path),
+    contentHash,
+    chunker: extractor.chunker,
+    units,
+  };
 }

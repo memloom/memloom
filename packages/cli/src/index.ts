@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { detectKind, type Memory } from "@memloom/core";
+import { detectKind, type Memory, supportedExtensions } from "@memloom/core";
 import { configPath, dataDir, ensureConfig, memloomHome } from "./config.js";
 import { connect } from "./connect.js";
 import { startDaemon } from "./daemon.js";
@@ -16,7 +16,7 @@ function describeSource(m: Memory): string | null {
 }
 
 // A path argument may be a file or a directory: directories are scanned recursively for
-// supported extensions (.md/.txt/.pdf); everything else is ignored.
+// extensions the extractor registry supports; everything else is ignored.
 function collectContextFiles(path: string): string[] {
   const stat = statSync(path);
   if (stat.isDirectory()) {
@@ -50,7 +50,7 @@ Usage: memloom <command> [args]
   recall <text...>     recall memories AND context by meaning
   index                extract entities from unindexed memories and context chunks
   conflicts            list pending conflicts
-  context add <path>   ingest .md/.txt/.pdf files (or a directory of them) as context
+  context add <path>   ingest files (or a directory) as context: ${supportedExtensions().join(" ")}
   context list         list ingested context documents
   context remove <id>  remove a context document and its chunks
   help                 show this help
@@ -144,7 +144,7 @@ export async function run(argv: readonly string[]): Promise<void> {
         if (targets.length === 0) throw new Error("usage: memloom context add <path...>");
         const files = targets.flatMap(collectContextFiles);
         if (files.length === 0) {
-          console.log("no .md/.txt/.pdf files found.");
+          console.log(`no ingestible files found (${supportedExtensions().join(", ")}).`);
           return;
         }
         for (const file of files) {

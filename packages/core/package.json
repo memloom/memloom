@@ -1,11 +1,23 @@
 {
   "name": "@memloom/core",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "description": "The memloom memory engine: storage adapter, providers, write path, retrieval.",
   "license": "Apache-2.0",
   "author": "Kostek Sytnyk <kostek@versuno.ai>",
   "homepage": "https://memloom.dev",
+  "keywords": [
+    "memory",
+    "ai",
+    "agents",
+    "local-first",
+    "context",
+    "mcp",
+    "knowledge-graph"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/memloom/memloom.git",

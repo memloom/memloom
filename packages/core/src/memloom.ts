@@ -182,7 +182,8 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
-   * Ingest a file (.md/.txt/.pdf) as context: extract, chunk, embed, store. Documents are
+   * Ingest a file as context (any registered extractor's format): extract, chunk, embed,
+   * store. Documents are
    * MIRRORS of files — no belief pipeline, no conflicts; re-adding a changed file replaces
    * its chunks in one transaction, and an unchanged file (same content hash) is a no-op.
    */
@@ -210,13 +211,12 @@ export class Memloom implements MemoryEngine {
       };
     }
 
-    // md splits at headings; txt/pdf split along their outline (ALL-CAPS titles, numbered
-    // points) so a chunk never starts mid-definition and carries a citable breadcrumb.
+    // The extractor declares its section strategy: markdown splits at headings, outline at
+    // ALL-CAPS titles and numbered points — either way a chunk never starts mid-section and
+    // carries a citable breadcrumb.
+    const sectionize = file.chunker === "markdown" ? chunkMarkdown : chunkOutline;
     const chunks = file.units.flatMap((unit) =>
-      (file.kind === "md" ? chunkMarkdown(unit.text) : chunkOutline(unit.text)).map((c) => ({
-        ...c,
-        page: unit.page,
-      })),
+      sectionize(unit.text).map((c) => ({ ...c, page: unit.page })),
     );
     // Embed before the transaction — provider calls are slow and can fail; the store swap
     // below stays a short, all-or-nothing write.
