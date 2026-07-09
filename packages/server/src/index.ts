@@ -77,6 +77,11 @@ const querySchema = z.object({
   limit: z.number().int().positive().optional(),
 });
 
+const updateSchema = z.object({
+  content: z.string().min(1, "content must be a non-empty string"),
+  canonical: z.string().optional(),
+});
+
 const contextAddSchema = z.object({
   path: z.string().min(1, "path must be a non-empty string"),
   ownerId: z.string().uuid().optional(),
@@ -211,6 +216,22 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const memories = await memloom.recall(body.data.query, { limit: body.data.limit });
     return c.json({ memories });
   });
+
+  app.post("/memory/:id/update", async (c) => {
+    const body = await parseBody(c, updateSchema);
+    if (!body.ok) return body.res;
+    return c.json(
+      await memloom.update({
+        id: c.req.param("id"),
+        content: body.data.content,
+        canonical: body.data.canonical,
+      }),
+    );
+  });
+
+  app.get("/memory/:id/history", async (c) =>
+    c.json({ versions: await memloom.history(c.req.param("id")) }),
+  );
 
   app.post("/memory/index", async (c) => c.json(await memloom.index()));
 

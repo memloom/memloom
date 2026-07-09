@@ -55,7 +55,10 @@ Because it's one real Postgres dialect everywhere, moving up a tier is a config 
 ## Memory vs context
 
 - **Memory** = engine-owned atomic beliefs. Deduped, contradiction-checked, active/stale, with
-  human-in-the-loop conflict resolution. If a memory changes, the engine updates its belief.
+  human-in-the-loop conflict resolution. A belief is **versioned**: restating or editing a fact
+  appends a new version (sharing a `root_id`, prior version staled but kept), so `history()` shows
+  how it changed. Recall always returns only the current version. See
+  `docs/design/node-versioning.md`.
 - **Context** = source-owned documents the engine mirrors. Re-adding an unchanged file is a
   no-op (content hash), a changed file replaces its chunks in one transaction; no conflict
   machinery. If context changes, you edit the source file.

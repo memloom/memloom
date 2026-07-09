@@ -20,6 +20,12 @@ export interface Memory {
   canonical: string | null;
   content: string;
   summary: string | null;
+  // Version lineage: every version of one belief shares a rootId; the newest active row is the
+  // current version. See history(). Chunks (kind "context") aren't versioned — rootId falls back
+  // to their own id and version is 1.
+  rootId: string;
+  version: number;
+  // valid-from of this version (asserted_at). stale_since is the valid-to, exposed via status.
   assertedAt: string;
   createdAt: string;
   /** Cosine similarity to the query (the meaning signal alone), present on recall results. */
@@ -50,14 +56,33 @@ export interface SaveInput {
   ownerId?: string;
 }
 
-export type SaveOutcome = "added" | "merged" | "conflict";
+// "versioned": the save restated an existing belief, so a new version was appended to its
+// lineage (the prior version is now stale). See [[node-versioning]].
+export type SaveOutcome = "added" | "merged" | "conflict" | "versioned";
 
 export interface SaveResult {
   id: string;
-  /** What the belief pipeline did: a fresh memory, a dedup merge, or a flagged conflict. */
+  /** What the belief pipeline did: fresh memory, dedup merge, new version, or a flagged conflict. */
   outcome: SaveOutcome;
   /** Set when outcome is "conflict": the id of the pending decision to resolve. */
   conflictId?: string;
+  /** Set when outcome is "versioned": the new version number (>= 2). */
+  version?: number;
+}
+
+export interface UpdateInput {
+  /** The memory to edit; must be an active belief. Its lineage gains a new current version. */
+  id: string;
+  content: string;
+  canonical?: string;
+  ownerId?: string;
+}
+
+export interface UpdateResult {
+  /** The id of the new current version (a fresh row; the edited one is now stale). */
+  id: string;
+  rootId: string;
+  version: number;
 }
 
 export interface RecallOptions {

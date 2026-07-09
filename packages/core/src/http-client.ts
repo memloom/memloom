@@ -12,6 +12,8 @@ import type {
   ResolveDecision,
   SaveInput,
   SaveResult,
+  UpdateInput,
+  UpdateResult,
 } from "./types.js";
 
 // Structural fetch types so core needs neither DOM nor node lib types (it deliberately avoids
@@ -67,6 +69,18 @@ export class HttpMemloomClient implements MemoryEngine {
       limit: opts?.limit,
     });
     return memories;
+  }
+
+  update(input: UpdateInput): Promise<UpdateResult> {
+    return this.#post<UpdateResult>(`/memory/${input.id}/update`, {
+      content: input.content,
+      canonical: input.canonical,
+    });
+  }
+
+  async history(memoryId: string): Promise<Memory[]> {
+    const { versions } = await this.#json<{ versions: Memory[] }>(`/memory/${memoryId}/history`);
+    return versions;
   }
 
   index(): Promise<IndexResult> {

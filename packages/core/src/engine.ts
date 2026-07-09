@@ -11,6 +11,8 @@ import type {
   ResolveDecision,
   SaveInput,
   SaveResult,
+  UpdateInput,
+  UpdateResult,
 } from "./types.js";
 
 // The engine contract the surfaces (CLI, MCP, viewer) depend on. Both the local Memloom and
@@ -21,6 +23,10 @@ export interface MemoryEngine {
   recall(query: string, opts?: RecallOptions): Promise<Memory[]>;
   /** All active memories, newest first — browsing, where recall is querying. */
   memories(ownerId?: string): Promise<Memory[]>;
+  /** Edit a belief: append a new current version and stale the prior one (explicit, no funnel). */
+  update(input: UpdateInput): Promise<UpdateResult>;
+  /** The full version chain of a belief, newest first — pass any version's id. */
+  history(memoryId: string, ownerId?: string): Promise<Memory[]>;
   index(ownerId?: string): Promise<IndexResult>;
   graph(ownerId?: string): Promise<Graph>;
   conflicts(ownerId?: string): Promise<Conflict[]>;

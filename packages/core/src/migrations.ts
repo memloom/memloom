@@ -513,5 +513,23 @@ export function buildMigrations(dims: number): Migration[] {
       $fn$;
     `,
     },
+    {
+      // Node versioning: every belief is a chain of versions sharing a root_id. The newest
+      // active row per root_id is the current belief; older ones are stale (never deleted),
+      // linked child -> parent by the existing 'replaces' edge. History = WHERE root_id = ...
+      // ORDER BY version. Recall is unaffected: it already filters status = 'active', so stale
+      // old versions never surface. Validity interval reuses existing columns — asserted_at is
+      // "valid from", stale_since is "valid to" — so no new temporal columns are needed.
+      id: "0009_node_versions",
+      sql: /* sql */ `
+      ALTER TABLE memory_objects ADD COLUMN root_id uuid;
+      ALTER TABLE memory_objects ADD COLUMN version int NOT NULL DEFAULT 1;
+      -- Backfill: every existing memory is the root of its own single-version lineage.
+      UPDATE memory_objects SET root_id = id WHERE root_id IS NULL;
+      ALTER TABLE memory_objects ALTER COLUMN root_id SET NOT NULL;
+      CREATE INDEX IF NOT EXISTS memory_objects_root_idx
+        ON memory_objects (owner_id, root_id, version);
+    `,
+    },
   ];
 }

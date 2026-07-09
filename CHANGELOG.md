@@ -8,6 +8,10 @@ The engine, end to end:
   via LLM classification) → human-in-the-loop conflicts. Contradictions keep *both* memories
   active and queue a conflict; resolutions (keep new / keep existing / keep both / merge) are
   durable and **reversible**.
+- **Node versioning** — every belief is a version chain: restating or editing a fact appends a
+  new version (shared `root_id`, prior version staled but kept), and resolving a contradiction is
+  a version step. `history()` shows how a belief changed; recall returns only the current version.
+  `memloom update <id> <text>` and `memloom history <id>`.
 - **Hybrid retrieval** — vector + keyword + entity-graph arms fused with reciprocal-rank fusion
   in a single SQL call (`memloom_fuse`), over memories and context chunks together.
 - **Context connector** — `memloom context add` ingests .md/.txt/.pdf into the same recall with

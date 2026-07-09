@@ -48,6 +48,8 @@ Usage: memloom <command> [args]
   init                 ensure the daemon is running and the store is ready
   save <text...>       save a memory
   recall <text...>     recall memories AND context by meaning
+  update <id> <text>   edit a memory into a new version (keeps the old one in history)
+  history <id>         show a memory's full version chain (newest first)
   index                extract entities from unindexed memories and context chunks
   conflicts            list pending conflicts
   context add <path>   ingest files (or a directory) as context: ${supportedExtensions().join(" ")}
@@ -115,9 +117,12 @@ export async function run(argv: readonly string[]): Promise<void> {
       if (!content) throw new Error("usage: memloom save <text>");
       const engine = await connect();
       const result = await engine.save({ content });
-      console.log(
-        `${result.outcome}  ${result.id}${result.conflictId ? `  conflict=${result.conflictId}` : ""}`,
-      );
+      const extra = result.version
+        ? `  v${result.version}`
+        : result.conflictId
+          ? `  conflict=${result.conflictId}`
+          : "";
+      console.log(`${result.outcome}  ${result.id}${extra}`);
       return;
     }
 
@@ -131,6 +136,29 @@ export async function run(argv: readonly string[]): Promise<void> {
         console.log(`[sim ${(m.similarity ?? 0).toFixed(2)}]  ${m.content}`);
         const source = describeSource(m);
         if (source) console.log(`            ${source}`);
+      }
+      return;
+    }
+
+    case "update": {
+      const [id, ...text] = rest;
+      const content = text.join(" ").trim();
+      if (!id || !content) throw new Error("usage: memloom update <memory-id> <text>");
+      const engine = await connect();
+      const result = await engine.update({ id, content });
+      console.log(`updated ${result.id}  v${result.version}`);
+      return;
+    }
+
+    case "history": {
+      const id = rest[0];
+      if (!id) throw new Error("usage: memloom history <memory-id>");
+      const engine = await connect();
+      const versions = await engine.history(id);
+      if (versions.length === 0) console.log("(no history)");
+      for (const v of versions) {
+        const marker = v.status === "active" ? "*" : " ";
+        console.log(`${marker} v${v.version}  ${v.assertedAt}  ${v.content}`);
       }
       return;
     }

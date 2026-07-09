@@ -65,6 +65,8 @@ export type {
   SaveInput,
   SaveOutcome,
   SaveResult,
+  UpdateInput,
+  UpdateResult,
 } from "./types.js";
 // The saveable memory taxonomy (fact | preference | episode | procedure).
 export { MEMORY_TYPES } from "./types.js";

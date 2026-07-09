@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { chunkMarkdown, chunkOutline } from "./chunker.js";
 import { type Candidate, classify } from "./dedup.js";
 import type { MemoryEngine } from "./engine.js";
@@ -27,6 +27,8 @@ import type {
   ResolveDecision,
   SaveInput,
   SaveResult,
+  UpdateInput,
+  UpdateResult,
 } from "./types.js";
 import { toVectorLiteral } from "./vector.js";
 
@@ -56,10 +58,19 @@ interface MemoryRow {
   canonical: string | null;
   content: string;
   summary: string | null;
+  root_id: string;
+  version: number;
   asserted_at: string;
   created_at: string;
   similarity?: number;
   rrf_score?: number;
+}
+
+// A dedup candidate enriched with its lineage, so an "identical" restatement can append a new
+// version to the right belief. Structurally a Candidate, so it still feeds classify().
+interface CandidateRow extends Candidate {
+  rootId: string;
+  version: number;
 }
 
 interface RecallRow extends Partial<MemoryRow> {
@@ -87,6 +98,8 @@ function mapRecallRow(row: RecallRow): Memory {
       canonical: null,
       content: row.c_content ?? "",
       summary: null,
+      rootId: row.id,
+      version: 1,
       assertedAt: row.c_created_at ?? "",
       createdAt: row.c_created_at ?? "",
       similarity: Number(row.similarity),
@@ -113,6 +126,8 @@ function mapRow(row: MemoryRow): Memory {
     canonical: row.canonical,
     content: row.content,
     summary: row.summary,
+    rootId: row.root_id,
+    version: Number(row.version),
     assertedAt: row.asserted_at,
     createdAt: row.created_at,
     ...(row.similarity !== undefined ? { similarity: Number(row.similarity) } : {}),
@@ -407,8 +422,16 @@ export class Memloom implements MemoryEngine {
       candidates,
     );
 
+    // A restatement of the same fact appends a new version to that belief's lineage (the prior
+    // version goes stale). A verbatim re-save was already short-circuited above as "merged".
     const identical = classifications.find((c) => c.relation === "identical");
-    if (identical) return { id: identical.candidateId, outcome: "merged" };
+    if (identical) {
+      const parent = candidates.find((c) => c.id === identical.candidateId);
+      if (parent) {
+        const childId = await this.#versionOf(owner, parent, input, embedding, hash);
+        return { id: childId, outcome: "versioned", version: parent.version + 1 };
+      }
+    }
 
     const id = await this.#insert(owner, input, embedding, hash);
 
@@ -435,13 +458,68 @@ export class Memloom implements MemoryEngine {
   async memories(ownerId: string = SENTINEL_OWNER): Promise<Memory[]> {
     const rows = await this.#storage.query<MemoryRow>(
       `SELECT id, owner_id, status, memory_type, canonical, content, summary,
-              asserted_at, created_at
+              root_id, version, asserted_at, created_at
        FROM memory_objects
        WHERE owner_id = $1 AND status = 'active'
        ORDER BY created_at DESC`,
       [ownerId],
     );
     return rows.map(mapRow);
+  }
+
+  /**
+   * The full version history of a belief: every version sharing this memory's root_id, newest
+   * first (active current version plus all stale predecessors). Pass any version's id.
+   */
+  async history(memoryId: string, ownerId: string = SENTINEL_OWNER): Promise<Memory[]> {
+    const [row] = await this.#storage.query<{ root_id: string }>(
+      "SELECT root_id FROM memory_objects WHERE id = $1 AND owner_id = $2",
+      [memoryId, ownerId],
+    );
+    if (!row) throw new Error(`memloom: no memory ${memoryId}`);
+    const rows = await this.#storage.query<MemoryRow>(
+      `SELECT id, owner_id, status, memory_type, canonical, content, summary,
+              root_id, version, asserted_at, created_at
+       FROM memory_objects
+       WHERE owner_id = $1 AND root_id = $2
+       ORDER BY version DESC`,
+      [ownerId, row.root_id],
+    );
+    return rows.map(mapRow);
+  }
+
+  /**
+   * Edit a belief: append a new current version with the given content and stale the prior one.
+   * An explicit edit — unlike a save, it never runs the dedup/conflict funnel. Reversible in the
+   * sense that the prior version stays queryable via history().
+   */
+  async update(input: UpdateInput): Promise<UpdateResult> {
+    const owner = input.ownerId ?? SENTINEL_OWNER;
+    const [parent] = await this.#storage.query<{
+      id: string;
+      root_id: string;
+      version: number;
+      memory_type: MemoryType;
+    }>(
+      "SELECT id, root_id, version, memory_type FROM memory_objects WHERE id = $1 AND owner_id = $2 AND status = 'active'",
+      [input.id, owner],
+    );
+    if (!parent) throw new Error(`memloom: no active memory ${input.id}`);
+    const [embedding] = await this.#embedding.embed([input.content]);
+    if (!embedding) throw new Error("memloom: embedding provider returned no vector");
+    const hash = createHash("sha256").update(input.content).digest("hex");
+    const childId = await this.#versionOf(
+      owner,
+      { id: parent.id, rootId: parent.root_id, version: Number(parent.version) },
+      {
+        content: input.content,
+        ...(input.canonical ? { canonical: input.canonical } : {}),
+        memoryType: parent.memory_type,
+      },
+      embedding,
+      hash,
+    );
+    return { id: childId, rootId: parent.root_id, version: Number(parent.version) + 1 };
   }
 
   /**
@@ -462,7 +540,7 @@ export class Memloom implements MemoryEngine {
       `SELECT f.id, f.src, f.rrf_score,
               1 - (COALESCE(mo.embedding, cc.embedding) <=> $1::vector) AS similarity,
               mo.owner_id, mo.status, mo.memory_type, mo.canonical, mo.content,
-              mo.summary, mo.asserted_at, mo.created_at,
+              mo.summary, mo.root_id, mo.version, mo.asserted_at, mo.created_at,
               cc.owner_id AS c_owner_id, cc.content AS c_content,
               cc.heading_path AS c_heading_path, cc.page AS c_page,
               cc.created_at AS c_created_at,
@@ -627,6 +705,13 @@ export class Memloom implements MemoryEngine {
 
     switch (decision.action) {
       case "keep_new": {
+        // The incoming belief continues the (primary) existing fact's lineage — a resolved
+        // contradiction is a version step, so it shows up in that belief's history().
+        const primary = candidateIds[0];
+        if (primary) {
+          const lin = await this.#lineageOf(primary);
+          if (lin) await this.#reparent(incoming, lin.rootId, lin.version + 1);
+        }
         await markStale(this.#storage, candidateIds);
         for (const loser of candidateIds)
           await addEdge(this.#storage, owner, incoming, loser, "replaces");
@@ -659,6 +744,10 @@ export class Memloom implements MemoryEngine {
           embedding,
           hash,
         );
+        // The merged belief continues the primary existing fact's lineage.
+        const mergePrimary = candidateIds[0] ?? incoming;
+        const mergeLin = await this.#lineageOf(mergePrimary);
+        if (mergeLin) await this.#reparent(winner, mergeLin.rootId, mergeLin.version + 1);
         const losers = [incoming, ...candidateIds];
         await markStale(this.#storage, losers);
         for (const loser of losers) await addEdge(this.#storage, owner, winner, loser, "replaces");
@@ -693,6 +782,10 @@ export class Memloom implements MemoryEngine {
       case "supersede": {
         await reactivate(this.#storage, losers);
         await deactivateEdgesTouching(this.#storage, owner, "replaces", losers);
+        // keep_new re-parented the incoming onto the losers' lineage; restore it to its own root.
+        if (row.resolution_winner_id === row.incoming_id) {
+          await this.#reparent(row.incoming_id, row.incoming_id, 1);
+        }
         break;
       }
       case "keep_both": {
@@ -725,18 +818,29 @@ export class Memloom implements MemoryEngine {
 
   // --- internals ---
 
+  // Insert a memory. Without `lineage` it starts a new belief (root_id = its own id, version 1);
+  // with `lineage` it's the next version of an existing belief. The id is generated app-side so
+  // a new root can set root_id = id atomically.
   async #insert(
     owner: string,
     input: { content: string; canonical?: string; memoryType?: MemoryType },
     embedding: number[],
     hash: string,
+    lineage?: { rootId: string; version: number },
   ): Promise<string> {
+    const id = randomUUID();
+    const rootId = lineage?.rootId ?? id;
+    const version = lineage?.version ?? 1;
     const rows = await this.#storage.query<{ id: string }>(
-      `INSERT INTO memory_objects (owner_id, memory_type, canonical, content, content_hash, embedding)
-       VALUES ($1, $2, $3, $4, $5, $6::vector)
+      `INSERT INTO memory_objects
+         (id, owner_id, root_id, version, memory_type, canonical, content, content_hash, embedding)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector)
        RETURNING id`,
       [
+        id,
         owner,
+        rootId,
+        version,
         input.memoryType ?? "fact",
         input.canonical ?? null,
         input.content,
@@ -744,9 +848,45 @@ export class Memloom implements MemoryEngine {
         toVectorLiteral(embedding),
       ],
     );
-    const id = rows[0]?.id;
-    if (!id) throw new Error("memloom: insert returned no id");
-    return id;
+    const rid = rows[0]?.id;
+    if (!rid) throw new Error("memloom: insert returned no id");
+    return rid;
+  }
+
+  // Append a new version to a belief: stale the parent, insert the child sharing the parent's
+  // root with version + 1, and link them child -> parent with a 'replaces' edge. Returns the
+  // new current version's id.
+  async #versionOf(
+    owner: string,
+    parent: { id: string; rootId: string; version: number },
+    input: { content: string; canonical?: string; memoryType?: MemoryType },
+    embedding: number[],
+    hash: string,
+  ): Promise<string> {
+    const childId = await this.#insert(owner, input, embedding, hash, {
+      rootId: parent.rootId,
+      version: parent.version + 1,
+    });
+    await markStale(this.#storage, [parent.id]);
+    await addEdge(this.#storage, owner, childId, parent.id, "replaces");
+    return childId;
+  }
+
+  // Move a memory onto a lineage (used when a resolved conflict continues an existing belief).
+  async #reparent(id: string, rootId: string, version: number): Promise<void> {
+    await this.#storage.query(
+      "UPDATE memory_objects SET root_id = $2, version = $3, updated_at = now() WHERE id = $1",
+      [id, rootId, version],
+    );
+  }
+
+  // The current root_id + version of a memory, or null if it's gone.
+  async #lineageOf(id: string): Promise<{ rootId: string; version: number } | null> {
+    const [row] = await this.#storage.query<{ root_id: string; version: number }>(
+      "SELECT root_id, version FROM memory_objects WHERE id = $1",
+      [id],
+    );
+    return row ? { rootId: row.root_id, version: Number(row.version) } : null;
   }
 
   // Extract entities from one source (memory or context chunk) and link it to each with a
@@ -776,14 +916,16 @@ export class Memloom implements MemoryEngine {
     return row.id;
   }
 
-  async #findCandidates(owner: string, embedding: number[], hash: string): Promise<Candidate[]> {
+  async #findCandidates(owner: string, embedding: number[], hash: string): Promise<CandidateRow[]> {
     const rows = await this.#storage.query<{
       id: string;
       canonical: string | null;
       content: string;
+      root_id: string;
+      version: number;
       similarity: number;
     }>(
-      `SELECT id, canonical, content, 1 - (embedding <=> $1::vector) AS similarity
+      `SELECT id, canonical, content, root_id, version, 1 - (embedding <=> $1::vector) AS similarity
        FROM memory_objects
        WHERE owner_id = $2 AND status = 'active' AND embedding IS NOT NULL AND content_hash <> $3
        ORDER BY embedding <=> $1::vector
@@ -791,7 +933,14 @@ export class Memloom implements MemoryEngine {
       [toVectorLiteral(embedding), owner, hash, CANDIDATE_LIMIT],
     );
     return rows
-      .map((r) => ({ ...r, similarity: Number(r.similarity) }))
+      .map((r) => ({
+        id: r.id,
+        canonical: r.canonical,
+        content: r.content,
+        rootId: r.root_id,
+        version: Number(r.version),
+        similarity: Number(r.similarity),
+      }))
       .filter((r) => r.similarity >= CANDIDATE_THRESHOLD);
   }
 
