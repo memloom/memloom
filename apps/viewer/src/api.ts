@@ -129,6 +129,8 @@ export const api = {
   documents: () =>
     json<{ documents: ContextDocument[] }>("/context/documents").then((r) => r.documents),
   documentChunks: (id: string) => json<DocumentChunks>(`/context/documents/${id}/chunks`),
+  openDocument: (id: string) =>
+    json<{ ok: boolean }>(`/context/documents/${id}/open`, { method: "POST" }),
   removeDocument: (id: string) =>
     json<{ ok: boolean }>(`/context/documents/${id}`, { method: "DELETE" }),
   save: (input: { content: string; canonical?: string }) => post<SaveResult>("/memory/save", input),

@@ -322,6 +322,45 @@ describe("server", () => {
     expect(bad.status).toBe(400);
   });
 
+  it("open route launches the injected opener for known documents only", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+    });
+    await memloom.init();
+
+    const openedPaths: string[] = [];
+    const server = createServer(memloom, { openPath: (p) => openedPaths.push(p) });
+
+    const dir = mkdtempSync(join(tmpdir(), "memloom-open-"));
+    cleanups.push(async () => rmSync(dir, { recursive: true, force: true }));
+    const filePath = join(dir, "notes.md");
+    writeFileSync(filePath, "# Notes\nsome context");
+    const added = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: filePath }),
+    });
+    const { documentId } = (await added.json()) as { documentId: string };
+
+    const opened = await server.request(`/context/documents/${documentId}/open`, {
+      method: "POST",
+    });
+    expect(opened.status).toBe(200);
+    expect(openedPaths).toEqual([filePath]);
+
+    const missing = await server.request(
+      "/context/documents/00000000-0000-0000-0000-000000000001/open",
+      { method: "POST" },
+    );
+    expect(missing.status).toBe(404);
+    expect(openedPaths).toHaveLength(1); // nothing launched for the unknown id
+  });
+
   it("index then graph exposes entities", async () => {
     const server = await app();
     await server.request("/memory/save", {

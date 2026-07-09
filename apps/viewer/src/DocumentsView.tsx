@@ -88,6 +88,17 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
                 </button>
                 <button
                   type="button"
+                  className="btn"
+                  onClick={() =>
+                    api
+                      .openDocument(d.id)
+                      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+                  }
+                >
+                  Open file
+                </button>
+                <button
+                  type="button"
                   className={`btn btnDanger ${arming === d.id ? "btnDangerArmed" : ""}`}
                   disabled={busy === d.id}
                   onClick={() => remove(d.id)}

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
-import { api, type DocumentChunks, type Graph } from "./api";
+import { api, type ContextChunk, type DocumentChunks, type Graph } from "./api";
 
 // The memory graph, ported from a production canvas pixel-motif: memories draw as
 // SQUARES (sky), entities as CIRCLES (purple), context documents as DIAMONDS (emerald), so
@@ -98,7 +98,7 @@ export function GraphView({ graph }: { graph: Graph }) {
     neighbors: new Set(),
   });
 
-  const { data, neighborMap } = useMemo(() => {
+  const { data, neighborMap, chunkParent } = useMemo(() => {
     // Ignore expansions of documents that no longer exist (removed between refreshes).
     const docIds = new Set(graph.documents.map((d) => d.id));
     const openDocs = [...expanded].filter(([id]) => docIds.has(id));
@@ -160,7 +160,12 @@ export function GraphView({ graph }: { graph: Graph }) {
       neighbors.get(s)?.add(t);
       neighbors.get(t)?.add(s);
     }
-    return { data: { nodes, links }, neighborMap: neighbors };
+
+    // chunk id -> parent document id, for the side panel's breadcrumb.
+    const parents = new Map<string, string>();
+    for (const [docId, dc] of openDocs) for (const c of dc.chunks) parents.set(c.id, docId);
+
+    return { data: { nodes, links }, neighborMap: neighbors, chunkParent: parents };
   }, [graph, expanded]);
 
   useEffect(() => {
@@ -210,6 +215,22 @@ export function GraphView({ graph }: { graph: Graph }) {
         .catch(() => {}); // daemon hiccup — stay collapsed, next click retries
     },
     [expanded],
+  );
+
+  // Select a chunk from the side panel's list and pan the canvas to it (the force layout
+  // mutates node coords in place, so the live position is on the node object).
+  const selectChunk = useCallback(
+    (chunk: ContextChunk) => {
+      setSelected({
+        kind: "chunk",
+        title: chunk.headingPath ?? `#${chunk.chunkIndex + 1}`,
+        body: chunk.content,
+        id: chunk.id,
+      });
+      const node = data.nodes.find((n) => n.id === chunk.id);
+      if (node?.x != null && node.y != null) fgRef.current?.centerAt?.(node.x, node.y, 400);
+    },
+    [data],
   );
 
   const nodeCanvasObject = useCallback(
@@ -351,15 +372,62 @@ export function GraphView({ graph }: { graph: Graph }) {
       </div>
       {selected && (
         <aside className="sidePanel">
+          {(() => {
+            // Breadcrumb for chunks: "document › chunk", with the document clickable.
+            if (selected.kind !== "chunk") return null;
+            const parentId = chunkParent.get(selected.id);
+            const parent = graph.documents.find((d) => d.id === parentId);
+            if (!parent) return null;
+            return (
+              <div className="crumb">
+                <button
+                  type="button"
+                  className="crumbLink"
+                  onClick={() =>
+                    setSelected({
+                      kind: "document",
+                      title: parent.title,
+                      body: parent.path,
+                      id: parent.id,
+                    })
+                  }
+                >
+                  {parent.title}
+                </button>
+                <span>›</span>
+                <span className="crumbHere">{selected.title}</span>
+              </div>
+            );
+          })()}
           <div className="sidePanelKind" style={{ color: NODE_COLOR[selected.kind] }}>
             {selected.kind}
           </div>
           <h2 className="sidePanelTitle">{selected.title}</h2>
           <div className="sidePanelBody">{selected.body}</div>
           <div className="sidePanelMeta">id {selected.id}</div>
-          {selected.kind === "document" && (
-            <div className="sidePanelMeta">click the node to toggle its chunks</div>
-          )}
+          {selected.kind === "document" &&
+            (() => {
+              const dc = expanded.get(selected.id);
+              if (!dc) {
+                return <div className="sidePanelMeta">click the node to toggle its chunks</div>;
+              }
+              return (
+                <div className="sideChunkList">
+                  <div className="cardLabel">chunks · {dc.chunks.length}</div>
+                  {dc.chunks.map((c) => (
+                    <button
+                      type="button"
+                      key={c.id}
+                      className="sideChunkRow"
+                      onClick={() => selectChunk(c)}
+                    >
+                      {c.headingPath ?? `#${c.chunkIndex + 1}`}
+                      {c.page != null ? ` · p. ${c.page}` : ""}
+                    </button>
+                  ))}
+                </div>
+              );
+            })()}
         </aside>
       )}
     </>

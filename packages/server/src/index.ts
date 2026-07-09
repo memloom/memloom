@@ -1,3 +1,4 @@
+import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { serve as nodeServe } from "@hono/node-server";
@@ -25,6 +26,25 @@ export interface ServerOptions {
    * no API route claims are served from it, so the daemon is API + viewer on one port.
    */
   staticDir?: string;
+  /**
+   * Opens a file with the OS default application (the viewer's "Open file" button). Defaults
+   * to the platform opener; injectable so tests never actually launch anything.
+   */
+  openPath?: (path: string) => void;
+}
+
+// Fire-and-forget OS opener. The daemon runs on the file owner's machine, so "open" means
+// their own default app; the HTTP response never waits on it.
+function platformOpen(path: string): void {
+  const [cmd, args] =
+    process.platform === "win32"
+      ? ["explorer.exe", [path]]
+      : process.platform === "darwin"
+        ? ["open", [path]]
+        : ["xdg-open", [path]];
+  const child = spawn(cmd, args as string[], { detached: true, stdio: "ignore" });
+  child.on("error", () => {}); // opener missing — nothing useful to report back
+  child.unref();
 }
 
 const MIME: Record<string, string> = {
@@ -222,6 +242,17 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.get("/context/documents/:id/chunks", async (c) =>
     c.json(await memloom.contextChunks(c.req.param("id"))),
   );
+
+  // Open the source file with the OS default app. Only paths already ingested by the owner
+  // can be opened — the id lookup is the gate; no arbitrary path ever reaches the opener.
+  const openPath = opts.openPath ?? platformOpen;
+  app.post("/context/documents/:id/open", async (c) => {
+    const id = c.req.param("id");
+    const doc = (await memloom.contextList()).find((d) => d.id === id);
+    if (!doc) return c.json({ error: `no context document ${id}` }, 404);
+    openPath(doc.path);
+    return c.json({ ok: true });
+  });
 
   app.delete("/context/documents/:id", async (c) => {
     await memloom.contextRemove(c.req.param("id"));

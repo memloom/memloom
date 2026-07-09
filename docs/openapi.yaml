@@ -363,6 +363,33 @@ paths:
                         relation:
                           type: string
                           example: mention
+  /context/documents/{id}/open:
+    post:
+      summary: Open the source file on the daemon's machine
+      description: |
+        Opens the document's file with the OS default application (what the viewer's
+        "Open file" button calls). Only ingested documents can be opened — the id lookup is
+        the gate, so no arbitrary path ever reaches the opener.
+      operationId: openContextDocument
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The opener was launched.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+        "404":
+          description: No document with that id.
   /context/documents/{id}:
     delete:
       summary: Remove a context document
