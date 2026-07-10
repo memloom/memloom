@@ -39,8 +39,8 @@ export async function recallMemory(
         `- saved ${saved} UTC`,
         `- similarity ${(m.similarity ?? 0).toFixed(2)}`,
       ];
-      // Context chunks carry provenance — always show where the text came from.
       if (m.source) {
+        // Context chunks carry provenance — always show where the text came from.
         const where = [
           `- from ${m.source.title}`,
           m.source.headingPath ? `› ${m.source.headingPath}` : "",
@@ -49,8 +49,27 @@ export async function recallMemory(
           .filter(Boolean)
           .join(" ");
         lines.push(where);
+      } else {
+        // A saved memory — surface its id (and version, if edited) so memory_history can look
+        // up how it changed.
+        lines.push(`- id ${m.id}${m.version > 1 ? ` (v${m.version})` : ""}`);
       }
       return lines.join("\n");
+    })
+    .join("\n---\n");
+}
+
+export async function memoryHistory(
+  memloom: MemoryEngine,
+  args: { memoryId: string },
+): Promise<string> {
+  const versions = await memloom.history(args.memoryId);
+  if (versions.length === 0) return "No such memory.";
+  return versions
+    .map((v) => {
+      const when = new Date(v.assertedAt).toISOString().slice(0, 16).replace("T", " ");
+      const marker = v.status === "active" ? "current" : "superseded";
+      return `v${v.version} (${marker}, since ${when} UTC)\n- ${v.content}`;
     })
     .join("\n---\n");
 }

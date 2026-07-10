@@ -11,6 +11,9 @@ export interface Memory {
   memoryType: MemoryType | "context";
   canonical: string | null;
   content: string;
+  rootId: string;
+  version: number;
+  assertedAt: string;
   createdAt: string;
   similarity?: number;
   rrfScore?: number;
@@ -98,8 +101,15 @@ export interface Conflict {
 
 export interface SaveResult {
   id: string;
-  outcome: "added" | "merged" | "conflict";
+  outcome: "added" | "merged" | "conflict" | "versioned";
   conflictId?: string;
+  version?: number;
+}
+
+export interface UpdateResult {
+  id: string;
+  rootId: string;
+  version: number;
 }
 
 export type ResolveDecision =
@@ -136,6 +146,10 @@ export const api = {
   save: (input: { content: string; canonical?: string }) => post<SaveResult>("/memory/save", input),
   recall: (query: string, limit?: number) =>
     post<{ memories: Memory[] }>("/memory/query", { query, limit }).then((r) => r.memories),
+  update: (id: string, input: { content: string; canonical?: string }) =>
+    post<UpdateResult>(`/memory/${id}/update`, input),
+  history: (id: string) =>
+    json<{ versions: Memory[] }>(`/memory/${id}/history`).then((r) => r.versions),
   index: () => post<{ indexed: number; chunksIndexed: number }>("/memory/index"),
   conflicts: () => json<{ conflicts: Conflict[] }>("/memory/conflicts").then((r) => r.conflicts),
   resolve: (id: string, decision: ResolveDecision) =>

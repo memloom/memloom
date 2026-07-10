@@ -1,7 +1,13 @@
 import { MEMORY_TYPES, type MemoryEngine } from "@memloom/core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
-import { listConflicts, recallMemory, resolveConflict, saveMemory } from "./tools.js";
+import {
+  listConflicts,
+  memoryHistory,
+  recallMemory,
+  resolveConflict,
+  saveMemory,
+} from "./tools.js";
 
 // Wire the tool functions to the MCP protocol. Descriptions tell the calling agent when to
 // reach for each tool and how memloom behaves (dedup + human-in-the-loop conflicts).
@@ -32,6 +38,15 @@ export function buildServer(memloom: MemoryEngine): McpServer {
       "and section they came from. Only active (non-superseded) memories are returned.",
     { query: z.string(), limit: z.number().optional() },
     async (args) => ({ content: [{ type: "text", text: await recallMemory(memloom, args) }] }),
+  );
+
+  server.tool(
+    "memory_history",
+    "Show how a memory changed over time: its full version chain, newest first, with the " +
+      "current version and every superseded one. Pass the `id` shown by recall_memory. Read-only " +
+      "— editing memories is a human action in the viewer or CLI.",
+    { memoryId: z.string() },
+    async (args) => ({ content: [{ type: "text", text: await memoryHistory(memloom, args) }] }),
   );
 
   server.tool(

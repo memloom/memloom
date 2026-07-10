@@ -5,7 +5,13 @@ import {
   ScriptedLLMProvider,
 } from "@memloom/core";
 import { afterEach, describe, expect, it } from "vitest";
-import { listConflicts, recallMemory, resolveConflict, saveMemory } from "./tools.js";
+import {
+  listConflicts,
+  memoryHistory,
+  recallMemory,
+  resolveConflict,
+  saveMemory,
+} from "./tools.js";
 
 // The MCP tool functions are pure over a Memloom, so we test them directly (the stdio wiring
 // in server.ts/bin.ts is thin). Uses a scripted LLM for the conflict path.
@@ -62,6 +68,31 @@ describe("mcp tools", () => {
 
     const untitled = items.find((i) => !i.startsWith("staging DB engine")) as string;
     expect(untitled.startsWith("the staging database lives in Frankfurt")).toBe(true);
+  });
+
+  it("recall exposes a memory id, and memory_history returns the version chain", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const m = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: new ScriptedLLMProvider(() => "[]"),
+    });
+    await m.init();
+
+    const a = await saveMemory(m, { content: "the api runs on port 3000" });
+    const id = a.match(/Saved memory (\S+)\./)?.[1] as string;
+    const recalled = await recallMemory(m, { query: "api port" });
+    expect(recalled).toContain(`- id ${id}`);
+
+    // Edit into a new version (a human action; driven directly here).
+    await m.update({ id, content: "the api runs on port 4000" });
+    const hist = await memoryHistory(m, { memoryId: id });
+    const entries = hist.split("\n---\n");
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toContain("v2 (current");
+    expect(entries[0]).toContain("port 4000");
+    expect(entries[1]).toContain("v1 (superseded");
   });
 
   it("save_memory reports a conflict, list + resolve work", async () => {

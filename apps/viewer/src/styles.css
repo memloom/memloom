@@ -492,6 +492,10 @@ textarea {
   color: var(--warn);
 }
 
+.outcome-versioned {
+  color: var(--episode);
+}
+
 .recallItem {
   display: flex;
   flex-direction: column;
@@ -564,6 +568,81 @@ textarea {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   margin-right: 8px;
+}
+
+/* a memory's current version marker, and each row in its history */
+.versionTag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  border: 1px solid var(--border);
+  padding: 0 5px;
+  margin-left: 8px;
+}
+
+.editBox {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.editActions {
+  display: flex;
+  gap: 8px;
+}
+
+/* inline text actions in the meta row (edit · history) */
+.metaAction {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  background: none;
+  border: none;
+  padding: 0;
+  margin-left: 10px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.metaAction:hover {
+  color: var(--primary);
+}
+
+.historyList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding-left: 10px;
+  border-left: 1px solid var(--border-strong);
+}
+
+.historyRow {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  opacity: 0.6;
+}
+
+.historyRowCurrent {
+  opacity: 1;
+}
+
+.historyRow .versionTag {
+  margin-left: 0;
+  margin-right: 8px;
+}
+
+.historyMeta {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.historyContent {
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
 }
 
 .docHead {
