@@ -63,13 +63,18 @@ hash). If you actually want *every* re-assertion — even byte-identical — to 
 that's a one-line change (drop the exact-hash short-circuit for versioning), but it makes history
 noisy with non-changes. Default = the reworded reading. Flag if you want the other.
 
-## Surfaces (v1)
+## Surfaces (shipped)
 
-- Engine: `update(input)` and `history(memoryId)` added to `MemoryEngine`.
+Editing is a **human** action (viewer + CLI); agents get **read-only** history via MCP — decided
+with the owner ("people manually edit memories, not agents").
+
+- Engine: `update(input)` and `history(memoryId)` on `MemoryEngine`.
 - HTTP: `POST /memory/:id/update`, `GET /memory/:id/history`.
 - CLI: `memloom update <id> <text…>`, `memloom history <id>`.
-- Deferred (post-launch, noted): MCP `update`/`history` tools; viewer "history" drill-down on a
-  memory node; branching histories; a `rollback(versionId)` that promotes an old version to current.
+- MCP: read-only `memory_history` tool; `recall_memory` prints each memory's id so an agent can
+  reference it. **No agent edit tool** (editing stays human).
+- Viewer: `MemoriesView` per-memory "edit" (appends a version) + expandable version history.
+- Deferred: branching histories; a `rollback(versionId)` promoting an old version to current.
 
 ## Files
 
