@@ -84,7 +84,7 @@ registerExtractor({
 registerExtractor({
   kind: "txt",
   extensions: [".txt"],
-  version: 3,
+  version: 1,
   chunker: "outline",
   async extract(bytes) {
     return { units: [{ text: decodeText(bytes), page: null }] };
@@ -94,7 +94,7 @@ registerExtractor({
 registerExtractor({
   kind: "pdf",
   extensions: [".pdf"],
-  version: 3,
+  version: 1,
   chunker: "outline",
   async extract(bytes) {
     const { getDocumentProxy } = await import("unpdf");

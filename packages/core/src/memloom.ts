@@ -241,14 +241,9 @@ export class Memloom implements MemoryEngine {
     return await this.#storage.tx(async (tx) => {
       let documentId: string;
       if (prior) {
-        // memory_edges has no FK to chunks, so the cascade won't clean mention edges — do it
-        // here or the graph rollup keeps counting edges from deleted chunks.
-        await tx.query(
-          `DELETE FROM memory_edges
-           WHERE from_id IN (SELECT id FROM context_chunks WHERE document_id = $1)`,
-          [prior.id],
-        );
-        await tx.query("DELETE FROM context_chunks WHERE document_id = $1", [prior.id]);
+        // Replace the prior chunks (and their mention edges) before re-inserting — see
+        // #deleteDocumentChunks for why the edges can't ride a cascade.
+        await this.#deleteDocumentChunks(tx, prior.id, owner);
         await tx.query(
           `UPDATE context_documents
            SET title = $2, kind = $3, content_hash = $4, chunk_count = $5, updated_at = now()
@@ -368,17 +363,33 @@ export class Memloom implements MemoryEngine {
     };
   }
 
+  // The single guarantee for the no-FK invariant: memory_edges has no foreign key to
+  // context_chunks, so neither the document cascade nor a chunk delete ever cleans mention
+  // edges — every chunk removal must clear the edges by hand. Delete a document's chunks ONLY
+  // through here (mention edges first, then the chunks), so no call site has to remember it.
+  // Entities are intentionally left: they may be mentioned by other documents.
+  async #deleteDocumentChunks(
+    tx: StorageAdapter,
+    documentId: string,
+    owner: string,
+  ): Promise<void> {
+    await tx.query(
+      `DELETE FROM memory_edges
+       WHERE owner_id = $2 AND from_id IN (
+         SELECT id FROM context_chunks WHERE document_id = $1 AND owner_id = $2)`,
+      [documentId, owner],
+    );
+    await tx.query("DELETE FROM context_chunks WHERE document_id = $1 AND owner_id = $2", [
+      documentId,
+      owner,
+    ]);
+  }
+
   async contextRemove(documentId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
     await this.#storage.tx(async (tx) => {
-      // Mention edges first: no FK from memory_edges to chunks, so the document cascade
-      // would orphan them (entities stay — they may be mentioned elsewhere). Owner-scoped
-      // because this runs before the ownership check on the document itself.
-      await tx.query(
-        `DELETE FROM memory_edges
-         WHERE owner_id = $2 AND from_id IN (
-           SELECT id FROM context_chunks WHERE document_id = $1 AND owner_id = $2)`,
-        [documentId, ownerId],
-      );
+      // Chunks + their mention edges go together (owner-scoped: this runs before the ownership
+      // check on the document row itself). The document delete then removes only the doc row.
+      await this.#deleteDocumentChunks(tx, documentId, ownerId);
       const deleted = await tx.query<{ id: string }>(
         "DELETE FROM context_documents WHERE id = $1 AND owner_id = $2 RETURNING id",
         [documentId, ownerId],

@@ -69,7 +69,9 @@ describe("extractFile (pdf geometry)", () => {
     expect(text).toBe("hello world 1. DEFINICJA 1. Tekst punktu. 2. DEFINICJA 2. Dalszy tekst.");
   });
 
-  it("salts the content hash with the pipeline version for txt/pdf but not md", async () => {
+  it("built-in extractors ship at pipeline version 1, so they don't salt the content hash", async () => {
+    // The salt only kicks in for version > 1 (a pipeline bump forces re-ingest) — covered by
+    // the custom version-2 extractor below. At the launch baseline every built-in is unsalted.
     const pdfPath = join(dir, "salted.pdf");
     writeFileSync(pdfPath, makePdf([{ x: 72, y: 720, text: "content" }]));
     const txtPath = join(dir, "salted.txt");
@@ -77,8 +79,8 @@ describe("extractFile (pdf geometry)", () => {
     const mdPath = join(dir, "salted.md");
     writeFileSync(mdPath, "# content");
 
-    expect((await extractFile(pdfPath, hash)).contentHash).toMatch(/#p3$/);
-    expect((await extractFile(txtPath, hash)).contentHash).toMatch(/#p3$/);
+    expect((await extractFile(pdfPath, hash)).contentHash).not.toContain("#");
+    expect((await extractFile(txtPath, hash)).contentHash).not.toContain("#");
     expect((await extractFile(mdPath, hash)).contentHash).not.toContain("#");
   });
 

@@ -8,6 +8,7 @@ import type { EmbeddingProvider, LLMProvider } from "./providers.js";
 const FNV_OFFSET = 2166136261;
 const FNV_PRIME = 16777619;
 
+// classic, non-cryptographic hash function
 function fnv1a(token: string): number {
   let h = FNV_OFFSET;
   for (let i = 0; i < token.length; i++) {
