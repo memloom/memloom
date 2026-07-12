@@ -21,6 +21,26 @@
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
+/* Light theme: warm stone neutrals with brand-deep amber (DESIGN.md); data colors darken
+   one step for contrast on light surfaces. The graph canvas re-palettes in JS. */
+[data-theme="light"] {
+  --bg: #faf9f7;
+  --bg-raised: #ffffff;
+  --bg-inset: #f3f1ec;
+  --border: #e7e2d9;
+  --border-strong: #cfc8bb;
+  --text: #1c1917;
+  --text-muted: #57534e;
+  --text-faint: #a8a29e;
+  --brand: #d97706;
+  --brand-bright: #b45309;
+  --memory: #0284c7;
+  --entity: #9333ea;
+  --ok: #059669;
+  --lineage: #4f46e5;
+  --danger: #dc2626;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -109,6 +129,26 @@ button {
   line-height: 16px;
   color: #0b0f14;
   background: var(--danger);
+}
+
+.themeToggle {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  border: 1px solid var(--border-strong);
+  background: none;
+  color: var(--text-muted);
+  transition:
+    color 0.18s,
+    border-color 0.18s;
+}
+
+.themeToggle:hover {
+  color: var(--brand);
+  border-color: var(--brand);
 }
 
 .headerStats {

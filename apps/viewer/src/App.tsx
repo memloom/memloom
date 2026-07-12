@@ -5,6 +5,7 @@ import { ConsoleView } from "./ConsoleView";
 import { DocumentsView } from "./DocumentsView";
 import { GraphView } from "./GraphView";
 import { MemoriesView } from "./MemoriesView";
+import { ThemeToggle } from "./ThemeToggle";
 
 type Tab = "graph" | "memories" | "documents" | "conflicts" | "console";
 
@@ -74,6 +75,7 @@ export function App() {
             )
           )}
         </div>
+        <ThemeToggle />
       </header>
       <main className="main">
         {tab === "graph" &&

@@ -1,27 +1,71 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { api, type ContextChunk, type DocumentChunks, type Graph } from "./api";
+import { useTheme } from "./useTheme";
 
 // The memory graph, ported from a production canvas pixel-motif: memories draw as
 // SQUARES (sky), entities as CIRCLES (purple), context documents as DIAMONDS (emerald), so
 // node kind reads at a glance. Clicking a document expands it into its chunks — smaller
 // emerald SQUARES (content is square; only entities are circles) — swapping the rolled-up
 // document edges for the real chunk-level ones. Labels are monospace and fade in with zoom;
-// hovering highlights a node and its neighbors.
+// hovering highlights a node and its neighbors. Colors resolve per theme.
 
-const MEMORY_COLOR = "#38bdf8";
-const ENTITY_COLOR = "#c084fc";
-const DOCUMENT_COLOR = "#34d399";
-const CHUNK_COLOR = "#6ee7b7";
-const LINK_BASE = "rgba(148, 163, 184, 0.45)";
-const LINK_BY_RELATION: Record<string, string> = {
-  mentions: "rgba(192, 132, 252, 0.5)",
-  mention: "rgba(192, 132, 252, 0.5)",
-  // Version lineage is indigo — amber is reserved for chrome/identity (DESIGN.md).
-  replaces: "rgba(93, 103, 245, 0.65)",
-  distinct: "rgba(45, 212, 191, 0.5)",
-  chunk: "rgba(52, 211, 153, 0.45)",
+type Palette = Record<
+  | "memory"
+  | "entity"
+  | "document"
+  | "chunk"
+  | "linkBase"
+  | "mention"
+  | "replaces"
+  | "distinct"
+  | "chunkLink"
+  | "linkDim"
+  | "label"
+  | "selectedStroke",
+  string
+>;
+
+const PALETTES: Record<"dark" | "light", Palette> = {
+  dark: {
+    memory: "#38bdf8",
+    entity: "#c084fc",
+    document: "#34d399",
+    chunk: "#6ee7b7",
+    linkBase: "rgba(148, 163, 184, 0.45)",
+    mention: "rgba(192, 132, 252, 0.5)",
+    // Version lineage is indigo — amber is reserved for chrome/identity (DESIGN.md).
+    replaces: "rgba(93, 103, 245, 0.65)",
+    distinct: "rgba(45, 212, 191, 0.5)",
+    chunkLink: "rgba(52, 211, 153, 0.45)",
+    linkDim: "rgba(148, 163, 184, 0.08)",
+    label: "#e2e8f0",
+    selectedStroke: "rgba(255, 255, 255, 0.92)",
+  },
+  light: {
+    memory: "#0284c7",
+    entity: "#9333ea",
+    document: "#059669",
+    chunk: "#10b981",
+    linkBase: "rgba(120, 113, 108, 0.5)",
+    mention: "rgba(147, 51, 234, 0.45)",
+    replaces: "rgba(79, 70, 229, 0.7)",
+    distinct: "rgba(13, 148, 136, 0.55)",
+    chunkLink: "rgba(5, 150, 105, 0.4)",
+    linkDim: "rgba(120, 113, 108, 0.12)",
+    label: "#44403c",
+    selectedStroke: "rgba(28, 25, 23, 0.92)",
+  },
 };
+
+function relationColor(pal: Palette, relation: string): string {
+  if (relation === "mention" || relation === "mentions") return pal.mention;
+  if (relation === "replaces") return pal.replaces;
+  if (relation === "distinct") return pal.distinct;
+  if (relation === "chunk") return pal.chunkLink;
+  return pal.linkBase;
+}
+
 const LABEL_THRESHOLD = 0.9; // globalScale where labels start fading in
 const MIN_ZOOM = 0.14;
 const MAX_ZOOM = 8;
@@ -49,13 +93,6 @@ interface Link {
 }
 
 type Selected = { kind: NodeKind; title: string; body: string; id: string } | null;
-
-const NODE_COLOR: Record<NodeKind, string> = {
-  memory: MEMORY_COLOR,
-  entity: ENTITY_COLOR,
-  document: DOCUMENT_COLOR,
-  chunk: CHUNK_COLOR,
-};
 
 function endpointId(endpoint: string | Node): string {
   return typeof endpoint === "string" ? endpoint : endpoint.id;
@@ -88,6 +125,14 @@ function traceNode(
 
 export function GraphView({ graph }: { graph: Graph }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
+  const theme = useTheme();
+  const pal = PALETTES[theme];
+  // The canvas paint callbacks run every frame and read the palette through a ref, so a
+  // theme flip re-colors immediately without re-creating the callbacks.
+  const palRef = useRef<Palette>(pal);
+  useEffect(() => {
+    palRef.current = PALETTES[theme];
+  }, [theme]);
   // react-force-graph's methods surface (zoom, zoomToFit, ...) — kept loose on purpose.
   // biome-ignore lint/suspicious/noExplicitAny: untyped imperative handle from the lib
   const fgRef = useRef<any>(null);
@@ -226,6 +271,12 @@ export function GraphView({ graph }: { graph: Graph }) {
     if (!fg) return;
     fg.d3Force?.("charge")?.strength((n: Node) => (n.kind === "chunk" ? -8 : -30));
     fg.d3Force?.("link")?.distance((l: Link) => (l.relation === "chunk" ? 14 : 30));
+    // Kill d3's centering force. It translates EVERY node each tick so the layout's
+    // centroid stays at the canvas center — but pinned nodes (fx/fy) snap back, so the
+    // entire correction lands on the only free nodes (expanded chunks), which then
+    // migrate as a group away from their documents. Positions are seeded/pinned and
+    // zoomToFit frames the view, so nothing needs recentering.
+    fg.d3Force?.("center", null);
   }, []);
 
   const handleHover = useCallback(
@@ -286,7 +337,7 @@ export function GraphView({ graph }: { graph: Graph }) {
       const isSelected = selected?.id === node.id;
       const dim = hover.id !== null && !isFocused && !isNeighbor && !isSelected;
 
-      const color = NODE_COLOR[node.kind];
+      const color = palRef.current[node.kind];
       const radius = node.size * (isSelected ? 1.25 : isFocused ? 1.15 : 1);
       const nx = node.x ?? 0;
       const ny = node.y ?? 0;
@@ -299,7 +350,7 @@ export function GraphView({ graph }: { graph: Graph }) {
 
       if (isSelected) {
         ctx.lineWidth = 1.6;
-        ctx.strokeStyle = "rgba(255,255,255,0.92)";
+        ctx.strokeStyle = palRef.current.selectedStroke;
         traceNode(ctx, node.kind, nx, ny, radius);
         ctx.stroke();
       }
@@ -312,7 +363,7 @@ export function GraphView({ graph }: { graph: Graph }) {
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
         ctx.globalAlpha = isFocused || isSelected ? 1 : zoomAlpha * (dim ? 0.18 : 1);
-        ctx.fillStyle = "#e2e8f0";
+        ctx.fillStyle = palRef.current.label;
         ctx.fillText(label, nx, ny + radius + 4 / globalScale);
       }
       ctx.restore();
@@ -322,10 +373,10 @@ export function GraphView({ graph }: { graph: Graph }) {
 
   const linkColor = useCallback((link: Link) => {
     const hover = hoverRef.current;
-    const base = LINK_BY_RELATION[link.relation] ?? LINK_BASE;
+    const base = relationColor(palRef.current, link.relation);
     if (hover.id === null) return base;
     const touches = endpointId(link.source) === hover.id || endpointId(link.target) === hover.id;
-    return touches ? base : "rgba(148, 163, 184, 0.08)";
+    return touches ? base : palRef.current.linkDim;
   }, []);
 
   const applyZoom = useCallback((factor: number) => {
@@ -398,19 +449,19 @@ export function GraphView({ graph }: { graph: Graph }) {
         </div>
         <div className="legend">
           <div className="legendRow">
-            <span className="swatchSquare" style={{ background: MEMORY_COLOR }} />
+            <span className="swatchSquare" style={{ background: pal.memory }} />
             memory
           </div>
           <div className="legendRow">
-            <span className="swatchCircle" style={{ background: ENTITY_COLOR }} />
+            <span className="swatchCircle" style={{ background: pal.entity }} />
             entity
           </div>
           <div className="legendRow">
-            <span className="swatchDiamond" style={{ background: DOCUMENT_COLOR }} />
+            <span className="swatchDiamond" style={{ background: pal.document }} />
             document
           </div>
           <div className="legendRow">
-            <span className="swatchSquare swatchSmall" style={{ background: CHUNK_COLOR }} />
+            <span className="swatchSquare swatchSmall" style={{ background: pal.chunk }} />
             chunk
           </div>
         </div>
@@ -444,7 +495,7 @@ export function GraphView({ graph }: { graph: Graph }) {
               </div>
             );
           })()}
-          <div className="sidePanelKind" style={{ color: NODE_COLOR[selected.kind] }}>
+          <div className="sidePanelKind" style={{ color: pal[selected.kind] }}>
             {selected.kind}
           </div>
           <h2 className="sidePanelTitle">{selected.title}</h2>

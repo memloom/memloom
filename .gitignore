@@ -7,3 +7,4 @@ dist/
 
 # embedded viewer bundle (copied from apps/viewer/dist at build time)
 packages/cli/viewer/
+.gstack/
