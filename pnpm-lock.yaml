@@ -26,6 +26,9 @@ importers:
 
   apps/viewer:
     dependencies:
+      d3-force-3d:
+        specifier: ^3.0.6
+        version: 3.0.6
       lucide-react:
         specifier: ^1.24.0
         version: 1.24.0(react@19.2.7)

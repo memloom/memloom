@@ -199,12 +199,16 @@ button {
 .zoomButton {
   width: 30px;
   height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: none;
   border: none;
   color: var(--text-muted);
-  font-family: var(--mono);
-  font-size: 15px;
-  line-height: 1;
+}
+
+.zoomButtonActive {
+  color: var(--brand);
 }
 
 .zoomButton + .zoomButton {
@@ -214,6 +218,132 @@ button {
 .zoomButton:hover {
   color: var(--text);
   background: var(--bg-inset);
+}
+
+/* graph controls panel (native sliders) */
+.graphControlsPanel {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 232px;
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--bg-raised) 94%, transparent);
+}
+
+.graphControlsHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.graphControlsTitle {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.graphControlsActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.graphIconButton {
+  display: inline-flex;
+  align-items: center;
+  background: none;
+  border: none;
+  padding: 2px;
+  color: var(--text-muted);
+}
+
+.graphIconButton:hover {
+  color: var(--text);
+}
+
+.graphControlSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.graphControlSectionButton {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.graphControlSectionButton:hover {
+  color: var(--text);
+}
+
+.graphControlRows {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.graphControlRow {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.graphControlMeta {
+  display: flex;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.graphControlLabel {
+  color: var(--text-muted);
+}
+
+.graphControlValue {
+  color: var(--text-faint);
+}
+
+.graphControlRow input[type="range"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 2px;
+  background: var(--border-strong);
+  outline: none;
+  cursor: pointer;
+}
+
+.graphControlRow input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 10px;
+  height: 10px;
+  background: var(--brand);
+  border: none;
+}
+
+.graphControlRow input[type="range"]::-moz-range-thumb {
+  width: 10px;
+  height: 10px;
+  background: var(--brand);
+  border: none;
+  border-radius: 0;
 }
 
 .legend {
