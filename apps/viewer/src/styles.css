@@ -10,12 +10,13 @@
   --text: #e2e8f0;
   --text-muted: #94a3b8;
   --text-faint: #64748b;
-  --primary: #38bdf8; /* memory-node sky — doubles as the accent */
-  --entity: #c084fc; /* entity purple (circles) */
-  --warn: #f59e0b; /* replaces / conflict amber — also the preference type */
-  --ok: #34d399; /* documents / procedure type */
-  --episode: #5d67f5; /* episode type indigo (memory-type palette) */
-  --danger: #f87171;
+  --brand: #f59e0b; /* memloom amber — chrome + identity ONLY, never data (DESIGN.md) */
+  --brand-bright: #fbbf24; /* amber hover/emphasis on dark */
+  --memory: #38bdf8; /* memory-node sky (data) */
+  --entity: #c084fc; /* entity purple (circles, data) */
+  --ok: #34d399; /* documents / success */
+  --lineage: #5d67f5; /* version lineage indigo (replaces edges, versioned outcome) */
+  --danger: #f87171; /* errors AND conflicts — a contradiction is an alert */
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
@@ -71,7 +72,7 @@ button {
 }
 
 .wordmark span {
-  color: var(--primary);
+  color: var(--brand);
 }
 
 .tabs {
@@ -96,7 +97,7 @@ button {
 
 .tabActive {
   color: var(--text);
-  border-bottom-color: var(--primary);
+  border-bottom-color: var(--brand);
 }
 
 .tabBadge {
@@ -107,7 +108,7 @@ button {
   font-size: 11px;
   line-height: 16px;
   color: #0b0f14;
-  background: var(--warn);
+  background: var(--danger);
 }
 
 .headerStats {
@@ -390,11 +391,11 @@ button {
 }
 
 .statementNew {
-  border-left: 3px solid var(--primary);
+  border-left: 3px solid var(--memory);
 }
 
 .statementExisting {
-  border-left: 3px solid var(--warn);
+  border-left: 3px solid var(--danger);
 }
 
 .reason {
@@ -418,8 +419,8 @@ button {
 }
 
 .btn:hover:not(:disabled) {
-  border-color: var(--primary);
-  color: var(--primary);
+  border-color: var(--brand);
+  color: var(--brand);
 }
 
 .btn:disabled {
@@ -428,12 +429,13 @@ button {
 }
 
 .btnPrimary {
-  border-color: var(--primary);
-  color: var(--primary);
+  border-color: var(--brand);
+  color: var(--brand);
 }
 
 .btnPrimary:hover:not(:disabled) {
-  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  color: var(--brand-bright);
+  background: color-mix(in srgb, var(--brand) 12%, transparent);
 }
 
 .btnGhost {
@@ -456,7 +458,7 @@ textarea {
 input[type="text"]:focus,
 textarea:focus {
   outline: none;
-  border-color: var(--primary);
+  border-color: var(--brand);
 }
 
 textarea {
@@ -485,15 +487,15 @@ textarea {
 }
 
 .outcome-merged {
-  color: var(--primary);
+  color: var(--memory);
 }
 
 .outcome-conflict {
-  color: var(--warn);
+  color: var(--danger);
 }
 
 .outcome-versioned {
-  color: var(--episode);
+  color: var(--lineage);
 }
 
 .recallItem {
@@ -532,7 +534,7 @@ textarea {
 
 .simBarFill {
   height: 100%;
-  background: var(--primary);
+  background: var(--memory);
 }
 
 /* ---------- memories + documents tabs ---------- */
@@ -558,8 +560,8 @@ textarea {
 }
 
 .chipActive {
-  color: var(--primary);
-  border-color: var(--primary);
+  color: var(--brand);
+  border-color: var(--brand);
 }
 
 .typeTag {
@@ -606,7 +608,7 @@ textarea {
 }
 
 .metaAction:hover {
-  color: var(--primary);
+  color: var(--brand);
 }
 
 .historyList {

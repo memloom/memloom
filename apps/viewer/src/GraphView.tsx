@@ -17,7 +17,8 @@ const LINK_BASE = "rgba(148, 163, 184, 0.45)";
 const LINK_BY_RELATION: Record<string, string> = {
   mentions: "rgba(192, 132, 252, 0.5)",
   mention: "rgba(192, 132, 252, 0.5)",
-  replaces: "rgba(245, 158, 11, 0.6)",
+  // Version lineage is indigo — amber is reserved for chrome/identity (DESIGN.md).
+  replaces: "rgba(93, 103, 245, 0.65)",
   distinct: "rgba(45, 212, 191, 0.5)",
   chunk: "rgba(52, 211, 153, 0.45)",
 };
