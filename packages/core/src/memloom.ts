@@ -13,7 +13,16 @@ import {
   markStale,
   reactivate,
 } from "./resolve.js";
-import { EDGE_RELATIONS, ENTITY_TYPES, PREDICATES } from "./schema.js";
+import {
+  type ActiveSchema,
+  EDGE_RELATIONS,
+  ENTITY_TYPES,
+  normalizeSchemaName,
+  PREDICATES,
+  PROPOSAL_MIN_OCCURRENCES,
+  type SchemaEntry,
+  type SchemaKind,
+} from "./schema.js";
 import type { StorageAdapter } from "./storage.js";
 import type {
   Conflict,
@@ -594,6 +603,9 @@ export class Memloom implements MemoryEngine {
     onProgress?: (event: IndexProgressEvent) => void,
   ): Promise<IndexResult> {
     const snippet = (text: string) => (text.length > 64 ? `${text.slice(0, 61)}...` : text);
+    // The vocabulary is loaded ONCE per run (registry rows: system + user tiers, active),
+    // then injected into every extraction — one query, not one per item.
+    const schema = await this.#activeSchema(ownerId);
 
     const pending = await this.#storage.query<{ id: string; content: string }>(
       `SELECT id, content FROM memory_objects
@@ -604,7 +616,7 @@ export class Memloom implements MemoryEngine {
     let memoryPosition = 0;
     for (const memory of pending) {
       memoryPosition += 1;
-      const linked = await this.#linkGraph(ownerId, memory.id, memory.content);
+      const linked = await this.#linkGraph(ownerId, memory.id, memory.content, schema);
       await this.#storage.query("UPDATE memory_objects SET indexed_at = now() WHERE id = $1", [
         memory.id,
       ]);
@@ -641,7 +653,7 @@ export class Memloom implements MemoryEngine {
       const skipped = isMathDense(chunk.content);
       const linked = skipped
         ? { entities: [], relationships: 0 }
-        : await this.#linkGraph(ownerId, chunk.id, chunk.content, {
+        : await this.#linkGraph(ownerId, chunk.id, chunk.content, schema, {
             docTitle: chunk.doc_title,
           });
       await this.#storage.query("UPDATE context_chunks SET indexed_at = now() WHERE id = $1", [
@@ -702,10 +714,17 @@ export class Memloom implements MemoryEngine {
    * mention edges don't pollute the quarantine count.
    */
   async describeSchema(ownerId: string = SENTINEL_OWNER): Promise<{
-    entityTypes: { name: string; description: string; count: number }[];
+    entityTypes: (SchemaEntry & { count: number })[];
     relations: { name: string; description: string; count: number }[];
-    predicates: { name: string; description: string; count: number }[];
+    predicates: (SchemaEntry & { count: number })[];
+    proposals: SchemaEntry[];
   }> {
+    await this.#ensureSchemaSeed(ownerId);
+    const rows = await this.#storage.query<SchemaEntry & { created_at: string }>(
+      `SELECT id, kind, name, description, tier, status, occurrences, created_at
+       FROM memory_schema WHERE owner_id = $1 ORDER BY created_at`,
+      [ownerId],
+    );
     const typeCounts = await this.#storage.query<{ entity_type: string; n: number }>(
       "SELECT entity_type, count(*)::int AS n FROM memory_entities WHERE owner_id = $1 GROUP BY entity_type",
       [ownerId],
@@ -725,22 +744,39 @@ export class Memloom implements MemoryEngine {
     const byType = new Map(typeCounts.map((r) => [r.entity_type, Number(r.n)]));
     const byRelation = new Map(relationCounts.map((r) => [r.relation, Number(r.n)]));
     const byPredicate = new Map(predicateCounts.map((r) => [r.relation, Number(r.n)]));
+
+    const entry = (r: SchemaEntry): SchemaEntry => ({
+      id: r.id,
+      kind: r.kind,
+      name: r.name,
+      description: r.description,
+      tier: r.tier,
+      status: r.status,
+      occurrences: Number(r.occurrences),
+    });
+    const vocab = rows.filter((r) => r.tier !== "proposed" && r.status !== "dismissed");
     return {
-      entityTypes: ENTITY_TYPES.map((t) => ({
-        name: t.name,
-        description: t.description,
-        count: byType.get(t.name) ?? 0,
-      })),
+      entityTypes: vocab
+        .filter((r) => r.kind === "entity_type")
+        .map((r) => ({ ...entry(r), count: byType.get(r.name) ?? 0 })),
+      // Edge relations are engine mechanics, not registry rows — reported from code.
       relations: EDGE_RELATIONS.map((r) => ({
         name: r.name,
         description: r.description,
         count: r.virtual ? 0 : (byRelation.get(r.name) ?? 0),
       })),
-      predicates: PREDICATES.map((p) => ({
-        name: p.name,
-        description: p.description,
-        count: byPredicate.get(p.name) ?? 0,
-      })),
+      predicates: vocab
+        .filter((r) => r.kind === "predicate")
+        .map((r) => ({ ...entry(r), count: byPredicate.get(r.name) ?? 0 })),
+      // The review queue: suggested often enough, not yet approved or dismissed.
+      proposals: rows
+        .filter(
+          (r) =>
+            r.tier === "proposed" &&
+            r.status === "active" &&
+            Number(r.occurrences) >= PROPOSAL_MIN_OCCURRENCES,
+        )
+        .map(entry),
     };
   }
 
@@ -1063,9 +1099,10 @@ export class Memloom implements MemoryEngine {
     owner: string,
     sourceId: string,
     content: string,
+    schema: ActiveSchema,
     context?: ExtractionContext,
   ): Promise<{ entities: string[]; relationships: number }> {
-    const extraction = await extractGraph(this.#llm, content, context);
+    const extraction = await extractGraph(this.#llm, content, context, schema);
     const idByName = new Map<string, string>();
     for (const entity of extraction.entities) {
       const entityId = await this.#resolveEntity(owner, entity.name, entity.type);
@@ -1083,7 +1120,131 @@ export class Memloom implements MemoryEngine {
       });
       stored += 1;
     }
+    // Vocabulary the model wanted but the schema lacks: accumulate occurrences; the
+    // review queue surfaces a name once enough independent extractions ask for it.
+    for (const proposal of extraction.proposals) {
+      await this.#recordProposal(owner, proposal.kind, proposal.name);
+    }
     return { entities: extraction.entities.map((e) => e.name), relationships: stored };
+  }
+
+  // --- schema registry ---
+
+  // Seed the system tier for this owner (idempotent). Lazy, so new owners and upgraded
+  // engines converge without data migrations; user rows and proposals are never touched.
+  async #ensureSchemaSeed(owner: string): Promise<void> {
+    for (const t of ENTITY_TYPES) {
+      await this.#storage.query(
+        `INSERT INTO memory_schema (owner_id, kind, name, description, tier, status)
+         VALUES ($1, 'entity_type', $2, $3, 'system', 'active')
+         ON CONFLICT (owner_id, kind, name) DO NOTHING`,
+        [owner, t.name, t.description],
+      );
+    }
+    for (const p of PREDICATES) {
+      await this.#storage.query(
+        `INSERT INTO memory_schema (owner_id, kind, name, description, tier, status)
+         VALUES ($1, 'predicate', $2, $3, 'system', 'active')
+         ON CONFLICT (owner_id, kind, name) DO NOTHING`,
+        [owner, p.name, p.description],
+      );
+    }
+  }
+
+  // The vocabulary an extraction run works against: active system + user rows, plus the
+  // dismissed names the prompt must never re-propose.
+  async #activeSchema(owner: string): Promise<ActiveSchema> {
+    await this.#ensureSchemaSeed(owner);
+    const rows = await this.#storage.query<{
+      kind: SchemaKind;
+      name: string;
+      description: string;
+      status: string;
+      tier: string;
+    }>(
+      `SELECT kind, name, description, status, tier FROM memory_schema
+       WHERE owner_id = $1 ORDER BY created_at`,
+      [owner],
+    );
+    const active = rows.filter((r) => r.status === "active" && r.tier !== "proposed");
+    return {
+      entityTypes: active
+        .filter((r) => r.kind === "entity_type")
+        .map((r) => ({ name: r.name, description: r.description })),
+      predicates: active
+        .filter((r) => r.kind === "predicate")
+        .map((r) => ({ name: r.name, description: r.description })),
+      dismissed: rows.filter((r) => r.status === "dismissed").map((r) => r.name),
+    };
+  }
+
+  async #recordProposal(owner: string, kind: SchemaKind, name: string): Promise<void> {
+    // Dismissed and existing names never re-enter the queue (the unique index holds the
+    // line; occurrences only grow while the row stays a proposal).
+    await this.#storage.query(
+      `INSERT INTO memory_schema (owner_id, kind, name, tier, status, occurrences)
+       VALUES ($1, $2, $3, 'proposed', 'active', 1)
+       ON CONFLICT (owner_id, kind, name)
+       DO UPDATE SET occurrences = memory_schema.occurrences + 1
+         WHERE memory_schema.tier = 'proposed' AND memory_schema.status = 'active'`,
+      [owner, kind, name],
+    );
+  }
+
+  /** Add a user-tier vocabulary entry. Name is normalized to snake_case. */
+  async addSchemaEntry(
+    kind: SchemaKind,
+    name: string,
+    description: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<SchemaEntry> {
+    await this.#ensureSchemaSeed(ownerId);
+    const normalized = normalizeSchemaName(name);
+    if (!normalized) throw new Error("memloom: schema entry needs a usable name");
+    const [row] = await this.#storage.query<SchemaEntry>(
+      `INSERT INTO memory_schema (owner_id, kind, name, description, tier, status)
+       VALUES ($1, $2, $3, $4, 'user', 'active')
+       ON CONFLICT (owner_id, kind, name)
+       DO UPDATE SET description = EXCLUDED.description, tier = 'user', status = 'active'
+       RETURNING id, kind, name, description, tier, status, occurrences`,
+      [ownerId, kind, normalized, description],
+    );
+    if (!row) throw new Error("memloom: failed to add schema entry");
+    return row;
+  }
+
+  /** Promote a proposal to the user tier — the extractor starts using it next run. */
+  async approveProposal(id: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    const updated = await this.#storage.query<{ id: string }>(
+      `UPDATE memory_schema SET tier = 'user', status = 'active'
+       WHERE id = $1 AND owner_id = $2 AND tier = 'proposed' RETURNING id`,
+      [id, ownerId],
+    );
+    if (updated.length === 0) throw new Error(`memloom: no pending proposal ${id}`);
+  }
+
+  /** Reject a proposal — the name is blocklisted from re-proposal in the prompt. */
+  async dismissProposal(id: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    const updated = await this.#storage.query<{ id: string }>(
+      `UPDATE memory_schema SET status = 'dismissed'
+       WHERE id = $1 AND owner_id = $2 AND tier = 'proposed' RETURNING id`,
+      [id, ownerId],
+    );
+    if (updated.length === 0) throw new Error(`memloom: no pending proposal ${id}`);
+  }
+
+  /** Enable or disable a vocabulary entry (system or user tier). */
+  async setSchemaStatus(
+    id: string,
+    status: "active" | "disabled",
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<void> {
+    const updated = await this.#storage.query<{ id: string }>(
+      `UPDATE memory_schema SET status = $3
+       WHERE id = $1 AND owner_id = $2 AND tier <> 'proposed' RETURNING id`,
+      [id, ownerId, status],
+    );
+    if (updated.length === 0) throw new Error(`memloom: no schema entry ${id}`);
   }
 
   async #resolveEntity(owner: string, name: string, type: string): Promise<string> {

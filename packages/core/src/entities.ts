@@ -1,16 +1,18 @@
 import type { LLMProvider } from "./providers.js";
 import {
-  ENTITY_TYPE_NAMES,
-  ENTITY_TYPES,
+  type ActiveSchema,
+  DEFAULT_ACTIVE_SCHEMA,
   MIN_RELATIONSHIP_CONFIDENCE,
-  PREDICATE_NAMES,
-  PREDICATES,
+  normalizeSchemaName,
+  type SchemaKind,
 } from "./schema.js";
 
 // Graph extraction: entities AND typed relationships in one LLM call, constrained by the
-// closed schema (schema.ts) at BOTH ends — the prompt renders the vocabularies, and
-// parseExtraction enforces them because the prompt is not trusted. Precision first: a
-// clean graph of real things beats a complete one full of noise.
+// ACTIVE schema (the registry rows, defaulting to the system tier) at BOTH ends — the
+// prompt renders the vocabularies, and parseExtraction enforces them because the prompt
+// is not trusted. Precision first: a clean graph of real things beats a complete one
+// full of noise. Unknown-but-clean names become PROPOSALS for the review queue instead
+// of graph rows.
 
 export interface ExtractedEntity {
   name: string;
@@ -24,9 +26,16 @@ export interface ExtractedRelationship {
   object: string;
 }
 
+export interface SchemaProposal {
+  kind: SchemaKind;
+  name: string;
+}
+
 export interface Extraction {
   entities: ExtractedEntity[];
   relationships: ExtractedRelationship[];
+  /** Vocabulary names the model wanted but the schema lacks — review-queue input. */
+  proposals: SchemaProposal[];
 }
 
 export interface ExtractionContext {
@@ -47,17 +56,23 @@ const DIGIT_OP_DIGIT = /\d\s*[+\-*/·×:^]\s*\d/;
 const FUNC_CALL = /\b[a-zA-Z]['′]?\s*\([^)]*\)/;
 const LETTER = /\p{L}/gu; // Unicode letters — Ł, ż, ó all count
 
-export function buildEntityPrompt(content: string, context: ExtractionContext = {}): string {
-  const typeLines = ENTITY_TYPES.map((t) => `- ${t.name}: ${t.description}`).join("\n");
-  const predicateLines = PREDICATES.map((p) => `- ${p.name}: ${p.description}`).join("\n");
+export function buildEntityPrompt(
+  content: string,
+  context: ExtractionContext = {},
+  schema: ActiveSchema = DEFAULT_ACTIVE_SCHEMA,
+): string {
+  const typeLines = schema.entityTypes.map((t) => `- ${t.name}: ${t.description}`).join("\n");
+  const predicateLines = schema.predicates.map((p) => `- ${p.name}: ${p.description}`).join("\n");
   return [
     "You extract a knowledge graph from one text for a personal memory system. PRECISION FIRST.",
     "Extract only SIGNAL: named, reusable things worth linking across MANY memories.",
     "When in doubt, do NOT extract. Empty arrays are a good answer.",
     "",
-    "ALLOWED ENTITY TYPES (anything else is discarded):",
+    "ALLOWED ENTITY TYPES:",
     typeLines,
     '"concept" is a LAST RESORT.',
+    "If a clearly reusable category is missing, you may use a NEW short snake_case type —",
+    "the entity is then held for the user's review instead of entering the graph. Rare.",
     "",
     "DO NOT EXTRACT:",
     '- mathematical expressions, formulas, or equations ("y = x^3 - 2x^2", "a + 2a = 6")',
@@ -69,9 +84,14 @@ export function buildEntityPrompt(content: string, context: ExtractionContext = 
     "ONE ENTITY = ONE THING. Use the canonical name. At most 5 entities, the most salient only.",
     "",
     "RELATIONSHIPS: only ones the text ACTUALLY STATES, between names in your entities array.",
-    "ALLOWED PREDICATES (anything else is discarded):",
+    "ALLOWED PREDICATES:",
     predicateLines,
-    "confidence is 0..1: how explicitly the text states it.",
+    "confidence is 0..1: how explicitly the text states it. If no predicate fits, you may",
+    "supply a NEW short snake_case name — the link is stored as a plain mention and the",
+    "name is proposed for the user's review. Propose sparingly.",
+    ...(schema.dismissed.length > 0
+      ? [`NEVER propose these rejected names: ${schema.dismissed.join(", ")}.`]
+      : []),
     "",
     'GOOD: {"entities":[{"name":"Ada Lovelace","type":"person"},{"name":"Analytical Engine","type":"project"}],',
     '       "relationships":[{"subject":"Ada Lovelace","predicate":"works_on","confidence":0.95,"object":"Analytical Engine"}]}',
@@ -98,10 +118,19 @@ function sliceJson(raw: string, open: string, close: string): unknown {
   }
 }
 
-// The deterministic validation layer. Entities: drop, never coerce (precision first).
+// The deterministic validation layer. Entities: drop, never coerce (precision first) —
+// but a CLEAN name with an unknown type becomes a schema proposal instead of a graph row.
 // Relationships: coerce to 'mention' when the predicate is out-of-vocab or under-confident
-// (quarantine semantics), drop when the endpoints aren't surviving entities.
-export function parseExtraction(raw: string): Extraction {
+// (quarantine semantics; confident unknown predicates are proposed), drop when the
+// endpoints aren't surviving entities.
+export function parseExtraction(
+  raw: string,
+  schema: ActiveSchema = DEFAULT_ACTIVE_SCHEMA,
+): Extraction {
+  const typeNames = new Set(schema.entityTypes.map((t) => t.name));
+  const predicateNames = new Set(schema.predicates.map((p) => p.name));
+  const dismissed = new Set(schema.dismissed);
+
   let entitiesRaw: unknown[] = [];
   let relationshipsRaw: unknown[] = [];
 
@@ -110,9 +139,7 @@ export function parseExtraction(raw: string): Extraction {
   // the legacy shape (a bare entities array).
   const obj = sliceJson(raw, "{", "}");
   const rec =
-    obj && typeof obj === "object" && !Array.isArray(obj)
-      ? (obj as Record<string, unknown>)
-      : null;
+    obj && typeof obj === "object" && !Array.isArray(obj) ? (obj as Record<string, unknown>) : null;
   if (rec && (Array.isArray(rec.entities) || Array.isArray(rec.relationships))) {
     if (Array.isArray(rec.entities)) entitiesRaw = rec.entities;
     if (Array.isArray(rec.relationships)) relationshipsRaw = rec.relationships;
@@ -121,6 +148,17 @@ export function parseExtraction(raw: string): Extraction {
     if (Array.isArray(arr)) entitiesRaw = arr;
   }
 
+  const proposals: SchemaProposal[] = [];
+  const proposed = new Set<string>();
+  const propose = (kind: SchemaKind, rawName: string) => {
+    const name = normalizeSchemaName(rawName);
+    if (!name || name === "mention" || dismissed.has(name)) return;
+    const key = `${kind}:${name}`;
+    if (proposed.has(key)) return;
+    proposed.add(key);
+    proposals.push({ kind, name });
+  };
+
   const entities: ExtractedEntity[] = [];
   const seen = new Set<string>();
   for (const item of entitiesRaw) {
@@ -128,13 +166,18 @@ export function parseExtraction(raw: string): Extraction {
     const rec = item as Record<string, unknown>;
     const name = String(rec.name ?? "").trim();
     if (!name) continue;
-    const type = String(rec.type ?? "")
-      .trim()
-      .toLowerCase();
-    if (!ENTITY_TYPE_NAMES.has(type)) continue; // no default sink — unknown type = drop
+    // Name guards first: a garbage name must never generate a type proposal either.
     if (MATH_SYMBOLS.test(name) || DIGIT_OP_DIGIT.test(name) || FUNC_CALL.test(name)) continue;
     if (name.length > MAX_NAME_LENGTH || name.split(/\s+/).length > MAX_NAME_WORDS) continue;
     if ((name.match(LETTER) ?? []).length < 2) continue;
+    const type = String(rec.type ?? "")
+      .trim()
+      .toLowerCase();
+    if (!typeNames.has(type)) {
+      // No default sink — the entity is held out of the graph, its type goes to review.
+      if (type) propose("entity_type", type);
+      continue;
+    }
     const key = `${name.toLowerCase()} ${type}`;
     if (seen.has(key)) continue;
     seen.add(key);
@@ -159,7 +202,15 @@ export function parseExtraction(raw: string): Extraction {
       .toLowerCase();
     const rawConfidence = Number(rec.confidence);
     const confidence = Number.isFinite(rawConfidence) ? Math.max(0, Math.min(1, rawConfidence)) : 0;
-    if (!PREDICATE_NAMES.has(predicate) || confidence < MIN_RELATIONSHIP_CONFIDENCE) {
+    if (!predicateNames.has(predicate) || confidence < MIN_RELATIONSHIP_CONFIDENCE) {
+      // A CONFIDENT classification against a missing predicate is vocabulary signal.
+      if (
+        predicate &&
+        !predicateNames.has(predicate) &&
+        confidence >= MIN_RELATIONSHIP_CONFIDENCE
+      ) {
+        propose("predicate", predicate);
+      }
       predicate = "mention"; // quarantine: keep the connection, drop the unproven claim
     }
     const key = `${subject.toLowerCase()}|${predicate}|${object.toLowerCase()}`;
@@ -169,16 +220,17 @@ export function parseExtraction(raw: string): Extraction {
     if (relationships.length >= MAX_RELATIONSHIPS) break;
   }
 
-  return { entities: kept, relationships };
+  return { entities: kept, relationships, proposals };
 }
 
 export async function extractGraph(
   llm: LLMProvider,
   content: string,
   context: ExtractionContext = {},
+  schema: ActiveSchema = DEFAULT_ACTIVE_SCHEMA,
 ): Promise<Extraction> {
-  const raw = await llm.complete(buildEntityPrompt(content, context));
-  return parseExtraction(raw);
+  const raw = await llm.complete(buildEntityPrompt(content, context, schema));
+  return parseExtraction(raw, schema);
 }
 
 // Math-density pre-filter: exercise-sheet chunks are formula-and-enumeration soup

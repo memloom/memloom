@@ -176,6 +176,76 @@ describe("parseExtraction — relationship guards", () => {
   });
 });
 
+describe("parseExtraction — schema proposals", () => {
+  it("a clean name with an unknown type is held out and its type proposed", () => {
+    const out = parseExtraction(
+      extraction([
+        { name: "Ibuprofen", type: "Medication" },
+        { name: "x + 2x = 6", type: "equation" }, // garbage name: no proposal either
+      ]),
+    );
+    expect(out.entities).toEqual([]);
+    expect(out.proposals).toEqual([{ kind: "entity_type", name: "medication" }]);
+  });
+
+  it("a confident unknown predicate is quarantined AND proposed; a weak one is not", () => {
+    const pair = [
+      { name: "Ada Lovelace", type: "person" },
+      { name: "Analytical Engine", type: "project" },
+    ];
+    const out = parseExtraction(
+      extraction(pair, [
+        {
+          subject: "Ada Lovelace",
+          predicate: "invented",
+          confidence: 0.95,
+          object: "Analytical Engine",
+        },
+        {
+          subject: "Analytical Engine",
+          predicate: "sketched_by",
+          confidence: 0.3,
+          object: "Ada Lovelace",
+        },
+      ]),
+    );
+    expect(out.relationships.map((r) => r.predicate)).toEqual(["mention", "mention"]);
+    expect(out.proposals).toEqual([{ kind: "predicate", name: "invented" }]);
+  });
+
+  it("dismissed names are never re-proposed", () => {
+    const schema = {
+      ...structuredClone({
+        entityTypes: [{ name: "person", description: "" }],
+        predicates: [{ name: "works_on", description: "" }],
+      }),
+      dismissed: ["medication"],
+    };
+    const out = parseExtraction(extraction([{ name: "Ibuprofen", type: "medication" }]), schema);
+    expect(out.proposals).toEqual([]);
+  });
+
+  it("an injected custom schema is honored end to end", () => {
+    const schema = {
+      entityTypes: [{ name: "medication", description: "a named drug" }],
+      predicates: [{ name: "treats", description: "drug treats condition" }],
+      dismissed: [],
+    };
+    const out = parseExtraction(
+      extraction(
+        [
+          { name: "Ibuprofen", type: "medication" },
+          { name: "Migrena", type: "medication" },
+        ],
+        [{ subject: "Ibuprofen", predicate: "treats", confidence: 0.9, object: "Migrena" }],
+      ),
+      schema,
+    );
+    expect(out.entities).toHaveLength(2);
+    expect(out.relationships[0]?.predicate).toBe("treats");
+  });
+});
+
 describe("math density pre-filter", () => {
   it("prose is not math-dense, in any language", () => {
     const polish =

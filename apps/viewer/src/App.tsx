@@ -5,21 +5,24 @@ import { ConsoleView } from "./ConsoleView";
 import { DocumentsView } from "./DocumentsView";
 import { GraphView } from "./GraphView";
 import { MemoriesView } from "./MemoriesView";
+import { SchemaView } from "./SchemaView";
 import { ThemeToggle } from "./ThemeToggle";
 
-type Tab = "graph" | "memories" | "documents" | "conflicts" | "console";
+type Tab = "graph" | "memories" | "documents" | "schema" | "conflicts" | "console";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("graph");
   const [graph, setGraph] = useState<Graph | null>(null);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
+  const [proposalCount, setProposalCount] = useState(0);
   const [daemonDown, setDaemonDown] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
-      const [g, c] = await Promise.all([api.graph(), api.conflicts()]);
+      const [g, c, s] = await Promise.all([api.graph(), api.conflicts(), api.schema()]);
       setGraph(g);
       setConflicts(c);
+      setProposalCount(s.proposals.length);
       setDaemonDown(false);
     } catch {
       setDaemonDown(true);
@@ -39,19 +42,24 @@ export function App() {
           mem<span>loom</span>
         </div>
         <nav className="tabs">
-          {(["graph", "memories", "documents", "conflicts", "console"] as const).map((t) => (
-            <button
-              key={t}
-              type="button"
-              className={`tab ${tab === t ? "tabActive" : ""}`}
-              onClick={() => setTab(t)}
-            >
-              {t}
-              {t === "conflicts" && conflicts.length > 0 && (
-                <span className="tabBadge">{conflicts.length}</span>
-              )}
-            </button>
-          ))}
+          {(["graph", "memories", "documents", "schema", "conflicts", "console"] as const).map(
+            (t) => (
+              <button
+                key={t}
+                type="button"
+                className={`tab ${tab === t ? "tabActive" : ""}`}
+                onClick={() => setTab(t)}
+              >
+                {t}
+                {t === "conflicts" && conflicts.length > 0 && (
+                  <span className="tabBadge">{conflicts.length}</span>
+                )}
+                {t === "schema" && proposalCount > 0 && (
+                  <span className="tabBadge">{proposalCount}</span>
+                )}
+              </button>
+            ),
+          )}
         </nav>
         <div className="headerStats">
           {daemonDown ? (
@@ -82,6 +90,7 @@ export function App() {
           (graph ? <GraphView graph={graph} /> : <div className="emptyState">loading…</div>)}
         {tab === "memories" && <MemoriesView />}
         {tab === "documents" && <DocumentsView onChanged={refresh} />}
+        {tab === "schema" && <SchemaView onChanged={refresh} />}
         {tab === "conflicts" && <ConflictsView conflicts={conflicts} onChanged={refresh} />}
         {tab === "console" && (
           <ConsoleView onChanged={refresh} goToConflicts={() => setTab("conflicts")} />

@@ -355,6 +355,92 @@ describe("entities + indexer", () => {
     expect(await m.index()).toEqual({ indexed: 0, chunksIndexed: 0 });
   });
 
+  it("proposal lifecycle: suggest twice, review, approve, extract with the new type", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const rel = new ScriptedLLMProvider((prompt) => {
+      if (prompt.includes("ibuprofen")) {
+        return JSON.stringify({
+          entities: [{ name: "Ibuprofen", type: "medication" }],
+          relationships: [],
+        });
+      }
+      return JSON.stringify({ entities: [], relationships: [] });
+    });
+    const m = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: rel,
+      dedup: false,
+    });
+    await m.init();
+
+    // Two independent extractions want "medication" -> it crosses the surfacing floor.
+    await m.save({ content: "took ibuprofen for the headache" });
+    await m.save({ content: "ibuprofen twice a day after meals" });
+    await m.index();
+
+    // Held out of the graph, queued for review.
+    expect((await m.graph()).entities).toHaveLength(0);
+    let schema = await m.describeSchema();
+    const proposal = schema.proposals.find((p) => p.name === "medication");
+    expect(proposal).toBeDefined();
+    expect(proposal?.kind).toBe("entity_type");
+    expect(proposal?.occurrences).toBe(2);
+
+    // Approve, re-index from scratch: the entity now enters the graph.
+    await m.approveProposal(proposal?.id ?? "");
+    await m.reindex();
+    expect((await m.graph()).entities.map((e) => e.name)).toEqual(["Ibuprofen"]);
+    schema = await m.describeSchema();
+    expect(schema.proposals).toHaveLength(0);
+    expect(schema.entityTypes.find((t) => t.name === "medication")?.tier).toBe("user");
+  });
+
+  it("dismissed proposals are blocklisted in the prompt", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const prompts: string[] = [];
+    const rel = new ScriptedLLMProvider((prompt) => {
+      prompts.push(prompt);
+      if (prompt.includes("ibuprofen")) {
+        return JSON.stringify({
+          entities: [{ name: "Ibuprofen", type: "medication" }],
+          relationships: [],
+        });
+      }
+      return JSON.stringify({ entities: [], relationships: [] });
+    });
+    const m = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: rel,
+      dedup: false,
+    });
+    await m.init();
+
+    await m.save({ content: "took ibuprofen for the headache" });
+    await m.save({ content: "ibuprofen twice a day after meals" });
+    await m.index();
+    const proposal = (await m.describeSchema()).proposals.find((p) => p.name === "medication");
+    await m.dismissProposal(proposal?.id ?? "");
+
+    // The next extraction run renders the blocklist and never re-queues the name.
+    await m.save({ content: "more ibuprofen notes" });
+    await m.index();
+    expect(prompts.at(-1)).toContain("NEVER propose these rejected names: medication");
+    expect((await m.describeSchema()).proposals).toHaveLength(0);
+  });
+
+  it("user-added schema entries reach the prompt", async () => {
+    const m = await fresh();
+    await m.addSchemaEntry("entity_type", "Medication", "a named drug");
+    const schema = await m.describeSchema();
+    const entry = schema.entityTypes.find((t) => t.name === "medication");
+    expect(entry?.tier).toBe("user");
+    expect(entry?.description).toBe("a named drug");
+  });
+
   it("re-adding a changed file drops stale chunk edges until re-indexed", async () => {
     const m = await fresh();
     const path = join(tempDir(), "notes.md");

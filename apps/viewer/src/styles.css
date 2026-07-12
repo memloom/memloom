@@ -743,6 +743,63 @@ textarea {
   color: var(--text);
 }
 
+/* schema registry rows (Schema tab) */
+.schemaRow {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+
+.schemaRowDisabled {
+  opacity: 0.45;
+}
+
+.schemaRowHead {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.schemaRowHead .docMeta {
+  margin-left: auto;
+}
+
+.schemaRowBody {
+  color: var(--text-muted);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.tierTag {
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--brand);
+  border: 1px solid var(--brand);
+  padding: 0 5px;
+}
+
+.schemaHint {
+  color: var(--text-faint);
+  font-size: 12.5px;
+  margin: 0;
+  line-height: 1.5;
+}
+
+.schemaKindSelect {
+  background: var(--bg-inset);
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  font: inherit;
+  padding: 8px 10px;
+  flex: none;
+}
+
 /* a memory's current version marker, and each row in its history */
 .versionTag {
   font-family: var(--mono);

@@ -39,21 +39,30 @@ export { PgAdapter } from "./pg-adapter.js";
 // Storage adapters
 export { PgliteAdapter } from "./pglite-adapter.js";
 export type { EmbeddingProvider, LLMProvider } from "./providers.js";
-// The graph schema: closed vocabularies constraining what the indexer may extract.
+// The graph schema: the system-tier vocabulary constants (seeded into the memory_schema
+// registry) plus the registry model types.
 export type {
+  ActiveSchema,
   EdgeRelationDef,
   EntityType,
   EntityTypeDef,
   PredicateDef,
   PredicateName,
+  SchemaEntry,
+  SchemaKind,
+  SchemaStatus,
+  SchemaTier,
 } from "./schema.js";
 export {
+  DEFAULT_ACTIVE_SCHEMA,
   EDGE_RELATIONS,
   ENTITY_TYPE_NAMES,
   ENTITY_TYPES,
   MIN_RELATIONSHIP_CONFIDENCE,
+  normalizeSchemaName,
   PREDICATE_NAMES,
   PREDICATES,
+  PROPOSAL_MIN_OCCURRENCES,
 } from "./schema.js";
 export type { StorageAdapter } from "./storage.js";
 // Domain types

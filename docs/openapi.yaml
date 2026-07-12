@@ -219,11 +219,14 @@ paths:
                 type: string
   /memory/schema:
     get:
-      summary: The graph schema with live counts
+      summary: The graph schema registry with live counts
       description: |
-        The closed vocabularies the indexer extracts against — entity types, edge relations,
-        and typed-relationship predicates — each with a description and its current usage
-        count in this store. Zero-filled, so every schema row appears even before first use.
+        The vocabularies the indexer extracts against — entity types and typed-relationship
+        predicates as registry rows (tier system/user, status active/disabled), edge
+        relations from the engine, and the LLM proposal review queue (names the extractor
+        wanted, with occurrence counts). Manage with POST /memory/schema (add a user entry),
+        POST /memory/schema/{id}/approve, POST /memory/schema/{id}/dismiss, and
+        PATCH /memory/schema/{id} (status active|disabled).
       operationId: getSchema
       responses:
         "200":

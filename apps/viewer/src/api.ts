@@ -118,6 +118,24 @@ export type ResolveDecision =
   | { action: "keep_both" }
   | { action: "merge"; content: string; canonical?: string };
 
+/** A schema registry row: a vocabulary entry or a pending LLM proposal. */
+export interface SchemaEntry {
+  id: string;
+  kind: "entity_type" | "predicate";
+  name: string;
+  description: string;
+  tier: "system" | "user" | "proposed";
+  status: "active" | "disabled" | "dismissed";
+  occurrences: number;
+}
+
+export interface SchemaInfo {
+  entityTypes: (SchemaEntry & { count: number })[];
+  relations: { name: string; description: string; count: number }[];
+  predicates: (SchemaEntry & { count: number })[];
+  proposals: SchemaEntry[];
+}
+
 /** One item finished during a streamed index run. */
 export interface IndexProgressEvent {
   kind: "memory" | "chunk";
@@ -170,6 +188,20 @@ export const api = {
   // Recovery: wipe all extracted entities/edges, then re-run indexing from scratch.
   reindexStream: (onEvent: (event: IndexProgressEvent) => void) =>
     streamRun("/memory/reindex/stream", onEvent),
+  schema: () => json<SchemaInfo>("/memory/schema"),
+  addSchemaEntry: (input: {
+    kind: "entity_type" | "predicate";
+    name: string;
+    description?: string;
+  }) => post<SchemaEntry>("/memory/schema", input),
+  approveProposal: (id: string) => post<{ ok: boolean }>(`/memory/schema/${id}/approve`),
+  dismissProposal: (id: string) => post<{ ok: boolean }>(`/memory/schema/${id}/dismiss`),
+  setSchemaStatus: (id: string, status: "active" | "disabled") =>
+    json<{ ok: boolean }>(`/memory/schema/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status }),
+    }),
   conflicts: () => json<{ conflicts: Conflict[] }>("/memory/conflicts").then((r) => r.conflicts),
   resolve: (id: string, decision: ResolveDecision) =>
     post<{ ok: boolean }>(`/memory/conflicts/${id}/resolve`, decision),

@@ -1,8 +1,10 @@
-// The graph schema: the closed vocabularies that constrain what the indexer may put in
-// the graph. Both the extraction prompt and the code-level validators render from these
-// constants, so they can never drift apart. Per-user configurability is future work (a
-// MemloomConfig extension point); for now the schema is deliberately a code constant —
-// a closed vocabulary is the fix for extraction noise, not a preference.
+// The graph schema. The constants below are the SYSTEM TIER — seeded into the
+// memory_schema table on first use, where they live alongside user-created entries and
+// LLM proposals (tier: system | user | proposed, status: active | disabled | dismissed).
+// The extraction prompt and validators read the ACTIVE registry (loaded once per index
+// run), so users can extend the vocabulary while the defaults keep git history here.
+// Edge relations stay code-level: they are engine mechanics written by specific code
+// paths (indexer, versioning, conflicts), not LLM-classifiable vocabulary.
 
 export interface EntityTypeDef {
   readonly name: string;
@@ -138,3 +140,50 @@ export const PREDICATE_NAMES: ReadonlySet<string> = new Set(PREDICATES.map((p) =
 
 /** Below this, a typed relationship is stored as a plain 'mention' edge (quarantine). */
 export const MIN_RELATIONSHIP_CONFIDENCE = 0.7;
+
+// The registry model (memory_schema table).
+
+export type SchemaKind = "entity_type" | "predicate";
+export type SchemaTier = "system" | "user" | "proposed";
+export type SchemaStatus = "active" | "disabled" | "dismissed";
+
+export interface SchemaEntry {
+  id: string;
+  kind: SchemaKind;
+  name: string;
+  description: string;
+  tier: SchemaTier;
+  status: SchemaStatus;
+  /** How many extraction runs suggested this name (proposals only). */
+  occurrences: number;
+}
+
+/** Proposals surface in the review queue once they have been suggested this many times. */
+export const PROPOSAL_MIN_OCCURRENCES = 2;
+
+/** Normalize an LLM-suggested vocabulary name: lowercase snake_case, letters/digits only. */
+export function normalizeSchemaName(raw: string): string {
+  return raw
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_")
+    .replace(/[^a-z0-9_]/g, "")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "")
+    .slice(0, 30);
+}
+
+/** The vocabulary an extraction run works against — loaded from the registry. */
+export interface ActiveSchema {
+  entityTypes: { name: string; description: string }[];
+  predicates: { name: string; description: string }[];
+  /** Names the user rejected — the prompt forbids re-proposing them. */
+  dismissed: string[];
+}
+
+/** The system tier as an ActiveSchema — the fallback and the seed. */
+export const DEFAULT_ACTIVE_SCHEMA: ActiveSchema = {
+  entityTypes: ENTITY_TYPES.map((t) => ({ name: t.name, description: t.description })),
+  predicates: PREDICATES.map((p) => ({ name: p.name, description: p.description })),
+  dismissed: [],
+};

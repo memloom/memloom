@@ -88,6 +88,16 @@ const contextAddSchema = z.object({
   ownerId: z.string().uuid().optional(),
 });
 
+const schemaEntrySchema = z.object({
+  kind: z.enum(["entity_type", "predicate"]),
+  name: z.string().min(2, "name must be at least 2 characters"),
+  description: z.string().optional(),
+});
+
+const schemaStatusSchema = z.object({
+  status: z.enum(["active", "disabled"]),
+});
+
 const resolveSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("keep_new") }),
   z.object({ action: z.literal("keep_existing"), candidateId: z.string().min(1) }),
@@ -269,8 +279,35 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/memory/reindex", async (c) => c.json(await memloom.reindex()));
   app.post("/memory/reindex/stream", (c) => streamRun(c, (p) => memloom.reindex(undefined, p)));
 
-  // The graph schema (closed vocabularies) with live usage counts.
+  // The graph schema registry: vocabularies with live usage counts + the proposal queue.
   app.get("/memory/schema", async (c) => c.json(await memloom.describeSchema()));
+
+  // Add a user-tier vocabulary entry (entity type or predicate).
+  app.post("/memory/schema", async (c) => {
+    const body = await parseBody(c, schemaEntrySchema);
+    if (!body.ok) return body.res;
+    return c.json(
+      await memloom.addSchemaEntry(body.data.kind, body.data.name, body.data.description ?? ""),
+    );
+  });
+
+  // Review a proposal: approve promotes it to the user tier; dismiss blocklists the name.
+  app.post("/memory/schema/:id/approve", async (c) => {
+    await memloom.approveProposal(c.req.param("id"));
+    return c.json({ ok: true });
+  });
+  app.post("/memory/schema/:id/dismiss", async (c) => {
+    await memloom.dismissProposal(c.req.param("id"));
+    return c.json({ ok: true });
+  });
+
+  // Enable/disable a vocabulary entry.
+  app.patch("/memory/schema/:id", async (c) => {
+    const body = await parseBody(c, schemaStatusSchema);
+    if (!body.ok) return body.res;
+    await memloom.setSchemaStatus(c.req.param("id"), body.data.status);
+    return c.json({ ok: true });
+  });
 
   app.get("/memory/graph", async (c) => c.json(await memloom.graph()));
 

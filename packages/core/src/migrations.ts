@@ -543,5 +543,29 @@ export function buildMigrations(dims: number): Migration[] {
       CREATE INDEX IF NOT EXISTS memory_edges_source_idx ON memory_edges (source_id) WHERE active;
     `,
     },
+    {
+      // The schema registry: entity types and predicates as rows, in three tiers —
+      // 'system' (seeded from the schema.ts constants), 'user' (created in the viewer/API),
+      // and 'proposed' (LLM suggestions awaiting review). The extraction prompt and
+      // validators read the ACTIVE rows; 'dismissed' names are blocklisted from
+      // re-proposal. Seeding happens lazily per owner in the engine (ON CONFLICT DO
+      // NOTHING), so new owners and new engine versions converge without data migrations.
+      id: "0011_schema_registry",
+      sql: /* sql */ `
+      CREATE TABLE memory_schema (
+        id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id     uuid NOT NULL,
+        kind         text NOT NULL CHECK (kind IN ('entity_type', 'predicate')),
+        name         text NOT NULL,
+        description  text NOT NULL DEFAULT '',
+        tier         text NOT NULL CHECK (tier IN ('system', 'user', 'proposed')),
+        status       text NOT NULL CHECK (status IN ('active', 'disabled', 'dismissed')),
+        occurrences  int  NOT NULL DEFAULT 0,
+        created_at   timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (owner_id, kind, name)
+      );
+      CREATE INDEX memory_schema_owner_idx ON memory_schema (owner_id, kind, status);
+    `,
+    },
   ];
 }
