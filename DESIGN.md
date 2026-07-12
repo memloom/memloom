@@ -107,9 +107,10 @@ crafted tool, serving one memorable thing: **the living graph**.
   headline and section titles only. Weight 650–700, tracking −0.02 to −0.03em. Geist stays
   for body, Geist Mono for machine text. Never use the display face for body copy.
 - **TUI panes:** hero copy sits on a solid inset panel (`--bg-inset` ~92%, hairline border),
-  never floating over the WebGL terminal. Screens (hero, terminal demo) stay dark in light
-  theme via scoped token overrides — remember `color: var(--text)` on the scope root, since
-  computed color inherits from body.
+  never floating over the WebGL terminal. Every surface, hero and terminal demo included,
+  follows the active theme: canvas/WebGL components re-palette in JS (the terminal shader
+  composites glyph coverage over a theme background color; the graph swaps to the darkened
+  light-surface data palette).
 - **HUD corner ticks:** the signature motif — amber viewfinder brackets (14px, 2px stroke)
   on the top-left and bottom-right corners of key panels (hero pane, graph card). Use
   sparingly; if everything has ticks, nothing does.
