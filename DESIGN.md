@@ -95,4 +95,35 @@ move along one axis.
 Lowercase commands, plain sentences, no exclamation marks. UI copy says what happened
 ("merged — nothing duplicated") and what to do next, in the same voice as the CLI. Sell
 outcomes in marketing surfaces ("never re-explain your codebase to an agent"), mechanisms in
-docs (RRF, arms, fingerprints).
+docs (RRF, arms, fingerprints). No em-dashes in user-facing copy; short sentences with
+periods, commas, and colons.
+
+## Landing layer (memloom-web)
+
+The marketing site extends this system — "Instrument Panel": the page reads as panels on a
+crafted tool, serving one memorable thing: **the living graph**.
+
+- **Display type:** Bricolage Grotesque (Google Fonts via next/font, self-hosted) for the
+  headline and section titles only. Weight 650–700, tracking −0.02 to −0.03em. Geist stays
+  for body, Geist Mono for machine text. Never use the display face for body copy.
+- **TUI panes:** hero copy sits on a solid inset panel (`--bg-inset` ~92%, hairline border),
+  never floating over the WebGL terminal. Screens (hero, terminal demo) stay dark in light
+  theme via scoped token overrides — remember `color: var(--text)` on the scope root, since
+  computed color inherits from body.
+- **HUD corner ticks:** the signature motif — amber viewfinder brackets (14px, 2px stroke)
+  on the top-left and bottom-right corners of key panels (hero pane, graph card). Use
+  sparingly; if everything has ticks, nothing does.
+- **Icons:** lucide-react only, 16px, stroke 1.75, always beside a mono label, never in
+  colored circles. Muted (`--text-faint`) at rest, amber on the parent's hover.
+- **Buttons:** exactly ONE filled amber primary per viewport (near-black text); everything
+  else outline or ghost. Icons inside buttons: 16px, 2 stroke.
+- **Signature motion:** section titles get a one-time 44px amber scan-line underline on
+  scroll-reveal (300ms). Card grids stagger 60ms per cell. Nothing loops except the product
+  demos (graph, terminal).
+
+## Decisions log
+
+| Date | Decision | Why |
+| --- | --- | --- |
+| 2026-07-12 | Amber brand adopted; conflicts moved to red, lineage to indigo | preservation metaphor, category differentiation, anti-slop |
+| 2026-07-12 | Landing layer: Bricolage display, TUI panes, HUD ticks, lucide icons, filled amber CTA, scan-line reveals | design review — serve "the living graph", fix hero readability as design |
