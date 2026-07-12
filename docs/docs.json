@@ -28,7 +28,25 @@
         "groups": [
           {
             "group": "Getting Started",
-            "pages": ["index"]
+            "pages": ["index", "features", "use-cases"]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/memory-types",
+              "concepts/conflicts",
+              "concepts/graph",
+              "concepts/retrieval"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/extractors",
+              "guides/configuration",
+              "guides/self-hosting"
+            ]
           }
         ]
       },

@@ -1,0 +1,76 @@
+---
+title: "Configuration"
+description: "config.env, the two modes, and the embedding fingerprint"
+---
+
+## Where config lives
+
+All configuration is one dotenv-style file, created by `memloom init`:
+
+```
+~/.memloom/config.env
+```
+
+The daemon reads it **at startup** — after editing it, restart (`memloom stop`, then any
+command). Real environment variables take precedence over the file, so a shell-provided or
+MCP-provided key overrides what's written there. Set `MEMLOOM_HOME` to relocate the whole
+home directory (config *and* data).
+
+## Reference
+
+```bash
+# The one switch that matters: with a key, memloom runs in cloud mode;
+# without it, offline mode.
+OPENROUTER_API_KEY=sk-or-...
+
+# Optional overrides (defaults shown):
+OPENROUTER_EMBED_MODEL=qwen/qwen3-embedding-8b
+OPENROUTER_EMBED_DIMS=1024          # Matryoshka truncation from the native 4096
+OPENROUTER_EMBED_PROVIDER=nebius    # preferred OpenRouter host for embeddings
+OPENROUTER_LLM_MODEL=google/gemini-2.5-flash
+```
+
+<Note>
+`OPENROUTER_EMBED_PROVIDER` exists because embedding latency varies wildly between hosts of
+the same model on OpenRouter — the same call has been observed taking 16s on one host and
+under a second on another. For the default model, memloom pins the fast host (nebius)
+automatically; set this only if you change models or want a different host.
+</Note>
+
+## The two modes
+
+| | **Cloud** (key set) | **Offline** (no key) |
+| --- | --- | --- |
+| Embeddings | Real model via OpenRouter | Deterministic hash embeddings |
+| Recall quality | Full semantic | Word-overlap only (keyword arm still full quality) |
+| Dedup / versioning on save | ✓ | ✗ — every save is `added` |
+| Conflict detection | ✓ | ✗ |
+| `memloom index` (entities, graph) | ✓ | ✗ (errors — needs the LLM) |
+| Context ingestion & citations | ✓ | ✓ |
+| Network calls | Embedding + LLM requests only | None |
+
+Offline mode is for trying memloom, tests, and air-gapped storage of text you'll search by
+keywords. For real use, set the key.
+
+## The embedding fingerprint
+
+A store's vectors are only comparable to vectors from the same provider + model + dims. On
+first init, memloom stamps the store with the embedding fingerprint (e.g.
+`openrouter:qwen/qwen3-embedding-8b@1024`). Any later startup with a **different**
+fingerprint is refused with an explicit error, because mixed embedding spaces don't fail —
+they silently return garbage recall.
+
+This means **switching between offline and cloud mode (or changing embedding models) requires
+a fresh store**: stop the daemon and delete `~/.memloom/data`, or restore the previous
+embedding config. The LLM model, by contrast, can be changed freely — it doesn't touch the
+vector space.
+
+## Daemon endpoints
+
+| What | Where | Change |
+| --- | --- | --- |
+| HTTP API + viewer | `http://127.0.0.1:4319` | fixed (localhost-only by design) |
+| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres` | fixed; distinctive port so it never collides with a local Postgres on 5432 |
+
+Both bind to `127.0.0.1` only, and the API's CORS policy allows only localhost origins — a
+public web page can't drive your daemon.

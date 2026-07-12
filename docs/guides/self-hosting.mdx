@@ -1,0 +1,112 @@
+---
+title: "Self-hosting & migration"
+description: "From a folder on your laptop to a Postgres server in Docker"
+---
+
+## The tiers
+
+memloom's storage is an adapter, and the same schema and SQL run on both implementations:
+
+| Tier | Storage | Who owns the connection | Status |
+| --- | --- | --- | --- |
+| **Embedded** (default) | PGLite — Postgres-in-a-folder at `~/.memloom/data` | The daemon, exclusively | What `memloom serve` runs today |
+| **Server** | Real Postgres (Docker, Supabase, any managed Postgres with pgvector) | The Postgres server — many connections | Available programmatically via `PgAdapter` |
+
+The embedded tier is the right default: zero setup, zero services, backup = copy a folder.
+Reach for the server tier when you want concurrent DB access (the PGLite single-connection
+lock is the thing you feel), a store bigger than comfortable in one folder, or a store shared
+across machines.
+
+## Backing up the embedded store
+
+The store is the folder. Stop the daemon first so the data directory is quiescent:
+
+```bash
+memloom stop
+cp -r ~/.memloom/data ~/backups/memloom-2026-07-12
+```
+
+Restoring is the reverse. `config.env` travels separately (same folder, one file).
+
+## Running against Docker Postgres
+
+**1. Start Postgres with pgvector:**
+
+```yaml
+# docker-compose.yml
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_PASSWORD: memloom
+    ports:
+      - "5432:5432"
+    volumes:
+      - memloom-data:/var/lib/postgresql/data
+volumes:
+  memloom-data:
+```
+
+**2. Point the engine at it.** The CLI daemon is PGLite-only today, so the server tier is
+wired up in a few lines of your own entry point — the engine and HTTP server are the same
+ones the daemon uses:
+
+```ts
+import {
+  Memloom, PgAdapter, OpenRouterEmbeddings, OpenRouterLLM,
+} from "@memloom/core";
+import { serve } from "@memloom/server";
+
+const storage = await PgAdapter.connect(
+  "postgresql://postgres:memloom@localhost:5432/postgres",
+);
+const memloom = new Memloom({
+  storage,
+  embedding: new OpenRouterEmbeddings({ apiKey: process.env.OPENROUTER_API_KEY! }),
+  llm: new OpenRouterLLM({ apiKey: process.env.OPENROUTER_API_KEY! }),
+});
+await memloom.init();   // runs migrations, stamps/checks the embedding fingerprint
+serve(memloom);         // HTTP API on 127.0.0.1:4319 — CLI, MCP, and viewer clients work as-is
+```
+
+`pg` is an optional dependency — `pnpm add pg` in the project that runs this. `init()`
+creates the full schema on an empty database, so there's no separate provisioning step.
+
+## Migrating existing data
+
+Two paths, depending on how much history you care about:
+
+**Re-ingest (simple, loses history).** Point the new store at the same embedding config and
+replay your sources: `context add` your files again, re-save what matters. Version chains and
+resolved conflicts don't come along. For a store that's mostly ingested documents, this is
+usually all you need — documents are mirrors, and re-ingesting reproduces them exactly.
+
+**Copy the rows (full fidelity).** The daemon speaks the Postgres wire protocol on
+`127.0.0.1:54329`, so with the daemon running you can pull data out with standard tools and
+load it into the Docker database:
+
+```bash
+pg_dump -h 127.0.0.1 -p 54329 -U postgres -d postgres --data-only \
+  > memloom-dump.sql
+psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f memloom-dump.sql
+```
+
+Run the target's schema first (any `memloom.init()` against the empty Docker database), then
+load data-only. The wire server is a single-connection bridge into PGLite — if `pg_dump`
+trips over it, fall back to per-table `COPY ... TO STDOUT` via `psql`, in dependency order:
+`_memloom_meta`, `memory_objects`, `memory_entities`, `memory_edges`,
+`memory_dedup_decisions`, `context_documents`, `context_chunks`.
+
+<Warning>
+The embedding fingerprint travels with the data (it's a row in `_memloom_meta`). The engine
+you run against the migrated store must be configured with the **same embedding provider,
+model, and dims**, or `init()` will refuse to open it — by design. See
+[Configuration](/guides/configuration#the-embedding-fingerprint).
+</Warning>
+
+## What stays local no matter what
+
+Whichever tier you run, the trust model doesn't change: the HTTP API binds to `127.0.0.1`,
+CORS admits only localhost origins, and the only outbound traffic is to the embedding/LLM
+provider you configured. Self-hosting the database in Docker doesn't expose memloom to the
+network — unless you publish the ports yourself, which is your call to make.

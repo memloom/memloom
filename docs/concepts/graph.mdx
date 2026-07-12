@@ -1,0 +1,69 @@
+---
+title: "The graph"
+description: "One graph over memories and context, at two granularities"
+---
+
+## One graph, two granularities
+
+Memories and ingested documents live in **one** graph, connected through the entities they
+mention. That's the whole design: your saved belief *"the ingest worker restarts via
+systemd"* and the ops runbook you ingested both mention the entity **ingest worker**, so the
+graph puts them two hops apart — and recall's entity arm can travel the same road.
+
+The two granularities:
+
+- **Storage links at chunk granularity.** Entity edges point at individual chunks, so the
+  engine knows *which section* of a document mentions what.
+- **Display projects at document granularity.** The graph API rolls chunk-level edges up
+  into one weighted `document → entity` edge (weight = how many chunks mention the entity),
+  so a 300-page PDF is one node, not a 300-node hairball.
+
+## Node and edge types
+
+| Node | Comes from | In the viewer |
+| --- | --- | --- |
+| **Memory** | Active saved memories | Circle, colored by memory type |
+| **Entity** | `memloom index` extraction | Purple circle |
+| **Document** | `memloom context add` | Emerald diamond |
+| **Chunk** | Expanding a document node | Square (drill-down only) |
+
+| Edge | Meaning |
+| --- | --- |
+| `mention` | A memory or chunk mentions an entity (document → entity edges carry a `weight`) |
+| `replaces` | Version lineage: this memory superseded that one |
+| `distinct` | A resolved *keep both* — these two are related but deliberately separate |
+
+Only **active** memories and edges appear; stale versions and reverted resolutions drop out.
+
+## How edges get made: `memloom index`
+
+Indexing is a separate, explicit step — save and ingest stay fast, and you pay the LLM cost
+when you choose:
+
+1. Every unindexed memory and context chunk goes to the LLM with an entity-extraction prompt
+   (people, projects, tools, technologies, places, concepts).
+2. Extracted entities are resolved case-insensitively by name + type — *Postgres* in a memory
+   and *postgres* in a PDF land on the same node. New entities get their own embedding.
+3. A `mention` edge links the source to each entity.
+
+Indexing is idempotent (rows are stamped `indexed_at`) and incremental — re-running it only
+touches what's new. One LLM call per row, so a large PDF makes an index run proportionally
+longer.
+
+Indexed entities also feed retrieval: the entity arm of hybrid recall anchors a query to
+entities and pulls in whatever mentions them — including document sections whose wording
+shares nothing with your query. See [Retrieval](/concepts/retrieval).
+
+## Navigating in the viewer
+
+`memloom ui` → the Graph tab:
+
+- Click a **document** diamond to expand it: its chunks appear as squares with their real
+  chunk-level entity edges, and the rolled-up document edges swap out.
+- Click a **chunk** to read it in the side panel, with breadcrumb navigation
+  (`document › chunk`) to move back up.
+- A document's side panel lists all its chunks and has an **Open file** button that opens
+  the source file with your OS default app.
+
+The daemon only ever opens files it previously ingested (the lookup is by document id, never
+by a path from the request), so the open button can't be pointed at arbitrary files.

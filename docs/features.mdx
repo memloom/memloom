@@ -1,0 +1,80 @@
+---
+title: "Features"
+description: "What memloom does, in one pass"
+---
+
+memloom is one store with several distinct capabilities layered on it. This page is the tour;
+each section links to the page that explains the mechanism.
+
+## Save with a belief pipeline, not an append log
+
+`save` doesn't just insert a row. With an API key configured, every incoming memory runs
+through the belief pipeline:
+
+- **Exact duplicate** → merged, nothing stored twice.
+- **Same fact, reworded** → the memory becomes a **new version** of the existing belief
+  (the old version stays in history).
+- **Contradiction** → both memories stay active and a **conflict** is recorded for you to
+  resolve — memloom never silently overwrites what you believed before.
+- **Genuinely new** → added.
+
+See [Memory types & versioning](/concepts/memory-types) and
+[Conflicts](/concepts/conflicts).
+
+## Hybrid recall
+
+`recall` ranks results with three retrieval arms fused together: vector similarity (meaning),
+Postgres full-text search (exact words — file paths, error codes, config keys), and entity
+anchoring (things the query names). One query searches your saved memories **and** your
+ingested files, in one ranking. See [Retrieval](/concepts/retrieval).
+
+## Context: your files, searchable and cited
+
+`memloom context add ./docs` ingests `.md`, `.txt`, and `.pdf` files (directories recurse).
+Files are chunked along their real structure — markdown headings, ALL-CAPS titles, numbered
+points — so a chunk is one definition or one section, never a blind 1,000-character window.
+Every result from a file says where it came from: `from notes.pdf › GRANICA FUNKCJI >
+2. DEFINICJA 2. (p. 1)`. Documents are mirrors: re-adding an unchanged file is a no-op, a
+changed file replaces its chunks. See [Extractors & chunking](/guides/extractors).
+
+## One graph over memories and context
+
+`memloom index` extracts entities (people, projects, tools, concepts) from memories and
+context chunks and links everything through them. The viewer renders it: memories as circles,
+entities as purple circles, documents as diamonds that expand into chunk squares on click.
+A 300-page PDF stays one node — chunk-level links roll up into one weighted document → entity
+edge. See [The graph](/concepts/graph).
+
+## Version history for every belief
+
+Every memory is a version chain. Rewording a fact, editing it with `memloom update`, or
+resolving a conflict appends a version; nothing is ever destroyed. `memloom history <id>`
+(or the `memory_history` MCP tool) walks the chain. See
+[Memory types & versioning](/concepts/memory-types).
+
+## Human-in-the-loop conflicts
+
+When two memories can't both be true, memloom keeps both and asks *you* — in the viewer, the
+CLI, or through an agent using the MCP tools. Every resolution (keep new, keep existing, keep
+both, merge) is reversible. See [Conflicts](/concepts/conflicts).
+
+## Every client, one store
+
+| Surface | What it's for |
+| --- | --- |
+| **CLI** (`memloom save/recall/...`) | You, in a terminal |
+| **MCP** | Claude Desktop, Claude Code, Cursor — agents that save and recall as they work |
+| **Viewer** (`memloom ui`) | Browsing: graph, documents, memories, conflicts, console |
+| **HTTP API** (`127.0.0.1:4319`) | Anything else — scripts, editors, your own tools |
+| **Postgres wire** (`127.0.0.1:54329`) | Inspecting the raw data with Drizzle Studio or psql |
+
+All of them talk to one daemon that owns one store, so an agent's save is instantly visible
+in the viewer and your CLI recall sees what the agent ingested. See
+[Architecture](/concepts/architecture).
+
+## Local-first, yours
+
+The store is a folder: `~/.memloom/data`. Copy it to back it up. Delete it to start over.
+The only network calls are to the embedding/LLM provider you configure — and without a key,
+memloom runs fully offline in a reduced mode. See [Configuration](/guides/configuration)
+and [Self-hosting](/guides/self-hosting).

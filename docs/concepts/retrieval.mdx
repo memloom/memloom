@@ -1,0 +1,67 @@
+---
+title: "Retrieval"
+description: "Hybrid recall: vector + keyword + entity, fused with reciprocal-rank fusion"
+---
+
+## Why hybrid
+
+Vector search alone misses exact identifiers — `ECONNREFUSED`, `pg_hba.conf`, a ticket
+number — because embeddings blur precise strings into approximate meaning. Keyword search
+alone misses paraphrases. memloom runs both (plus an entity arm) inside the database, in a
+single SQL function (`memloom_fuse`), and fuses the rankings. There's no reranker service and
+no second round trip: one query, one fused result list.
+
+All arms rank saved memories **and** context chunks together in one pool, so "search my
+memories" and "search my files" are the same operation.
+
+## The three arms
+
+| Arm | Signal | Catches |
+| --- | --- | --- |
+| **Vector** | pgvector cosine distance over embeddings | Meaning — paraphrases, translations, "the thing about restarting that worker" |
+| **Keyword** | Postgres full-text search | Exact words — file paths, error codes, config keys, names |
+| **Entity** | Query-to-entity similarity, then mention edges | Things — everything that *mentions* an entity the query names, however it's worded |
+
+The entity arm has an **abstention gate**: it only fires when the query is clearly about a
+known entity (query ↔ entity cosine ≥ 0.45). A vague query anchors to nothing and the arm
+contributes nothing, so it never drags in unrelated results. The keyword arm abstains
+naturally the same way — no lexical match, no votes.
+
+## Reciprocal-rank fusion
+
+Each arm produces a ranking; fusion combines *ranks*, not scores (cosine distances and FTS
+ranks aren't comparable):
+
+```
+score(result) = Σ over arms:  weight_arm / (60 + rank_in_arm)
+```
+
+Default weights: vector **1.0**, keyword **2.0**, entity **1.0** — keyword is up-weighted
+because it abstains when it has nothing, so its votes are cheap and precise (eval-tuned).
+A result that two arms agree on beats a result that tops one arm alone.
+
+Each recall result carries both numbers:
+
+- `rrfScore` — the fused rank score. **This is the order results arrive in.**
+- `similarity` — the raw cosine signal alone, useful as a "how semantically close" gauge but
+  not what the ranking used.
+
+## What makes results good in practice
+
+- **Exact identifiers are excellent queries.** The keyword arm makes `memloom recall
+  "pg_hba.conf"` precise in a way pure-vector systems can't be.
+- **Chunks embed their breadcrumb.** A markdown chunk is stored as
+  `Guide > Setup > Postgres\n\n<text>` — the heading path is *prepended to the text*, so both
+  the vector and the keyword arm see the context, not just the paragraph. (This approximates
+  Anthropic's contextual-retrieval result without a second LLM pass.)
+- **Index your store.** The entity arm only works over what `memloom index` has processed.
+  An unindexed store still recalls fine on the other two arms.
+- **Stale never surfaces.** Every arm filters `status = 'active'`, so superseded versions of
+  a belief can't shadow the current one.
+
+<Note>
+In offline mode (no API key) the vector arm runs on deterministic hash embeddings — texts
+sharing words score as similar, which is a real but crude signal. The keyword arm works at
+full quality offline; the entity arm needs indexing, which needs the LLM. For production
+recall quality, configure a key. See [Configuration](/guides/configuration).
+</Note>

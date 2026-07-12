@@ -1,0 +1,96 @@
+---
+title: "Extractors & chunking"
+description: "How files become searchable chunks, and how to add a format"
+---
+
+## The ingestion pipeline
+
+`memloom context add <path>` runs every file through four stages:
+
+```
+file bytes → extract (format-specific) → chunk (structure-aware) → embed → store
+```
+
+1. **Extract.** The extractor registered for the file's extension turns bytes into text
+   units — one unit for a text file, one unit *per page* for a PDF (so page numbers survive
+   into citations).
+2. **Chunk.** Units are split along the document's real structure (below), each chunk
+   carrying a breadcrumb like `Guide > Setup > Postgres`.
+3. **Embed.** All chunks are embedded in batches *before* the store transaction — provider
+   calls are slow and can fail, so the database write stays short and all-or-nothing.
+4. **Store.** Chunks replace the document's previous chunks in one transaction.
+
+Documents are **mirrors** of files, not beliefs: no dedup, no conflicts, no versions.
+Re-adding an unchanged file (same content hash) is a no-op; a changed file atomically
+replaces its chunks.
+
+## Built-in extractors
+
+| Kind | Extensions | Chunker | Notes |
+| --- | --- | --- | --- |
+| `md` | `.md`, `.markdown` | markdown | Title from the first `#` heading |
+| `txt` | `.txt` | outline | |
+| `pdf` | `.pdf` | outline | Text layer via unpdf (pure JS); no OCR |
+
+PDF text is rebuilt from **glyph geometry**, not stream order: equation-heavy PDFs (Word or
+LaTeX math) come out in reading order, and 2-up print layouts (the same content twice, side
+by side) are de-duplicated. Symbols that a PDF's fonts never map to Unicode (∞, ∈, ≠) can't
+be recovered from the text layer — that would need OCR, which is deliberately out of scope.
+
+## Two chunking strategies
+
+Both aim at the same rule: **a chunk never starts mid-section, and always knows where it
+came from.**
+
+**Markdown** splits at ATX headings (headings inside code fences are content, not structure),
+tracking the heading stack. Each chunk gets its breadcrumb *prepended to the text* —
+`Guide > Setup > Postgres\n\n<chunk>` — so retrieval's vector and keyword arms both see the
+context, not just the paragraph.
+
+**Outline** handles documents without markdown structure — lecture notes, contracts,
+exercise sheets. It recognizes ALL-CAPS title lines (Unicode-aware, so `GRANICA NIEWŁAŚCIWA
+FUNKCJI` qualifies) and numbered points (`2. DEFINICJA 2. …`) as boundaries. One point = one
+chunk, so a chunk is exactly one definition, theorem, or clause, with a breadcrumb like
+`GRANICA FUNKCJI > 2. DEFINICJA 2.`. Text with no such structure degrades gracefully to plain
+size-based splitting.
+
+Within a section, chunks target ~1,600 characters (≈400 tokens) with a 2,048 hard cap and
+~200 characters of overlap carried across boundaries — research-consensus defaults, sized in
+characters on purpose (a tokenizer dependency buys nothing when the embedding model has ~20×
+context headroom).
+
+## Adding a format
+
+The registry is open: one object, no fork.
+
+```ts
+import { registerExtractor } from "@memloom/core";
+
+registerExtractor({
+  kind: "html",
+  extensions: [".html", ".htm"],
+  version: 1,
+  chunker: "markdown",           // or "outline" — the section strategy applied after extract
+  async extract(bytes, path) {
+    const text = htmlToText(new TextDecoder().decode(bytes));
+    return { title: findTitle(text), units: [{ text, page: null }] };
+  },
+});
+```
+
+Registrations are keyed by extension (last one wins), so you can also *override* a built-in —
+for example, replace the PDF extractor with an OCR-backed one.
+
+## Pipeline versioning
+
+Each extractor declares a `version`. Bump it when the format's extract/chunk logic changes:
+the version is salted into the document's content hash (`<sha256>#p2`), so the next
+`context add` sees "changed" and re-ingests files **whose bytes didn't change** — instead of
+no-op'ing forever on chunks produced by the old pipeline. Version 1 is unsalted so existing
+stores don't mass-reingest on upgrade.
+
+<Note>
+Directories passed to `context add` are scanned recursively; `node_modules` and dotfiles are
+skipped, and only files whose extension has a registered extractor are picked up.
+`supportedExtensions()` is what the CLI help and error messages print.
+</Note>

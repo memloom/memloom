@@ -1,0 +1,60 @@
+---
+title: "Conflicts (human-in-the-loop)"
+description: "Contradictions are kept, surfaced, and resolved by you — reversibly"
+---
+
+## The stance
+
+Most memory systems resolve contradictions silently: last write wins, or an LLM picks a
+winner. memloom's position is that **a contradiction between your memories is information,
+and deciding it is your call**. When an incoming memory can't be true at the same time as an
+existing one, memloom keeps *both* active and records a conflict for you to resolve. Nothing
+is auto-overwritten; nothing is lost while the conflict is pending.
+
+## How a conflict is detected
+
+On every save (with dedup enabled), memloom:
+
+1. Short-circuits exact duplicates by content hash — no LLM involved.
+2. Finds up to 5 existing active memories with cosine similarity ≥ 0.5 to the incoming one.
+3. Asks the LLM to classify each candidate's relation to the incoming memory:
+
+| Relation | Meaning | What happens |
+| --- | --- | --- |
+| `identical` | The same fact restated | New **version** of the existing belief |
+| `complementary` | Related, but both can be true | Both coexist — just added |
+| `contradictory` | They cannot both be true | **Conflict recorded**, both stay active |
+
+The conflict record stores the incoming memory, every contradicting candidate, and the
+classifier's stated *reason* — so when you look at it later you see why it was flagged.
+
+## Resolving
+
+Pending conflicts show up in `memloom conflicts`, the viewer's Conflicts tab, the
+`GET /memory/conflicts` endpoint, and the `list_conflicts` MCP tool (so an agent can say
+*"you have a pending conflict about the staging database"*). Four resolutions:
+
+| Action | Effect |
+| --- | --- |
+| **keep_new** | The incoming memory wins and *continues the existing belief's lineage* (it becomes the next version). The old memories go stale with `replaces` edges. |
+| **keep_existing** | The incoming memory goes stale; the existing one stays current. |
+| **keep_both** | They're genuinely distinct facts. Both stay active, linked with a `distinct` edge so they're never re-flagged against each other. |
+| **merge** | You (or an agent, with your reconciled text) write the sentence that's actually true. It becomes the next version of the belief; both inputs go stale under it. |
+
+## Everything is reversible
+
+No resolution deletes anything. Losers go `status = 'stale'`; the relationships are recorded
+as edges (`replaces`, `distinct`) that can be deactivated. `revert` on a resolved conflict:
+
+- reactivates whatever was staled,
+- deactivates the edges the resolution created,
+- undoes any lineage re-parenting,
+- and puts the conflict back in the pending queue.
+
+You can resolve a conflict, change your mind a week later, revert it, and resolve it the
+other way.
+
+<Note>
+Conflict detection requires the LLM, so it's off in offline mode (no `OPENROUTER_API_KEY`).
+Offline saves skip the belief pipeline entirely and always report `added`.
+</Note>
