@@ -568,6 +568,7 @@ textarea {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   margin-right: 8px;
+  color: var(--text);
 }
 
 /* a memory's current version marker, and each row in its history */

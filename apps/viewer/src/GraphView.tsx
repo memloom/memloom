@@ -36,6 +36,8 @@ interface Node {
   size: number;
   x?: number;
   y?: number;
+  fx?: number;
+  fy?: number;
 }
 
 interface Link {
@@ -97,12 +99,31 @@ export function GraphView({ graph }: { graph: Graph }) {
     id: null,
     neighbors: new Set(),
   });
+  // The previous render's node objects — the simulation mutates x/y on them in place, so
+  // they hold the live layout. Rebuilding graphData would otherwise reset every position
+  // and re-randomize the whole canvas on each document expand/collapse.
+  const prevNodesRef = useRef<Node[]>([]);
 
   const { data, neighborMap, chunkParent } = useMemo(() => {
     // Ignore expansions of documents that no longer exist (removed between refreshes).
     const docIds = new Set(graph.documents.map((d) => d.id));
     const openDocs = [...expanded].filter(([id]) => docIds.has(id));
     const openIds = new Set(openDocs.map(([id]) => id));
+
+    // Harvest the live layout before rebuilding, so every surviving node keeps its spot.
+    const prevPos = new Map<string, { x: number; y: number }>();
+    for (const n of prevNodesRef.current) {
+      if (n.x != null && n.y != null) prevPos.set(n.id, { x: n.x, y: n.y });
+    }
+    // While any document is open, pin every pre-existing node in place: expanding a
+    // 46-chunk PDF injects a lot of new repulsion, and without pins it blasts the rest of
+    // the graph apart. Chunks stay free so they can arrange themselves around their parent.
+    const pin = openDocs.length > 0;
+    const keep = (id: string): { x?: number; y?: number; fx?: number; fy?: number } => {
+      const p = prevPos.get(id);
+      if (!p) return {};
+      return pin ? { x: p.x, y: p.y, fx: p.x, fy: p.y } : { x: p.x, y: p.y };
+    };
 
     const nodes: Node[] = [
       ...graph.memories.map((m) => ({
@@ -111,6 +132,7 @@ export function GraphView({ graph }: { graph: Graph }) {
         label: m.canonical ?? m.content,
         full: m.content,
         size: 6,
+        ...keep(m.id),
       })),
       ...graph.entities.map((e) => ({
         id: e.id,
@@ -118,6 +140,7 @@ export function GraphView({ graph }: { graph: Graph }) {
         label: e.name,
         full: `${e.name} (${e.entityType})`,
         size: 7,
+        ...keep(e.id),
       })),
       ...graph.documents.map((d) => ({
         id: d.id,
@@ -125,17 +148,29 @@ export function GraphView({ graph }: { graph: Graph }) {
         label: d.title,
         full: d.path,
         size: 8,
+        ...keep(d.id),
       })),
-      ...openDocs.flatMap(([, dc]) =>
-        dc.chunks.map((c) => ({
-          id: c.id,
-          kind: "chunk" as const,
-          label: c.headingPath ?? `#${c.chunkIndex + 1}`,
-          full: c.content,
-          size: 4.5,
-        })),
-      ),
+      ...openDocs.flatMap(([docId, dc]) => {
+        // Seed chunks on a phyllotaxis spiral around their document instead of letting the
+        // simulation spawn them at the origin — they start where they'll end up, so the
+        // expansion reads as a bloom around the doc, not an explosion across the canvas.
+        const center = prevPos.get(docId);
+        return dc.chunks.map((c, i) => {
+          const r = 12 + 3 * Math.sqrt(i);
+          const a = i * 2.399963; // golden angle
+          return {
+            id: c.id,
+            kind: "chunk" as const,
+            label: c.headingPath ?? `#${c.chunkIndex + 1}`,
+            full: c.content,
+            size: 4.5,
+            ...(prevPos.get(c.id) ??
+              (center ? { x: center.x + r * Math.cos(a), y: center.y + r * Math.sin(a) } : {})),
+          };
+        });
+      }),
     ];
+    prevNodesRef.current = nodes;
     const ids = new Set(nodes.map((n) => n.id));
     const links: Link[] = [
       // An expanded document swaps its rolled-up mention edges for the chunk-level truth.
@@ -181,6 +216,15 @@ export function GraphView({ graph }: { graph: Graph }) {
   useEffect(() => {
     const t = setTimeout(() => fgRef.current?.zoomToFit?.(600, 90), 250);
     return () => clearTimeout(t);
+  }, []);
+
+  // Chunks orbit tightly around their document: weak repulsion and short parent links keep
+  // an expanded document a compact bloom instead of doubling the graph's spread.
+  useEffect(() => {
+    const fg = fgRef.current;
+    if (!fg) return;
+    fg.d3Force?.("charge")?.strength((n: Node) => (n.kind === "chunk" ? -8 : -30));
+    fg.d3Force?.("link")?.distance((l: Link) => (l.relation === "chunk" ? 14 : 30));
   }, []);
 
   const handleHover = useCallback(

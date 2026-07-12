@@ -3,17 +3,9 @@ import { api, type Memory, type MemoryType } from "./api";
 
 // Browse every active memory, newest first — the reading counterpart to the Console's
 // query-driven recall. Each memory can be edited (a manual, human action that appends a new
-// version) and its version history expanded. Types carry the graph palette so a memory reads the
-// same here as on the canvas.
+// version) and its version history expanded.
 
 const TYPES: MemoryType[] = ["fact", "preference", "episode", "procedure"];
-
-const TYPE_COLOR: Record<MemoryType, string> = {
-  fact: "var(--primary)",
-  preference: "var(--warn)",
-  episode: "var(--episode)",
-  procedure: "var(--ok)",
-};
 
 function MemoryCard({ m, onChanged }: { m: Memory; onChanged: () => void }) {
   const [editing, setEditing] = useState(false);
@@ -60,12 +52,7 @@ function MemoryCard({ m, onChanged }: { m: Memory; onChanged: () => void }) {
   return (
     <div className="recallItem">
       <div className="recallTitle">
-        <span
-          className="typeTag"
-          style={{ color: TYPE_COLOR[m.memoryType as MemoryType] ?? "var(--text-faint)" }}
-        >
-          {m.memoryType}
-        </span>
+        <span className="typeTag">{m.memoryType}</span>
         {m.canonical ?? m.content}
         {m.version > 1 && <span className="versionTag">v{m.version}</span>}
       </div>
