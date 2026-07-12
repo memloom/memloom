@@ -2,11 +2,18 @@ import { createHash, randomUUID } from "node:crypto";
 import { chunkMarkdown, chunkOutline } from "./chunker.js";
 import { type Candidate, classify } from "./dedup.js";
 import type { MemoryEngine } from "./engine.js";
-import { extractEntities } from "./entities.js";
+import { type ExtractionContext, extractGraph, isMathDense } from "./entities.js";
 import { extractFile } from "./extract.js";
 import { migrate } from "./migrate.js";
 import type { EmbeddingProvider, LLMProvider } from "./providers.js";
-import { addEdge, deactivateEdgesTouching, markStale, reactivate } from "./resolve.js";
+import {
+  addEdge,
+  addEdgeIfAbsent,
+  deactivateEdgesTouching,
+  markStale,
+  reactivate,
+} from "./resolve.js";
+import { EDGE_RELATIONS, ENTITY_TYPES, PREDICATES } from "./schema.js";
 import type { StorageAdapter } from "./storage.js";
 import type {
   Conflict,
@@ -374,6 +381,14 @@ export class Memloom implements MemoryEngine {
     documentId: string,
     owner: string,
   ): Promise<void> {
+    // Relationships STATED BY these chunks go too (a document is a mirror; its claims
+    // leave with it) — entity nodes themselves intentionally survive.
+    await tx.query(
+      `DELETE FROM memory_edges
+       WHERE owner_id = $2 AND source_id IN (
+         SELECT id FROM context_chunks WHERE document_id = $1 AND owner_id = $2)`,
+      [documentId, owner],
+    );
     await tx.query(
       `DELETE FROM memory_edges
        WHERE owner_id = $2 AND from_id IN (
@@ -589,7 +604,7 @@ export class Memloom implements MemoryEngine {
     let memoryPosition = 0;
     for (const memory of pending) {
       memoryPosition += 1;
-      const entities = await this.#linkEntities(ownerId, memory.id, memory.content);
+      const linked = await this.#linkGraph(ownerId, memory.id, memory.content);
       await this.#storage.query("UPDATE memory_objects SET indexed_at = now() WHERE id = $1", [
         memory.id,
       ]);
@@ -599,7 +614,8 @@ export class Memloom implements MemoryEngine {
         label: snippet(memory.content),
         index: memoryPosition,
         total: pending.length,
-        entities,
+        entities: linked.entities,
+        relationships: linked.relationships,
       });
     }
 
@@ -620,7 +636,14 @@ export class Memloom implements MemoryEngine {
     let chunkPosition = 0;
     for (const chunk of pendingChunks) {
       chunkPosition += 1;
-      const entities = await this.#linkEntities(ownerId, chunk.id, chunk.content);
+      // Formula-dominated chunks have nothing extractable — skip the LLM call entirely
+      // (a math exercise sheet would otherwise become a graph of equations).
+      const skipped = isMathDense(chunk.content);
+      const linked = skipped
+        ? { entities: [], relationships: 0 }
+        : await this.#linkGraph(ownerId, chunk.id, chunk.content, {
+            docTitle: chunk.doc_title,
+          });
       await this.#storage.query("UPDATE context_chunks SET indexed_at = now() WHERE id = $1", [
         chunk.id,
       ]);
@@ -632,11 +655,93 @@ export class Memloom implements MemoryEngine {
         ),
         index: chunkPosition,
         total: pendingChunks.length,
-        entities,
+        entities: linked.entities,
+        relationships: linked.relationships,
+        ...(skipped ? { skipped: "math-dense" as const } : {}),
       });
     }
 
     return { indexed: pending.length, chunksIndexed: pendingChunks.length };
+  }
+
+  /**
+   * Wipe every extracted artifact and re-run indexing from scratch — the recovery path for
+   * a store polluted by a weaker extraction pipeline. Deletes all entities, their mention
+   * edges (from memories AND chunks), and every typed entity-to-entity edge; belief edges
+   * (replaces/distinct) connect only memory_objects and are untouched by construction.
+   * The wipe commits in one tx BEFORE any LLM call: a mid-run failure leaves everything
+   * merely unindexed, and a plain index() resumes.
+   */
+  async reindex(
+    ownerId: string = SENTINEL_OWNER,
+    onProgress?: (event: IndexProgressEvent) => void,
+  ): Promise<IndexResult> {
+    await this.#storage.tx(async (tx) => {
+      await tx.query(
+        `DELETE FROM memory_edges
+         WHERE owner_id = $1
+           AND (relation = 'mention'
+             OR from_id IN (SELECT id FROM memory_entities WHERE owner_id = $1)
+             OR to_id IN (SELECT id FROM memory_entities WHERE owner_id = $1))`,
+        [ownerId],
+      );
+      await tx.query("DELETE FROM memory_entities WHERE owner_id = $1", [ownerId]);
+      await tx.query(
+        "UPDATE memory_objects SET indexed_at = NULL WHERE owner_id = $1 AND status = 'active'",
+        [ownerId],
+      );
+      await tx.query("UPDATE context_chunks SET indexed_at = NULL WHERE owner_id = $1", [ownerId]);
+    });
+    return this.index(ownerId, onProgress);
+  }
+
+  /**
+   * The graph schema with live usage counts: the closed entity-type vocabulary and the
+   * relation/predicate vocabulary, zero-filled so every schema row appears even before
+   * first use. Predicate counts consider entity-sourced edges only, so document/memory
+   * mention edges don't pollute the quarantine count.
+   */
+  async describeSchema(ownerId: string = SENTINEL_OWNER): Promise<{
+    entityTypes: { name: string; description: string; count: number }[];
+    relations: { name: string; description: string; count: number }[];
+    predicates: { name: string; description: string; count: number }[];
+  }> {
+    const typeCounts = await this.#storage.query<{ entity_type: string; n: number }>(
+      "SELECT entity_type, count(*)::int AS n FROM memory_entities WHERE owner_id = $1 GROUP BY entity_type",
+      [ownerId],
+    );
+    const relationCounts = await this.#storage.query<{ relation: string; n: number }>(
+      "SELECT relation, count(*)::int AS n FROM memory_edges WHERE owner_id = $1 AND active GROUP BY relation",
+      [ownerId],
+    );
+    const predicateCounts = await this.#storage.query<{ relation: string; n: number }>(
+      `SELECT e.relation, count(*)::int AS n
+       FROM memory_edges e
+       JOIN memory_entities me ON me.id = e.from_id
+       WHERE e.owner_id = $1 AND e.active
+       GROUP BY e.relation`,
+      [ownerId],
+    );
+    const byType = new Map(typeCounts.map((r) => [r.entity_type, Number(r.n)]));
+    const byRelation = new Map(relationCounts.map((r) => [r.relation, Number(r.n)]));
+    const byPredicate = new Map(predicateCounts.map((r) => [r.relation, Number(r.n)]));
+    return {
+      entityTypes: ENTITY_TYPES.map((t) => ({
+        name: t.name,
+        description: t.description,
+        count: byType.get(t.name) ?? 0,
+      })),
+      relations: EDGE_RELATIONS.map((r) => ({
+        name: r.name,
+        description: r.description,
+        count: r.virtual ? 0 : (byRelation.get(r.name) ?? 0),
+      })),
+      predicates: PREDICATES.map((p) => ({
+        name: p.name,
+        description: p.description,
+        count: byPredicate.get(p.name) ?? 0,
+      })),
+    };
   }
 
   /**
@@ -676,6 +781,18 @@ export class Memloom implements MemoryEngine {
        WHERE e.owner_id = $1 AND e.active`,
       [ownerId],
     );
+    // Typed entity-to-entity relationships (uses, part_of, ...) plus quarantined mentions.
+    const entityEdgeRows = await this.#storage.query<{
+      from_id: string;
+      to_id: string;
+      relation: string;
+    }>(
+      `SELECT e.from_id, e.to_id, e.relation
+       FROM memory_edges e
+       JOIN memory_entities me ON me.id = e.from_id
+       WHERE e.owner_id = $1 AND e.active`,
+      [ownerId],
+    );
     const docEdgeRows = await this.#storage.query<{
       from_id: string;
       to_id: string;
@@ -702,6 +819,7 @@ export class Memloom implements MemoryEngine {
     }));
     const edges: GraphEdge[] = [
       ...edgeRows.map((e) => ({ from: e.from_id, to: e.to_id, relation: e.relation })),
+      ...entityEdgeRows.map((e) => ({ from: e.from_id, to: e.to_id, relation: e.relation })),
       ...docEdgeRows.map((e) => ({
         from: e.from_id,
         to: e.to_id,
@@ -936,16 +1054,36 @@ export class Memloom implements MemoryEngine {
     return row ? { rootId: row.root_id, version: Number(row.version) } : null;
   }
 
-  // Extract entities from one source (memory or context chunk) and link it to each with a
-  // 'mention' edge. The edge table has no FKs, so both node kinds share it. Returns the
-  // extracted entity names — the index progress stream reports them.
-  async #linkEntities(owner: string, sourceId: string, content: string): Promise<string[]> {
-    const entities = await extractEntities(this.#llm, content);
-    for (const entity of entities) {
+  // Extract the graph from one source (memory or context chunk): mention edges to each
+  // surviving entity, plus typed entity-to-entity edges for the relationships the text
+  // states (out-of-vocab and under-confident ones arrive already quarantined as 'mention'
+  // by parseExtraction). The edge table has no FKs, so all node kinds share it. Returns
+  // what the index progress stream reports.
+  async #linkGraph(
+    owner: string,
+    sourceId: string,
+    content: string,
+    context?: ExtractionContext,
+  ): Promise<{ entities: string[]; relationships: number }> {
+    const extraction = await extractGraph(this.#llm, content, context);
+    const idByName = new Map<string, string>();
+    for (const entity of extraction.entities) {
       const entityId = await this.#resolveEntity(owner, entity.name, entity.type);
+      idByName.set(entity.name.toLowerCase(), entityId);
       await addEdge(this.#storage, owner, sourceId, entityId, "mention");
     }
-    return entities.map((e) => e.name);
+    let stored = 0;
+    for (const rel of extraction.relationships) {
+      const fromId = idByName.get(rel.subject.toLowerCase());
+      const toId = idByName.get(rel.object.toLowerCase());
+      if (!fromId || !toId) continue; // parser guarantees this; stay defensive
+      await addEdgeIfAbsent(this.#storage, owner, fromId, toId, rel.predicate, {
+        confidence: rel.confidence,
+        sourceId,
+      });
+      stored += 1;
+    }
+    return { entities: extraction.entities.map((e) => e.name), relationships: stored };
   }
 
   async #resolveEntity(owner: string, name: string, type: string): Promise<string> {

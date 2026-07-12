@@ -60,6 +60,8 @@
               "POST /memory/save",
               "POST /memory/query",
               "POST /memory/index",
+              "POST /memory/reindex",
+              "GET /memory/schema",
               "GET /memory/graph"
             ]
           },

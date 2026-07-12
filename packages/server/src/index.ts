@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { serve as nodeServe } from "@hono/node-server";
-import { MEMORY_TYPES, type Memloom } from "@memloom/core";
+import { type IndexProgressEvent, MEMORY_TYPES, type Memloom } from "@memloom/core";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { stream } from "hono/streaming";
@@ -236,10 +236,13 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   app.post("/memory/index", async (c) => c.json(await memloom.index()));
 
-  // Indexing runs one LLM call per unindexed row — minutes for a big PDF. This variant
-  // streams NDJSON progress ({type:"item"} per row, {type:"done"} with the totals) so
-  // clients can show what's happening in real time instead of a spinner.
-  app.post("/memory/index/stream", (c) => {
+  // Indexing runs one LLM call per unindexed row — minutes for a big PDF. The stream
+  // variants respond with NDJSON progress ({type:"item"} per row, {type:"done"} with the
+  // totals) so clients can show what's happening in real time instead of a spinner.
+  type ProgressRun = (
+    onProgress: (event: IndexProgressEvent) => void,
+  ) => Promise<{ indexed: number; chunksIndexed: number }>;
+  const streamRun = (c: Context, run: ProgressRun) => {
     c.header("content-type", "application/x-ndjson");
     return stream(c, async (s) => {
       // onProgress is sync; serialize writes through a promise chain so lines never interleave.
@@ -250,7 +253,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         });
       };
       try {
-        const result = await memloom.index(undefined, (event) => write({ type: "item", ...event }));
+        const result = await run((event) => write({ type: "item", ...event }));
         write({ type: "done", ...result });
       } catch (err) {
         // Mid-stream failures can't become an HTTP error status — surface them in-band.
@@ -258,7 +261,16 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       }
       await chain;
     });
-  });
+  };
+
+  app.post("/memory/index/stream", (c) => streamRun(c, (p) => memloom.index(undefined, p)));
+
+  // Recovery: wipe every extracted entity/edge and re-run indexing from scratch.
+  app.post("/memory/reindex", async (c) => c.json(await memloom.reindex()));
+  app.post("/memory/reindex/stream", (c) => streamRun(c, (p) => memloom.reindex(undefined, p)));
+
+  // The graph schema (closed vocabularies) with live usage counts.
+  app.get("/memory/schema", async (c) => c.json(await memloom.describeSchema()));
 
   app.get("/memory/graph", async (c) => c.json(await memloom.graph()));
 

@@ -41,6 +41,52 @@ describe("server", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  it("reindex/stream wipes entities and streams NDJSON item + done events", async () => {
+    const server = await app();
+    await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "the staging database runs on Postgres" }),
+    });
+    expect((await server.request("/memory/index", { method: "POST" })).status).toBe(200);
+
+    const res = await server.request("/memory/reindex/stream", { method: "POST" });
+    expect(res.status).toBe(200);
+    const lines = (await res.text())
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    const items = lines.filter((l) => l.type === "item");
+    const done = lines.at(-1);
+    expect(items).toHaveLength(1); // the one active memory re-indexed after the wipe
+    expect(items[0]?.entities).toEqual(["Postgres"]);
+    expect(done).toMatchObject({ type: "done", indexed: 1, chunksIndexed: 0 });
+  });
+
+  it("schema endpoint reports vocabularies with live counts", async () => {
+    const server = await app();
+    await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "the staging database runs on Postgres" }),
+    });
+    await server.request("/memory/index", { method: "POST" });
+
+    const res = await server.request("/memory/schema");
+    expect(res.status).toBe(200);
+    const schema = (await res.json()) as {
+      entityTypes: Array<{ name: string; description: string; count: number }>;
+      relations: Array<{ name: string; count: number }>;
+      predicates: Array<{ name: string; count: number }>;
+    };
+    // Zero-filled over the whole vocabulary; the one extracted entity is counted.
+    expect(schema.entityTypes.map((t) => t.name)).toContain("technology");
+    expect(schema.entityTypes.find((t) => t.name === "technology")?.count).toBe(1);
+    expect(schema.entityTypes.find((t) => t.name === "person")?.count).toBe(0);
+    expect(schema.relations.find((r) => r.name === "mention")?.count).toBe(1);
+    expect(schema.predicates.map((p) => p.name)).toContain("works_on");
+  });
+
   it("allows local browser origins via CORS, refuses foreign ones", async () => {
     const server = await app();
     const local = await server.request("/health", {

@@ -35,6 +35,35 @@ export async function addEdge(
   );
 }
 
+/**
+ * Insert an edge unless an active one with the same endpoints and relation already exists.
+ * Typed entity-to-entity edges need this: many sources can state the same relationship
+ * (mention edges can't duplicate — indexed_at gates re-processing and each source has a
+ * distinct from_id). Carries the extractor's confidence and the stating source for
+ * provenance.
+ */
+export async function addEdgeIfAbsent(
+  storage: StorageAdapter,
+  ownerId: string,
+  fromId: string,
+  toId: string,
+  relation: string,
+  opts?: { confidence?: number; sourceId?: string },
+): Promise<void> {
+  const existing = await storage.query<{ id: string }>(
+    `SELECT id FROM memory_edges
+     WHERE owner_id = $1 AND from_id = $2 AND to_id = $3 AND relation = $4 AND active
+     LIMIT 1`,
+    [ownerId, fromId, toId, relation],
+  );
+  if (existing[0]) return;
+  await storage.query(
+    `INSERT INTO memory_edges (owner_id, from_id, to_id, relation, confidence, source_id)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [ownerId, fromId, toId, relation, opts?.confidence ?? null, opts?.sourceId ?? null],
+  );
+}
+
 /** Soft-delete edges of a relation that touch any of the given memory ids (from or to). */
 export async function deactivateEdgesTouching(
   storage: StorageAdapter,

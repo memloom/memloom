@@ -163,6 +163,10 @@ export interface IndexProgressEvent {
   total: number;
   /** Names of the entities extracted from this item. */
   entities: string[];
+  /** Typed entity-to-entity relationships stored from this item. */
+  relationships?: number;
+  /** Present when the item was skipped without an LLM call (formula-dominated chunk). */
+  skipped?: "math-dense";
 }
 
 // ---- Context connector (files mirrored into chunked, searchable rows) ----

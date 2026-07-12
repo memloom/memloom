@@ -88,14 +88,25 @@ export class HttpMemloomClient implements MemoryEngine {
     return versions;
   }
 
-  async index(
+  index(_ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult> {
+    if (!onProgress) return this.#post<IndexResult>("/memory/index", {});
+    return this.#streamRun("/memory/index/stream", onProgress);
+  }
+
+  reindex(
     _ownerId?: string,
     onProgress?: (event: IndexProgressEvent) => void,
   ): Promise<IndexResult> {
-    if (!onProgress) return this.#post<IndexResult>("/memory/index", {});
+    if (!onProgress) return this.#post<IndexResult>("/memory/reindex", {});
+    return this.#streamRun("/memory/reindex/stream", onProgress);
+  }
 
-    // Progress requested: consume the NDJSON stream, forwarding item events as they land.
-    const res = await this.#fetch(`${this.#baseUrl}/memory/index/stream`, {
+  // Consume an NDJSON progress stream, forwarding item events as they land.
+  async #streamRun(
+    path: string,
+    onProgress: (event: IndexProgressEvent) => void,
+  ): Promise<IndexResult> {
+    const res = await this.#fetch(`${this.#baseUrl}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: "{}",

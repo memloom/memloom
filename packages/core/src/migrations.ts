@@ -531,5 +531,17 @@ export function buildMigrations(dims: number): Migration[] {
         ON memory_objects (owner_id, root_id, version);
     `,
     },
+    {
+      // Typed entity-to-entity relationships ride the shared edge table. confidence is the
+      // extractor's stated 0..1; source_id is the memory/chunk that stated the relationship
+      // (provenance — a removed document takes its relationships with it). Nullable, no
+      // backfill: existing mention/replaces/distinct edges are legitimately source-less.
+      id: "0010_typed_edges",
+      sql: /* sql */ `
+      ALTER TABLE memory_edges ADD COLUMN IF NOT EXISTS confidence double precision;
+      ALTER TABLE memory_edges ADD COLUMN IF NOT EXISTS source_id uuid;
+      CREATE INDEX IF NOT EXISTS memory_edges_source_idx ON memory_edges (source_id) WHERE active;
+    `,
+    },
   ];
 }

@@ -170,6 +170,93 @@ paths:
                 example: |
                   {"type":"item","kind":"chunk","id":"...","label":"notes.pdf › 2. DEFINICJA 2.","index":3,"total":46,"entities":["granica","funkcja"]}
                   {"type":"done","indexed":0,"chunksIndexed":46}
+  /memory/reindex:
+    post:
+      summary: Rebuild the graph from scratch
+      description: |
+        Wipes every extracted artifact — all entities, their mention edges, and all typed
+        entity-to-entity edges — then re-runs indexing over everything. Belief edges
+        (replaces, distinct) are never touched. The recovery path when an older extraction
+        pipeline polluted the graph.
+      operationId: reindexMemories
+      requestBody:
+        required: false
+        content:
+          application\json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: How many memories and context chunks were re-indexed.
+          content:
+            application\json:
+              schema:
+                type: object
+                properties:
+                  indexed:
+                    type: integer
+                  chunksIndexed:
+                    type: integer
+  /memory/reindex/stream:
+    post:
+      summary: Rebuild with real-time progress (NDJSON stream)
+      description: |
+        Same work as /memory/reindex, streamed as newline-delimited JSON in the same shape
+        as /memory/index/stream (item events, then done; errors in-band).
+      operationId: reindexMemoriesStream
+      requestBody:
+        required: false
+        content:
+          application\json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: NDJSON progress stream ending with a done (or error) event.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+  /memory/schema:
+    get:
+      summary: The graph schema with live counts
+      description: |
+        The closed vocabularies the indexer extracts against — entity types, edge relations,
+        and typed-relationship predicates — each with a description and its current usage
+        count in this store. Zero-filled, so every schema row appears even before first use.
+      operationId: getSchema
+      responses:
+        "200":
+          description: Entity types, relations, and predicates with counts.
+          content:
+            application\json:
+              schema:
+                type: object
+                properties:
+                  entityTypes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string, example: technology }
+                        description: { type: string }
+                        count: { type: integer, example: 12 }
+                  relations:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string, example: mention }
+                        description: { type: string }
+                        count: { type: integer }
+                  predicates:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name: { type: string, example: works_on }
+                        description: { type: string }
+                        count: { type: integer }
   /memory/graph:
     get:
       summary: Get the memory graph

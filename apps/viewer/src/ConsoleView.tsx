@@ -22,6 +22,7 @@ export function ConsoleView({
 
   const [indexing, setIndexing] = useState(false);
   const [indexLog, setIndexLog] = useState<string[]>([]);
+  const [rebuildArmed, setRebuildArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const indexLogRef = useRef<HTMLDivElement | null>(null);
 
@@ -30,6 +31,34 @@ export function ConsoleView({
     const el = indexLogRef.current;
     if (el) el.scrollTop = el.scrollHeight;
   }, [indexLog]);
+
+  async function runIndex(rebuild: boolean) {
+    setIndexLog([
+      rebuild ? "re-indexing from scratch (all extracted entities wiped)…" : "starting index run…",
+    ]);
+    const stream = rebuild ? api.reindexStream : api.indexStream;
+    const result = await run(setIndexing, () =>
+      stream((e) => {
+        const outcome = e.skipped
+          ? `(skipped: ${e.skipped})`
+          : e.entities.length > 0
+            ? e.entities.join(", ") +
+              (e.relationships ? `  (+${e.relationships} relationships)` : "")
+            : "(no entities)";
+        setIndexLog((log) => [
+          ...log.slice(-400),
+          `[${e.index}/${e.total}] ${e.kind}  ${e.label}  →  ${outcome}`,
+        ]);
+      }),
+    );
+    if (result) {
+      setIndexLog((log) => [
+        ...log,
+        `done — ${result.indexed} memories, ${result.chunksIndexed} chunks indexed`,
+      ]);
+      onChanged();
+    }
+  }
 
   async function run<T>(setBusyState: (b: boolean) => void, fn: () => Promise<T>) {
     setBusyState(true);
@@ -160,28 +189,28 @@ export function ConsoleView({
               type="button"
               className="btn"
               disabled={indexing}
-              onClick={async () => {
-                setIndexLog(["starting index run…"]);
-                const result = await run(setIndexing, () =>
-                  api.indexStream((e) => {
-                    const entities =
-                      e.entities.length > 0 ? e.entities.join(", ") : "(no entities)";
-                    setIndexLog((log) => [
-                      ...log.slice(-400),
-                      `[${e.index}/${e.total}] ${e.kind}  ${e.label}  →  ${entities}`,
-                    ]);
-                  }),
-                );
-                if (result) {
-                  setIndexLog((log) => [
-                    ...log,
-                    `done — ${result.indexed} memories, ${result.chunksIndexed} chunks indexed`,
-                  ]);
-                  onChanged();
-                }
+              onClick={() => {
+                setRebuildArmed(false);
+                void runIndex(false);
               }}
             >
               {indexing ? "Indexing…" : "Extract entities from unindexed memories & context"}
+            </button>
+            <button
+              type="button"
+              className={`btn ${rebuildArmed ? "btnDangerArmed" : ""}`}
+              disabled={indexing}
+              onBlur={() => setRebuildArmed(false)}
+              onClick={() => {
+                if (!rebuildArmed) {
+                  setRebuildArmed(true);
+                  return;
+                }
+                setRebuildArmed(false);
+                void runIndex(true);
+              }}
+            >
+              {rebuildArmed ? "Confirm: wipe all entities & re-index" : "Re-index from scratch"}
             </button>
           </div>
           {indexLog.length > 0 && (

@@ -50,7 +50,8 @@ Usage: memloom <command> [args]
   recall <text...>     recall memories AND context by meaning
   update <id> <text>   edit a memory into a new version (keeps the old one in history)
   history <id>         show a memory's full version chain (newest first)
-  index                extract entities from unindexed memories and context chunks
+  index [--rebuild]    extract entities from unindexed memories and context chunks;
+                       --rebuild wipes all extracted entities/edges and re-runs from scratch
   conflicts            list pending conflicts
   context add <path>   ingest files (or a directory) as context: ${supportedExtensions().join(" ")}
   context list         list ingested context documents
@@ -204,10 +205,27 @@ export async function run(argv: readonly string[]): Promise<void> {
 
     case "index": {
       const engine = await connect();
-      const { indexed, chunksIndexed } = await engine.index(undefined, (e) => {
-        const entities = e.entities.length > 0 ? e.entities.join(", ") : "(no entities)";
-        console.log(`[${e.index}/${e.total}] ${e.kind.padEnd(6)} ${e.label}  ->  ${entities}`);
-      });
+      const rebuild = rest.includes("--rebuild");
+      const progress = (e: {
+        index: number;
+        total: number;
+        kind: string;
+        label: string;
+        entities: string[];
+        relationships?: number;
+        skipped?: string;
+      }) => {
+        const outcome = e.skipped
+          ? `(skipped: ${e.skipped})`
+          : e.entities.length > 0
+            ? e.entities.join(", ") +
+              (e.relationships ? `  (+${e.relationships} relationships)` : "")
+            : "(no entities)";
+        console.log(`[${e.index}/${e.total}] ${e.kind.padEnd(6)} ${e.label}  ->  ${outcome}`);
+      };
+      const { indexed, chunksIndexed } = rebuild
+        ? await engine.reindex(undefined, progress)
+        : await engine.index(undefined, progress);
       console.log(`indexed ${indexed} memories, ${chunksIndexed} context chunks`);
       return;
     }

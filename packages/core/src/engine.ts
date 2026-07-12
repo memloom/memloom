@@ -30,6 +30,8 @@ export interface MemoryEngine {
   history(memoryId: string, ownerId?: string): Promise<Memory[]>;
   /** Extract entities from unindexed rows. `onProgress` fires after each item completes. */
   index(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
+  /** Wipe all extracted entities/edges and re-run indexing from scratch (recovery path). */
+  reindex(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
   graph(ownerId?: string): Promise<Graph>;
   conflicts(ownerId?: string): Promise<Conflict[]>;
   resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void>;

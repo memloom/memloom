@@ -39,6 +39,22 @@ export { PgAdapter } from "./pg-adapter.js";
 // Storage adapters
 export { PgliteAdapter } from "./pglite-adapter.js";
 export type { EmbeddingProvider, LLMProvider } from "./providers.js";
+// The graph schema: closed vocabularies constraining what the indexer may extract.
+export type {
+  EdgeRelationDef,
+  EntityType,
+  EntityTypeDef,
+  PredicateDef,
+  PredicateName,
+} from "./schema.js";
+export {
+  EDGE_RELATIONS,
+  ENTITY_TYPE_NAMES,
+  ENTITY_TYPES,
+  MIN_RELATIONSHIP_CONFIDENCE,
+  PREDICATE_NAMES,
+  PREDICATES,
+} from "./schema.js";
 export type { StorageAdapter } from "./storage.js";
 // Domain types
 export type {
@@ -55,6 +71,7 @@ export type {
   GraphDocument,
   GraphEdge,
   GraphMemory,
+  IndexProgressEvent,
   IndexResult,
   Memory,
   MemoryStatus,

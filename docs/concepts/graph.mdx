@@ -38,17 +38,40 @@ Only **active** memories and edges appear; stale versions and reverted resolutio
 ## How edges get made: `memloom index`
 
 Indexing is a separate, explicit step — save and ingest stay fast, and you pay the LLM cost
-when you choose:
+when you choose. Extraction is **schema-constrained and precision-first**: a clean graph of
+real things beats a complete one full of noise.
 
-1. Every unindexed memory and context chunk goes to the LLM with an entity-extraction prompt
-   (people, projects, tools, technologies, places, concepts).
-2. Extracted entities are resolved case-insensitively by name + type — *Postgres* in a memory
-   and *postgres* in a PDF land on the same node. New entities get their own embedding.
-3. A `mention` edge links the source to each entity.
+1. Every unindexed memory and context chunk goes to the LLM with an extraction prompt built
+   from the graph schema — a **closed vocabulary of 8 entity types** (`person`,
+   `organization`, `project`, `tool`, `technology`, `place`, `event`, `concept` — the last
+   is explicitly a last resort). The prompt instructs the model to abstain when in doubt and
+   caps output at the 5 most salient entities per text.
+2. The model is not trusted: a deterministic validator drops anything with an out-of-vocab
+   type, anything shaped like a math expression (`f(x) = x^3 - 2x^2`), sentence fragments
+   (over 40 characters or 5 words), and names with fewer than two letters.
+3. **Formula-dominated chunks skip the LLM entirely** — a cheap math-density check keeps
+   exercise sheets from becoming graphs of equations (those runs log `skipped: math-dense`).
+4. Surviving entities are resolved case-insensitively by name + type — *Postgres* in a memory
+   and *postgres* in a PDF land on the same node — and a `mention` edge links the source to
+   each one.
+5. The same call also extracts **typed relationships between entities**, classified against a
+   closed predicate vocabulary: `uses`, `depends_on`, `part_of`, `created_by`, `works_on`,
+   `works_at`, `located_in`, `attended`. Out-of-vocab predicates and claims below 0.7
+   confidence are quarantined as plain `mention` edges instead of being trusted.
 
 Indexing is idempotent (rows are stamped `indexed_at`) and incremental — re-running it only
 touches what's new. One LLM call per row, so a large PDF makes an index run proportionally
-longer.
+longer. `GET /memory/schema` reports the vocabularies with live usage counts.
+
+If an older, noisier pipeline already polluted your graph, rebuild it from scratch:
+
+```bash
+memloom index --rebuild   # wipes all extracted entities/edges, then re-runs indexing
+```
+
+Belief edges (`replaces`, `distinct`) are never touched by a rebuild. Note that rebuilding
+needs the LLM: run it offline and the wipe still happens — the store stays consistent
+(everything is simply unindexed), but nothing is re-extracted until a key is configured.
 
 Indexed entities also feed retrieval: the entity arm of hybrid recall anchors a query to
 entities and pulls in whatever mentions them — including document sections whose wording
