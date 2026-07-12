@@ -5,6 +5,7 @@ import { serve as nodeServe } from "@hono/node-server";
 import { MEMORY_TYPES, type Memloom } from "@memloom/core";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
+import { stream } from "hono/streaming";
 import { z } from "zod";
 
 // The local HTTP server: a thin wrapper around @memloom/core so the browser-based viewer (and
@@ -234,6 +235,30 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   );
 
   app.post("/memory/index", async (c) => c.json(await memloom.index()));
+
+  // Indexing runs one LLM call per unindexed row — minutes for a big PDF. This variant
+  // streams NDJSON progress ({type:"item"} per row, {type:"done"} with the totals) so
+  // clients can show what's happening in real time instead of a spinner.
+  app.post("/memory/index/stream", (c) => {
+    c.header("content-type", "application/x-ndjson");
+    return stream(c, async (s) => {
+      // onProgress is sync; serialize writes through a promise chain so lines never interleave.
+      let chain = Promise.resolve();
+      const write = (payload: unknown) => {
+        chain = chain.then(async () => {
+          await s.write(`${JSON.stringify(payload)}\n`);
+        });
+      };
+      try {
+        const result = await memloom.index(undefined, (event) => write({ type: "item", ...event }));
+        write({ type: "done", ...result });
+      } catch (err) {
+        // Mid-stream failures can't become an HTTP error status — surface them in-band.
+        write({ type: "error", error: err instanceof Error ? err.message : String(err) });
+      }
+      await chain;
+    });
+  });
 
   app.get("/memory/graph", async (c) => c.json(await memloom.graph()));
 

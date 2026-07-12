@@ -151,6 +151,20 @@ export interface IndexResult {
   chunksIndexed: number;
 }
 
+/** One item finished during an index run — the real-time progress signal. */
+export interface IndexProgressEvent {
+  kind: "memory" | "chunk";
+  id: string;
+  /** Human-readable identity: memory content snippet, or "doc title › section". */
+  label: string;
+  /** 1-based position within this kind's pending set. */
+  index: number;
+  /** Total pending items of this kind in this run. */
+  total: number;
+  /** Names of the entities extracted from this item. */
+  entities: string[];
+}
+
 // ---- Context connector (files mirrored into chunked, searchable rows) ----
 
 export interface ContextAddInput {

@@ -5,6 +5,7 @@ import type {
   ContextDocument,
   DocumentChunks,
   Graph,
+  IndexProgressEvent,
   IndexResult,
   Memory,
   RecallOptions,
@@ -27,7 +28,8 @@ export interface MemoryEngine {
   update(input: UpdateInput): Promise<UpdateResult>;
   /** The full version chain of a belief, newest first — pass any version's id. */
   history(memoryId: string, ownerId?: string): Promise<Memory[]>;
-  index(ownerId?: string): Promise<IndexResult>;
+  /** Extract entities from unindexed rows. `onProgress` fires after each item completes. */
+  index(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
   graph(ownerId?: string): Promise<Graph>;
   conflicts(ownerId?: string): Promise<Conflict[]>;
   resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void>;

@@ -6,6 +6,7 @@ import type {
   ContextDocument,
   DocumentChunks,
   Graph,
+  IndexProgressEvent,
   IndexResult,
   Memory,
   RecallOptions,
@@ -23,6 +24,10 @@ export interface HttpResponse {
   status: number;
   text(): Promise<string>;
   json(): Promise<unknown>;
+  /** Web-streams body (present on real fetch Responses) — used by the index progress stream. */
+  body?: {
+    getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }> };
+  } | null;
 }
 export type FetchLike = (
   url: string,
@@ -83,8 +88,56 @@ export class HttpMemloomClient implements MemoryEngine {
     return versions;
   }
 
-  index(): Promise<IndexResult> {
-    return this.#post<IndexResult>("/memory/index", {});
+  async index(
+    _ownerId?: string,
+    onProgress?: (event: IndexProgressEvent) => void,
+  ): Promise<IndexResult> {
+    if (!onProgress) return this.#post<IndexResult>("/memory/index", {});
+
+    // Progress requested: consume the NDJSON stream, forwarding item events as they land.
+    const res = await this.#fetch(`${this.#baseUrl}/memory/index/stream`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    if (!res.ok) throw new Error(`memloom server ${res.status}: ${await res.text()}`);
+
+    let result: IndexResult | null = null;
+    const handleLine = (line: string) => {
+      if (!line.trim()) return;
+      const event = JSON.parse(line) as
+        | ({ type: "item" } & IndexProgressEvent)
+        | ({ type: "done" } & IndexResult)
+        | { type: "error"; error: string };
+      if (event.type === "item") onProgress(event);
+      else if (event.type === "done")
+        result = { indexed: event.indexed, chunksIndexed: event.chunksIndexed };
+      else throw new Error(event.error);
+    };
+
+    const reader = res.body?.getReader();
+    if (reader) {
+      const decoder = new TextDecoder();
+      let buffer = "";
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        let newline = buffer.indexOf("\n");
+        while (newline >= 0) {
+          handleLine(buffer.slice(0, newline));
+          buffer = buffer.slice(newline + 1);
+          newline = buffer.indexOf("\n");
+        }
+      }
+      handleLine(buffer);
+    } else {
+      // Fetch impls without body streaming (test doubles): parse the full text at once.
+      for (const line of (await res.text()).split("\n")) handleLine(line);
+    }
+
+    if (!result) throw new Error("memloom: index stream ended without a done event");
+    return result;
   }
 
   graph(): Promise<Graph> {

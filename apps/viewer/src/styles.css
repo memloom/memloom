@@ -895,3 +895,21 @@ textarea {
   font-family: var(--mono);
   font-size: 12px;
 }
+
+/* live index-run log (Console tab): terminal-style, autoscrolls while streaming */
+.indexLog {
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.indexLogDone {
+  color: var(--ok);
+}

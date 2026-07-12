@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, type Memory, type SaveResult } from "./api";
 
 // Console-lite: exercise the engine by hand — save, recall, index — without leaving the
@@ -21,8 +21,15 @@ export function ConsoleView({
   const [results, setResults] = useState<Memory[] | null>(null);
 
   const [indexing, setIndexing] = useState(false);
-  const [indexed, setIndexed] = useState<{ indexed: number; chunksIndexed: number } | null>(null);
+  const [indexLog, setIndexLog] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const indexLogRef = useRef<HTMLDivElement | null>(null);
+
+  // Keep the newest log line in view while the run streams.
+  useEffect(() => {
+    const el = indexLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [indexLog]);
 
   async function run<T>(setBusyState: (b: boolean) => void, fn: () => Promise<T>) {
     setBusyState(true);
@@ -154,21 +161,41 @@ export function ConsoleView({
               className="btn"
               disabled={indexing}
               onClick={async () => {
-                const result = await run(setIndexing, () => api.index());
+                setIndexLog(["starting index run…"]);
+                const result = await run(setIndexing, () =>
+                  api.indexStream((e) => {
+                    const entities =
+                      e.entities.length > 0 ? e.entities.join(", ") : "(no entities)";
+                    setIndexLog((log) => [
+                      ...log.slice(-400),
+                      `[${e.index}/${e.total}] ${e.kind}  ${e.label}  →  ${entities}`,
+                    ]);
+                  }),
+                );
                 if (result) {
-                  setIndexed(result);
+                  setIndexLog((log) => [
+                    ...log,
+                    `done — ${result.indexed} memories, ${result.chunksIndexed} chunks indexed`,
+                  ]);
                   onChanged();
                 }
               }}
             >
               {indexing ? "Indexing…" : "Extract entities from unindexed memories & context"}
             </button>
-            {indexed !== null && (
-              <span className="spin">
-                indexed {indexed.indexed} memories · {indexed.chunksIndexed} chunks
-              </span>
-            )}
           </div>
+          {indexLog.length > 0 && (
+            <div className="indexLog" ref={indexLogRef}>
+              {indexLog.map((line, i) => (
+                <div
+                  key={`${i}-${line.slice(0, 24)}`}
+                  className={line.startsWith("done") ? "indexLogDone" : ""}
+                >
+                  {line}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

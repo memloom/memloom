@@ -118,6 +118,16 @@ export type ResolveDecision =
   | { action: "keep_both" }
   | { action: "merge"; content: string; canonical?: string };
 
+/** One item finished during a streamed index run. */
+export interface IndexProgressEvent {
+  kind: "memory" | "chunk";
+  id: string;
+  label: string;
+  index: number;
+  total: number;
+  entities: string[];
+}
+
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
   const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -151,6 +161,43 @@ export const api = {
   history: (id: string) =>
     json<{ versions: Memory[] }>(`/memory/${id}/history`).then((r) => r.versions),
   index: () => post<{ indexed: number; chunksIndexed: number }>("/memory/index"),
+  // Streamed indexing: NDJSON progress per item, resolves with the totals. The callback
+  // fires as each memory/chunk finishes, so the console can log in real time.
+  indexStream: async (
+    onEvent: (event: IndexProgressEvent) => void,
+  ): Promise<{ indexed: number; chunksIndexed: number }> => {
+    const res = await fetch("/memory/index/stream", { method: "POST" });
+    if (!res.ok || !res.body) throw new Error(`${res.status} ${res.statusText}`);
+    let result: { indexed: number; chunksIndexed: number } | null = null;
+    const handleLine = (line: string) => {
+      if (!line.trim()) return;
+      const event = JSON.parse(line) as
+        | ({ type: "item" } & IndexProgressEvent)
+        | { type: "done"; indexed: number; chunksIndexed: number }
+        | { type: "error"; error: string };
+      if (event.type === "item") onEvent(event);
+      else if (event.type === "done")
+        result = { indexed: event.indexed, chunksIndexed: event.chunksIndexed };
+      else throw new Error(event.error);
+    };
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        handleLine(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+      }
+    }
+    handleLine(buffer);
+    if (!result) throw new Error("index stream ended without a done event");
+    return result;
+  },
   conflicts: () => json<{ conflicts: Conflict[] }>("/memory/conflicts").then((r) => r.conflicts),
   resolve: (id: string, decision: ResolveDecision) =>
     post<{ ok: boolean }>(`/memory/conflicts/${id}/resolve`, decision),

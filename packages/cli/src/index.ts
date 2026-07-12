@@ -204,7 +204,10 @@ export async function run(argv: readonly string[]): Promise<void> {
 
     case "index": {
       const engine = await connect();
-      const { indexed, chunksIndexed } = await engine.index();
+      const { indexed, chunksIndexed } = await engine.index(undefined, (e) => {
+        const entities = e.entities.length > 0 ? e.entities.join(", ") : "(no entities)";
+        console.log(`[${e.index}/${e.total}] ${e.kind.padEnd(6)} ${e.label}  ->  ${entities}`);
+      });
       console.log(`indexed ${indexed} memories, ${chunksIndexed} context chunks`);
       return;
     }

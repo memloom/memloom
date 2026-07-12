@@ -145,6 +145,31 @@ paths:
                     type: integer
                     description: Context chunks processed this run.
                     example: 12
+  /memory/index/stream:
+    post:
+      summary: Index with real-time progress (NDJSON stream)
+      description: |
+        Same work as /memory/index, but the response streams newline-delimited JSON as it
+        runs: one `{"type":"item"}` event per processed memory/chunk (with its label, 1-based
+        position, total, and extracted entity names), then a final `{"type":"done"}` event
+        with the run totals. Failures mid-run arrive in-band as `{"type":"error"}`.
+      operationId: indexMemoriesStream
+      requestBody:
+        required: false
+        content:
+          application\json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: NDJSON progress stream ending with a done (or error) event.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                example: |
+                  {"type":"item","kind":"chunk","id":"...","label":"notes.pdf › 2. DEFINICJA 2.","index":3,"total":46,"entities":["granica","funkcja"]}
+                  {"type":"done","indexed":0,"chunksIndexed":46}
   /memory/graph:
     get:
       summary: Get the memory graph

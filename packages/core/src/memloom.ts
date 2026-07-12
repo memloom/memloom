@@ -20,6 +20,7 @@ import type {
   GraphDocument,
   GraphEdge,
   GraphMemory,
+  IndexProgressEvent,
   IndexResult,
   Memory,
   MemoryType,
@@ -573,31 +574,66 @@ export class Memloom implements MemoryEngine {
    * are how context connects to memory (rolled up per document in graph()). One LLM call per
    * row, so a large PDF makes indexing proportionally slower.
    */
-  async index(ownerId: string = SENTINEL_OWNER): Promise<IndexResult> {
+  async index(
+    ownerId: string = SENTINEL_OWNER,
+    onProgress?: (event: IndexProgressEvent) => void,
+  ): Promise<IndexResult> {
+    const snippet = (text: string) => (text.length > 64 ? `${text.slice(0, 61)}...` : text);
+
     const pending = await this.#storage.query<{ id: string; content: string }>(
       `SELECT id, content FROM memory_objects
        WHERE owner_id = $1 AND status = 'active' AND indexed_at IS NULL
        ORDER BY created_at`,
       [ownerId],
     );
+    let memoryPosition = 0;
     for (const memory of pending) {
-      await this.#linkEntities(ownerId, memory.id, memory.content);
+      memoryPosition += 1;
+      const entities = await this.#linkEntities(ownerId, memory.id, memory.content);
       await this.#storage.query("UPDATE memory_objects SET indexed_at = now() WHERE id = $1", [
         memory.id,
       ]);
+      onProgress?.({
+        kind: "memory",
+        id: memory.id,
+        label: snippet(memory.content),
+        index: memoryPosition,
+        total: pending.length,
+        entities,
+      });
     }
 
-    const pendingChunks = await this.#storage.query<{ id: string; content: string }>(
-      `SELECT id, content FROM context_chunks
-       WHERE owner_id = $1 AND indexed_at IS NULL
-       ORDER BY created_at, chunk_index`,
+    const pendingChunks = await this.#storage.query<{
+      id: string;
+      content: string;
+      heading_path: string | null;
+      chunk_index: number;
+      doc_title: string;
+    }>(
+      `SELECT cc.id, cc.content, cc.heading_path, cc.chunk_index, cd.title AS doc_title
+       FROM context_chunks cc
+       JOIN context_documents cd ON cd.id = cc.document_id
+       WHERE cc.owner_id = $1 AND cc.indexed_at IS NULL
+       ORDER BY cc.created_at, cc.chunk_index`,
       [ownerId],
     );
+    let chunkPosition = 0;
     for (const chunk of pendingChunks) {
-      await this.#linkEntities(ownerId, chunk.id, chunk.content);
+      chunkPosition += 1;
+      const entities = await this.#linkEntities(ownerId, chunk.id, chunk.content);
       await this.#storage.query("UPDATE context_chunks SET indexed_at = now() WHERE id = $1", [
         chunk.id,
       ]);
+      onProgress?.({
+        kind: "chunk",
+        id: chunk.id,
+        label: snippet(
+          `${chunk.doc_title} › ${chunk.heading_path ?? `#${Number(chunk.chunk_index) + 1}`}`,
+        ),
+        index: chunkPosition,
+        total: pendingChunks.length,
+        entities,
+      });
     }
 
     return { indexed: pending.length, chunksIndexed: pendingChunks.length };
@@ -901,13 +937,15 @@ export class Memloom implements MemoryEngine {
   }
 
   // Extract entities from one source (memory or context chunk) and link it to each with a
-  // 'mention' edge. The edge table has no FKs, so both node kinds share it.
-  async #linkEntities(owner: string, sourceId: string, content: string): Promise<void> {
+  // 'mention' edge. The edge table has no FKs, so both node kinds share it. Returns the
+  // extracted entity names — the index progress stream reports them.
+  async #linkEntities(owner: string, sourceId: string, content: string): Promise<string[]> {
     const entities = await extractEntities(this.#llm, content);
     for (const entity of entities) {
       const entityId = await this.#resolveEntity(owner, entity.name, entity.type);
       await addEdge(this.#storage, owner, sourceId, entityId, "mention");
     }
+    return entities.map((e) => e.name);
   }
 
   async #resolveEntity(owner: string, name: string, type: string): Promise<string> {
