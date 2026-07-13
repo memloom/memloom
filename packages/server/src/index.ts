@@ -73,16 +73,25 @@ async function nativePick(mode: "file" | "folder"): Promise<string[] | null> {
     const filter = supportedExtensions()
       .map((ext) => `*${ext}`)
       .join(";");
-    // An invisible TopMost owner form makes the dialog appear above the browser.
+    // The owner form must be SHOWN (offscreen, topmost) and activated before the dialog
+    // opens — a modal dialog owned by a never-shown form gets no activation and no
+    // taskbar entry, floating invisibly behind every window.
+    const owner =
+      "$owner = New-Object System.Windows.Forms.Form; $owner.StartPosition = 'Manual'; " +
+      "$owner.Left = -32000; $owner.Top = -32000; $owner.Width = 1; $owner.Height = 1; " +
+      "$owner.ShowInTaskbar = $false; $owner.TopMost = $true; $owner.Show(); $owner.Activate(); ";
     const script =
       "Add-Type -AssemblyName System.Windows.Forms; " +
-      "$owner = New-Object System.Windows.Forms.Form -Property @{TopMost=$true}; " +
+      "[System.Windows.Forms.Application]::EnableVisualStyles(); " +
+      owner +
       (mode === "folder"
         ? "$d = New-Object System.Windows.Forms.FolderBrowserDialog; " +
-          "if ($d.ShowDialog($owner) -eq 'OK') { [Console]::WriteLine($d.SelectedPath) }"
+          "$r = $d.ShowDialog($owner); $owner.Close(); " +
+          "if ($r -eq 'OK') { [Console]::WriteLine($d.SelectedPath) }"
         : "$f = New-Object System.Windows.Forms.OpenFileDialog; $f.Multiselect = $true; " +
           `$f.Filter = 'Supported files|${filter}|All files|*.*'; ` +
-          "if ($f.ShowDialog($owner) -eq 'OK') { $f.FileNames | ForEach-Object { [Console]::WriteLine($_) } }");
+          "$r = $f.ShowDialog($owner); $owner.Close(); " +
+          "if ($r -eq 'OK') { $f.FileNames | ForEach-Object { [Console]::WriteLine($_) } }");
     try {
       const { stdout } = await run("powershell.exe", ["-NoProfile", "-STA", "-Command", script], {
         windowsHide: true,
