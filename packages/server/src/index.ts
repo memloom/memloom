@@ -73,13 +73,17 @@ async function nativePick(mode: "file" | "folder"): Promise<string[] | null> {
     const filter = supportedExtensions()
       .map((ext) => `*${ext}`)
       .join(";");
-    // The owner form must be SHOWN (offscreen, topmost) and activated before the dialog
-    // opens — a modal dialog owned by a never-shown form gets no activation and no
-    // taskbar entry, floating invisibly behind every window.
+    // The common dialog positions itself relative to its OWNER and inherits its z-order,
+    // so the owner must be a real, shown, ON-SCREEN window: centered, 1x1, near-invisible
+    // (1% opacity), TopMost. An offscreen owner (-32000) sends the dialog to a clamped
+    // corner with no taskbar button and no activation: invisible in practice. Verified on
+    // Windows 11 through the detached-daemon chain; see docs/design/assistant-tab.md repo
+    // history for the full investigation.
     const owner =
-      "$owner = New-Object System.Windows.Forms.Form; $owner.StartPosition = 'Manual'; " +
-      "$owner.Left = -32000; $owner.Top = -32000; $owner.Width = 1; $owner.Height = 1; " +
-      "$owner.ShowInTaskbar = $false; $owner.TopMost = $true; $owner.Show(); $owner.Activate(); ";
+      "$owner = New-Object System.Windows.Forms.Form; $owner.TopMost = $true; " +
+      "$owner.ShowInTaskbar = $false; $owner.FormBorderStyle = 'None'; " +
+      "$owner.StartPosition = 'CenterScreen'; $owner.Width = 1; $owner.Height = 1; " +
+      "$owner.Opacity = 0.01; $owner.Show(); $owner.Activate(); ";
     const script =
       "Add-Type -AssemblyName System.Windows.Forms; " +
       "[System.Windows.Forms.Application]::EnableVisualStyles(); " +
@@ -93,10 +97,20 @@ async function nativePick(mode: "file" | "folder"): Promise<string[] | null> {
           "$r = $f.ShowDialog($owner); $owner.Close(); " +
           "if ($r -eq 'OK') { $f.FileNames | ForEach-Object { [Console]::WriteLine($_) } }");
     try {
-      const { stdout } = await run("powershell.exe", ["-NoProfile", "-STA", "-Command", script], {
-        windowsHide: true,
-        timeout: PICK_TIMEOUT_MS,
-      });
+      // -EncodedCommand removes every quoting variable between Node and PowerShell.
+      const { stdout } = await run(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
+          "-STA",
+          "-EncodedCommand",
+          Buffer.from(script, "utf16le").toString("base64"),
+        ],
+        { windowsHide: true, timeout: PICK_TIMEOUT_MS },
+      );
       return stdout
         .split(/\r?\n/)
         .map((s) => s.trim())
