@@ -1,8 +1,10 @@
 import { forceCollide } from "d3-force-3d";
-import { Maximize, Minus, Plus, SlidersHorizontal, X } from "lucide-react";
+import { FilePlus, Maximize, MessageSquare, Minus, Plus, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
+import { AssistantView } from "./AssistantView";
 import { api, type ContextChunk, type DocumentChunks, type Graph } from "./api";
+import { AddFileCard } from "./cards";
 import { GraphControlsPanel } from "./GraphControlsPanel";
 import {
   cloneGraphConfig,
@@ -331,7 +333,19 @@ type HoverState = {
   rafId: number | null;
 };
 
-export function GraphView({ graph }: { graph: Graph }) {
+export function GraphView({
+  graph,
+  focus,
+  onFocusConsumed,
+  onChanged,
+}: {
+  graph: Graph;
+  /** A node id to select and center on when the tab opens (e.g. from an assistant source). */
+  focus?: string | null;
+  onFocusConsumed?: () => void;
+  /** Called after a file is ingested from the docked "+ add" panel, so App refetches. */
+  onChanged?: () => void;
+}) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
   // react-force-graph's methods surface (zoom, zoomToFit, d3Force, ...) — kept loose.
   // biome-ignore lint/suspicious/noExplicitAny: untyped imperative handle from the lib
@@ -340,6 +354,10 @@ export function GraphView({ graph }: { graph: Graph }) {
   const [selected, setSelected] = useState<Selected>(null);
   const [panelWidth, setPanelWidth] = useState(320);
   const [expanded, setExpanded] = useState<Map<string, DocumentChunks>>(new Map());
+  // The right-hand dock: launched from the corner buttons above the legend. One panel hosts
+  // either the compact assistant or the "+ add" file ingest, at a width the user can drag.
+  const [dock, setDock] = useState<"assistant" | "add" | null>(null);
+  const [dockWidth, setDockWidth] = useState(420);
 
   // Drag the panel's left edge to resize; clamped so it can neither vanish nor eat the canvas.
   const startPanelResize = useCallback(
@@ -358,6 +376,24 @@ export function GraphView({ graph }: { graph: Graph }) {
       window.addEventListener("pointerup", onUp);
     },
     [panelWidth],
+  );
+
+  const startDockResize = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = dockWidth;
+      const onMove = (ev: PointerEvent) => {
+        setDockWidth(Math.min(760, Math.max(320, startWidth + (startX - ev.clientX))));
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [dockWidth],
   );
   const [config, setConfig] = useState<ViewerGraphConfig>(() =>
     cloneGraphConfig(DEFAULT_GRAPH_CONFIG),
@@ -404,6 +440,23 @@ export function GraphView({ graph }: { graph: Graph }) {
   useEffect(() => {
     nodeMapRef.current = nodeMap;
   });
+
+  // External focus: an assistant source asks to see itself in the graph. This view unmounts
+  // on tab switch, so the target arrives as a prop from App (its own `selected` state is gone
+  // on remount). Highlight the node immediately, recenter after the mount zoomToFit settles,
+  // then consume the request so App's background refresh does not re-center every tick.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on the focus prop only
+  useEffect(() => {
+    if (!focus) return;
+    const node = nodeMap.get(focus);
+    if (node) {
+      setSelected({ kind: node.kind, title: node.label, body: node.full, id: node.id });
+      window.setTimeout(() => {
+        if (node.x != null && node.y != null) fgRef.current?.centerAt?.(node.x, node.y, 600);
+      }, 320);
+    }
+    onFocusConsumed?.();
+  }, [focus]);
 
   // Persist positions so a rebuild (refetch, expand/collapse) never relayouts from scratch.
   useEffect(() => {
@@ -830,22 +883,40 @@ export function GraphView({ graph }: { graph: Graph }) {
             onClose={() => setShowControls(false)}
           />
         )}
-        <div className="legend">
-          <div className="legendRow">
-            <span className="swatchSquare" style={{ background: pal.memory }} />
-            memory
-          </div>
-          <div className="legendRow">
-            <span className="swatchCircle" style={{ background: pal.entity }} />
-            entity
-          </div>
-          <div className="legendRow">
-            <span className="swatchDiamond" style={{ background: pal.document }} />
-            document
-          </div>
-          <div className="legendRow">
-            <span className="swatchSquare swatchSmall" style={{ background: pal.chunk }} />
-            chunk
+        <div className="graphCorner">
+          <button
+            type="button"
+            className={`graphLauncher ${dock === "assistant" ? "graphLauncherActive" : ""}`}
+            onClick={() => setDock((d) => (d === "assistant" ? null : "assistant"))}
+            title="Ask the assistant"
+          >
+            <MessageSquare size={13} strokeWidth={1.75} /> assistant
+          </button>
+          <button
+            type="button"
+            className={`graphLauncher ${dock === "add" ? "graphLauncherActive" : ""}`}
+            onClick={() => setDock((d) => (d === "add" ? null : "add"))}
+            title="Add files to the knowledge base"
+          >
+            <FilePlus size={13} strokeWidth={1.75} /> add
+          </button>
+          <div className="legend">
+            <div className="legendRow">
+              <span className="swatchSquare" style={{ background: pal.memory }} />
+              memory
+            </div>
+            <div className="legendRow">
+              <span className="swatchCircle" style={{ background: pal.entity }} />
+              entity
+            </div>
+            <div className="legendRow">
+              <span className="swatchDiamond" style={{ background: pal.document }} />
+              document
+            </div>
+            <div className="legendRow">
+              <span className="swatchSquare swatchSmall" style={{ background: pal.chunk }} />
+              chunk
+            </div>
           </div>
         </div>
       </div>
@@ -922,6 +993,39 @@ export function GraphView({ graph }: { graph: Graph }) {
                 </div>
               );
             })()}
+        </aside>
+      )}
+      {dock && (
+        <aside className="graphDock" style={{ width: dockWidth }}>
+          <button
+            type="button"
+            className="sidePanelResize"
+            aria-label="Resize panel"
+            onPointerDown={startDockResize}
+          />
+          <div className="graphDockHead">
+            <span className="graphDockTitle">
+              {dock === "assistant" ? "assistant" : "add to knowledge base"}
+            </span>
+            <button
+              type="button"
+              className="graphDockClose"
+              onClick={() => setDock(null)}
+              aria-label="Close panel"
+            >
+              <X size={14} strokeWidth={1.75} />
+            </button>
+          </div>
+          <div className="graphDockBody">
+            {dock === "assistant" ? (
+              <AssistantView compact />
+            ) : (
+              <div className="graphDockScroll">
+                <h2 className="sectionTitle">Add a file/folder</h2>
+                <AddFileCard onAdded={() => onChanged?.()} />
+              </div>
+            )}
+          </div>
         </aside>
       )}
     </>

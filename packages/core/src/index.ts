@@ -11,7 +11,13 @@ export type { Chunk, ChunkOptions } from "./chunker.js";
 export { chunkMarkdown, chunkOutline, chunkText } from "./chunker.js";
 export type { MemoryEngine } from "./engine.js";
 export type { ContextKind, ExtractedFile, ExtractedUnit, Extractor } from "./extract.js";
-export { detectKind, extractFile, registerExtractor, supportedExtensions } from "./extract.js";
+export {
+  detectKind,
+  extractBytes,
+  extractFile,
+  registerExtractor,
+  supportedExtensions,
+} from "./extract.js";
 // Providers
 export {
   HashingEmbeddingProvider,
@@ -88,6 +94,8 @@ export type {
   ContextAddInput,
   ContextAddOutcome,
   ContextAddResult,
+  ContextAttachInput,
+  ContextAttachResult,
   ContextChunk,
   ContextDocument,
   DocumentChunks,

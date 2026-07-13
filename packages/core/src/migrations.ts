@@ -739,5 +739,119 @@ export function buildMigrations(dims: number): Migration[] {
       $fn$;
     `,
     },
+    {
+      // Chat-scoped attachments: a file attached to an assistant chat is chunked and
+      // embedded like any document but tagged with the session, searchable only from that
+      // chat's recall and deleted with it. session_id is denormalized onto chunks so the
+      // fuse function filters without a join. The parameter list changes, so the old
+      // signature must be dropped first (CREATE OR REPLACE would add an overload and make
+      // recall's positional call ambiguous). Body is 0014's plus the two chunk filters.
+      id: "0015_session_attachments",
+      sql: /* sql */ `
+      ALTER TABLE context_documents ADD COLUMN IF NOT EXISTS session_id uuid;
+      ALTER TABLE context_chunks ADD COLUMN IF NOT EXISTS session_id uuid;
+
+      DROP FUNCTION IF EXISTS memloom_fuse(
+        text, vector, uuid, int, int, int, int, boolean, boolean, boolean,
+        double precision, double precision, double precision, double precision
+      );
+
+      CREATE FUNCTION memloom_fuse(
+        p_q           text,
+        p_emb         vector(${dims}),
+        p_owner       uuid,
+        p_limit       int     DEFAULT 10,
+        p_pool        int     DEFAULT 50,
+        p_anchor      int     DEFAULT 10,
+        p_k           int     DEFAULT 60,
+        p_use_vector  boolean DEFAULT true,
+        p_use_keyword boolean DEFAULT true,
+        p_use_entity  boolean DEFAULT true,
+        p_anchor_sim  float   DEFAULT 0.60,
+        p_w_vector    float   DEFAULT 1.0,
+        p_w_keyword   float   DEFAULT 2.0,
+        p_w_entity    float   DEFAULT 0.5,
+        p_session     uuid    DEFAULT NULL
+      )
+      RETURNS TABLE (id uuid, rrf_score double precision, src text)
+      LANGUAGE sql STABLE AS $fn$
+        WITH vec AS (
+          SELECT u.id, u.src, row_number() OVER (ORDER BY u.dist) AS rnk
+          FROM (
+            SELECT mo.id, 'memory'::text AS src, mo.embedding <=> p_emb AS dist
+            FROM memory_objects mo
+            WHERE mo.owner_id = p_owner AND mo.status = 'active' AND mo.embedding IS NOT NULL
+            UNION ALL
+            SELECT cc.id, 'chunk'::text, cc.embedding <=> p_emb
+            FROM context_chunks cc
+            WHERE cc.owner_id = p_owner AND cc.embedding IS NOT NULL
+              AND (cc.session_id IS NULL OR cc.session_id = p_session)
+          ) u
+          WHERE p_use_vector
+          ORDER BY u.dist
+          LIMIT p_pool
+        ),
+        kw AS (
+          SELECT u.id, u.src, row_number() OVER (ORDER BY u.rank DESC) AS rnk
+          FROM (
+            SELECT mo.id, 'memory'::text AS src,
+                   ts_rank(mo.search_tsv, websearch_to_tsquery('simple', p_q)) AS rank
+            FROM memory_objects mo
+            WHERE mo.owner_id = p_owner AND mo.status = 'active'
+              AND mo.search_tsv @@ websearch_to_tsquery('simple', p_q)
+            UNION ALL
+            SELECT cc.id, 'chunk'::text,
+                   ts_rank(cc.search_tsv, websearch_to_tsquery('simple', p_q))
+            FROM context_chunks cc
+            WHERE cc.owner_id = p_owner
+              AND cc.search_tsv @@ websearch_to_tsquery('simple', p_q)
+              AND (cc.session_id IS NULL OR cc.session_id = p_session)
+          ) u
+          WHERE p_use_keyword
+          ORDER BY u.rank DESC
+          LIMIT p_pool
+        ),
+        anchors AS (
+          SELECT me.id AS eid
+          FROM memory_entities me
+          WHERE p_use_entity AND me.owner_id = p_owner AND me.embedding IS NOT NULL
+            AND (1 - (me.embedding <=> p_emb)) >= p_anchor_sim
+          ORDER BY me.embedding <=> p_emb
+          LIMIT p_anchor
+        ),
+        ent AS (
+          SELECT g.id, g.src, row_number() OVER (ORDER BY g.cnt DESC) AS rnk
+          FROM (
+            SELECT e.from_id AS id,
+                   CASE WHEN bool_or(mo.id IS NOT NULL) THEN 'memory'::text
+                        ELSE 'chunk'::text END AS src,
+                   count(DISTINCT e.to_id) AS cnt
+            FROM memory_edges e
+            JOIN anchors a ON a.eid = e.to_id
+            LEFT JOIN memory_objects mo ON mo.id = e.from_id AND mo.status = 'active'
+            LEFT JOIN context_chunks cc ON cc.id = e.from_id
+            WHERE e.owner_id = p_owner AND e.relation = 'mention' AND e.active
+            GROUP BY e.from_id
+            HAVING bool_or(mo.id IS NOT NULL) OR bool_or(cc.id IS NOT NULL)
+            ORDER BY count(DISTINCT e.to_id) DESC
+            LIMIT p_pool
+          ) g
+        ),
+        fused AS (
+          SELECT u.id AS fid, u.src AS fsrc, sum(u.w / (p_k + u.rnk)) AS score
+          FROM (
+            SELECT vec.id, vec.src, vec.rnk, p_w_vector  AS w FROM vec
+            UNION ALL SELECT kw.id,  kw.src,  kw.rnk,  p_w_keyword FROM kw
+            UNION ALL SELECT ent.id, ent.src, ent.rnk, p_w_entity FROM ent
+          ) u
+          GROUP BY u.id, u.src
+        )
+        SELECT fused.fid, fused.score, fused.fsrc
+        FROM fused
+        ORDER BY fused.score DESC
+        LIMIT p_limit
+      $fn$;
+    `,
+    },
   ];
 }

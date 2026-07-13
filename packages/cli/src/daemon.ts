@@ -123,6 +123,8 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
       log: true,
       onShutdown: shutdown,
       ...(staticDir ? { staticDir } : {}),
+      // Mirrors OpenRouterLLM's own chat-model fallback chain, for the picker's label.
+      ...(apiKey ? { defaultChatModel: chatModel ?? llmModel ?? "google/gemini-2.5-flash" } : {}),
     }).fetch,
     port: httpPort,
     hostname: "127.0.0.1",

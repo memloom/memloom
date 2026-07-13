@@ -175,6 +175,9 @@ export interface AssistantSource {
   snippet: string;
   similarity?: number;
   date?: string;
+  memoryType?: MemoryType;
+  rrfScore?: number;
+  graphNodeId?: string;
 }
 
 export interface BrowseEntry {
@@ -221,6 +224,34 @@ export type AssistantStreamEvent =
       sources: AssistantSource[];
     }
   | { type: "error"; message: string };
+
+/** One tool-capable OpenRouter model, shaped by the daemon for the composer's picker. */
+export interface AssistantModel {
+  id: string;
+  name: string;
+  description: string;
+  contextLength: number | null;
+  /** USD per 1M input tokens; null when OpenRouter reports no price. */
+  promptPer1M: number | null;
+  completionPer1M: number | null;
+  provider: string;
+}
+
+export interface AssistantModels {
+  /** The daemon's configured chat model; null in offline mode. */
+  defaultModel: string | null;
+  models: AssistantModel[];
+}
+
+/** A file attached to one chat session (same shape as a context document). */
+export interface SessionAttachment {
+  id: string;
+  path: string;
+  title: string;
+  kind: string;
+  chunkCount: number;
+  updatedAt: string;
+}
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
@@ -313,9 +344,23 @@ export const api = {
     }),
   assistantDelete: (sessionId: string) =>
     json<{ ok: boolean }>(`/assistant/sessions/${sessionId}`, { method: "DELETE" }),
+  assistantModels: () => json<AssistantModels>("/assistant/models"),
+  // Attach a file's bytes to a chat; no sessionId creates the session and returns it.
+  assistantAttach: (input: { sessionId?: string; filename: string; contentBase64: string }) =>
+    post<{
+      sessionId: string;
+      documentId: string;
+      outcome: "added" | "updated" | "unchanged";
+      title: string;
+      chunks: number;
+    }>("/assistant/attachments", input),
+  sessionAttachments: (sessionId: string) =>
+    json<{ attachments: SessionAttachment[] }>(`/assistant/sessions/${sessionId}/attachments`).then(
+      (r) => r.attachments,
+    ),
   // One agentic turn over SSE. Resolves with the done payload; onEvent fires per event.
   assistantChat: async (
-    input: { sessionId?: string; message: string },
+    input: { sessionId?: string; message: string; model?: string },
     onEvent: (e: AssistantStreamEvent) => void,
   ): Promise<Extract<AssistantStreamEvent, { type: "done" }>> => {
     const res = await fetch("/assistant/chat", {

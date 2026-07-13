@@ -29,6 +29,10 @@ export interface AssistantTurnInput {
   message: string;
   /** Injected so "what day is today?" never needs a tool (and the fn stays testable). */
   today: string;
+  /** Per-turn model override (the viewer's model picker); provider default when absent. */
+  model?: string;
+  /** Titles of files attached to this chat, so the model knows to recall them. */
+  attachments?: string[];
   onEvent?: (e: AssistantEvent) => void;
 }
 
@@ -55,10 +59,20 @@ const RECALL_TOOL: ChatTool = {
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
-export function buildAssistantSystemPrompt(today: string): string {
+export function buildAssistantSystemPrompt(today: string, attachments?: string[]): string {
+  const attachmentLines =
+    attachments && attachments.length > 0
+      ? [
+          "",
+          "Files the user attached to this chat (their content is searchable through",
+          "recall_memory, exactly like saved memories and documents):",
+          ...attachments.map((t) => `- ${t}`),
+        ]
+      : [];
   return [
     "You are the memloom assistant. You help one person use their private, local memory",
     `store: memories they saved and documents they ingested. Today is ${today}.`,
+    ...attachmentLines,
     "",
     "You have one tool:",
     "- recall_memory(query): hybrid search over the user's saved memories and ingested",
@@ -104,6 +118,9 @@ function sourceOf(memory: Memory, n: number): AssistantSource {
   const title = isContext
     ? [memory.source?.title, memory.source?.headingPath].filter(Boolean).join(" › ") || "document"
     : (memory.canonical ?? memory.content.slice(0, 60));
+  // The graph link targets a top-level node: the memory itself, or the chunk's parent
+  // document (chunks are not standalone nodes, so the document is the honest anchor).
+  const graphNodeId = isContext ? memory.source?.documentId : memory.id;
   return {
     n,
     kind: isContext ? "context" : "memory",
@@ -114,6 +131,9 @@ function sourceOf(memory: Memory, n: number): AssistantSource {
         ? `${memory.content.slice(0, SNIPPET_CHARS - 3)}...`
         : memory.content,
     ...(memory.similarity !== undefined ? { similarity: memory.similarity } : {}),
+    ...(memory.rrfScore !== undefined ? { rrfScore: memory.rrfScore } : {}),
+    ...(graphNodeId ? { graphNodeId } : {}),
+    ...(!isContext ? { memoryType: memory.memoryType as AssistantSource["memoryType"] } : {}),
     ...(!isContext && assertedDay(memory) ? { date: assertedDay(memory) } : {}),
   };
 }
@@ -126,9 +146,9 @@ export function stripInvalidMarkers(text: string, validNs: Set<number>): string 
 export async function runAssistantTurn(
   input: AssistantTurnInput,
 ): Promise<{ answer: string; sources: AssistantSource[] }> {
-  const { provider, recall, onEvent } = input;
+  const { provider, recall, onEvent, model } = input;
   const messages: ChatMessage[] = [
-    { role: "system", content: buildAssistantSystemPrompt(input.today) },
+    { role: "system", content: buildAssistantSystemPrompt(input.today, input.attachments) },
     ...input.history.map((t) => ({ role: t.role, content: t.content })),
     { role: "user", content: input.message },
   ];
@@ -138,7 +158,11 @@ export async function runAssistantTurn(
   let usedAnyTool = false;
   let lastQuery = "";
   let round = 0;
-  let result = await provider.chat(messages, { tools: [RECALL_TOOL], toolChoice: "auto" });
+  let result = await provider.chat(messages, {
+    tools: [RECALL_TOOL],
+    toolChoice: "auto",
+    ...(model ? { model } : {}),
+  });
 
   while (result.toolCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
     round += 1;
@@ -220,7 +244,11 @@ export async function runAssistantTurn(
 
     if (round >= MAX_TOOL_ROUNDS) break;
     try {
-      result = await provider.chat(messages, { tools: [RECALL_TOOL], toolChoice: "auto" });
+      result = await provider.chat(messages, {
+        tools: [RECALL_TOOL],
+        toolChoice: "auto",
+        ...(model ? { model } : {}),
+      });
     } catch {
       break; // mid-loop failure: answer with whatever context was gathered
     }
@@ -234,7 +262,11 @@ export async function runAssistantTurn(
   } else {
     // The history is plain text by construction (no tool scaffolding), so the final
     // streamed call needs no tool declarations on any provider.
-    answer = await provider.chatStream(messages, (text) => onEvent?.({ type: "delta", text }));
+    answer = await provider.chatStream(
+      messages,
+      (text) => onEvent?.({ type: "delta", text }),
+      model ? { model } : {},
+    );
     if (!answer.trim()) answer = "No response generated.";
   }
 

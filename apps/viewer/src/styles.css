@@ -377,10 +377,42 @@ button {
   color: var(--bg);
 }
 
-.legend {
+/* Bottom-right stack: the launcher buttons sit above the legend by DOM order. */
+.graphCorner {
   position: absolute;
   right: 12px;
   bottom: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+  z-index: 5;
+}
+
+.graphLauncher {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  background: color-mix(in srgb, var(--bg-raised) 88%, transparent);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+}
+
+.graphLauncher:hover {
+  color: var(--text);
+  background: var(--bg-inset);
+}
+
+.graphLauncherActive,
+.graphLauncherActive:hover {
+  border-color: var(--brand);
+  color: var(--brand);
+}
+
+.legend {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -390,7 +422,6 @@ button {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text-muted);
-  z-index: 5;
 }
 
 .legendRow {
@@ -418,6 +449,56 @@ button {
 
 .swatchSmall {
   transform: scale(0.75);
+}
+
+/* The graph's right-hand dock: hosts the compact assistant or the "+ add" ingest panel.
+   Resizable from its left edge (reuses .sidePanelResize), sits beside the node details panel. */
+.graphDock {
+  position: relative;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-left: 1px solid var(--border);
+  background: var(--bg-raised);
+}
+
+.graphDockHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex: none;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+}
+
+.graphDockClose {
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  padding: 3px;
+}
+
+.graphDockClose:hover {
+  color: var(--text);
+}
+
+.graphDockBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.graphDockScroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 14px;
 }
 
 .sidePanel {
@@ -1236,6 +1317,44 @@ textarea {
   min-height: 0;
 }
 
+/* Docked in the graph: no session sidebar, just a "new chat" header over the chat column. */
+.chatLayoutCompact {
+  flex-direction: column;
+}
+
+.chatCompactHead {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+}
+
+.chatLayoutCompact .chatNewBtn {
+  width: 100%;
+}
+
+.chatCompactBody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* In the dock the sprawling tab padding (up to 96px each side) leaves the composer and
+   messages stranded — tighten it so they use the full width. */
+.chatLayoutCompact .chatMessages {
+  padding: 16px 12px;
+}
+
+.chatLayoutCompact .chatComposer {
+  padding: 12px;
+}
+
+.chatLayoutCompact .chatSessionList {
+  padding: 0 12px 10px;
+}
+
 .chatSidebar {
   width: 250px;
   flex: none;
@@ -1571,7 +1690,7 @@ textarea {
 }
 
 .sourceN {
-  color: var(--brand);
+  color: var(--text);
   flex: none;
 }
 
@@ -1579,14 +1698,7 @@ textarea {
   flex: none;
   font-size: 10px;
   text-transform: uppercase;
-}
-
-.sourceKind-memory {
-  color: var(--memory);
-}
-
-.sourceKind-context {
-  color: var(--ok);
+  color: var(--text);
 }
 
 .sourceTitle {
@@ -1602,8 +1714,61 @@ textarea {
   color: var(--text-faint);
 }
 
-.sourceFull {
+.sourceRowOpen {
+  color: var(--text);
+  background: var(--bg);
+}
+
+/* The detail frame: opens inline directly under its own source row. */
+.sourceFrame {
   border-top: 1px solid var(--border);
+  background: var(--bg);
+}
+
+.sourceFrameHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.sourceFrameType {
+  color: var(--text-muted);
+  text-transform: uppercase;
+  font-size: 10px;
+  letter-spacing: 0.03em;
+}
+
+.sourceFrameMeta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: none;
+}
+
+.sourceStat {
+  color: var(--text-faint);
+}
+
+.sourceGraphLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: none;
+  background: none;
+  color: var(--brand);
+  font: inherit;
+  cursor: pointer;
+  padding: 0;
+}
+
+.sourceGraphLink:hover {
+  text-decoration: underline;
+}
+
+.sourceFrameBody {
   padding: 8px 10px;
   color: var(--text-muted);
   white-space: pre-wrap;
@@ -1612,8 +1777,11 @@ textarea {
   overflow-y: auto;
 }
 
+/* Stacked composer: textarea on top, an action bar below with attach (left) + model
+   picker and Send (right). Shared by the assistant tab and the docked graph assistant. */
 .chatComposer {
   display: flex;
+  flex-direction: column;
   gap: 8px;
   padding: 12px clamp(16px, 8vw, 96px);
   border-top: 1px solid var(--border);
@@ -1621,7 +1789,7 @@ textarea {
 }
 
 .chatComposer textarea {
-  flex: 1;
+  width: 100%;
   resize: none;
   border: 1px solid var(--border);
   background: var(--bg-inset);
@@ -1634,4 +1802,240 @@ textarea {
 
 .chatComposer textarea:focus {
   border-color: var(--border-strong);
+}
+
+.chatComposerBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.chatComposerActions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.chatComposerActions .btn {
+  height: 30px;
+  padding: 0 14px;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Send is the composer's primary action: solid brand fill, white label (Claude-style).
+   Scoped here so the app's other outlined primary buttons stay as they are. */
+.chatComposerActions .btnPrimary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: #fff;
+}
+
+.chatComposerActions .btnPrimary:hover:not(:disabled) {
+  background: var(--brand-bright);
+  border-color: var(--brand-bright);
+  color: #fff;
+}
+
+.composerIconBtn {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  color: var(--text-muted);
+}
+
+.composerIconBtn:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-faint);
+}
+
+.composerModelBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.composerModelBtn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.composerIconBtn:disabled,
+.composerModelBtn:disabled {
+  cursor: default;
+  opacity: 0.85;
+}
+
+/* ---------- model picker popover ---------- */
+
+.modelPicker {
+  position: relative;
+}
+
+.pickerBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 29;
+  border: none;
+  background: transparent;
+  cursor: default;
+}
+
+.modelPickerPop {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  width: 340px;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+}
+
+.modelPickerSearch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-faint);
+}
+
+.modelPickerSearch input {
+  flex: 1;
+  border: none;
+  background: none;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.modelPickerList {
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.modelGroupHead {
+  padding: 6px 10px 3px;
+  font-family: var(--mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  border-top: 1px solid var(--border);
+}
+
+.modelPickerList > div:first-child .modelGroupHead {
+  border-top: none;
+}
+
+.modelRow {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 1px;
+  width: 100%;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  padding: 5px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: left;
+}
+
+.modelRow:hover {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+.modelRowActive {
+  color: var(--text);
+  background: var(--bg-inset);
+}
+
+.modelRowName {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.modelDefaultTag {
+  font-size: 10px;
+  color: var(--brand);
+}
+
+.modelRowMeta {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.modelRowDesc {
+  font-size: 11px;
+  color: var(--text-faint);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.modelPickerNote {
+  padding: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+/* ---------- chat attachments ---------- */
+
+.attachChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.attachChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 260px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachChipPending {
+  opacity: 0.6;
+}
+
+.attachChipX {
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  padding: 0;
+}
+
+.attachChipX:hover {
+  color: var(--danger);
 }

@@ -13,6 +13,8 @@ type Tab = "graph" | "assistant" | "memories" | "documents" | "schema" | "confli
 
 export function App() {
   const [tab, setTab] = useState<Tab>("graph");
+  // A node the graph should select/center on next time it opens (set from an assistant source).
+  const [graphFocus, setGraphFocus] = useState<string | null>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [proposalCount, setProposalCount] = useState(0);
@@ -96,8 +98,24 @@ export function App() {
       </header>
       <main className="main">
         {tab === "graph" &&
-          (graph ? <GraphView graph={graph} /> : <div className="emptyState">loading…</div>)}
-        {tab === "assistant" && <AssistantView />}
+          (graph ? (
+            <GraphView
+              graph={graph}
+              focus={graphFocus}
+              onFocusConsumed={() => setGraphFocus(null)}
+              onChanged={refresh}
+            />
+          ) : (
+            <div className="emptyState">loading…</div>
+          ))}
+        {tab === "assistant" && (
+          <AssistantView
+            onOpenInGraph={(nodeId) => {
+              setGraphFocus(nodeId);
+              setTab("graph");
+            }}
+          />
+        )}
         {tab === "memories" && <MemoriesView />}
         {tab === "documents" && <DocumentsView onChanged={refresh} />}
         {tab === "schema" && <SchemaView onChanged={refresh} />}

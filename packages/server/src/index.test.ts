@@ -575,4 +575,151 @@ describe("server", () => {
     };
     expect(graph.entities.map((e) => e.name)).toContain("Postgres");
   });
+
+  it("attachments: upload creates a session-scoped doc, listed and removable", async () => {
+    const server = await app();
+    const contentBase64 = Buffer.from("# Brief\nthe kickoff is on tuesday").toString("base64");
+
+    const res = await server.request("/assistant/attachments", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename: "brief.md", contentBase64 }),
+    });
+    expect(res.status).toBe(200);
+    const attached = (await res.json()) as {
+      sessionId: string;
+      documentId: string;
+      outcome: string;
+      chunks: number;
+    };
+    expect(attached.outcome).toBe("added");
+    expect(attached.sessionId).toBeTruthy();
+    expect(attached.chunks).toBeGreaterThan(0);
+
+    // Listed under the session, absent from the global documents tab.
+    const listed = (await (
+      await server.request(`/assistant/sessions/${attached.sessionId}/attachments`)
+    ).json()) as { attachments: Array<{ id: string }> };
+    expect(listed.attachments.map((a) => a.id)).toEqual([attached.documentId]);
+    const docs = (await (await server.request("/context/documents")).json()) as {
+      documents: unknown[];
+    };
+    expect(docs.documents).toHaveLength(0);
+
+    // Attaching to a bogus session 404s; a bad extension 400s.
+    const bogus = await server.request("/assistant/attachments", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        filename: "x.md",
+        contentBase64,
+        sessionId: "00000000-0000-0000-0000-000000000001",
+      }),
+    });
+    expect(bogus.status).toBe(404);
+    const badExt = await server.request("/assistant/attachments", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename: "image.png", contentBase64 }),
+    });
+    expect(badExt.status).toBe(400);
+
+    // The generic document delete works on attachments too.
+    const del = await server.request(`/context/documents/${attached.documentId}`, {
+      method: "DELETE",
+    });
+    expect(del.status).toBe(200);
+  });
+
+  it("models route shapes and caches the OpenRouter catalog", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+    });
+    await memloom.init();
+
+    let fetches = 0;
+    const fetchModels = (async () => {
+      fetches += 1;
+      return {
+        ok: true,
+        json: async () => ({
+          data: [
+            {
+              id: "anthropic/claude-sonnet-5",
+              name: "Anthropic: Claude Sonnet 5",
+              description: "A capable model.",
+              context_length: 1_000_000,
+              pricing: { prompt: "0.000002", completion: "0.00001" },
+            },
+            {
+              id: "google/gemini-2.5-flash",
+              name: "Google: Gemini 2.5 Flash",
+              description: "Fast.",
+              context_length: 1_048_576,
+              pricing: { prompt: "0.0000003", completion: "0.0000025" },
+            },
+          ],
+        }),
+      };
+    }) as unknown as typeof fetch;
+    const server = createServer(memloom, {
+      defaultChatModel: "google/gemini-2.5-flash",
+      fetchModels,
+    });
+
+    const res = await server.request("/assistant/models");
+    expect(res.status).toBe(200);
+    const payload = (await res.json()) as {
+      defaultModel: string;
+      models: Array<{
+        id: string;
+        provider: string;
+        promptPer1M: number;
+        completionPer1M: number;
+      }>;
+    };
+    expect(payload.defaultModel).toBe("google/gemini-2.5-flash");
+    const sonnet = payload.models.find((m) => m.id === "anthropic/claude-sonnet-5");
+    expect(sonnet).toMatchObject({ provider: "anthropic", promptPer1M: 2, completionPer1M: 10 });
+
+    // Second call is served from the 1h cache: no second upstream fetch.
+    await server.request("/assistant/models");
+    expect(fetches).toBe(1);
+  });
+
+  it("assistant chat accepts a model override in the body", async () => {
+    const seenModels: (string | undefined)[] = [];
+    const chatLLM: LLMProvider & ChatProvider = {
+      complete: async () => "[]",
+      chat: async (_m, opts?: { model?: string }) => {
+        seenModels.push(opts?.model);
+        return { content: "ok", toolCalls: [] };
+      },
+      chatStream: async () => "unused",
+    };
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: chatLLM,
+      dedup: false,
+    });
+    await memloom.init();
+    const server = createServer(memloom);
+
+    const res = await server.request("/assistant/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: "hi", model: "anthropic/claude-sonnet-5" }),
+    });
+    expect(res.status).toBe(200);
+    await res.text(); // drain the SSE stream so the turn completes
+    expect(seenModels).toEqual(["anthropic/claude-sonnet-5"]);
+  });
 });

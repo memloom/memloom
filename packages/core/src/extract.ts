@@ -117,13 +117,25 @@ export async function extractFile(
   path: string,
   hash: (bytes: Uint8Array) => string,
 ): Promise<ExtractedFile> {
+  return extractBytes(new Uint8Array(await readFile(path)), path, hash);
+}
+
+/**
+ * Extract from in-memory bytes: the chat-attachment path, where the browser uploads file
+ * content and no file ever touches the daemon's disk. `path` only picks the extractor by
+ * extension and provides the title fallback, so a bare filename works.
+ */
+export async function extractBytes(
+  bytes: Uint8Array,
+  path: string,
+  hash: (bytes: Uint8Array) => string,
+): Promise<ExtractedFile> {
   const extractor = registry.get(extname(path).toLowerCase());
   if (!extractor) {
     throw new Error(
       `unsupported file type: ${basename(path)} (the context connector reads ${supportedExtensions().join(", ")})`,
     );
   }
-  const bytes = new Uint8Array(await readFile(path));
   const contentHash =
     extractor.version === 1 ? hash(bytes) : `${hash(bytes)}#p${extractor.version}`;
   const { title, units } = await extractor.extract(bytes, path);

@@ -5,6 +5,7 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { serve as nodeServe } from "@hono/node-server";
 import {
+  detectKind,
   type IndexProgressEvent,
   isChatProvider,
   MEMORY_TYPES,
@@ -12,6 +13,7 @@ import {
   supportedExtensions,
 } from "@memloom/core";
 import { type Context, Hono } from "hono";
+import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { stream, streamSSE } from "hono/streaming";
 import { z } from "zod";
@@ -46,6 +48,16 @@ export interface ServerOptions {
    * injectable so tests never open one.
    */
   pickPaths?: (mode: "file" | "folder") => Promise<string[] | null>;
+  /**
+   * The chat model the daemon is configured with (OPENROUTER_CHAT_MODEL fallback chain).
+   * Reported by GET /assistant/models so the viewer's picker can label the default.
+   */
+  defaultChatModel?: string;
+  /**
+   * Fetches the OpenRouter model catalog; injectable so tests never hit the network.
+   * Defaults to global fetch.
+   */
+  fetchModels?: typeof fetch;
 }
 
 // Fire-and-forget OS opener. The daemon runs on the file owner's machine, so "open" means
@@ -218,6 +230,15 @@ const schemaStatusSchema = z.object({
 const assistantChatSchema = z.object({
   sessionId: z.string().uuid().optional(),
   message: z.string().min(1, "message must be a non-empty string"),
+  // Loosely validated on purpose: OpenRouter is the authority on what exists, and its
+  // errors already surface through the SSE error event.
+  model: z.string().min(1).max(200).optional(),
+});
+
+const assistantAttachSchema = z.object({
+  sessionId: z.string().uuid().optional(),
+  filename: z.string().min(1, "filename must be a non-empty string").max(255),
+  contentBase64: z.string().min(1, "contentBase64 must be a non-empty string"),
 });
 
 const assistantSessionPatchSchema = z.object({
@@ -529,6 +550,97 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     await memloom.clearAssistantSessions();
     return c.json({ ok: true });
   });
+
+  // The model catalog for the composer's picker: tool-capable OpenRouter models (the
+  // harness needs native tool calling), shaped for display and cached for an hour. On a
+  // refresh failure the stale copy keeps serving — a model list is never worth an outage.
+  const MODELS_TTL_MS = 60 * 60 * 1000;
+  let modelsCache: { at: number; payload: unknown } | null = null;
+  app.get("/assistant/models", async (c) => {
+    if (modelsCache && Date.now() - modelsCache.at < MODELS_TTL_MS) {
+      return c.json(modelsCache.payload as object);
+    }
+    const doFetch = opts.fetchModels ?? fetch;
+    try {
+      const res = await doFetch("https://openrouter.ai/api/v1/models?supported_parameters=tools");
+      if (!res.ok) throw new Error(`OpenRouter models: ${res.status}`);
+      const json = (await res.json()) as {
+        data: {
+          id: string;
+          name: string;
+          description?: string;
+          context_length?: number;
+          pricing?: { prompt?: string; completion?: string };
+        }[];
+      };
+      const perMillion = (v: string | undefined) => {
+        const n = Number(v);
+        return Number.isFinite(n) ? n * 1_000_000 : null;
+      };
+      const models = json.data
+        .map((m) => ({
+          id: m.id,
+          name: m.name,
+          description: m.description ?? "",
+          contextLength: m.context_length ?? null,
+          promptPer1M: perMillion(m.pricing?.prompt),
+          completionPer1M: perMillion(m.pricing?.completion),
+          provider: m.id.split("/")[0] ?? "other",
+        }))
+        .sort((a, b) => a.provider.localeCompare(b.provider) || a.name.localeCompare(b.name));
+      modelsCache = {
+        at: Date.now(),
+        payload: { defaultModel: opts.defaultChatModel ?? null, models },
+      };
+      return c.json(modelsCache.payload as object);
+    } catch (err) {
+      if (modelsCache) return c.json(modelsCache.payload as object);
+      return c.json(
+        { error: `could not load models: ${err instanceof Error ? err.message : String(err)}` },
+        502,
+      );
+    }
+  });
+
+  // Attach a file to a chat: the browser uploads the bytes (base64 JSON — the daemon is
+  // localhost, simplicity beats multipart), the engine chunks/embeds them scoped to the
+  // session. No sessionId creates the session, so attaching can precede the first message.
+  app.post(
+    "/assistant/attachments",
+    bodyLimit({
+      maxSize: 48 * 1024 * 1024, // base64 inflates 4/3: ~36MB of real file
+      onError: (c) => c.json({ error: "attachment too large (max ~36MB)" }, 413),
+    }),
+    async (c) => {
+      const body = await parseBody(c, assistantAttachSchema);
+      if (!body.ok) return body.res;
+      // The filename only picks the extractor and titles the document — never a disk path.
+      const filename = body.data.filename.replace(/[/\\]/g, "_");
+      if (!detectKind(filename)) {
+        return c.json(
+          { error: `unsupported file type (supported: ${supportedExtensions().join(", ")})` },
+          400,
+        );
+      }
+      const bytes = new Uint8Array(Buffer.from(body.data.contentBase64, "base64"));
+      if (bytes.length === 0) return c.json({ error: "empty file" }, 400);
+      try {
+        const result = await memloom.contextAttach({
+          filename,
+          bytes,
+          ...(body.data.sessionId ? { sessionId: body.data.sessionId } : {}),
+        });
+        return c.json(result);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ error: message }, /no assistant session/.test(message) ? 404 : 500);
+      }
+    },
+  );
+
+  app.get("/assistant/sessions/:id/attachments", async (c) =>
+    c.json({ attachments: await memloom.sessionAttachments(c.req.param("id")) }),
+  );
 
   // Ingest a file, or a whole folder: directories are walked (bounded depth, hidden and
   // node_modules-style dirs skipped) and every supported file is added.

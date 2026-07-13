@@ -95,6 +95,11 @@ export interface RecallOptions {
    * no assertion day).
    */
   assertedOn?: string;
+  /**
+   * Also search chunks attached to this assistant chat session. Global chunks are always
+   * searched; a chat's attachments are visible only to its own recalls.
+   */
+  sessionId?: string;
 }
 
 export interface ConflictCandidate {
@@ -230,6 +235,12 @@ export interface AssistantSource {
   similarity?: number;
   /** The memory's assertion day (YYYY-MM-DD); absent on context chunks. */
   date?: string;
+  /** The saved memory's type ("fact", "procedure", ...); absent on context chunks. */
+  memoryType?: MemoryType;
+  /** The fused reciprocal-rank-fusion score this hit was ordered by. */
+  rrfScore?: number;
+  /** The top-level graph node this source maps to (the memory, or its parent document). */
+  graphNodeId?: string;
 }
 
 export interface AssistantSession {
@@ -284,6 +295,23 @@ export interface ContextDocument {
   kind: string;
   chunkCount: number;
   updatedAt: string;
+}
+
+// ---- Chat attachments (files uploaded into one assistant session's scope) ----
+
+export interface ContextAttachInput {
+  /** Filename with extension — picks the extractor and titles the document. */
+  filename: string;
+  /** Raw file bytes (the browser upload, base64-decoded by the server). */
+  bytes: Uint8Array;
+  /** Attach to this chat; omitted = a fresh session is created and returned. */
+  sessionId?: string;
+  ownerId?: string;
+}
+
+export interface ContextAttachResult extends ContextAddResult {
+  /** The session the file is scoped to (newly created when none was passed). */
+  sessionId: string;
 }
 
 export interface ContextChunk {

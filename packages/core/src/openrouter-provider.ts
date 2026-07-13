@@ -166,15 +166,16 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
 
   async chat(
     messages: ChatMessage[],
-    opts: { tools?: ChatTool[]; toolChoice?: "auto" | "none" } = {},
+    opts: { tools?: ChatTool[]; toolChoice?: "auto" | "none"; model?: string } = {},
   ): Promise<ChatResult> {
+    const model = opts.model ?? this.#chatModel;
     let json: unknown;
     try {
       json = await postJson(
         `${this.#baseUrl}/chat/completions`,
         this.#apiKey,
         {
-          model: this.#chatModel,
+          model,
           messages: toWireMessages(messages),
           ...(opts.tools
             ? {
@@ -198,8 +199,8 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
       const message = err instanceof Error ? err.message : String(err);
       if (opts.tools && /support tool use|404/.test(message)) {
         throw new Error(
-          `the model "${this.#chatModel}" does not support tool calling on OpenRouter. ` +
-            "Set OPENROUTER_CHAT_MODEL to a tool-capable model (e.g. google/gemini-2.5-flash).",
+          `the model "${model}" does not support tool calling on OpenRouter. ` +
+            "Pick a tool-capable model (e.g. google/gemini-2.5-flash).",
         );
       }
       throw err;
@@ -216,13 +217,13 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
   async chatStream(
     messages: ChatMessage[],
     onDelta: (text: string) => void,
-    opts: { tools?: ChatTool[] } = {},
+    opts: { tools?: ChatTool[]; model?: string } = {},
   ): Promise<string> {
     const res = await fetch(`${this.#baseUrl}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${this.#apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: this.#chatModel,
+        model: opts.model ?? this.#chatModel,
         messages: toWireMessages(messages),
         // Declare the tools even though none may be called: the history contains tool
         // calls/results, and Gemini drops that history without matching declarations.

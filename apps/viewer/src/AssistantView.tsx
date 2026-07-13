@@ -1,23 +1,30 @@
 import {
   Check,
+  ChevronDown,
   Copy,
+  FileText,
   MessageSquare,
   MoreHorizontal,
+  Network,
   Plus,
   Search,
   SquarePen,
   Star,
   Trash2,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import {
   type AssistantMessage,
+  type AssistantModel,
+  type AssistantModels,
   type AssistantSession,
   type AssistantSessionHit,
   type AssistantSource,
   api,
+  type SessionAttachment,
 } from "./api";
 
 // The assistant tab: chat grounded in the local memory store. The harness lives in the
@@ -87,30 +94,206 @@ function CopyButton({ text }: { text: string }) {
   );
 }
 
-function SourcesPanel({ sources }: { sources: AssistantSource[] }) {
-  const [open, setOpen] = useState<AssistantSource | null>(null);
+// "memory / fact", "memory / how-to" (procedure), or plain "context" for chunks.
+function sourceTypeLabel(s: AssistantSource): string {
+  if (s.kind === "context") return "context";
+  if (!s.memoryType) return "memory";
+  return `memory / ${s.memoryType === "procedure" ? "how-to" : s.memoryType}`;
+}
+
+function SourcesPanel({
+  sources,
+  onOpenInGraph,
+}: {
+  sources: AssistantSource[];
+  onOpenInGraph?: (nodeId: string) => void;
+}) {
+  const [openN, setOpenN] = useState<number | null>(null);
   if (sources.length === 0) return null;
   return (
     <details className="sourcesPanel">
       <summary>sources · {sources.length}</summary>
-      {sources.map((s) => (
-        <button
-          type="button"
-          key={s.n}
-          className="sourceRow"
-          onClick={() => setOpen(open?.n === s.n ? null : s)}
-        >
-          <span className="sourceN">[{s.n}]</span>
-          <span className={`sourceKind sourceKind-${s.kind}`}>{s.kind}</span>
-          <span className="sourceTitle">{s.title}</span>
-          {s.date && <span className="sourceSim">{s.date}</span>}
-          {s.similarity !== undefined && (
-            <span className="sourceSim">{Math.round(s.similarity * 100)}%</span>
-          )}
-        </button>
-      ))}
-      {open && <div className="sourceFull">{open.snippet}</div>}
+      {sources.map((s) => {
+        const isOpen = openN === s.n;
+        return (
+          // The detail frame opens right under its own row, not below the whole list.
+          <div key={s.n} className="sourceItem">
+            <button
+              type="button"
+              className={`sourceRow ${isOpen ? "sourceRowOpen" : ""}`}
+              onClick={() => setOpenN(isOpen ? null : s.n)}
+            >
+              <span className="sourceN">[{s.n}]</span>
+              <span className={`sourceKind sourceKind-${s.kind}`}>{s.kind}</span>
+              <span className="sourceTitle">{s.title}</span>
+              {s.date && <span className="sourceSim">{s.date}</span>}
+            </button>
+            {isOpen && (
+              <div className="sourceFrame">
+                <div className="sourceFrameHead">
+                  <span className="sourceFrameType">{sourceTypeLabel(s)}</span>
+                  <span className="sourceFrameMeta">
+                    {s.similarity !== undefined && (
+                      <span className="sourceStat">{Math.round(s.similarity * 100)}% sim</span>
+                    )}
+                    {s.graphNodeId && onOpenInGraph && (
+                      <button
+                        type="button"
+                        className="sourceGraphLink"
+                        onClick={() => onOpenInGraph(s.graphNodeId as string)}
+                      >
+                        <Network size={12} strokeWidth={1.75} /> graph
+                      </button>
+                    )}
+                  </span>
+                </div>
+                <div className="sourceFrameBody">{s.snippet}</div>
+              </div>
+            )}
+          </div>
+        );
+      })}
     </details>
+  );
+}
+
+const MODEL_STORAGE_KEY = "memloom:chatModel";
+
+// "Anthropic: Claude Sonnet 5" -> "Claude Sonnet 5" (the group heading names the provider).
+function shortName(name: string): string {
+  const colon = name.indexOf(": ");
+  return colon > 0 ? name.slice(colon + 2) : name;
+}
+
+function fmtContext(tokens: number | null): string {
+  if (!tokens) return "";
+  if (tokens >= 1_000_000) return `${Math.round(tokens / 100_000) / 10}M`;
+  return `${Math.round(tokens / 1000)}K`;
+}
+
+function fmtPrice(usd: number | null): string {
+  if (usd === null) return "?";
+  if (usd === 0) return "$0";
+  return usd < 1 ? `$${usd.toFixed(2).replace(/0$/, "")}` : `$${Number(usd.toFixed(2))}`;
+}
+
+// The composer's model picker: the live OpenRouter catalog (tool-capable models only,
+// fetched lazily through the daemon's cached proxy), grouped by provider with search.
+// value null = the daemon's configured default.
+function ModelPicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string | null;
+  onChange: (id: string | null) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [catalog, setCatalog] = useState<AssistantModels | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+
+  useEffect(() => {
+    if (!open || catalog) return;
+    api
+      .assistantModels()
+      .then(setCatalog)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [open, catalog]);
+
+  const current = value ?? catalog?.defaultModel ?? null;
+  const currentModel = catalog?.models.find((m) => m.id === current);
+  const label = currentModel ? shortName(currentModel.name) : (current ?? "model");
+
+  const groups = useMemo(() => {
+    if (!catalog) return [];
+    const needle = q.trim().toLowerCase();
+    const hits = needle
+      ? catalog.models.filter(
+          (m) => m.id.toLowerCase().includes(needle) || m.name.toLowerCase().includes(needle),
+        )
+      : catalog.models;
+    const byProvider = new Map<string, AssistantModel[]>();
+    for (const m of hits) {
+      const list = byProvider.get(m.provider);
+      if (list) list.push(m);
+      else byProvider.set(m.provider, [m]);
+    }
+    return [...byProvider.entries()];
+  }, [catalog, q]);
+
+  return (
+    <div className="modelPicker">
+      <button
+        type="button"
+        className="composerModelBtn"
+        disabled={disabled}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {label} <ChevronDown size={13} strokeWidth={1.75} />
+      </button>
+      {open && (
+        <>
+          {/* transparent backdrop: any outside click closes the popover */}
+          <button
+            type="button"
+            className="pickerBackdrop"
+            aria-label="Close model picker"
+            onClick={() => setOpen(false)}
+          />
+          <div className="modelPickerPop">
+            <div className="modelPickerSearch">
+              <Search size={13} strokeWidth={1.75} />
+              <input
+                type="text"
+                placeholder="Search models..."
+                value={q}
+                // biome-ignore lint/a11y/noAutofocus: the popover just opened by user intent
+                autoFocus
+                onChange={(e) => setQ(e.target.value)}
+              />
+            </div>
+            <div className="modelPickerList">
+              {!catalog && !error && <div className="modelPickerNote">loading models...</div>}
+              {error && <div className="modelPickerNote">{error}</div>}
+              {groups.map(([provider, models]) => (
+                <div key={provider}>
+                  <div className="modelGroupHead">{provider}</div>
+                  {models.map((m) => (
+                    <button
+                      type="button"
+                      key={m.id}
+                      className={`modelRow ${m.id === current ? "modelRowActive" : ""}`}
+                      title={m.description}
+                      onClick={() => {
+                        onChange(m.id === catalog?.defaultModel ? null : m.id);
+                        setOpen(false);
+                      }}
+                    >
+                      <span className="modelRowName">
+                        {shortName(m.name)}
+                        {m.id === catalog?.defaultModel && (
+                          <span className="modelDefaultTag">default</span>
+                        )}
+                      </span>
+                      <span className="modelRowMeta">
+                        {fmtPrice(m.promptPer1M)}/{fmtPrice(m.completionPer1M)} per 1M
+                        {m.contextLength ? ` · ${fmtContext(m.contextLength)} ctx` : ""}
+                      </span>
+                      {m.description && <span className="modelRowDesc">{m.description}</span>}
+                    </button>
+                  ))}
+                </div>
+              ))}
+              {catalog && groups.length === 0 && (
+                <div className="modelPickerNote">no models matched</div>
+              )}
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -226,7 +409,15 @@ function SessionRow({
   );
 }
 
-export function AssistantView() {
+// `compact` drops the session-list sidebar for the docked graph view — the chat column fills
+// the dock, keeping one "new chat" affordance so context can still be reset.
+export function AssistantView({
+  onOpenInGraph,
+  compact = false,
+}: {
+  onOpenInGraph?: (nodeId: string) => void;
+  compact?: boolean;
+}) {
   const [sessions, setSessions] = useState<AssistantSession[]>([]);
   const [searchQ, setSearchQ] = useState("");
   const [searchHits, setSearchHits] = useState<AssistantSessionHit[] | null>(null);
@@ -238,7 +429,18 @@ export function AssistantView() {
   const [statusLine, setStatusLine] = useState<string | null>(null);
   const [offline, setOffline] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The picked model persists across sessions and chats; null = the daemon's default.
+  const [model, setModel] = useState<string | null>(() => localStorage.getItem(MODEL_STORAGE_KEY));
+  const [attachments, setAttachments] = useState<SessionAttachment[]>([]);
+  const [uploading, setUploading] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const pickModel = useCallback((id: string | null) => {
+    if (id) localStorage.setItem(MODEL_STORAGE_KEY, id);
+    else localStorage.removeItem(MODEL_STORAGE_KEY);
+    setModel(id);
+  }, []);
 
   const refreshSessions = useCallback(async () => {
     const list = await api.assistantSessions().catch(() => null);
@@ -267,9 +469,62 @@ export function AssistantView() {
   const openSession = useCallback(async (id: string) => {
     setActiveId(id);
     setError(null);
-    const list = await api.assistantMessages(id).catch(() => null);
+    const [list, files] = await Promise.all([
+      api.assistantMessages(id).catch(() => null),
+      api.sessionAttachments(id).catch(() => []),
+    ]);
     if (list) setMessages(list);
+    setAttachments(files);
   }, []);
+
+  const resetChat = useCallback(() => {
+    setActiveId(null);
+    setMessages([]);
+    setError(null);
+    setAttachments([]);
+  }, []);
+
+  // Upload the picked files into the chat's scope. The first attach of a fresh chat
+  // creates the session server-side; adopt its id so the message goes to the same chat.
+  async function attachFiles(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    setError(null);
+    let sessionId = activeId;
+    for (const file of Array.from(files)) {
+      setUploading((prev) => [...prev, file.name]);
+      try {
+        const buf = new Uint8Array(await file.arrayBuffer());
+        // btoa needs a binary string; build it in slices to keep the stack flat.
+        let bin = "";
+        for (let i = 0; i < buf.length; i += 0x8000) {
+          bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+        }
+        const result = await api.assistantAttach({
+          filename: file.name,
+          contentBase64: btoa(bin),
+          ...(sessionId ? { sessionId } : {}),
+        });
+        sessionId = result.sessionId;
+        setActiveId(result.sessionId);
+        const list = await api.sessionAttachments(result.sessionId).catch(() => []);
+        setAttachments(list);
+        void refreshSessions();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setUploading((prev) => prev.filter((n) => n !== file.name));
+      }
+    }
+  }
+
+  async function removeAttachment(id: string) {
+    try {
+      await api.removeDocument(id);
+      setAttachments((prev) => prev.filter((a) => a.id !== id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: scroll on every append
   useEffect(() => {
@@ -298,7 +553,7 @@ export function AssistantView() {
     ]);
     try {
       const done = await api.assistantChat(
-        { ...(activeId ? { sessionId: activeId } : {}), message },
+        { ...(activeId ? { sessionId: activeId } : {}), ...(model ? { model } : {}), message },
         (e) => {
           if (e.type === "tool_call")
             setStatusLine(
@@ -352,117 +607,157 @@ export function AssistantView() {
     );
   }
 
-  return (
-    <div className="chatLayout">
-      <aside className="chatSidebar">
-        <button
-          type="button"
-          className="btn chatNewBtn"
-          onClick={() => {
-            setActiveId(null);
-            setMessages([]);
-            setError(null);
-          }}
-        >
-          <Plus size={13} strokeWidth={1.75} /> new chat
-        </button>
-        <div className="chatSearch">
-          <Search size={13} strokeWidth={1.75} />
-          <input
-            type="text"
-            placeholder="Search chats..."
-            value={searchQ}
-            onChange={(e) => setSearchQ(e.target.value)}
-          />
-        </div>
-        <div className="chatSessionList">
-          {sidebarSessions.map((s) => (
-            <SessionRow
-              key={s.id}
-              session={s}
-              snippet={s.snippet || undefined}
-              active={s.id === activeId}
-              onOpen={() => void openSession(s.id)}
-              onPatch={(patch) => {
-                void api.assistantPatch(s.id, patch).then(refreshSessions);
-              }}
-              onDelete={() => {
-                void api.assistantDelete(s.id).then(() => {
-                  if (activeId === s.id) {
-                    setActiveId(null);
-                    setMessages([]);
-                  }
-                  void refreshSessions();
-                });
-              }}
-            />
-          ))}
-          {sidebarSessions.length === 0 && (
-            <div className="chatSidebarEmpty">{searchQ ? "no chats matched" : "no chats yet"}</div>
-          )}
-        </div>
-      </aside>
+  const searchBox = (
+    <div className="chatSearch">
+      <Search size={13} strokeWidth={1.75} />
+      <input
+        type="text"
+        placeholder="Search chats..."
+        value={searchQ}
+        onChange={(e) => setSearchQ(e.target.value)}
+      />
+    </div>
+  );
 
-      <section className="chatMain">
-        <div className="chatMessages" ref={scrollRef}>
-          {messages.length === 0 && !streaming && (
-            <div className="chatWelcome">
-              <p>Ask about your memories and documents.</p>
-              <p className="chatWelcomeHint">
-                Answers are grounded in your local store, with sources.
-              </p>
-            </div>
-          )}
-          {messages.map((m) =>
-            m.role === "user" ? (
-              <div key={m.id} className="chatBubble chatBubbleUser">
-                {m.content}
-              </div>
-            ) : (
-              <div key={m.id} className="chatBubble chatBubbleAssistant">
-                <div className="chatMarkdown">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
-                </div>
-                <SourcesPanel sources={m.sources} />
-                <div className="chatBubbleActions">
-                  <CopyButton text={m.content} />
-                </div>
-              </div>
-            ),
-          )}
-          {streaming && (
-            <div className="chatBubble chatBubbleAssistant">
-              {streamText ? (
-                <div className="chatMarkdown">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamText}</ReactMarkdown>
-                </div>
-              ) : (
-                <TypingLine text={statusLine} />
-              )}
-            </div>
-          )}
-          {error && <div className="notice noticeError">{error}</div>}
+  const sessionList = (
+    <div className="chatSessionList">
+      {sidebarSessions.map((s) => (
+        <SessionRow
+          key={s.id}
+          session={s}
+          snippet={s.snippet || undefined}
+          active={s.id === activeId}
+          onOpen={() => void openSession(s.id)}
+          onPatch={(patch) => {
+            void api.assistantPatch(s.id, patch).then(refreshSessions);
+          }}
+          onDelete={() => {
+            void api.assistantDelete(s.id).then(() => {
+              if (activeId === s.id) {
+                setActiveId(null);
+                setMessages([]);
+              }
+              void refreshSessions();
+            });
+          }}
+        />
+      ))}
+      {sidebarSessions.length === 0 && (
+        <div className="chatSidebarEmpty">{searchQ ? "no chats matched" : "no chats yet"}</div>
+      )}
+    </div>
+  );
+
+  const messagesEl = (
+    <div className="chatMessages" ref={scrollRef}>
+      {messages.length === 0 && !streaming && (
+        <div className="chatWelcome">
+          <p>Ask about your memories and documents.</p>
+          <p className="chatWelcomeHint">Answers are grounded in your local store, with sources.</p>
         </div>
-        <form
-          className="chatComposer"
-          onSubmit={(e) => {
+      )}
+      {messages.map((m) =>
+        m.role === "user" ? (
+          <div key={m.id} className="chatBubble chatBubbleUser">
+            {m.content}
+          </div>
+        ) : (
+          <div key={m.id} className="chatBubble chatBubbleAssistant">
+            <div className="chatMarkdown">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+            </div>
+            <SourcesPanel sources={m.sources} onOpenInGraph={onOpenInGraph} />
+            <div className="chatBubbleActions">
+              <CopyButton text={m.content} />
+            </div>
+          </div>
+        ),
+      )}
+      {streaming && (
+        <div className="chatBubble chatBubbleAssistant">
+          {streamText ? (
+            <div className="chatMarkdown">
+              <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamText}</ReactMarkdown>
+            </div>
+          ) : (
+            <TypingLine text={statusLine} />
+          )}
+        </div>
+      )}
+      {error && <div className="notice noticeError">{error}</div>}
+    </div>
+  );
+
+  const composerEl = (
+    <form
+      className="chatComposer"
+      onSubmit={(e) => {
+        e.preventDefault();
+        void send();
+      }}
+    >
+      {(attachments.length > 0 || uploading.length > 0) && (
+        <div className="attachChips">
+          {attachments.map((a) => (
+            <span key={a.id} className="attachChip" title={`${a.chunkCount} chunks`}>
+              <FileText size={12} strokeWidth={1.75} />
+              {a.title}
+              <button
+                type="button"
+                className="attachChipX"
+                aria-label={`Remove ${a.title}`}
+                onClick={() => void removeAttachment(a.id)}
+              >
+                <X size={11} strokeWidth={2} />
+              </button>
+            </span>
+          ))}
+          {uploading.map((name) => (
+            <span key={name} className="attachChip attachChipPending">
+              <FileText size={12} strokeWidth={1.75} />
+              {name}...
+            </span>
+          ))}
+        </div>
+      )}
+      <textarea
+        value={draft}
+        rows={Math.min(6, Math.max(1, draft.split("\n").length))}
+        placeholder="Ask your memory..."
+        disabled={streaming}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             void send();
+          }
+        }}
+      />
+      {/* Bottom bar: "+" attaches files into this chat's scope; the model picker chooses
+          the OpenRouter model for every turn. */}
+      <div className="chatComposerBar">
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          accept=".md,.markdown,.txt,.pdf"
+          style={{ display: "none" }}
+          onChange={(e) => {
+            void attachFiles(e.target.files);
+            e.target.value = ""; // allow re-picking the same file
           }}
+        />
+        <button
+          type="button"
+          className="composerIconBtn"
+          aria-label="Attach a file to this chat"
+          disabled={streaming || uploading.length > 0}
+          onClick={() => fileInputRef.current?.click()}
         >
-          <textarea
-            value={draft}
-            rows={Math.min(6, Math.max(1, draft.split("\n").length))}
-            placeholder="Ask your memory..."
-            disabled={streaming}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                void send();
-              }
-            }}
-          />
+          <Plus size={16} strokeWidth={1.75} />
+        </button>
+        <div className="chatComposerActions">
+          <ModelPicker value={model} onChange={pickModel} disabled={streaming} />
           <button
             type="submit"
             className="btn btnPrimary"
@@ -470,7 +765,42 @@ export function AssistantView() {
           >
             {streaming ? "..." : "Send"}
           </button>
-        </form>
+        </div>
+      </div>
+    </form>
+  );
+
+  if (compact) {
+    // Single column so the composer spans the full dock width. The body shows the chat
+    // history (same rows as the tab) while idle and swaps to messages once a conversation
+    // is open; "new chat" clears back to the list.
+    const inConversation = streaming || messages.length > 0 || activeId !== null;
+    return (
+      <div className="chatLayout chatLayoutCompact">
+        <div className="chatCompactHead">
+          <button type="button" className="btn chatNewBtn" onClick={resetChat}>
+            <Plus size={13} strokeWidth={1.75} /> new chat
+          </button>
+          {searchBox}
+        </div>
+        <div className="chatCompactBody">{inConversation ? messagesEl : sessionList}</div>
+        {composerEl}
+      </div>
+    );
+  }
+
+  return (
+    <div className="chatLayout">
+      <aside className="chatSidebar">
+        <button type="button" className="btn chatNewBtn" onClick={resetChat}>
+          <Plus size={13} strokeWidth={1.75} /> new chat
+        </button>
+        {searchBox}
+        {sessionList}
+      </aside>
+      <section className="chatMain">
+        {messagesEl}
+        {composerEl}
       </section>
     </div>
   );

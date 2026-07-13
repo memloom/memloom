@@ -4,7 +4,7 @@ import { chunkMarkdown, chunkOutline } from "./chunker.js";
 import { type Candidate, classify } from "./dedup.js";
 import type { MemoryEngine } from "./engine.js";
 import { type ExtractionContext, extractGraph, isMathDense } from "./entities.js";
-import { extractFile } from "./extract.js";
+import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
 import { migrate } from "./migrate.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
 import {
@@ -35,6 +35,8 @@ import type {
   ConflictCandidate,
   ContextAddInput,
   ContextAddResult,
+  ContextAttachInput,
+  ContextAttachResult,
   ContextDocument,
   DocumentChunks,
   Entity,
@@ -232,14 +234,86 @@ export class Memloom implements MemoryEngine {
     const file = await extractFile(input.path, (bytes) =>
       createHash("sha256").update(bytes).digest("hex"),
     );
+    return this.#ingestDocument(owner, input.path, file, null);
+  }
 
+  /**
+   * Attach an uploaded file to one assistant chat: the same extract/chunk/embed pipeline
+   * as contextAdd, but the document and its chunks carry the session id, so only that
+   * chat's recall sees them and deleting the chat deletes them. No file touches disk —
+   * the synthetic attachment:// path exists only to key the UNIQUE(owner, path) dedup
+   * (re-attaching the same bytes to the same chat is a no-op).
+   */
+  async contextAttach(input: ContextAttachInput): Promise<ContextAttachResult> {
+    const owner = input.ownerId ?? SENTINEL_OWNER;
+    const file = await extractBytes(input.bytes, input.filename, (bytes) =>
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+
+    let sessionId = input.sessionId;
+    if (sessionId) {
+      const found = await this.#storage.query(
+        "SELECT id FROM assistant_sessions WHERE owner_id = $1 AND id = $2",
+        [owner, sessionId],
+      );
+      if (found.length === 0) throw new Error(`no assistant session ${sessionId}`);
+    } else {
+      // Attach-before-first-message: the session exists from the attach on. It keeps the
+      // 'New chat' default title; assistantChat retitles it from the first message.
+      const [row] = await this.#storage.query<{ id: string }>(
+        "INSERT INTO assistant_sessions (owner_id) VALUES ($1) RETURNING id",
+        [owner],
+      );
+      if (!row) throw new Error("memloom: could not create assistant session");
+      sessionId = row.id;
+    }
+
+    const path = `attachment://${sessionId}/${input.filename}`;
+    const result = await this.#ingestDocument(owner, path, file, sessionId);
+    return { ...result, sessionId };
+  }
+
+  /** The files attached to one assistant chat, newest first. */
+  async sessionAttachments(
+    sessionId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<ContextDocument[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      path: string;
+      title: string;
+      kind: string;
+      chunk_count: number;
+      updated_at: string;
+    }>(
+      `SELECT id, path, title, kind, chunk_count, updated_at
+       FROM context_documents WHERE owner_id = $1 AND session_id = $2 ORDER BY updated_at DESC`,
+      [ownerId, sessionId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      path: r.path,
+      title: r.title,
+      kind: r.kind,
+      chunkCount: Number(r.chunk_count),
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  /** Shared ingest: hash short-circuit, replace-or-insert document, insert chunks. */
+  async #ingestDocument(
+    owner: string,
+    path: string,
+    file: ExtractedFile,
+    sessionId: string | null,
+  ): Promise<ContextAddResult> {
     const existing = await this.#storage.query<{
       id: string;
       content_hash: string;
       chunk_count: number;
     }>(
       "SELECT id, content_hash, chunk_count FROM context_documents WHERE owner_id = $1 AND path = $2",
-      [owner, input.path],
+      [owner, path],
     );
     const prior = existing[0];
     if (prior && prior.content_hash === file.contentHash) {
@@ -278,9 +352,9 @@ export class Memloom implements MemoryEngine {
         documentId = prior.id;
       } else {
         const inserted = await tx.query<{ id: string }>(
-          `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count)
-           VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
-          [owner, input.path, file.title, file.kind, file.contentHash, chunks.length],
+          `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count, session_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
+          [owner, path, file.title, file.kind, file.contentHash, chunks.length, sessionId],
         );
         const row = inserted[0];
         if (!row) throw new Error("memloom: context document insert returned no id");
@@ -292,8 +366,8 @@ export class Memloom implements MemoryEngine {
         const emb = embeddings[i];
         if (!chunk || !emb) throw new Error("memloom: embedding count mismatch during ingest");
         await tx.query(
-          `INSERT INTO context_chunks (document_id, owner_id, chunk_index, content, heading_path, page, embedding)
-           VALUES ($1, $2, $3, $4, $5, $6, $7::vector)`,
+          `INSERT INTO context_chunks (document_id, owner_id, chunk_index, content, heading_path, page, embedding, session_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8)`,
           [
             documentId,
             owner,
@@ -302,6 +376,7 @@ export class Memloom implements MemoryEngine {
             chunk.headingPath,
             chunk.page,
             toVectorLiteral(emb),
+            sessionId,
           ],
         );
       }
@@ -325,7 +400,8 @@ export class Memloom implements MemoryEngine {
       updated_at: string;
     }>(
       `SELECT id, path, title, kind, chunk_count, updated_at
-       FROM context_documents WHERE owner_id = $1 ORDER BY updated_at DESC`,
+       FROM context_documents WHERE owner_id = $1 AND session_id IS NULL
+       ORDER BY updated_at DESC`,
       [ownerId],
     );
     return rows.map((r) => ({
@@ -608,12 +684,12 @@ export class Memloom implements MemoryEngine {
               cc.heading_path AS c_heading_path, cc.page AS c_page,
               cc.created_at AS c_created_at,
               cd.id AS d_id, cd.title AS d_title, cd.path AS d_path
-       FROM memloom_fuse($2, $1::vector, $3, $4) f
+       FROM memloom_fuse($2, $1::vector, $3, $4, p_session => $5) f
        LEFT JOIN memory_objects mo ON f.src = 'memory' AND mo.id = f.id
        LEFT JOIN context_chunks cc ON f.src = 'chunk' AND cc.id = f.id
        LEFT JOIN context_documents cd ON cd.id = cc.document_id
        ORDER BY f.rrf_score DESC`,
-      [qvec, query, owner, limit],
+      [qvec, query, owner, limit, opts.sessionId ?? null],
     );
     return rows.map(mapRecallRow);
   }
@@ -680,7 +756,7 @@ export class Memloom implements MemoryEngine {
       `SELECT cc.id, cc.content, cc.heading_path, cc.chunk_index, cd.title AS doc_title
        FROM context_chunks cc
        JOIN context_documents cd ON cd.id = cc.document_id
-       WHERE cc.owner_id = $1 AND cc.indexed_at IS NULL
+       WHERE cc.owner_id = $1 AND cc.indexed_at IS NULL AND cc.session_id IS NULL
        ORDER BY cc.created_at, cc.chunk_index`,
       [ownerId],
     );
@@ -953,7 +1029,7 @@ export class Memloom implements MemoryEngine {
    * grounded answer with its sources. `onEvent` streams tool activity + answer deltas.
    */
   async assistantChat(
-    input: { sessionId?: string; message: string; ownerId?: string },
+    input: { sessionId?: string; message: string; ownerId?: string; model?: string },
     onEvent?: (e: AssistantEvent) => void,
   ): Promise<AssistantChatResult> {
     const owner = input.ownerId ?? SENTINEL_OWNER;
@@ -965,18 +1041,28 @@ export class Memloom implements MemoryEngine {
       );
     }
 
+    const titleOf = (message: string) =>
+      message.length > 60 ? `${message.slice(0, 57)}...` : message;
     let sessionId = input.sessionId;
     if (sessionId) {
-      const found = await this.#storage.query(
-        "SELECT id FROM assistant_sessions WHERE owner_id = $1 AND id = $2",
+      const found = await this.#storage.query<{ title: string }>(
+        "SELECT title FROM assistant_sessions WHERE owner_id = $1 AND id = $2",
         [owner, sessionId],
       );
       if (found.length === 0) throw new Error(`no assistant session ${sessionId}`);
+      // A session created by an attach-before-first-message still has the column default
+      // title; the first real message names it. The guard makes this race-safe.
+      if (found[0]?.title === "New chat") {
+        await this.#storage.query(
+          `UPDATE assistant_sessions SET title = $3
+           WHERE owner_id = $1 AND id = $2 AND title = 'New chat'`,
+          [owner, sessionId, titleOf(input.message)],
+        );
+      }
     } else {
-      const title = input.message.length > 60 ? `${input.message.slice(0, 57)}...` : input.message;
       const [row] = await this.#storage.query<{ id: string }>(
         "INSERT INTO assistant_sessions (owner_id, title) VALUES ($1, $2) RETURNING id",
-        [owner, title],
+        [owner, titleOf(input.message)],
       );
       if (!row) throw new Error("memloom: could not create assistant session");
       sessionId = row.id;
@@ -990,22 +1076,27 @@ export class Memloom implements MemoryEngine {
       [owner, sessionId, Memloom.#ASSISTANT_HISTORY_LIMIT],
     );
     const history = historyRows.reverse();
+    const attachments = (await this.sessionAttachments(sessionId, owner)).map((d) => d.title);
 
     await this.#saveAssistantMessage(owner, sessionId, "user", input.message, []);
 
     const now = new Date();
+    const scopedSessionId = sessionId;
     const { answer, sources } = await runAssistantTurn({
       provider: llm,
       recall: (query, onDate) =>
         this.recall(query, {
           ownerId: owner,
           limit: 8,
+          sessionId: scopedSessionId,
           ...(onDate ? { assertedOn: onDate } : {}),
         }),
       history,
       message: input.message,
       // Both forms: the readable one for prose, the ISO one to copy into on_date.
       today: `${now.toDateString()} (${now.toLocaleDateString("en-CA")})`,
+      ...(input.model ? { model: input.model } : {}),
+      ...(attachments.length > 0 ? { attachments } : {}),
       ...(onEvent ? { onEvent } : {}),
     });
 
@@ -1092,14 +1183,45 @@ export class Memloom implements MemoryEngine {
   }
 
   async deleteAssistantSession(sessionId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
-    await this.#storage.query(
-      "DELETE FROM assistant_sessions WHERE owner_id = $1 AND id = $2", // messages cascade
-      [ownerId, sessionId],
-    );
+    await this.#storage.tx(async (tx) => {
+      // Attachments are scoped to the chat, so they die with it. Chunks cascade from the
+      // document FK, but edge cleanup must be explicit (see #deleteDocumentChunks); session
+      // chunks are never indexed so no edges exist in practice — this keeps the invariant
+      // anyway. Messages cascade from the session FK.
+      await this.#deleteSessionAttachments(tx, ownerId, sessionId);
+      await tx.query("DELETE FROM assistant_sessions WHERE owner_id = $1 AND id = $2", [
+        ownerId,
+        sessionId,
+      ]);
+    });
   }
 
   async clearAssistantSessions(ownerId: string = SENTINEL_OWNER): Promise<void> {
-    await this.#storage.query("DELETE FROM assistant_sessions WHERE owner_id = $1", [ownerId]);
+    await this.#storage.tx(async (tx) => {
+      await this.#deleteSessionAttachments(tx, ownerId, null);
+      await tx.query("DELETE FROM assistant_sessions WHERE owner_id = $1", [ownerId]);
+    });
+  }
+
+  /** Delete one session's attached documents (sessionId null = every session's). */
+  async #deleteSessionAttachments(
+    tx: StorageAdapter,
+    owner: string,
+    sessionId: string | null,
+  ): Promise<void> {
+    const docs = await tx.query<{ id: string }>(
+      `SELECT id FROM context_documents
+       WHERE owner_id = $1 AND session_id IS NOT NULL
+         AND ($2::uuid IS NULL OR session_id = $2)`,
+      [owner, sessionId],
+    );
+    for (const doc of docs) {
+      await this.#deleteDocumentChunks(tx, doc.id, owner);
+      await tx.query("DELETE FROM context_documents WHERE id = $1 AND owner_id = $2", [
+        doc.id,
+        owner,
+      ]);
+    }
   }
 
   /**
@@ -1198,7 +1320,10 @@ export class Memloom implements MemoryEngine {
         "UPDATE memory_objects SET indexed_at = NULL WHERE owner_id = $1 AND status = 'active'",
         [ownerId],
       );
-      await tx.query("UPDATE context_chunks SET indexed_at = NULL WHERE owner_id = $1", [ownerId]);
+      await tx.query(
+        "UPDATE context_chunks SET indexed_at = NULL WHERE owner_id = $1 AND session_id IS NULL",
+        [ownerId],
+      );
     });
     return this.#runIndex(ownerId, "rebuild", onProgress);
   }
@@ -1298,7 +1423,7 @@ export class Memloom implements MemoryEngine {
       [ownerId],
     );
     const documents = await this.#storage.query<GraphDocument>(
-      "SELECT id, title, path FROM context_documents WHERE owner_id = $1",
+      "SELECT id, title, path FROM context_documents WHERE owner_id = $1 AND session_id IS NULL",
       [ownerId],
     );
     // Memory-anchored edges only — chunk edges are represented by the rollup below.

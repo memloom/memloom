@@ -52,10 +52,13 @@ export interface ChatResult {
 }
 
 export interface ChatProvider {
-  /** One non-streaming turn. The assistant's tool-gather rounds. */
+  /**
+   * One non-streaming turn. The assistant's tool-gather rounds. `model` overrides the
+   * provider's configured chat model for this call only (the viewer's model picker).
+   */
   chat(
     messages: ChatMessage[],
-    opts?: { tools?: ChatTool[]; toolChoice?: "auto" | "none" },
+    opts?: { tools?: ChatTool[]; toolChoice?: "auto" | "none"; model?: string },
   ): Promise<ChatResult>;
   /**
    * Streaming turn for the assistant's final grounded answer. `tools` must still be
@@ -66,7 +69,7 @@ export interface ChatProvider {
   chatStream(
     messages: ChatMessage[],
     onDelta: (text: string) => void,
-    opts?: { tools?: ChatTool[] },
+    opts?: { tools?: ChatTool[]; model?: string },
   ): Promise<string>;
 }
 
