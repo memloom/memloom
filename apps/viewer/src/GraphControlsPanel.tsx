@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { useState } from "react";
-import type { ViewerGraphConfig } from "./graphConfig";
+import type { EdgeLabelMode, ViewerGraphConfig } from "./graphConfig";
 
 // The graph controls panel, rebuilt on native range inputs (no antd here) and the
 // viewer's sharp-corner design language. Sliders edit the scalar fields live; the
@@ -57,7 +57,10 @@ export function GraphControlsPanel({
   const [isDisplayOpen, setIsDisplayOpen] = useState(true);
   const [isForcesOpen, setIsForcesOpen] = useState(true);
 
-  const updateDisplay = (key: keyof ViewerGraphConfig["display"], value: number) => {
+  const updateDisplay = (
+    key: keyof ViewerGraphConfig["display"],
+    value: number | EdgeLabelMode,
+  ) => {
     onChange({ ...graphConfig, display: { ...graphConfig.display, [key]: value } });
   };
   const updateForce = (
@@ -125,6 +128,25 @@ export function GraphControlsPanel({
               step={0.05}
               onChange={(v) => updateDisplay("labelFadeThreshold", v)}
             />
+            <div className="graphControlRow">
+              <div className="graphControlMeta">
+                <span className="graphControlLabel">edge labels</span>
+              </div>
+              <div className="graphSegment">
+                {(["off", "predicates", "all"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    type="button"
+                    className={`graphSegmentBtn ${
+                      graphConfig.display.edgeLabels === mode ? "graphSegmentBtnActive" : ""
+                    }`}
+                    onClick={() => updateDisplay("edgeLabels", mode)}
+                  >
+                    {mode}
+                  </button>
+                ))}
+              </div>
+            </div>
           </div>
         )}
       </section>

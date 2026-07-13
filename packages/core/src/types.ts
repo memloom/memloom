@@ -167,6 +167,48 @@ export interface IndexProgressEvent {
   relationships?: number;
   /** Present when the item was skipped without an LLM call (formula-dominated chunk). */
   skipped?: "math-dense";
+  /** Present when this item failed (extraction error); the item stays unindexed for retry. */
+  error?: string;
+}
+
+// ---- Index run sessions (persistent, session-grouped logs for the Console) ----
+
+export type IndexRunTrigger = "index" | "rebuild";
+/** 'warning' = finished with failed items; 'interrupted' = the daemon died mid-run. */
+export type IndexRunStatus = "running" | "success" | "warning" | "error" | "interrupted";
+
+/** One index()/reindex() pass: the session row the Console lists, with status + totals. */
+export interface IndexRun {
+  id: string;
+  trigger: IndexRunTrigger;
+  status: IndexRunStatus;
+  /** Items (memories + chunks) this run set out to process. */
+  batchSize: number;
+  memoriesIndexed: number;
+  chunksIndexed: number;
+  itemsFailed: number;
+  /** Entity links made across the run (mentions per item, not distinct entities). */
+  entitiesLinked: number;
+  relationsCreated: number;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export type IndexEventLevel = "info" | "success" | "warning" | "error";
+
+/** One per-item log line under a run — what the Console shows when a session is expanded. */
+export interface IndexRunEvent {
+  id: string;
+  level: IndexEventLevel;
+  message: string;
+  itemId: string | null;
+  metadata: {
+    entities?: string[];
+    relationships?: number;
+    skipped?: string;
+    error?: string;
+  };
+  createdAt: string;
 }
 
 // ---- Context connector (files mirrored into chunked, searchable rows) ----

@@ -136,16 +136,33 @@ export interface SchemaInfo {
   proposals: SchemaEntry[];
 }
 
-/** One item finished during a streamed index run. */
-export interface IndexProgressEvent {
-  kind: "memory" | "chunk";
+export type IndexRunStatus = "running" | "success" | "warning" | "error" | "interrupted";
+
+/** One index/reindex pass — a session row in the Console's persistent log. */
+export interface IndexRun {
   id: string;
-  label: string;
-  index: number;
-  total: number;
-  entities: string[];
-  relationships?: number;
-  skipped?: "math-dense";
+  trigger: "index" | "rebuild";
+  status: IndexRunStatus;
+  batchSize: number;
+  memoriesIndexed: number;
+  chunksIndexed: number;
+  itemsFailed: number;
+  entitiesLinked: number;
+  relationsCreated: number;
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export type IndexEventLevel = "info" | "success" | "warning" | "error";
+
+/** One per-item log line under a run. */
+export interface IndexRunEvent {
+  id: string;
+  level: IndexEventLevel;
+  message: string;
+  itemId: string | null;
+  metadata: { entities?: string[]; relationships?: number; skipped?: string; error?: string };
+  createdAt: string;
 }
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
@@ -181,13 +198,16 @@ export const api = {
   history: (id: string) =>
     json<{ versions: Memory[] }>(`/memory/${id}/history`).then((r) => r.versions),
   index: () => post<{ indexed: number; chunksIndexed: number }>("/memory/index"),
-  // Streamed indexing: NDJSON progress per item, resolves with the totals. The callback
-  // fires as each memory/chunk finishes, so the console can log in real time.
-  indexStream: (onEvent: (event: IndexProgressEvent) => void) =>
-    streamRun("/memory/index/stream", onEvent),
   // Recovery: wipe all extracted entities/edges, then re-run indexing from scratch.
-  reindexStream: (onEvent: (event: IndexProgressEvent) => void) =>
-    streamRun("/memory/reindex/stream", onEvent),
+  reindex: () => post<{ indexed: number; chunksIndexed: number }>("/memory/reindex"),
+  // Index sessions — the engine writes a run row + per-item events to the store during a
+  // run, so the Console polls these while a run is live and history survives everything.
+  indexRuns: () => json<{ runs: IndexRun[] }>("/memory/index/runs").then((r) => r.runs),
+  runEvents: (runId: string) =>
+    json<{ events: IndexRunEvent[] }>(`/memory/index/runs/${runId}/events`).then((r) => r.events),
+  deleteRun: (runId: string) =>
+    json<{ ok: boolean }>(`/memory/index/runs/${runId}`, { method: "DELETE" }),
+  clearRuns: () => json<{ ok: boolean }>("/memory/index/runs", { method: "DELETE" }),
   schema: () => json<SchemaInfo>("/memory/schema"),
   addSchemaEntry: (input: {
     kind: "entity_type" | "predicate";
@@ -207,40 +227,3 @@ export const api = {
     post<{ ok: boolean }>(`/memory/conflicts/${id}/resolve`, decision),
   revert: (id: string) => post<{ ok: boolean }>(`/memory/conflicts/${id}/revert`),
 };
-
-async function streamRun(
-  path: string,
-  onEvent: (event: IndexProgressEvent) => void,
-): Promise<{ indexed: number; chunksIndexed: number }> {
-  const res = await fetch(path, { method: "POST" });
-  if (!res.ok || !res.body) throw new Error(`${res.status} ${res.statusText}`);
-  let result: { indexed: number; chunksIndexed: number } | null = null;
-  const handleLine = (line: string) => {
-    if (!line.trim()) return;
-    const event = JSON.parse(line) as
-      | ({ type: "item" } & IndexProgressEvent)
-      | { type: "done"; indexed: number; chunksIndexed: number }
-      | { type: "error"; error: string };
-    if (event.type === "item") onEvent(event);
-    else if (event.type === "done")
-      result = { indexed: event.indexed, chunksIndexed: event.chunksIndexed };
-    else throw new Error(event.error);
-  };
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    let newline = buffer.indexOf("\n");
-    while (newline >= 0) {
-      handleLine(buffer.slice(0, newline));
-      buffer = buffer.slice(newline + 1);
-      newline = buffer.indexOf("\n");
-    }
-  }
-  handleLine(buffer);
-  if (!result) throw new Error("index stream ended without a done event");
-  return result;
-}

@@ -42,11 +42,7 @@
           },
           {
             "group": "Guides",
-            "pages": [
-              "guides/extractors",
-              "guides/configuration",
-              "guides/self-hosting"
-            ]
+            "pages": ["guides/extractors", "guides/configuration", "guides/self-hosting"]
           }
         ]
       },

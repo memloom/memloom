@@ -567,5 +567,45 @@ export function buildMigrations(dims: number): Migration[] {
       CREATE INDEX memory_schema_owner_idx ON memory_schema (owner_id, kind, status);
     `,
     },
+    {
+      // Persistent, session-grouped indexing logs (a production-proven memory_index_runs pattern):
+      // one runs row per index()/reindex() pass holding status + totals, and an append-only
+      // per-item event stream under it. The Console lists runs newest-first; a run's events
+      // load on expand. Deleting a run cascades to its events.
+      id: "0012_index_runs",
+      sql: /* sql */ `
+      CREATE TABLE memory_index_runs (
+        id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id          uuid NOT NULL,
+        trigger           text NOT NULL DEFAULT 'index'
+                            CHECK (trigger IN ('index', 'rebuild')),
+        -- 'interrupted' = the daemon died mid-run; reconciled when the next run starts.
+        status            text NOT NULL DEFAULT 'running'
+                            CHECK (status IN ('running', 'success', 'warning', 'error', 'interrupted')),
+        batch_size        int NOT NULL DEFAULT 0,
+        memories_indexed  int NOT NULL DEFAULT 0,
+        chunks_indexed    int NOT NULL DEFAULT 0,
+        items_failed      int NOT NULL DEFAULT 0,
+        entities_linked   int NOT NULL DEFAULT 0,
+        relations_created int NOT NULL DEFAULT 0,
+        started_at        timestamptz NOT NULL DEFAULT now(),
+        finished_at       timestamptz
+      );
+      CREATE INDEX memory_index_runs_owner_started_idx
+        ON memory_index_runs (owner_id, started_at DESC);
+      CREATE TABLE memory_index_events (
+        id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id   uuid NOT NULL,
+        run_id     uuid NOT NULL REFERENCES memory_index_runs (id) ON DELETE CASCADE,
+        level      text NOT NULL DEFAULT 'info'
+                     CHECK (level IN ('info', 'success', 'warning', 'error')),
+        message    text NOT NULL,
+        item_id    uuid,
+        metadata   jsonb NOT NULL DEFAULT '{}'::jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX memory_index_events_run_idx ON memory_index_events (run_id, created_at);
+    `,
+    },
   ];
 }

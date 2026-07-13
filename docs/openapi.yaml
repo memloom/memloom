@@ -217,6 +217,89 @@ paths:
             application/x-ndjson:
               schema:
                 type: string
+  /memory/index/runs:
+    get:
+      summary: Index sessions (persistent run history)
+      description: |
+        Every index/reindex pass is recorded as a run: trigger (index|rebuild), status
+        (running|success|warning|error|interrupted), batch size, per-kind indexed counts,
+        failures, and entity/relation totals. Newest first. The viewer's Console polls this
+        while a run is live; history survives restarts and includes CLI runs.
+      operationId: listIndexRuns
+      responses:
+        "200":
+          description: Runs, newest first.
+          content:
+            application\json:
+              schema:
+                type: object
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        trigger: { type: string, enum: [index, rebuild] }
+                        status:
+                          type: string
+                          enum: [running, success, warning, error, interrupted]
+                        batchSize: { type: integer, example: 14 }
+                        memoriesIndexed: { type: integer }
+                        chunksIndexed: { type: integer }
+                        itemsFailed: { type: integer }
+                        entitiesLinked: { type: integer }
+                        relationsCreated: { type: integer }
+                        startedAt: { type: string, format: date-time }
+                        finishedAt: { type: string, format: date-time, nullable: true }
+    delete:
+      summary: Clear the whole indexing history
+      operationId: clearIndexRuns
+      responses:
+        "200":
+          description: All runs and their events deleted.
+  /memory/index/runs/{id}/events:
+    get:
+      summary: The per-item log lines of one run
+      operationId: getIndexRunEvents
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Events oldest-first (reads like a terminal).
+          content:
+            application\json:
+              schema:
+                type: object
+                properties:
+                  events:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        level: { type: string, enum: [info, success, warning, error] }
+                        message:
+                          type: string
+                          example: "[3/12] chunk notes.pdf › Intro → Postgres (+1 relationship)"
+                        itemId: { type: string, format: uuid, nullable: true }
+                        metadata: { type: object }
+                        createdAt: { type: string, format: date-time }
+  /memory/index/runs/{id}:
+    delete:
+      summary: Delete one run session (its events cascade)
+      operationId: deleteIndexRun
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Deleted.
   /memory/schema:
     get:
       summary: The graph schema registry with live counts

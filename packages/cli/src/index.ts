@@ -214,13 +214,16 @@ export async function run(argv: readonly string[]): Promise<void> {
         entities: string[];
         relationships?: number;
         skipped?: string;
+        error?: string;
       }) => {
-        const outcome = e.skipped
-          ? `(skipped: ${e.skipped})`
-          : e.entities.length > 0
-            ? e.entities.join(", ") +
-              (e.relationships ? `  (+${e.relationships} relationships)` : "")
-            : "(no entities)";
+        const outcome = e.error
+          ? `FAILED: ${e.error}`
+          : e.skipped
+            ? `(skipped: ${e.skipped})`
+            : e.entities.length > 0
+              ? e.entities.join(", ") +
+                (e.relationships ? `  (+${e.relationships} relationships)` : "")
+              : "(no entities)";
         console.log(`[${e.index}/${e.total}] ${e.kind.padEnd(6)} ${e.label}  ->  ${outcome}`);
       };
       const { indexed, chunksIndexed } = rebuild

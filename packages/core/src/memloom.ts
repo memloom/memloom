@@ -38,6 +38,8 @@ import type {
   GraphMemory,
   IndexProgressEvent,
   IndexResult,
+  IndexRun,
+  IndexRunEvent,
   Memory,
   MemoryType,
   RecallOptions,
@@ -602,6 +604,36 @@ export class Memloom implements MemoryEngine {
     ownerId: string = SENTINEL_OWNER,
     onProgress?: (event: IndexProgressEvent) => void,
   ): Promise<IndexResult> {
+    return this.#runIndex(ownerId, "index", onProgress);
+  }
+
+  // Run ids this process is executing right now. Any DB row still 'running' that is NOT in
+  // here belongs to a process that died mid-run — reconciled to 'interrupted' on read/start.
+  #activeRuns = new Set<string>();
+
+  async #reconcileInterruptedRuns(ownerId: string): Promise<void> {
+    const live = [...this.#activeRuns];
+    await this.#storage.query(
+      `UPDATE memory_index_runs SET status = 'interrupted', finished_at = now()
+       WHERE owner_id = $1 AND status = 'running'${
+         live.length > 0 ? ` AND id NOT IN (${live.map((_, i) => `$${i + 2}`).join(", ")})` : ""
+}`,
+      [ownerId, ...live],
+    );
+  }
+
+  /**
+   * The shared index pass behind index() and reindex(): processes every unindexed memory
+   * and chunk, and records the pass as a session — one memory_index_runs row plus one
+   * memory_index_events row per item — so progress survives the viewer navigating away
+   * and CLI runs show up in the Console. A failing item is logged and left unindexed
+   * (the next run retries it); the run finishes 'warning' instead of dying mid-batch.
+   */
+  async #runIndex(
+    ownerId: string,
+    trigger: "index" | "rebuild",
+    onProgress?: (event: IndexProgressEvent) => void,
+  ): Promise<IndexResult> {
     const snippet = (text: string) => (text.length > 64 ? `${text.slice(0, 61)}...` : text);
     // The vocabulary is loaded ONCE per run (registry rows: system + user tiers, active),
     // then injected into every extraction — one query, not one per item.
@@ -613,24 +645,6 @@ export class Memloom implements MemoryEngine {
        ORDER BY created_at`,
       [ownerId],
     );
-    let memoryPosition = 0;
-    for (const memory of pending) {
-      memoryPosition += 1;
-      const linked = await this.#linkGraph(ownerId, memory.id, memory.content, schema);
-      await this.#storage.query("UPDATE memory_objects SET indexed_at = now() WHERE id = $1", [
-        memory.id,
-      ]);
-      onProgress?.({
-        kind: "memory",
-        id: memory.id,
-        label: snippet(memory.content),
-        index: memoryPosition,
-        total: pending.length,
-        entities: linked.entities,
-        relationships: linked.relationships,
-      });
-    }
-
     const pendingChunks = await this.#storage.query<{
       id: string;
       content: string;
@@ -645,35 +659,238 @@ export class Memloom implements MemoryEngine {
        ORDER BY cc.created_at, cc.chunk_index`,
       [ownerId],
     );
-    let chunkPosition = 0;
-    for (const chunk of pendingChunks) {
-      chunkPosition += 1;
-      // Formula-dominated chunks have nothing extractable — skip the LLM call entirely
-      // (a math exercise sheet would otherwise become a graph of equations).
-      const skipped = isMathDense(chunk.content);
-      const linked = skipped
-        ? { entities: [], relationships: 0 }
-        : await this.#linkGraph(ownerId, chunk.id, chunk.content, schema, {
-            docTitle: chunk.doc_title,
+    // Nothing pending: no session row — an empty run every time someone clicks "index"
+    // would drown the real history.
+    if (pending.length + pendingChunks.length === 0) return { indexed: 0, chunksIndexed: 0 };
+
+    await this.#reconcileInterruptedRuns(ownerId);
+    const [run] = await this.#storage.query<{ id: string }>(
+      `INSERT INTO memory_index_runs (owner_id, trigger, batch_size)
+       VALUES ($1, $2, $3) RETURNING id`,
+      [ownerId, trigger, pending.length + pendingChunks.length],
+    );
+    if (!run) throw new Error("memloom: could not create index run");
+    const runId = run.id;
+    this.#activeRuns.add(runId);
+
+    const totals = { memories: 0, chunks: 0, failed: 0, entities: 0, relations: 0 };
+    const logEvent = async (
+      level: "info" | "success" | "warning" | "error",
+      message: string,
+      itemId: string,
+      metadata: Record<string, unknown>,
+    ) => {
+      await this.#storage.query(
+        `INSERT INTO memory_index_events (owner_id, run_id, level, message, item_id, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [ownerId, runId, level, message, itemId, JSON.stringify(metadata)],
+      );
+    };
+    // Counters sync per item, not per run, so an interrupted run's row still tells the truth.
+    const syncTotals = async () => {
+      await this.#storage.query(
+        `UPDATE memory_index_runs
+         SET memories_indexed = $2, chunks_indexed = $3, items_failed = $4,
+             entities_linked = $5, relations_created = $6
+         WHERE id = $1`,
+        [runId, totals.memories, totals.chunks, totals.failed, totals.entities, totals.relations],
+      );
+    };
+    const outcomeOf = (linked: { entities: string[]; relationships: number }) =>
+      linked.entities.length === 0
+        ? "no entities"
+        : linked.entities.join(", ") +
+          (linked.relationships > 0
+            ? ` (+${linked.relationships} ${linked.relationships === 1 ? "relationship" : "relationships"})`
+            : "");
+
+    try {
+      let memoryPosition = 0;
+      for (const memory of pending) {
+        memoryPosition += 1;
+        const base = {
+          kind: "memory" as const,
+          id: memory.id,
+          label: snippet(memory.content),
+          index: memoryPosition,
+          total: pending.length,
+        };
+        const prefix = `[${base.index}/${base.total}] memory ${base.label}`;
+        try {
+          const linked = await this.#linkGraph(ownerId, memory.id, memory.content, schema);
+          await this.#storage.query("UPDATE memory_objects SET indexed_at = now() WHERE id = $1", [
+            memory.id,
+          ]);
+          totals.memories += 1;
+          totals.entities += linked.entities.length;
+          totals.relations += linked.relationships;
+          await logEvent(
+            linked.entities.length > 0 ? "success" : "info",
+            `${prefix} → ${outcomeOf(linked)}`,
+            memory.id,
+            { entities: linked.entities, relationships: linked.relationships },
+          );
+          await syncTotals();
+          onProgress?.({ ...base, entities: linked.entities, relationships: linked.relationships });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          totals.failed += 1;
+          await logEvent("error", `${prefix} → failed: ${message}`, memory.id, { error: message });
+          await syncTotals();
+          onProgress?.({ ...base, entities: [], error: message });
+        }
+      }
+
+      let chunkPosition = 0;
+      for (const chunk of pendingChunks) {
+        chunkPosition += 1;
+        const base = {
+          kind: "chunk" as const,
+          id: chunk.id,
+          label: snippet(
+            `${chunk.doc_title} › ${chunk.heading_path ?? `#${Number(chunk.chunk_index) + 1}`}`,
+          ),
+          index: chunkPosition,
+          total: pendingChunks.length,
+        };
+        const prefix = `[${base.index}/${base.total}] chunk ${base.label}`;
+        try {
+          // Formula-dominated chunks have nothing extractable — skip the LLM call entirely
+          // (a math exercise sheet would otherwise become a graph of equations).
+          const skipped = isMathDense(chunk.content);
+          const linked = skipped
+            ? { entities: [], relationships: 0 }
+            : await this.#linkGraph(ownerId, chunk.id, chunk.content, schema, {
+                docTitle: chunk.doc_title,
+              });
+          await this.#storage.query("UPDATE context_chunks SET indexed_at = now() WHERE id = $1", [
+            chunk.id,
+          ]);
+          totals.chunks += 1;
+          totals.entities += linked.entities.length;
+          totals.relations += linked.relationships;
+          await logEvent(
+            skipped ? "info" : linked.entities.length > 0 ? "success" : "info",
+            `${prefix} → ${skipped ? "skipped (math-dense)" : outcomeOf(linked)}`,
+            chunk.id,
+            skipped
+              ? { skipped: "math-dense" }
+              : { entities: linked.entities, relationships: linked.relationships },
+          );
+          await syncTotals();
+          onProgress?.({
+            ...base,
+            entities: linked.entities,
+            relationships: linked.relationships,
+            ...(skipped ? { skipped: "math-dense" as const } : {}),
           });
-      await this.#storage.query("UPDATE context_chunks SET indexed_at = now() WHERE id = $1", [
-        chunk.id,
-      ]);
-      onProgress?.({
-        kind: "chunk",
-        id: chunk.id,
-        label: snippet(
-          `${chunk.doc_title} › ${chunk.heading_path ?? `#${Number(chunk.chunk_index) + 1}`}`,
-        ),
-        index: chunkPosition,
-        total: pendingChunks.length,
-        entities: linked.entities,
-        relationships: linked.relationships,
-        ...(skipped ? { skipped: "math-dense" as const } : {}),
-      });
+        } catch (err) {
+          const message = err instanceof Error ? err.message : String(err);
+          totals.failed += 1;
+          await logEvent("error", `${prefix} → failed: ${message}`, chunk.id, { error: message });
+          await syncTotals();
+          onProgress?.({ ...base, entities: [], error: message });
+        }
+      }
+
+      const status =
+        totals.failed === 0 ? "success" : totals.memories + totals.chunks > 0 ? "warning" : "error";
+      await this.#storage.query(
+        "UPDATE memory_index_runs SET status = $2, finished_at = now() WHERE id = $1",
+        [runId, status],
+      );
+    } catch (err) {
+      // Something outside the per-item guards (storage failure, schema query) — finalize
+      // the session honestly before propagating.
+      await this.#storage
+        .query("UPDATE memory_index_runs SET status = 'error', finished_at = now() WHERE id = $1", [
+          runId,
+        ])
+        .catch(() => {});
+      throw err;
+    } finally {
+      this.#activeRuns.delete(runId);
     }
 
-    return { indexed: pending.length, chunksIndexed: pendingChunks.length };
+    return { indexed: totals.memories, chunksIndexed: totals.chunks };
+  }
+
+  /** Index sessions, newest first — the Console's persistent log. Reconciles dead runs. */
+  async listIndexRuns(ownerId: string = SENTINEL_OWNER, limit = 100): Promise<IndexRun[]> {
+    await this.#reconcileInterruptedRuns(ownerId);
+    const rows = await this.#storage.query<{
+      id: string;
+      trigger: IndexRun["trigger"];
+      status: IndexRun["status"];
+      batch_size: number;
+      memories_indexed: number;
+      chunks_indexed: number;
+      items_failed: number;
+      entities_linked: number;
+      relations_created: number;
+      started_at: string;
+      finished_at: string | null;
+    }>(
+      `SELECT id, trigger, status, batch_size, memories_indexed, chunks_indexed, items_failed,
+              entities_linked, relations_created, started_at, finished_at
+       FROM memory_index_runs WHERE owner_id = $1
+       ORDER BY started_at DESC LIMIT $2`,
+      [ownerId, limit],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      trigger: r.trigger,
+      status: r.status,
+      batchSize: Number(r.batch_size),
+      memoriesIndexed: Number(r.memories_indexed),
+      chunksIndexed: Number(r.chunks_indexed),
+      itemsFailed: Number(r.items_failed),
+      entitiesLinked: Number(r.entities_linked),
+      relationsCreated: Number(r.relations_created),
+      startedAt: r.started_at,
+      finishedAt: r.finished_at,
+    }));
+  }
+
+  /** The per-item log lines of one session, oldest first (reads like a terminal). */
+  async indexRunEvents(runId: string, ownerId: string = SENTINEL_OWNER): Promise<IndexRunEvent[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      level: IndexRunEvent["level"];
+      message: string;
+      item_id: string | null;
+      metadata: unknown;
+      created_at: string;
+    }>(
+      `SELECT id, level, message, item_id, metadata, created_at
+       FROM memory_index_events WHERE owner_id = $1 AND run_id = $2
+       ORDER BY created_at, id`,
+      [ownerId, runId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      level: r.level,
+      message: r.message,
+      itemId: r.item_id,
+      // jsonb comes back parsed from pg/PGLite, but tolerate string-returning adapters.
+      metadata: (typeof r.metadata === "string"
+        ? JSON.parse(r.metadata)
+        : (r.metadata ?? {})) as IndexRunEvent["metadata"],
+      createdAt: r.created_at,
+    }));
+  }
+
+  /** Delete one session and its events (the Console's per-row delete). */
+  async deleteIndexRun(runId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    await this.#storage.query(
+      "DELETE FROM memory_index_runs WHERE owner_id = $1 AND id = $2", // events cascade
+      [ownerId, runId],
+    );
+  }
+
+  /** Wipe the whole indexing history. */
+  async clearIndexRuns(ownerId: string = SENTINEL_OWNER): Promise<void> {
+    await this.#storage.query("DELETE FROM memory_index_runs WHERE owner_id = $1", [ownerId]);
   }
 
   /**
@@ -704,7 +921,7 @@ export class Memloom implements MemoryEngine {
       );
       await tx.query("UPDATE context_chunks SET indexed_at = NULL WHERE owner_id = $1", [ownerId]);
     });
-    return this.index(ownerId, onProgress);
+    return this.#runIndex(ownerId, "rebuild", onProgress);
   }
 
   /**

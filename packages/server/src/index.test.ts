@@ -63,6 +63,39 @@ describe("server", () => {
     expect(done).toMatchObject({ type: "done", indexed: 1, chunksIndexed: 0 });
   });
 
+  it("index run sessions are listed, expandable, and deletable over HTTP", async () => {
+    const server = await app();
+    await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "the staging database runs on Postgres" }),
+    });
+    await server.request("/memory/index", { method: "POST" });
+
+    const runsRes = await server.request("/memory/index/runs");
+    expect(runsRes.status).toBe(200);
+    const { runs } = (await runsRes.json()) as {
+      runs: Array<{ id: string; status: string; trigger: string; batchSize: number }>;
+    };
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ status: "success", trigger: "index", batchSize: 1 });
+
+    const eventsRes = await server.request(`/memory/index/runs/${runs[0]?.id}/events`);
+    expect(eventsRes.status).toBe(200);
+    const { events } = (await eventsRes.json()) as {
+      events: Array<{ level: string; message: string }>;
+    };
+    expect(events).toHaveLength(1);
+    expect(events[0]?.message).toContain("Postgres");
+
+    const del = await server.request(`/memory/index/runs/${runs[0]?.id}`, { method: "DELETE" });
+    expect(del.status).toBe(200);
+    const after = (await (await server.request("/memory/index/runs")).json()) as {
+      runs: unknown[];
+    };
+    expect(after.runs).toHaveLength(0);
+  });
+
   it("schema endpoint reports vocabularies with live counts", async () => {
     const server = await app();
     await server.request("/memory/save", {

@@ -275,6 +275,22 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   app.post("/memory/index/stream", (c) => streamRun(c, (p) => memloom.index(undefined, p)));
 
+  // Index sessions: the persistent, session-grouped log the Console tab renders. Runs are
+  // listed newest-first; a run's per-item events load on expand. History is user-managed —
+  // per-run delete and clear-all instead of an automatic cap.
+  app.get("/memory/index/runs", async (c) => c.json({ runs: await memloom.listIndexRuns() }));
+  app.get("/memory/index/runs/:id/events", async (c) =>
+    c.json({ events: await memloom.indexRunEvents(c.req.param("id")) }),
+  );
+  app.delete("/memory/index/runs/:id", async (c) => {
+    await memloom.deleteIndexRun(c.req.param("id"));
+    return c.json({ ok: true });
+  });
+  app.delete("/memory/index/runs", async (c) => {
+    await memloom.clearIndexRuns();
+    return c.json({ ok: true });
+  });
+
   // Recovery: wipe every extracted entity/edge and re-run indexing from scratch.
   app.post("/memory/reindex", async (c) => c.json(await memloom.reindex()));
   app.post("/memory/reindex/stream", (c) => streamRun(c, (p) => memloom.reindex(undefined, p)));

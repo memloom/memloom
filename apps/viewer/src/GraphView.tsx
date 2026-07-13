@@ -118,7 +118,17 @@ interface Link {
   source: string | Node;
   target: string | Node;
   relation: GraphRelation;
+  /** The raw relation string — typed predicates (works_on, uses, ...) keep their name here. */
+  label: string;
   weight: number;
+}
+
+// Structural relations the engine writes itself; everything else is a typed predicate the
+// extractor stated (subject -> predicate -> object), which is what earns a label + arrow.
+const STRUCTURAL_RELATIONS = new Set(["mention", "mentions", "replaces", "distinct", "chunk"]);
+
+function isPredicateLink(link: Link): boolean {
+  return !STRUCTURAL_RELATIONS.has(link.label);
 }
 
 type Selected = { kind: GraphNodeKind; title: string; body: string; id: string } | null;
@@ -274,6 +284,7 @@ function buildGraphData(
         source: e.from,
         target: e.to,
         relation: toRelation(e.relation),
+        label: e.relation,
         weight: e.weight ?? 1,
       })),
     ...openDocs.flatMap(([docId, dc]) => [
@@ -281,6 +292,7 @@ function buildGraphData(
         source: docId,
         target: c.id,
         relation: "chunk" as const,
+        label: "chunk",
         weight: 1,
       })),
       ...dc.edges
@@ -289,6 +301,7 @@ function buildGraphData(
           source: e.from,
           target: e.to,
           relation: toRelation(e.relation),
+          label: e.relation,
           weight: 1,
         })),
     ]),
@@ -645,6 +658,49 @@ export function GraphView({ graph }: { graph: Graph }) {
     return scaleColorAlpha(base, Math.max(0.5, 1 - hover.mix * 0.55));
   }, []);
 
+  // Edge labels: the relation name drawn along the link, above the line, never upside
+  // down. Fades in with zoom like node labels; dims with the hover focus like the link.
+  const edgeLabelMode = config.display.edgeLabels;
+  const linkCanvasObject = useCallback(
+    (link: Link, ctx: CanvasRenderingContext2D, globalScale: number) => {
+      if (edgeLabelMode === "off") return;
+      if (edgeLabelMode === "predicates" && !isPredicateLink(link)) return;
+      const s = link.source;
+      const t = link.target;
+      if (typeof s === "string" || typeof t === "string") return; // pre-init tick
+
+      const labelThreshold = LABEL_BASE_THRESHOLD * config.display.labelFadeThreshold;
+      const fadeRange = labelThreshold * 0.3;
+      const zoomAlpha = clamp01((globalScale - (labelThreshold - fadeRange)) / fadeRange);
+      if (zoomAlpha <= 0.01) return;
+
+      const hover = hoverRef.current;
+      const touches = hover.focusNode === s.id || hover.focusNode === t.id;
+      const hoverAlpha = !hover.focusNode || touches ? 1 : Math.max(0.12, 1 - hover.mix * 0.86);
+
+      const sx = s.x ?? 0;
+      const sy = s.y ?? 0;
+      const tx = t.x ?? 0;
+      const ty = t.y ?? 0;
+      let angle = Math.atan2(ty - sy, tx - sx);
+      // Keep text readable: flip when the link points leftward.
+      if (angle > Math.PI / 2) angle -= Math.PI;
+      else if (angle < -Math.PI / 2) angle += Math.PI;
+
+      ctx.save();
+      ctx.translate((sx + tx) / 2, (sy + ty) / 2);
+      ctx.rotate(angle);
+      const fontSize = 9.5 / globalScale;
+      ctx.font = `500 ${fontSize}px ui-monospace, SFMono-Regular, Menlo, monospace`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+      ctx.fillStyle = scaleColorAlpha(palRef.current.label, 0.85 * zoomAlpha * hoverAlpha);
+      ctx.fillText(link.label, 0, -2.5 / globalScale);
+      ctx.restore();
+    },
+    [edgeLabelMode, config.display.labelFadeThreshold],
+  );
+
   // Rolled-up document -> entity edges thicken with how many chunks mention the entity.
   const linkWidth = useCallback(
     (link: Link) => {
@@ -691,6 +747,14 @@ export function GraphView({ graph }: { graph: Graph }) {
           }}
           linkColor={linkColor}
           linkWidth={linkWidth}
+          linkCanvasObjectMode={() => "after"}
+          linkCanvasObject={linkCanvasObject}
+          // Predicates are directional facts (subject -> object) — labels without arrows
+          // read half a claim. Structural edges stay arrowless.
+          linkDirectionalArrowLength={(l: Link) =>
+            edgeLabelMode !== "off" && isPredicateLink(l) ? 3.5 : 0
+          }
+          linkDirectionalArrowRelPos={0.82}
           nodeRelSize={6}
           minZoom={MIN_ZOOM}
           maxZoom={MAX_ZOOM}

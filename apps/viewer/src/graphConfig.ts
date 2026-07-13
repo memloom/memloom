@@ -5,12 +5,16 @@
 
 export type GraphNodeKind = "memory" | "entity" | "document" | "chunk";
 export type GraphRelation = "mention" | "replaces" | "distinct" | "chunk" | "default";
+// What gets a name drawn along the edge: nothing, typed predicate edges only (works_on,
+// uses, ...), or every edge including structural ones (mention, chunk, replaces).
+export type EdgeLabelMode = "off" | "predicates" | "all";
 
 export type ViewerGraphConfig = {
   display: {
     nodeSizeMultiplier: number;
     linkThicknessMultiplier: number;
     labelFadeThreshold: number;
+    edgeLabels: EdgeLabelMode;
   };
   forces: {
     centerForce: number;
@@ -35,6 +39,9 @@ export const DEFAULT_GRAPH_CONFIG: ViewerGraphConfig = {
     nodeSizeMultiplier: 1,
     linkThicknessMultiplier: 1,
     labelFadeThreshold: 1,
+    // Labeling mention/chunk edges would print the same word hundreds of times — typed
+    // predicate edges are the ones whose name carries information.
+    edgeLabels: "predicates",
   },
   forces: {
     centerForce: 0.5,
