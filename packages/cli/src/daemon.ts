@@ -68,6 +68,7 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
       ? "nebius"
       : undefined);
   const llmModel = process.env.OPENROUTER_LLM_MODEL;
+  const chatModel = process.env.OPENROUTER_CHAT_MODEL;
 
   const memloom = apiKey
     ? new Memloom({
@@ -78,7 +79,11 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
           ...(embedDims ? { dims: embedDims } : {}),
           ...(embedProvider ? { provider: embedProvider } : {}),
         }),
-        llm: new OpenRouterLLM({ apiKey, ...(llmModel ? { model: llmModel } : {}) }),
+        llm: new OpenRouterLLM({
+          apiKey,
+          ...(llmModel ? { model: llmModel } : {}),
+          ...(chatModel ? { chatModel } : {}),
+        }),
       })
     : new Memloom({
         storage,

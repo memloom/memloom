@@ -1,11 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
+import { type AssistantEvent, runAssistantTurn } from "./assistant.js";
 import { chunkMarkdown, chunkOutline } from "./chunker.js";
 import { type Candidate, classify } from "./dedup.js";
 import type { MemoryEngine } from "./engine.js";
 import { type ExtractionContext, extractGraph, isMathDense } from "./entities.js";
 import { extractFile } from "./extract.js";
 import { migrate } from "./migrate.js";
-import type { EmbeddingProvider, LLMProvider } from "./providers.js";
+import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
 import {
   addEdge,
   addEdgeIfAbsent,
@@ -25,6 +26,11 @@ import {
 } from "./schema.js";
 import type { StorageAdapter } from "./storage.js";
 import type {
+  AssistantChatResult,
+  AssistantMessage,
+  AssistantSession,
+  AssistantSessionHit,
+  AssistantSource,
   Conflict,
   ConflictCandidate,
   ContextAddInput,
@@ -891,6 +897,253 @@ export class Memloom implements MemoryEngine {
   /** Wipe the whole indexing history. */
   async clearIndexRuns(ownerId: string = SENTINEL_OWNER): Promise<void> {
     await this.#storage.query("DELETE FROM memory_index_runs WHERE owner_id = $1", [ownerId]);
+  }
+
+  // assistant chat (docs/design/assistant-tab.md)
+
+  static readonly #ASSISTANT_HISTORY_LIMIT = 12;
+
+  async #embedOrNull(text: string): Promise<string | null> {
+    try {
+      const [vec] = await this.#embedding.embed([text]);
+      return vec ? toVectorLiteral(vec) : null;
+    } catch {
+      return null; // search degrades to keyword-only for this message; the chat still works
+    }
+  }
+
+  async #saveAssistantMessage(
+    ownerId: string,
+    sessionId: string,
+    role: "user" | "assistant",
+    content: string,
+    sources: AssistantSource[],
+  ): Promise<string> {
+    const embedding = await this.#embedOrNull(content);
+    const [row] = await this.#storage.query<{ id: string }>(
+      `INSERT INTO assistant_messages (owner_id, session_id, role, content, sources, embedding)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      [ownerId, sessionId, role, content, JSON.stringify(sources), embedding],
+    );
+    return row?.id ?? "";
+  }
+
+  /**
+   * One assistant turn: resolve/create the session, replay recent history, run the
+   * agentic loop (the model decides whether to recall), persist both turns, return the
+   * grounded answer with its sources. `onEvent` streams tool activity + answer deltas.
+   */
+  async assistantChat(
+    input: { sessionId?: string; message: string; ownerId?: string },
+    onEvent?: (e: AssistantEvent) => void,
+  ): Promise<AssistantChatResult> {
+    const owner = input.ownerId ?? SENTINEL_OWNER;
+    const llm = this.#llm;
+    if (!isChatProvider(llm)) {
+      throw new Error(
+        "the assistant needs a chat-capable LLM: add OPENROUTER_API_KEY to " +
+          "~/.memloom/config.env and restart the daemon",
+      );
+    }
+
+    let sessionId = input.sessionId;
+    if (sessionId) {
+      const found = await this.#storage.query(
+        "SELECT id FROM assistant_sessions WHERE owner_id = $1 AND id = $2",
+        [owner, sessionId],
+      );
+      if (found.length === 0) throw new Error(`no assistant session ${sessionId}`);
+    } else {
+      const title = input.message.length > 60 ? `${input.message.slice(0, 57)}...` : input.message;
+      const [row] = await this.#storage.query<{ id: string }>(
+        "INSERT INTO assistant_sessions (owner_id, title) VALUES ($1, $2) RETURNING id",
+        [owner, title],
+      );
+      if (!row) throw new Error("memloom: could not create assistant session");
+      sessionId = row.id;
+    }
+
+    // Last N plain turns, oldest first. Tool scaffolding is never persisted, so this is
+    // exactly what the model should see again.
+    const historyRows = await this.#storage.query<{ role: "user" | "assistant"; content: string }>(
+      `SELECT role, content FROM assistant_messages
+       WHERE owner_id = $1 AND session_id = $2 ORDER BY created_at DESC LIMIT $3`,
+      [owner, sessionId, Memloom.#ASSISTANT_HISTORY_LIMIT],
+    );
+    const history = historyRows.reverse();
+
+    await this.#saveAssistantMessage(owner, sessionId, "user", input.message, []);
+
+    const { answer, sources } = await runAssistantTurn({
+      provider: llm,
+      recall: (query) => this.recall(query, { ownerId: owner, limit: 6 }),
+      history,
+      message: input.message,
+      today: new Date().toDateString(),
+      ...(onEvent ? { onEvent } : {}),
+    });
+
+    const messageId = await this.#saveAssistantMessage(
+      owner,
+      sessionId,
+      "assistant",
+      answer,
+      sources,
+    );
+    await this.#storage.query("UPDATE assistant_sessions SET updated_at = now() WHERE id = $1", [
+      sessionId,
+    ]);
+    return { sessionId, messageId, answer, sources };
+  }
+
+  async assistantSessions(ownerId: string = SENTINEL_OWNER): Promise<AssistantSession[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      title: string;
+      is_starred: boolean;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `SELECT id, title, is_starred, created_at, updated_at FROM assistant_sessions
+       WHERE owner_id = $1 ORDER BY is_starred DESC, updated_at DESC`,
+      [ownerId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      title: r.title,
+      isStarred: Boolean(r.is_starred),
+      createdAt: r.created_at,
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  async assistantMessages(
+    sessionId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<AssistantMessage[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      role: "user" | "assistant";
+      content: string;
+      sources: unknown;
+      created_at: string;
+    }>(
+      `SELECT id, role, content, sources, created_at FROM assistant_messages
+       WHERE owner_id = $1 AND session_id = $2 ORDER BY created_at, id`,
+      [ownerId, sessionId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      role: r.role,
+      content: r.content,
+      sources: (typeof r.sources === "string"
+        ? JSON.parse(r.sources)
+        : (r.sources ?? [])) as AssistantSource[],
+      createdAt: r.created_at,
+    }));
+  }
+
+  async renameAssistantSession(
+    sessionId: string,
+    title: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<void> {
+    await this.#storage.query(
+      "UPDATE assistant_sessions SET title = $3 WHERE owner_id = $1 AND id = $2",
+      [ownerId, sessionId, title.trim() || "New chat"],
+    );
+  }
+
+  async starAssistantSession(
+    sessionId: string,
+    starred: boolean,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<void> {
+    await this.#storage.query(
+      "UPDATE assistant_sessions SET is_starred = $3 WHERE owner_id = $1 AND id = $2",
+      [ownerId, sessionId, starred],
+    );
+  }
+
+  async deleteAssistantSession(sessionId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    await this.#storage.query(
+      "DELETE FROM assistant_sessions WHERE owner_id = $1 AND id = $2", // messages cascade
+      [ownerId, sessionId],
+    );
+  }
+
+  async clearAssistantSessions(ownerId: string = SENTINEL_OWNER): Promise<void> {
+    await this.#storage.query("DELETE FROM assistant_sessions WHERE owner_id = $1", [ownerId]);
+  }
+
+  /**
+   * Hybrid chat search: a keyword arm (ILIKE over titles + message content) and a
+   * similarity arm (cosine over message embeddings). Merged per session; keyword hits
+   * rank above pure-similarity hits; each hit carries its best-matching snippet.
+   */
+  async searchAssistantSessions(
+    query: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<AssistantSessionHit[]> {
+    const q = query.trim();
+    if (!q) return (await this.assistantSessions(ownerId)).map((s) => ({ ...s, snippet: "" }));
+
+    type HitRow = {
+      id: string;
+      title: string;
+      is_starred: boolean;
+      created_at: string;
+      updated_at: string;
+      snippet: string | null;
+      sim?: number;
+    };
+    const keyword = await this.#storage.query<HitRow>(
+      `SELECT DISTINCT ON (s.id) s.id, s.title, s.is_starred, s.created_at, s.updated_at,
+              m.content AS snippet
+       FROM assistant_sessions s
+       LEFT JOIN assistant_messages m ON m.session_id = s.id AND m.content ILIKE $2
+       WHERE s.owner_id = $1 AND (s.title ILIKE $2 OR m.id IS NOT NULL)
+       ORDER BY s.id, m.created_at DESC`,
+      [ownerId, `%${q}%`],
+    );
+
+    const hits = new Map<string, AssistantSessionHit & { score: number }>();
+    const add = (row: HitRow, score: number) => {
+      const existing = hits.get(row.id);
+      if (existing && existing.score >= score) return;
+      hits.set(row.id, {
+        id: row.id,
+        title: row.title,
+        isStarred: Boolean(row.is_starred),
+        createdAt: row.created_at,
+        updatedAt: row.updated_at,
+        snippet: (row.snippet ?? "").slice(0, 160),
+        score,
+      });
+    };
+    for (const row of keyword) add(row, 2); // keyword outranks similarity
+
+    const [vec] = await this.#embedding.embed([q]).catch(() => [undefined]);
+    if (vec) {
+      const similar = await this.#storage.query<HitRow>(
+        `SELECT DISTINCT ON (s.id) s.id, s.title, s.is_starred, s.created_at, s.updated_at,
+                m.content AS snippet, 1 - (m.embedding <=> $2::vector) AS sim
+         FROM assistant_messages m
+         JOIN assistant_sessions s ON s.id = m.session_id
+         WHERE m.owner_id = $1 AND m.embedding IS NOT NULL
+         ORDER BY s.id, sim DESC`,
+        [ownerId, toVectorLiteral(vec)],
+      );
+      for (const row of similar) {
+        const sim = Number(row.sim ?? 0);
+        if (sim >= 0.35) add(row, sim);
+      }
+    }
+
+    return [...hits.values()]
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 20)
+      .map(({ score: _score, ...hit }) => hit);
   }
 
   /**

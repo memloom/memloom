@@ -18,3 +18,54 @@ export interface LLMProvider {
   /** Return the model's text completion for a prompt. Structured-JSON helpers layer on top. */
   complete(prompt: string): Promise<string>;
 }
+
+// Chat is a separate, optional capability: the assistant needs multi-turn messages with
+// native tool calling and streaming, which extraction/dedup never do. A provider that
+// only implements complete() (NullLLMProvider in offline mode) simply has no assistant.
+
+export interface ChatToolCall {
+  id: string;
+  name: string;
+  /** Raw JSON string of arguments, exactly as the model produced it. */
+  arguments: string;
+}
+
+export interface ChatMessage {
+  role: "system" | "user" | "assistant" | "tool";
+  /** null on assistant tool-call turns: some backends reject an empty string there. */
+  content: string | null;
+  toolCalls?: ChatToolCall[];
+  /** Set on role "tool": which call this message answers. */
+  toolCallId?: string;
+}
+
+export interface ChatTool {
+  name: string;
+  description: string;
+  /** JSON schema for the arguments object. */
+  parameters: Record<string, unknown>;
+}
+
+export interface ChatResult {
+  content: string | null;
+  toolCalls: ChatToolCall[];
+}
+
+export interface ChatProvider {
+  /** One non-streaming turn. The assistant's tool-gather rounds. */
+  chat(
+    messages: ChatMessage[],
+    opts?: { tools?: ChatTool[]; toolChoice?: "auto" | "none" },
+  ): Promise<ChatResult>;
+  /** Streaming text-only turn (no tools). The assistant's final grounded answer. */
+  chatStream(messages: ChatMessage[], onDelta: (text: string) => void): Promise<string>;
+}
+
+export function isChatProvider(llm: unknown): llm is ChatProvider {
+  return (
+    typeof llm === "object" &&
+    llm !== null &&
+    typeof (llm as ChatProvider).chat === "function" &&
+    typeof (llm as ChatProvider).chatStream === "function"
+  );
+}

@@ -607,5 +607,34 @@ export function buildMigrations(dims: number): Migration[] {
       CREATE INDEX memory_index_events_run_idx ON memory_index_events (run_id, created_at);
     `,
     },
+    {
+      // Assistant chat sessions + messages. Only plain user/assistant turns persist; the
+      // agentic tool scaffolding lives and dies inside one turn. Messages are embedded so
+      // chat search gets a similarity arm alongside keyword ILIKE.
+      id: "0013_assistant_chat",
+      sql: /* sql */ `
+      CREATE TABLE assistant_sessions (
+        id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id   uuid NOT NULL,
+        title      text NOT NULL DEFAULT 'New chat',
+        is_starred boolean NOT NULL DEFAULT false,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        updated_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX assistant_sessions_owner_idx
+        ON assistant_sessions (owner_id, is_starred DESC, updated_at DESC);
+      CREATE TABLE assistant_messages (
+        id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id   uuid NOT NULL,
+        session_id uuid NOT NULL REFERENCES assistant_sessions (id) ON DELETE CASCADE,
+        role       text NOT NULL CHECK (role IN ('user', 'assistant')),
+        content    text NOT NULL,
+        sources    jsonb NOT NULL DEFAULT '[]'::jsonb,
+        embedding  vector(${dims}),
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX assistant_messages_session_idx ON assistant_messages (session_id, created_at);
+    `,
+    },
   ];
 }

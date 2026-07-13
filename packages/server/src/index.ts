@@ -2,10 +2,10 @@ import { spawn } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { extname, join, normalize, resolve, sep } from "node:path";
 import { serve as nodeServe } from "@hono/node-server";
-import { type IndexProgressEvent, MEMORY_TYPES, type Memloom } from "@memloom/core";
+import { type IndexProgressEvent, isChatProvider, MEMORY_TYPES, type Memloom } from "@memloom/core";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
-import { stream } from "hono/streaming";
+import { stream, streamSSE } from "hono/streaming";
 import { z } from "zod";
 
 // The local HTTP server: a thin wrapper around @memloom/core so the browser-based viewer (and
@@ -98,6 +98,16 @@ const schemaStatusSchema = z.object({
   status: z.enum(["active", "disabled"]),
 });
 
+const assistantChatSchema = z.object({
+  sessionId: z.string().uuid().optional(),
+  message: z.string().min(1, "message must be a non-empty string"),
+});
+
+const assistantSessionPatchSchema = z.object({
+  title: z.string().min(1).optional(),
+  starred: z.boolean().optional(),
+});
+
 const resolveSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("keep_new") }),
   z.object({ action: z.literal("keep_existing"), candidateId: z.string().min(1) }),
@@ -161,6 +171,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       const isApi =
         c.req.path.startsWith("/memory") ||
         c.req.path.startsWith("/context") ||
+        c.req.path.startsWith("/assistant") ||
         c.req.path.startsWith("/admin");
       if (isApi) {
         console.log(`${new Date().toISOString()}  → ${c.req.method} ${c.req.path}`);
@@ -202,6 +213,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   };
   app.use("/memory/*", probeStore);
   app.use("/context/*", probeStore);
+  app.use("/assistant/*", probeStore);
 
   if (opts.onShutdown) {
     const shutdown = opts.onShutdown;
@@ -338,6 +350,66 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   app.post("/memory/conflicts/:id/revert", async (c) => {
     await memloom.revertConflict(c.req.param("id"));
+    return c.json({ ok: true });
+  });
+
+  // The assistant tab: one agentic turn streamed as SSE (tool activity + answer deltas +
+  // a terminal done/error event). Offline mode (no chat-capable LLM) fails fast with a
+  // setup hint BEFORE the stream starts, so the client gets a real 503.
+  app.post("/assistant/chat", async (c) => {
+    const body = await parseBody(c, assistantChatSchema);
+    if (!body.ok) return body.res;
+    if (!isChatProvider(memloom.deps.llm)) {
+      return c.json(
+        {
+          error:
+            "the assistant needs an LLM: add OPENROUTER_API_KEY to ~/.memloom/config.env " +
+            "and restart the daemon",
+        },
+        503,
+      );
+    }
+    return streamSSE(c, async (s) => {
+      // onEvent is sync; serialize writes through a promise chain so events never interleave.
+      let chain = Promise.resolve();
+      const send = (payload: unknown) => {
+        chain = chain.then(async () => {
+          await s.writeSSE({ data: JSON.stringify(payload) });
+        });
+      };
+      try {
+        const result = await memloom.assistantChat(body.data, send);
+        send({ type: "done", ...result });
+      } catch (err) {
+        send({ type: "error", message: err instanceof Error ? err.message : String(err) });
+      }
+      await chain;
+    });
+  });
+
+  app.get("/assistant/sessions", async (c) =>
+    c.json({ sessions: await memloom.assistantSessions() }),
+  );
+  app.get("/assistant/sessions/search", async (c) =>
+    c.json({ sessions: await memloom.searchAssistantSessions(c.req.query("q") ?? "") }),
+  );
+  app.get("/assistant/sessions/:id/messages", async (c) =>
+    c.json({ messages: await memloom.assistantMessages(c.req.param("id")) }),
+  );
+  app.patch("/assistant/sessions/:id", async (c) => {
+    const body = await parseBody(c, assistantSessionPatchSchema);
+    if (!body.ok) return body.res;
+    const id = c.req.param("id");
+    if (body.data.title !== undefined) await memloom.renameAssistantSession(id, body.data.title);
+    if (body.data.starred !== undefined) await memloom.starAssistantSession(id, body.data.starred);
+    return c.json({ ok: true });
+  });
+  app.delete("/assistant/sessions/:id", async (c) => {
+    await memloom.deleteAssistantSession(c.req.param("id"));
+    return c.json({ ok: true });
+  });
+  app.delete("/assistant/sessions", async (c) => {
+    await memloom.clearAssistantSessions();
     return c.json({ ok: true });
   });
 

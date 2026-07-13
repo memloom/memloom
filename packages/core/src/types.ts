@@ -211,6 +211,46 @@ export interface IndexRunEvent {
   createdAt: string;
 }
 
+// ---- Assistant chat (the viewer's assistant tab; docs/design/assistant-tab.md) ----
+
+/** One recall hit the assistant grounded an answer in. `n` matches the [n] markers. */
+export interface AssistantSource {
+  n: number;
+  kind: "memory" | "context";
+  id: string;
+  title: string;
+  snippet: string;
+  similarity?: number;
+}
+
+export interface AssistantSession {
+  id: string;
+  title: string;
+  isStarred: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AssistantMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  sources: AssistantSource[];
+  createdAt: string;
+}
+
+/** A chat-search hit: the session plus the message snippet that matched. */
+export interface AssistantSessionHit extends AssistantSession {
+  snippet: string;
+}
+
+export interface AssistantChatResult {
+  sessionId: string;
+  messageId: string;
+  answer: string;
+  sources: AssistantSource[];
+}
+
 // ---- Context connector (files mirrored into chunked, searchable rows) ----
 
 export interface ContextAddInput {

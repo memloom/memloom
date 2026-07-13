@@ -2,7 +2,9 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type ChatProvider,
   HashingEmbeddingProvider,
+  type LLMProvider,
   Memloom,
   PgliteAdapter,
   ScriptedLLMProvider,
@@ -94,6 +96,66 @@ describe("server", () => {
       runs: unknown[];
     };
     expect(after.runs).toHaveLength(0);
+  });
+
+  it("assistant chat streams SSE and manages sessions; offline mode 503s", async () => {
+    // The default test provider is complete-only, so /assistant/chat must 503 with a hint.
+    const offline = await app();
+    const denied = await offline.request("/assistant/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: "hi" }),
+    });
+    expect(denied.status).toBe(503);
+
+    // A chat-capable provider: answers directly, no tools.
+    const chatLLM: LLMProvider & ChatProvider = {
+      complete: async () => "[]",
+      chat: async () => ({ content: "It is Sunday.", toolCalls: [] }),
+      chatStream: async () => "unused",
+    };
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: chatLLM,
+      dedup: false,
+    });
+    await memloom.init();
+    const server = createServer(memloom);
+
+    const res = await server.request("/assistant/chat", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ message: "what day is today?" }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("text/event-stream");
+    const events = (await res.text())
+      .split("\n\n")
+      .map((block) => block.split("\n").find((l) => l.startsWith("data: ")))
+      .filter((l): l is string => Boolean(l))
+      .map((l) => JSON.parse(l.slice(6)) as { type: string; sessionId?: string });
+    expect(events.at(-1)?.type).toBe("done");
+    const sessionId = events.at(-1)?.sessionId ?? "";
+
+    // Session surface: list, rename+star via PATCH, search, delete.
+    const list = (await (await server.request("/assistant/sessions")).json()) as {
+      sessions: Array<{ id: string; title: string; isStarred: boolean }>;
+    };
+    expect(list.sessions[0]?.id).toBe(sessionId);
+    await server.request(`/assistant/sessions/${sessionId}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ title: "daily", starred: true }),
+    });
+    const found = (await (await server.request("/assistant/sessions/search?q=daily")).json()) as {
+      sessions: Array<{ id: string }>;
+    };
+    expect(found.sessions.some((s) => s.id === sessionId)).toBe(true);
+    const del = await server.request(`/assistant/sessions/${sessionId}`, { method: "DELETE" });
+    expect(del.status).toBe(200);
   });
 
   it("schema endpoint reports vocabularies with live counts", async () => {

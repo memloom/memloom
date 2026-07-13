@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { AssistantView } from "./AssistantView";
 import { api, type Conflict, type Graph } from "./api";
 import { ConflictsView } from "./ConflictsView";
 import { ConsoleView } from "./ConsoleView";
@@ -8,7 +9,7 @@ import { MemoriesView } from "./MemoriesView";
 import { SchemaView } from "./SchemaView";
 import { ThemeToggle } from "./ThemeToggle";
 
-type Tab = "graph" | "memories" | "documents" | "schema" | "conflicts" | "console";
+type Tab = "graph" | "assistant" | "memories" | "documents" | "schema" | "conflicts" | "console";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("graph");
@@ -42,24 +43,32 @@ export function App() {
           mem<span>loom</span>
         </div>
         <nav className="tabs">
-          {(["graph", "memories", "documents", "schema", "conflicts", "console"] as const).map(
-            (t) => (
-              <button
-                key={t}
-                type="button"
-                className={`tab ${tab === t ? "tabActive" : ""}`}
-                onClick={() => setTab(t)}
-              >
-                {t}
-                {t === "conflicts" && conflicts.length > 0 && (
-                  <span className="tabBadge">{conflicts.length}</span>
-                )}
-                {t === "schema" && proposalCount > 0 && (
-                  <span className="tabBadge">{proposalCount}</span>
-                )}
-              </button>
-            ),
-          )}
+          {(
+            [
+              "graph",
+              "assistant",
+              "memories",
+              "documents",
+              "schema",
+              "conflicts",
+              "console",
+            ] as const
+          ).map((t) => (
+            <button
+              key={t}
+              type="button"
+              className={`tab ${tab === t ? "tabActive" : ""}`}
+              onClick={() => setTab(t)}
+            >
+              {t}
+              {t === "conflicts" && conflicts.length > 0 && (
+                <span className="tabBadge">{conflicts.length}</span>
+              )}
+              {t === "schema" && proposalCount > 0 && (
+                <span className="tabBadge">{proposalCount}</span>
+              )}
+            </button>
+          ))}
         </nav>
         <div className="headerStats">
           {daemonDown ? (
@@ -88,6 +97,7 @@ export function App() {
       <main className="main">
         {tab === "graph" &&
           (graph ? <GraphView graph={graph} /> : <div className="emptyState">loading…</div>)}
+        {tab === "assistant" && <AssistantView />}
         {tab === "memories" && <MemoriesView />}
         {tab === "documents" && <DocumentsView onChanged={refresh} />}
         {tab === "schema" && <SchemaView onChanged={refresh} />}

@@ -1,5 +1,8 @@
 // Ports (interfaces)
 
+// Domain types
+export type { AssistantEvent } from "./assistant.js";
+export { buildAssistantSystemPrompt, runAssistantTurn, stripInvalidMarkers } from "./assistant.js";
 export type { BenchCorpus, BenchDoc, BenchQuery } from "./benchmark.js";
 // Retrieval benchmark + metrics
 export { runBenchmark } from "./benchmark.js";
@@ -38,7 +41,16 @@ export { assemblePageText } from "./pdf-layout.js";
 export { PgAdapter } from "./pg-adapter.js";
 // Storage adapters
 export { PgliteAdapter } from "./pglite-adapter.js";
-export type { EmbeddingProvider, LLMProvider } from "./providers.js";
+export type {
+  ChatMessage,
+  ChatProvider,
+  ChatResult,
+  ChatTool,
+  ChatToolCall,
+  EmbeddingProvider,
+  LLMProvider,
+} from "./providers.js";
+export { isChatProvider } from "./providers.js";
 // The graph schema: the system-tier vocabulary constants (seeded into the memory_schema
 // registry) plus the registry model types.
 export type {
@@ -65,8 +77,12 @@ export {
   PROPOSAL_MIN_OCCURRENCES,
 } from "./schema.js";
 export type { StorageAdapter } from "./storage.js";
-// Domain types
 export type {
+  AssistantChatResult,
+  AssistantMessage,
+  AssistantSession,
+  AssistantSessionHit,
+  AssistantSource,
   Conflict,
   ConflictCandidate,
   ContextAddInput,
