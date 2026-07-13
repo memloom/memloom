@@ -158,6 +158,35 @@ describe("server", () => {
     expect(del.status).toBe(200);
   });
 
+  it("pick route returns the native picker's paths, 501 when unavailable", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+    });
+    await memloom.init();
+
+    const picked = createServer(memloom, { pickPaths: async () => ["C:\\notes\\a.md"] });
+    const ok = await picked.request("/context/pick", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "file" }),
+    });
+    expect(ok.status).toBe(200);
+    expect(await ok.json()).toEqual({ paths: ["C:\\notes\\a.md"] });
+
+    const bare = createServer(memloom, { pickPaths: async () => null });
+    const missing = await bare.request("/context/pick", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(missing.status).toBe(501);
+  });
+
   it("browse lists a directory and folder add ingests every supported file", async () => {
     const server = await app();
     const dir = mkdtempSync(join(tmpdir(), "memloom-folder-"));

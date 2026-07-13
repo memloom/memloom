@@ -260,6 +260,9 @@ export const api = {
     }>("/context/add", { path }),
   browse: (path?: string) =>
     json<BrowseResult>(`/context/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+  // Opens the OS-native picker on the daemon's desktop; resolves when the user picks or
+  // cancels ([] = cancelled). 501 when the platform has no picker.
+  pick: (mode: "file" | "folder") => post<{ paths: string[] }>("/context/pick", { mode }),
   save: (input: { content: string; canonical?: string }) => post<SaveResult>("/memory/save", input),
   recall: (query: string, limit?: number) =>
     post<{ memories: Memory[] }>("/memory/query", { query, limit }).then((r) => r.memories),

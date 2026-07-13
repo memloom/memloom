@@ -1,7 +1,8 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { readdir, readFile, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { promisify } from "node:util";
 import { serve as nodeServe } from "@hono/node-server";
 import {
   type IndexProgressEvent,
@@ -39,6 +40,12 @@ export interface ServerOptions {
    * to the platform opener; injectable so tests never actually launch anything.
    */
   openPath?: (path: string) => void;
+  /**
+   * Shows the OS-native file/folder picker and resolves with the chosen absolute paths
+   * ([] = cancelled, null = no picker on this system). Defaults to the platform dialog;
+   * injectable so tests never open one.
+   */
+  pickPaths?: (mode: "file" | "folder") => Promise<string[] | null>;
 }
 
 // Fire-and-forget OS opener. The daemon runs on the file owner's machine, so "open" means
@@ -53,6 +60,66 @@ function platformOpen(path: string): void {
   const child = spawn(cmd, args as string[], { detached: true, stdio: "ignore" });
   child.on("error", () => {}); // opener missing — nothing useful to report back
   child.unref();
+}
+
+// The OS-native file/folder dialog, shown on the daemon's own desktop (localhost tool:
+// the daemon and the browser are the same machine). The request blocks until the user
+// picks or cancels; [] = cancelled, null = this system has no picker we know.
+const PICK_TIMEOUT_MS = 300_000;
+const run = promisify(execFile);
+
+async function nativePick(mode: "file" | "folder"): Promise<string[] | null> {
+  if (process.platform === "win32") {
+    const filter = supportedExtensions()
+      .map((ext) => `*${ext}`)
+      .join(";");
+    // An invisible TopMost owner form makes the dialog appear above the browser.
+    const script =
+      "Add-Type -AssemblyName System.Windows.Forms; " +
+      "$owner = New-Object System.Windows.Forms.Form -Property @{TopMost=$true}; " +
+      (mode === "folder"
+        ? "$d = New-Object System.Windows.Forms.FolderBrowserDialog; " +
+          "if ($d.ShowDialog($owner) -eq 'OK') { [Console]::WriteLine($d.SelectedPath) }"
+        : "$f = New-Object System.Windows.Forms.OpenFileDialog; $f.Multiselect = $true; " +
+          `$f.Filter = 'Supported files|${filter}|All files|*.*'; ` +
+          "if ($f.ShowDialog($owner) -eq 'OK') { $f.FileNames | ForEach-Object { [Console]::WriteLine($_) } }");
+    try {
+      const { stdout } = await run("powershell.exe", ["-NoProfile", "-STA", "-Command", script], {
+        windowsHide: true,
+        timeout: PICK_TIMEOUT_MS,
+      });
+      return stdout
+        .split(/\r?\n/)
+        .map((s) => s.trim())
+        .filter(Boolean);
+    } catch (err) {
+      return (err as { code?: string }).code === "ENOENT" ? null : [];
+    }
+  }
+  if (process.platform === "darwin") {
+    const script =
+      mode === "folder" ? "POSIX path of (choose folder)" : "POSIX path of (choose file)";
+    try {
+      const { stdout } = await run("osascript", ["-e", script], { timeout: PICK_TIMEOUT_MS });
+      const picked = stdout.trim();
+      return picked ? [picked] : [];
+    } catch (err) {
+      return (err as { code?: string }).code === "ENOENT" ? null : []; // non-zero exit = cancelled
+    }
+  }
+  try {
+    const args =
+      mode === "folder"
+        ? ["--file-selection", "--directory"]
+        : ["--file-selection", "--multiple", "--separator=\n"];
+    const { stdout } = await run("zenity", args, { timeout: PICK_TIMEOUT_MS });
+    return stdout
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean);
+  } catch (err) {
+    return (err as { code?: string }).code === "ENOENT" ? null : [];
+  }
 }
 
 // Folder ingestion: walk for supported files, bounded so a mistaken "add C:\" cannot
@@ -479,6 +546,20 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       chunks,
       ...(errors.length > 0 ? { errors } : {}),
     });
+  });
+
+  // Open the OS-native file/folder dialog and return the chosen absolute paths. 501 when
+  // the platform has no picker (headless Linux without zenity) — the viewer then falls
+  // back to the in-app /context/browse panel.
+  const pickPaths = opts.pickPaths ?? nativePick;
+  app.post("/context/pick", async (c) => {
+    const body = await parseBody(c, z.object({ mode: z.enum(["file", "folder"]).default("file") }));
+    if (!body.ok) return body.res;
+    const paths = await pickPaths(body.data.mode);
+    if (paths === null) {
+      return c.json({ error: "no native file picker available on this system" }, 501);
+    }
+    return c.json({ paths });
   });
 
   // Server-side filesystem listing for the viewer's file/folder picker (the browser never

@@ -200,6 +200,52 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
     }
   }
 
+  async function ingestMany(targets: string[]) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    let files = 0;
+    let unchanged = 0;
+    let chunks = 0;
+    const failures: string[] = [];
+    for (const target of targets) {
+      try {
+        const r = await api.contextAdd(target);
+        chunks += r.chunks;
+        if (r.outcome === "unchanged") unchanged += 1;
+        else files += r.documents ?? 1;
+      } catch (err) {
+        failures.push(err instanceof Error ? err.message : String(err));
+      }
+    }
+    setNotice(
+      `ingested ${files} ${files === 1 ? "file" : "files"}` +
+        `${unchanged ? ` (${unchanged} unchanged)` : ""} · ${chunks} chunks. ` +
+        "Run index to extract entities.",
+    );
+    if (failures.length > 0) setError(failures.join("; "));
+    setPath("");
+    setBusy(false);
+    onAdded();
+  }
+
+  // The OS-native dialog opens on this machine (the daemon IS local). Systems without
+  // one (headless Linux) answer 501 — fall back to the in-app directory panel.
+  async function pickNative(mode: "file" | "folder") {
+    setError(null);
+    setBusy(true);
+    try {
+      const { paths } = await api.pick(mode);
+      setBusy(false);
+      if (paths.length === 0) return; // cancelled
+      if (paths.length === 1) await ingest(paths[0] ?? "");
+      else await ingestMany(paths);
+    } catch {
+      setBusy(false);
+      await browse(path.trim() || undefined);
+    }
+  }
+
   return (
     <div className="card">
       {error && <div className="notice noticeError">{error}</div>}
@@ -220,9 +266,17 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
           type="button"
           className="btn"
           disabled={busy}
-          onClick={() => (listing ? setListing(null) : void browse(path.trim() || undefined))}
+          onClick={() => void pickNative("file")}
         >
-          {listing ? "Close" : "Browse…"}
+          Browse…
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy}
+          onClick={() => void pickNative("folder")}
+        >
+          Folder…
         </button>
         <button type="submit" className="btn btnPrimary" disabled={busy || path.trim() === ""}>
           {busy ? "Ingesting…" : "Add"}
@@ -251,6 +305,9 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
               }}
             >
               <FolderOpen size={12} strokeWidth={1.75} /> ingest this folder
+            </button>
+            <button type="button" className="btn btnGhost" onClick={() => setListing(null)}>
+              close
             </button>
           </div>
           <div className="fsBrowserList">
