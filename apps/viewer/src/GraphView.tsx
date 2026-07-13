@@ -851,11 +851,10 @@ export function GraphView({ graph }: { graph: Graph }) {
       </div>
       {selected && (
         <aside className="sidePanel" style={{ width: panelWidth }}>
-          {/* drag-to-resize handle; the panel is fully usable at its default width without it */}
-          <div
+          <button
+            type="button"
             className="sidePanelResize"
-            role="separator"
-            aria-orientation="vertical"
+            aria-label="Resize details panel"
             onPointerDown={startPanelResize}
           />
           <button
