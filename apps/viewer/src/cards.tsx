@@ -1,5 +1,6 @@
+import { ArrowUp, FileText, Folder, FolderOpen } from "lucide-react";
 import { useState } from "react";
-import { api, type Memory, type SaveResult } from "./api";
+import { api, type BrowseResult, type Memory, type SaveResult } from "./api";
 
 // Shared action cards: save a memory, recall, ingest a file. Used by the Console (both,
 // unfiltered), the Memories tab (save + memory-only recall), and the Documents tab
@@ -162,45 +163,125 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // The daemon-side filesystem picker: the browser can't reveal absolute paths itself.
+  const [listing, setListing] = useState<BrowseResult | null>(null);
+
+  async function browse(target?: string) {
+    setError(null);
+    try {
+      setListing(await api.browse(target));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function ingest(target: string) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const r = await api.contextAdd(target);
+      setNotice(
+        r.documents !== undefined
+          ? `ingested ${r.documents} ${r.documents === 1 ? "file" : "files"}` +
+              `${r.unchanged ? ` (${r.unchanged} unchanged)` : ""} · ${r.chunks} chunks. ` +
+              "Run index to extract entities."
+          : r.outcome === "unchanged"
+            ? `"${r.title}" is unchanged — nothing to do`
+            : `${r.outcome} "${r.title}" · ${r.chunks} chunks. Run index to extract entities.`,
+      );
+      setPath("");
+      setListing(null);
+      onAdded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="card">
       {error && <div className="notice noticeError">{error}</div>}
       <form
         className="formRow"
-        onSubmit={async (e) => {
+        onSubmit={(e) => {
           e.preventDefault();
-          const p = path.trim();
-          if (!p) return;
-          setBusy(true);
-          setError(null);
-          setNotice(null);
-          try {
-            const r = await api.contextAdd(p);
-            setNotice(
-              r.outcome === "unchanged"
-                ? `"${r.title}" is unchanged — nothing to do`
-                : `${r.outcome} "${r.title}" · ${r.chunks} chunks. Run index to extract entities.`,
-            );
-            setPath("");
-            onAdded();
-          } catch (err) {
-            setError(err instanceof Error ? err.message : String(err));
-          } finally {
-            setBusy(false);
-          }
+          if (path.trim()) void ingest(path.trim());
         }}
       >
         <input
           type="text"
           value={path}
           onChange={(e) => setPath(e.target.value)}
-          placeholder="Absolute path to a .md, .txt, or .pdf on this machine…"
+          placeholder="Path to a file (.md, .txt, .pdf) or a folder on this machine…"
         />
+        <button
+          type="button"
+          className="btn"
+          disabled={busy}
+          onClick={() => (listing ? setListing(null) : void browse(path.trim() || undefined))}
+        >
+          {listing ? "Close" : "Browse…"}
+        </button>
         <button type="submit" className="btn btnPrimary" disabled={busy || path.trim() === ""}>
-          {busy ? "Ingesting…" : "Add file"}
+          {busy ? "Ingesting…" : "Add"}
         </button>
       </form>
+
+      {listing && (
+        <div className="fsBrowser">
+          <div className="fsBrowserHead">
+            <button
+              type="button"
+              className="btn btnGhost"
+              disabled={!listing.parent}
+              onClick={() => listing.parent && void browse(listing.parent)}
+            >
+              <ArrowUp size={12} strokeWidth={1.75} /> up
+            </button>
+            <span className="fsBrowserPath">{listing.path}</span>
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={() => {
+                setPath(listing.path);
+                void ingest(listing.path);
+              }}
+            >
+              <FolderOpen size={12} strokeWidth={1.75} /> ingest this folder
+            </button>
+          </div>
+          <div className="fsBrowserList">
+            {listing.entries.length === 0 && (
+              <div className="fsBrowserEmpty">nothing ingestible here</div>
+            )}
+            {listing.entries.map((entry) => (
+              <button
+                type="button"
+                key={entry.path}
+                className="fsBrowserRow"
+                onClick={() => {
+                  if (entry.kind === "dir") void browse(entry.path);
+                  else {
+                    setPath(entry.path);
+                    void ingest(entry.path);
+                  }
+                }}
+              >
+                {entry.kind === "dir" ? (
+                  <Folder size={13} strokeWidth={1.75} className="fsDirIcon" />
+                ) : (
+                  <FileText size={13} strokeWidth={1.75} />
+                )}
+                {entry.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
       {notice && <div className="resultOutcome outcome-added">{notice}</div>}
     </div>
   );

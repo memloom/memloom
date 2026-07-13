@@ -103,6 +103,7 @@ function SourcesPanel({ sources }: { sources: AssistantSource[] }) {
           <span className="sourceN">[{s.n}]</span>
           <span className={`sourceKind sourceKind-${s.kind}`}>{s.kind}</span>
           <span className="sourceTitle">{s.title}</span>
+          {s.date && <span className="sourceSim">{s.date}</span>}
           {s.similarity !== undefined && (
             <span className="sourceSim">{Math.round(s.similarity * 100)}%</span>
           )}
@@ -299,7 +300,10 @@ export function AssistantView() {
       const done = await api.assistantChat(
         { ...(activeId ? { sessionId: activeId } : {}), message },
         (e) => {
-          if (e.type === "tool_call") setStatusLine(`searching memories for "${e.query}"...`);
+          if (e.type === "tool_call")
+            setStatusLine(
+              `searching memories for "${e.query}"${e.onDate ? ` on ${e.onDate}` : ""}...`,
+            );
           else if (e.type === "tool_result")
             setStatusLine(`found ${e.hits} ${e.hits === 1 ? "result" : "results"}, reading...`);
           else if (e.type === "delta") {

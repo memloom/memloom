@@ -174,6 +174,19 @@ export interface AssistantSource {
   title: string;
   snippet: string;
   similarity?: number;
+  date?: string;
+}
+
+export interface BrowseEntry {
+  name: string;
+  path: string;
+  kind: "dir" | "file";
+}
+
+export interface BrowseResult {
+  path: string;
+  parent: string | null;
+  entries: BrowseEntry[];
 }
 
 export interface AssistantSession {
@@ -197,7 +210,7 @@ export interface AssistantMessage {
 }
 
 export type AssistantStreamEvent =
-  | { type: "tool_call"; round: number; query: string }
+  | { type: "tool_call"; round: number; query: string; onDate?: string }
   | { type: "tool_result"; round: number; hits: number }
   | { type: "delta"; text: string }
   | {
@@ -236,11 +249,17 @@ export const api = {
     json<{ ok: boolean }>(`/context/documents/${id}`, { method: "DELETE" }),
   contextAdd: (path: string) =>
     post<{
-      documentId: string;
+      documentId?: string;
       outcome: "added" | "updated" | "unchanged";
       title: string;
       chunks: number;
+      /** Present when a folder was ingested: how many files were added/updated. */
+      documents?: number;
+      unchanged?: number;
+      errors?: string[];
     }>("/context/add", { path }),
+  browse: (path?: string) =>
+    json<BrowseResult>(`/context/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   save: (input: { content: string; canonical?: string }) => post<SaveResult>("/memory/save", input),
   recall: (query: string, limit?: number) =>
     post<{ memories: Memory[] }>("/memory/query", { query, limit }).then((r) => r.memories),

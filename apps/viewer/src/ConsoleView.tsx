@@ -10,7 +10,6 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type IndexEventLevel, type IndexRun, type IndexRunEvent } from "./api";
-import { RecallCard, SaveMemoryCard } from "./cards";
 
 // Console: exercise the engine by hand — save, recall, index — without leaving the viewer.
 // Indexing history is persistent and session-grouped (a production-proven memory_index_runs
@@ -146,13 +145,7 @@ function SessionRow({
   );
 }
 
-export function ConsoleView({
-  onChanged,
-  goToConflicts,
-}: {
-  onChanged: () => void;
-  goToConflicts: () => void;
-}) {
+export function ConsoleView({ onChanged }: { onChanged: () => void }) {
   const [indexing, setIndexing] = useState(false);
   const [rebuildArmed, setRebuildArmed] = useState(false);
   const [clearArmed, setClearArmed] = useState(false);
@@ -224,12 +217,6 @@ export function ConsoleView({
     <div className="panel">
       <div className="panelInner">
         {error && <div className="notice noticeError">{error}</div>}
-
-        <h2 className="sectionTitle">Save a memory</h2>
-        <SaveMemoryCard onSaved={onChanged} goToConflicts={goToConflicts} />
-
-        <h2 className="sectionTitle">Recall</h2>
-        <RecallCard />
 
         <h2 className="sectionTitle">Index</h2>
         <div className="card">

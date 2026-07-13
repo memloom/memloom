@@ -578,6 +578,25 @@ export class Memloom implements MemoryEngine {
     if (!embedding) throw new Error("memloom: embedding provider returned no vector");
     const qvec = toVectorLiteral(embedding);
 
+    // The temporal arm: a calendar-day filter over memories, ranked by similarity.
+    // Deliberately outside the fuse (which has no notion of time) — the day IS the filter,
+    // similarity only orders within it. Context chunks are excluded by construction.
+    if (opts.assertedOn) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.assertedOn)) {
+        throw new Error(`memloom: assertedOn must be YYYY-MM-DD, got "${opts.assertedOn}"`);
+      }
+      const rows = await this.#storage.query<MemoryRow>(
+        `SELECT id, owner_id, status, memory_type, canonical, content, summary, root_id,
+                version, asserted_at, created_at,
+                1 - (embedding <=> $1::vector) AS similarity
+         FROM memory_objects
+         WHERE owner_id = $2 AND status = 'active' AND asserted_at::date = $3::date
+         ORDER BY similarity DESC LIMIT $4`,
+        [qvec, owner, opts.assertedOn, limit],
+      );
+      return rows.map((row) => ({ ...mapRow(row), kind: "memory" as const }));
+    }
+
     // The fuse ranks memories and context chunks together; join whichever table each id
     // came from and map to one result shape (chunks carry a source for provenance).
     const rows = await this.#storage.query<RecallRow>(
@@ -974,12 +993,19 @@ export class Memloom implements MemoryEngine {
 
     await this.#saveAssistantMessage(owner, sessionId, "user", input.message, []);
 
+    const now = new Date();
     const { answer, sources } = await runAssistantTurn({
       provider: llm,
-      recall: (query) => this.recall(query, { ownerId: owner, limit: 6 }),
+      recall: (query, onDate) =>
+        this.recall(query, {
+          ownerId: owner,
+          limit: 8,
+          ...(onDate ? { assertedOn: onDate } : {}),
+        }),
       history,
       message: input.message,
-      today: new Date().toDateString(),
+      // Both forms: the readable one for prose, the ISO one to copy into on_date.
+      today: `${now.toDateString()} (${now.toLocaleDateString("en-CA")})`,
       ...(onEvent ? { onEvent } : {}),
     });
 

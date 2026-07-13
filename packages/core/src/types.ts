@@ -88,6 +88,13 @@ export interface UpdateResult {
 export interface RecallOptions {
   limit?: number;
   ownerId?: string;
+  /**
+   * Restrict to memories asserted on one calendar day ("YYYY-MM-DD"), ranked by
+   * similarity. The temporal arm: "plans for today" has no lexical or semantic overlap
+   * with the plan's content, but its date does. Context chunks are excluded (files have
+   * no assertion day).
+   */
+  assertedOn?: string;
 }
 
 export interface ConflictCandidate {
@@ -221,6 +228,8 @@ export interface AssistantSource {
   title: string;
   snippet: string;
   similarity?: number;
+  /** The memory's assertion day (YYYY-MM-DD); absent on context chunks. */
+  date?: string;
 }
 
 export interface AssistantSession {

@@ -214,6 +214,46 @@ describe("assistant harness", () => {
   it("stripInvalidMarkers only keeps markers with sources", () => {
     expect(stripInvalidMarkers("a [1] b [2] c [12]", new Set([2]))).toBe("a  b [2] c ");
   });
+
+  it("passes on_date through to recall and dates the passages", async () => {
+    const provider = scripted(
+      [
+        {
+          content: null,
+          toolCalls: [
+            {
+              id: "c1",
+              name: "recall_memory",
+              arguments: JSON.stringify({ query: "plans", on_date: "2026-07-13" }),
+            },
+          ],
+        },
+        { content: null, toolCalls: [] },
+      ],
+      "You are going to Poznan. [1]",
+    );
+    let seenDate: string | undefined;
+    const events: AssistantEvent[] = [];
+    const poznan = { ...memory("m1", "going to a waterpark in poznan today") };
+    poznan.assertedAt = "2026-07-13T09:52:08.000Z";
+    const out = await runAssistantTurn({
+      provider,
+      recall: async (_q, onDate) => {
+        seenDate = onDate;
+        return [poznan];
+      },
+      history: [],
+      message: "what are my plans for today?",
+      today: "Sun Jul 13 2026 (2026-07-13)",
+      onEvent: (e) => events.push(e),
+    });
+    expect(seenDate).toBe("2026-07-13");
+    expect(out.sources[0]?.date).toBe("2026-07-13");
+    const toolMsg = provider.chatCalls[1]?.find((m) => m.role === "tool");
+    expect(toolMsg?.content).toContain("saved 2026-07-13");
+    const call = events.find((e) => e.type === "tool_call");
+    expect(call && "onDate" in call ? call.onDate : undefined).toBe("2026-07-13");
+  });
 });
 
 // Engine-level: sessions, persistence, search, offline mode.
@@ -299,6 +339,23 @@ describe("assistant engine", () => {
 
     const all = await m.searchAssistantSessions("");
     expect(all).toHaveLength(2);
+  });
+
+  it("recall assertedOn filters memories to one calendar day", async () => {
+    const m = await fresh();
+    await m.save({ content: "going to a waterpark in poznan today" });
+    const old = await m.save({ content: "call Orange before 9 AM" });
+    // Backdate the second memory a week: it must vanish from a today-filtered recall.
+    await m.deps.storage.query(
+      "UPDATE memory_objects SET asserted_at = now() - interval '7 days' WHERE id = $1",
+      [old.id],
+    );
+    const today = new Date().toLocaleDateString("en-CA");
+    const hits = await m.recall("plans", { assertedOn: today });
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.content).toContain("poznan");
+
+    await expect(m.recall("plans", { assertedOn: "13-07-2026" })).rejects.toThrow(/YYYY-MM-DD/);
   });
 
   it("offline mode (no chat-capable provider) fails with the setup hint", async () => {

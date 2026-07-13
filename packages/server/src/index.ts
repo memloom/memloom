@@ -1,8 +1,15 @@
 import { spawn } from "node:child_process";
-import { readFile } from "node:fs/promises";
-import { extname, join, normalize, resolve, sep } from "node:path";
+import { readdir, readFile, stat } from "node:fs/promises";
+import { homedir } from "node:os";
+import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { serve as nodeServe } from "@hono/node-server";
-import { type IndexProgressEvent, isChatProvider, MEMORY_TYPES, type Memloom } from "@memloom/core";
+import {
+  type IndexProgressEvent,
+  isChatProvider,
+  MEMORY_TYPES,
+  type Memloom,
+  supportedExtensions,
+} from "@memloom/core";
 import { type Context, Hono } from "hono";
 import { cors } from "hono/cors";
 import { stream, streamSSE } from "hono/streaming";
@@ -46,6 +53,26 @@ function platformOpen(path: string): void {
   const child = spawn(cmd, args as string[], { detached: true, stdio: "ignore" });
   child.on("error", () => {}); // opener missing — nothing useful to report back
   child.unref();
+}
+
+// Folder ingestion: walk for supported files, bounded so a mistaken "add C:\" cannot
+// run away. Hidden dirs and dependency/VCS dirs are skipped.
+const WALK_MAX_DEPTH = 5;
+const WALK_MAX_FILES = 500;
+const SKIP_DIRS = new Set(["node_modules", "dist", "build", "__pycache__", "target"]);
+
+async function collectSupportedFiles(root: string, depth = 0, out: string[] = []) {
+  if (depth > WALK_MAX_DEPTH || out.length >= WALK_MAX_FILES) return out;
+  const supported = new Set(supportedExtensions());
+  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    if (out.length >= WALK_MAX_FILES) break;
+    if (entry.name.startsWith(".") || SKIP_DIRS.has(entry.name)) continue;
+    const full = join(root, entry.name);
+    if (entry.isDirectory()) await collectSupportedFiles(full, depth + 1, out);
+    else if (supported.has(extname(entry.name).toLowerCase())) out.push(full);
+  }
+  return out;
 }
 
 const MIME: Record<string, string> = {
@@ -413,10 +440,71 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     return c.json({ ok: true });
   });
 
+  // Ingest a file, or a whole folder: directories are walked (bounded depth, hidden and
+  // node_modules-style dirs skipped) and every supported file is added.
   app.post("/context/add", async (c) => {
     const body = await parseBody(c, contextAddSchema);
     if (!body.ok) return body.res;
-    return c.json(await memloom.contextAdd(body.data));
+    const target = resolve(body.data.path);
+    const info = await stat(target).catch(() => null);
+    if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
+    if (!info.isDirectory()) return c.json(await memloom.contextAdd({ path: target }));
+
+    const files = await collectSupportedFiles(target);
+    if (files.length === 0) {
+      return c.json(
+        { error: `no supported files (${supportedExtensions().join(", ")}) under ${target}` },
+        400,
+      );
+    }
+    let added = 0;
+    let unchanged = 0;
+    let chunks = 0;
+    const errors: string[] = [];
+    for (const file of files) {
+      try {
+        const r = await memloom.contextAdd({ path: file });
+        chunks += r.chunks;
+        if (r.outcome === "unchanged") unchanged += 1;
+        else added += 1;
+      } catch (err) {
+        errors.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return c.json({
+      outcome: "added",
+      title: target,
+      documents: added,
+      unchanged,
+      chunks,
+      ...(errors.length > 0 ? { errors } : {}),
+    });
+  });
+
+  // Server-side filesystem listing for the viewer's file/folder picker (the browser never
+  // sees absolute paths from its own file inputs). Directory names only — no file reads.
+  app.get("/context/browse", async (c) => {
+    const supported = new Set(supportedExtensions());
+    const dir = resolve(c.req.query("path")?.trim() || homedir());
+    let list: { name: string; path: string; kind: "dir" | "file" }[];
+    try {
+      const entries = await readdir(dir, { withFileTypes: true });
+      list = entries
+        .filter((e) => !e.name.startsWith("."))
+        .map((e) => ({
+          name: e.name,
+          path: join(dir, e.name),
+          kind: e.isDirectory() ? ("dir" as const) : ("file" as const),
+        }))
+        .filter((e) => e.kind === "dir" || supported.has(extname(e.name).toLowerCase()))
+        .sort((a, b) =>
+          a.kind === b.kind ? a.name.localeCompare(b.name) : a.kind === "dir" ? -1 : 1,
+        );
+    } catch {
+      return c.json({ error: `cannot read directory: ${dir}` }, 400);
+    }
+    const parent = dirname(dir);
+    return c.json({ path: dir, parent: parent === dir ? null : parent, entries: list });
   });
 
   app.get("/context/documents", async (c) => c.json({ documents: await memloom.contextList() }));

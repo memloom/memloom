@@ -1163,6 +1163,70 @@ textarea {
   }
 }
 
+/* server-side file/folder picker (Documents tab) */
+
+.fsBrowser {
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+
+.fsBrowserHead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.fsBrowserPath {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl; /* keep the leaf directory visible when the path overflows */
+  text-align: left;
+}
+
+.fsBrowserList {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.fsBrowserRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: none;
+  background: none;
+  color: var(--text-muted);
+  padding: 5px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  text-align: left;
+}
+
+.fsBrowserRow:hover {
+  background: var(--bg-raised);
+  color: var(--text);
+}
+
+.fsDirIcon {
+  color: var(--brand);
+}
+
+.fsBrowserEmpty {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--text-faint);
+  padding: 8px 10px;
+}
+
 /* ---------- assistant tab ---------- */
 
 .chatLayout {

@@ -59,7 +59,7 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
   return (
     <div className="panel">
       <div className="panelInner">
-        <h2 className="sectionTitle">Add a file</h2>
+        <h2 className="sectionTitle">Add a file/folder</h2>
         <AddFileCard
           onAdded={() => {
             load();

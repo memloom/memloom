@@ -102,9 +102,7 @@ export function App() {
         {tab === "documents" && <DocumentsView onChanged={refresh} />}
         {tab === "schema" && <SchemaView onChanged={refresh} />}
         {tab === "conflicts" && <ConflictsView conflicts={conflicts} onChanged={refresh} />}
-        {tab === "console" && (
-          <ConsoleView onChanged={refresh} goToConflicts={() => setTab("conflicts")} />
-        )}
+        {tab === "console" && <ConsoleView onChanged={refresh} />}
       </main>
     </div>
   );

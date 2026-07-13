@@ -158,6 +158,37 @@ describe("server", () => {
     expect(del.status).toBe(200);
   });
 
+  it("browse lists a directory and folder add ingests every supported file", async () => {
+    const server = await app();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-folder-"));
+    cleanups.push(async () => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, "a.md"), "# A\nthe staging database is Postgres");
+    writeFileSync(join(dir, "b.txt"), "plain notes");
+    writeFileSync(join(dir, "skip.exe"), "binary");
+    mkdirSync(join(dir, "nested"));
+    writeFileSync(join(dir, "nested", "c.md"), "# C\nnested notes");
+
+    const browsed = (await (
+      await server.request(`/context/browse?path=${encodeURIComponent(dir)}`)
+    ).json()) as { path: string; entries: Array<{ name: string; kind: string }> };
+    expect(browsed.entries.map((e) => e.name)).toEqual(["nested", "a.md", "b.txt"]); // dirs first, .exe hidden
+
+    const res = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: dir }),
+    });
+    expect(res.status).toBe(200);
+    const result = (await res.json()) as { documents: number; chunks: number };
+    expect(result.documents).toBe(3); // a.md, b.txt, nested/c.md
+    expect(result.chunks).toBeGreaterThan(0);
+
+    const docs = (await (await server.request("/context/documents")).json()) as {
+      documents: unknown[];
+    };
+    expect(docs.documents).toHaveLength(3);
+  });
+
   it("schema endpoint reports vocabularies with live counts", async () => {
     const server = await app();
     await server.request("/memory/save", {
