@@ -234,6 +234,13 @@ export const api = {
     json<{ ok: boolean }>(`/context/documents/${id}/open`, { method: "POST" }),
   removeDocument: (id: string) =>
     json<{ ok: boolean }>(`/context/documents/${id}`, { method: "DELETE" }),
+  contextAdd: (path: string) =>
+    post<{
+      documentId: string;
+      outcome: "added" | "updated" | "unchanged";
+      title: string;
+      chunks: number;
+    }>("/context/add", { path }),
   save: (input: { content: string; canonical?: string }) => post<SaveResult>("/memory/save", input),
   recall: (query: string, limit?: number) =>
     post<{ memories: Memory[] }>("/memory/query", { query, limit }).then((r) => r.memories),

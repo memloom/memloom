@@ -182,10 +182,27 @@ function SessionRow({
       </button>
       {menuOpen && (
         <div className="chatSessionMenu">
-          <button type="button" onMouseDown={() => onPatch({ starred: !session.isStarred })}>
+          {/* preventDefault throughout: the browser's default mousedown action moves focus
+              AFTER React swaps the row for the rename input, which would instantly blur
+              (and cancel) the input before it ever paints. */}
+          <button
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              setMenuOpen(false);
+              onPatch({ starred: !session.isStarred });
+            }}
+          >
             <Star size={12} strokeWidth={1.75} /> {session.isStarred ? "unstar" : "star"}
           </button>
-          <button type="button" onMouseDown={() => setRenaming(true)}>
+          <button
+            type="button"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              setMenuOpen(false);
+              setRenaming(true);
+            }}
+          >
             <SquarePen size={12} strokeWidth={1.75} /> rename
           </button>
           <button

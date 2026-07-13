@@ -421,12 +421,41 @@ button {
 }
 
 .sidePanel {
-  width: 320px;
+  position: relative;
+  width: 320px; /* overridden inline by the drag-to-resize handle */
   flex: none;
   border-left: 1px solid var(--border);
   background: var(--bg-raised);
   padding: 14px;
+  padding-right: 34px; /* room for the close button */
   overflow-y: auto;
+}
+
+.sidePanelResize {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+
+.sidePanelResize:hover {
+  background: var(--border-strong);
+}
+
+.sidePanelClose {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  border: none;
+  background: none;
+  color: var(--text-faint);
+  padding: 3px;
+}
+
+.sidePanelClose:hover {
+  color: var(--text);
 }
 
 .crumb {

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ContextDocument, type DocumentChunks } from "./api";
+import { AddFileCard, RecallCard } from "./cards";
 
 // Ingested context documents: what's mirrored, how it was chunked, and the drill-down to the
 // chunks themselves. Removal is two-step (arm, then confirm) — no modal, matching the rest of
@@ -58,6 +59,17 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
   return (
     <div className="panel">
       <div className="panelInner">
+        <h2 className="sectionTitle">Add a file</h2>
+        <AddFileCard
+          onAdded={() => {
+            load();
+            onChanged();
+          }}
+        />
+
+        <h2 className="sectionTitle">Recall</h2>
+        <RecallCard only="context" />
+
         <h2 className="sectionTitle">Documents {docs ? `· ${docs.length}` : ""}</h2>
 
         {error && <div className="notice noticeError">{error}</div>}

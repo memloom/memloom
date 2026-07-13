@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type Memory, type MemoryType } from "./api";
+import { RecallCard, SaveMemoryCard } from "./cards";
 
 // Browse every active memory, newest first — the reading counterpart to the Console's
 // query-driven recall. Each memory can be edited (a manual, human action that appends a new
@@ -151,6 +152,12 @@ export function MemoriesView() {
   return (
     <div className="panel">
       <div className="panelInner">
+        <h2 className="sectionTitle">Save a memory</h2>
+        <SaveMemoryCard onSaved={load} />
+
+        <h2 className="sectionTitle">Recall</h2>
+        <RecallCard only="memory" />
+
         <h2 className="sectionTitle">Memories {memories ? `· ${memories.length} active` : ""}</h2>
 
         {error && <div className="notice noticeError">{error}</div>}

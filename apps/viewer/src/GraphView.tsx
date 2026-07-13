@@ -1,5 +1,5 @@
 import { forceCollide } from "d3-force-3d";
-import { Maximize, Minus, Plus, SlidersHorizontal } from "lucide-react";
+import { Maximize, Minus, Plus, SlidersHorizontal, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { api, type ContextChunk, type DocumentChunks, type Graph } from "./api";
@@ -338,7 +338,27 @@ export function GraphView({ graph }: { graph: Graph }) {
   const fgRef = useRef<any>(null);
   const [size, setSize] = useState({ width: 800, height: 600 });
   const [selected, setSelected] = useState<Selected>(null);
+  const [panelWidth, setPanelWidth] = useState(320);
   const [expanded, setExpanded] = useState<Map<string, DocumentChunks>>(new Map());
+
+  // Drag the panel's left edge to resize; clamped so it can neither vanish nor eat the canvas.
+  const startPanelResize = useCallback(
+    (e: React.PointerEvent) => {
+      e.preventDefault();
+      const startX = e.clientX;
+      const startWidth = panelWidth;
+      const onMove = (ev: PointerEvent) => {
+        setPanelWidth(Math.min(640, Math.max(240, startWidth + (startX - ev.clientX))));
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [panelWidth],
+  );
   const [config, setConfig] = useState<ViewerGraphConfig>(() =>
     cloneGraphConfig(DEFAULT_GRAPH_CONFIG),
   );
@@ -830,7 +850,22 @@ export function GraphView({ graph }: { graph: Graph }) {
         </div>
       </div>
       {selected && (
-        <aside className="sidePanel">
+        <aside className="sidePanel" style={{ width: panelWidth }}>
+          {/* drag-to-resize handle; the panel is fully usable at its default width without it */}
+          <div
+            className="sidePanelResize"
+            role="separator"
+            aria-orientation="vertical"
+            onPointerDown={startPanelResize}
+          />
+          <button
+            type="button"
+            className="sidePanelClose"
+            onClick={() => setSelected(null)}
+            aria-label="Close details"
+          >
+            <X size={14} strokeWidth={1.75} />
+          </button>
           {(() => {
             // Breadcrumb for chunks: "document › chunk", with the document clickable.
             if (selected.kind !== "chunk") return null;
@@ -862,7 +897,8 @@ export function GraphView({ graph }: { graph: Graph }) {
             {selected.kind}
           </div>
           <h2 className="sidePanelTitle">{selected.title}</h2>
-          <div className="sidePanelBody">{selected.body}</div>
+          {/* Memories without a canonical title would repeat the title verbatim here. */}
+          {selected.body !== selected.title && <div className="sidePanelBody">{selected.body}</div>}
           <div className="sidePanelMeta">id {selected.id}</div>
           {selected.kind === "document" &&
             (() => {
