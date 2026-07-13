@@ -57,8 +57,17 @@ export interface ChatProvider {
     messages: ChatMessage[],
     opts?: { tools?: ChatTool[]; toolChoice?: "auto" | "none" },
   ): Promise<ChatResult>;
-  /** Streaming text-only turn (no tools). The assistant's final grounded answer. */
-  chatStream(messages: ChatMessage[], onDelta: (text: string) => void): Promise<string>;
+  /**
+   * Streaming turn for the assistant's final grounded answer. `tools` must still be
+   * declared (with tool choice forced off) when the message history contains tool
+   * calls/results: some backends (Gemini via OpenRouter) drop function-call history
+   * whose declarations are missing, which silently blinds the model to tool results.
+   */
+  chatStream(
+    messages: ChatMessage[],
+    onDelta: (text: string) => void,
+    opts?: { tools?: ChatTool[] },
+  ): Promise<string>;
 }
 
 export function isChatProvider(llm: unknown): llm is ChatProvider {

@@ -8,8 +8,12 @@ import type { AssistantSource, Memory } from "./types.js";
 // and transport live in memloom.ts / the server. See docs/design/assistant-tab.md.
 
 export const MAX_TOOL_ROUNDS = 3;
-const PASSAGE_CHARS = 500;
-const SNIPPET_CHARS = 200;
+// Chunks are hard-capped at 2,048 chars by the chunker, so this never truncates a real
+// chunk. A tighter cap silently starved the model: a comparison-table chunk cut at 500
+// chars left only the header row, and the model honestly answered "not enough info".
+const PASSAGE_CHARS = 2100;
+// The sources panel shows exactly the passage the model saw, no shorter.
+const SNIPPET_CHARS = PASSAGE_CHARS;
 
 export type { AssistantSource };
 
@@ -139,7 +143,17 @@ export async function runAssistantTurn(
   while (result.toolCalls.length > 0 && round < MAX_TOOL_ROUNDS) {
     round += 1;
     usedAnyTool = true;
-    messages.push({ role: "assistant", content: result.content, toolCalls: result.toolCalls });
+    // Tool results go back as PLAIN TEXT, not role:"tool" protocol messages. Verified
+    // empirically: Gemini via OpenRouter ignores role:"tool" content entirely (identical
+    // messages answered fine by gpt-4o-mini, and fine by Gemini once inlined as a user
+    // message), so the tool protocol is used only for the model's call decision.
+    messages.push({
+      role: "assistant",
+      content:
+        result.content ??
+        `(searching memories: ${result.toolCalls.map((c) => c.arguments).join("; ")})`,
+    });
+    const resultBlocks: string[] = [];
 
     for (const call of result.toolCalls) {
       let out: string;
@@ -197,8 +211,12 @@ export async function runAssistantTurn(
           }
         }
       }
-      messages.push({ role: "tool", content: out, toolCallId: call.id });
+      resultBlocks.push(`Results of ${call.name}(${call.arguments}):\n${out}`);
     }
+    messages.push({
+      role: "user",
+      content: `${resultBlocks.join("\n\n")}\n\nUse these results to answer my original question. Do not repeat a search you already made.`,
+    });
 
     if (round >= MAX_TOOL_ROUNDS) break;
     try {
@@ -214,6 +232,8 @@ export async function runAssistantTurn(
     answer = result.content;
     onEvent?.({ type: "delta", text: answer });
   } else {
+    // The history is plain text by construction (no tool scaffolding), so the final
+    // streamed call needs no tool declarations on any provider.
     answer = await provider.chatStream(messages, (text) => onEvent?.({ type: "delta", text }));
     if (!answer.trim()) answer = "No response generated.";
   }

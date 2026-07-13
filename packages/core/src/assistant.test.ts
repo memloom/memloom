@@ -106,9 +106,11 @@ describe("assistant harness", () => {
     const types = events.map((e) => e.type);
     expect(types.indexOf("tool_call")).toBeLessThan(types.indexOf("tool_result"));
     expect(types.indexOf("tool_result")).toBeLessThan(types.indexOf("delta"));
-    // The tool result reached the model as a numbered passage.
-    const toolMsg = provider.chatCalls[1]?.find((m) => m.role === "tool");
-    expect(toolMsg?.content).toContain("[1] (memory)");
+    // The tool result reached the model as a numbered passage, inlined as plain text
+    // (role "user", never role "tool" — Gemini via OpenRouter ignores tool messages).
+    expect(provider.chatCalls[1]?.some((m) => m.role === "tool")).toBe(false);
+    const resultMsg = provider.chatCalls[1]?.filter((m) => m.role === "user").at(-1);
+    expect(resultMsg?.content).toContain("[1] (memory)");
   });
 
   it("dedupes identical consecutive queries", async () => {
@@ -129,8 +131,8 @@ describe("assistant harness", () => {
       today: "d",
     });
     expect(recalled).toBe(1);
-    const secondToolMsg = provider.chatCalls[2]?.filter((m) => m.role === "tool").at(-1);
-    expect(secondToolMsg?.content).toContain("already searched");
+    const secondResultMsg = provider.chatCalls[2]?.filter((m) => m.role === "user").at(-1);
+    expect(secondResultMsg?.content).toContain("already searched");
   });
 
   it("malformed args fall back to the raw user message as the query", async () => {
@@ -167,8 +169,8 @@ describe("assistant harness", () => {
       message: "my unicorn project?",
       today: "d",
     });
-    const toolMsg = provider.chatCalls[1]?.find((m) => m.role === "tool");
-    expect(toolMsg?.content).toContain("No relevant memories found");
+    const resultMsg = provider.chatCalls[1]?.filter((m) => m.role === "user").at(-1);
+    expect(resultMsg?.content).toContain("No relevant memories found");
     expect(out.sources).toEqual([]);
   });
 
@@ -249,8 +251,8 @@ describe("assistant harness", () => {
     });
     expect(seenDate).toBe("2026-07-13");
     expect(out.sources[0]?.date).toBe("2026-07-13");
-    const toolMsg = provider.chatCalls[1]?.find((m) => m.role === "tool");
-    expect(toolMsg?.content).toContain("saved 2026-07-13");
+    const resultMsg = provider.chatCalls[1]?.filter((m) => m.role === "user").at(-1);
+    expect(resultMsg?.content).toContain("saved 2026-07-13");
     const call = events.find((e) => e.type === "tool_call");
     expect(call && "onDate" in call ? call.onDate : undefined).toBe("2026-07-13");
   });

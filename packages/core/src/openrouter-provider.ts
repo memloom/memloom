@@ -213,13 +213,28 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
     };
   }
 
-  async chatStream(messages: ChatMessage[], onDelta: (text: string) => void): Promise<string> {
+  async chatStream(
+    messages: ChatMessage[],
+    onDelta: (text: string) => void,
+    opts: { tools?: ChatTool[] } = {},
+  ): Promise<string> {
     const res = await fetch(`${this.#baseUrl}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${this.#apiKey}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         model: this.#chatModel,
         messages: toWireMessages(messages),
+        // Declare the tools even though none may be called: the history contains tool
+        // calls/results, and Gemini drops that history without matching declarations.
+        ...(opts.tools
+          ? {
+              tools: opts.tools.map((t) => ({
+                type: "function",
+                function: { name: t.name, description: t.description, parameters: t.parameters },
+              })),
+              tool_choice: "none",
+            }
+          : {}),
         stream: true,
       }),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS * 3), // long answers stream slowly
