@@ -254,6 +254,11 @@ const assistantAttachSchema = z.object({
   contentBase64: z.string().min(1, "contentBase64 must be a non-empty string"),
 });
 
+const contextUploadSchema = z.object({
+  filename: z.string().min(1, "filename must be a non-empty string").max(255),
+  contentBase64: z.string().min(1, "contentBase64 must be a non-empty string"),
+});
+
 const assistantSessionPatchSchema = z.object({
   title: z.string().min(1).optional(),
   starred: z.boolean().optional(),
@@ -704,6 +709,30 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     c.json({ attachments: await memloom.sessionAttachments(c.req.param("id")) }),
   );
 
+  // Ingest bytes uploaded from the browser's own file dialog (the viewer's Browse/Folder
+  // buttons) as a global document. Same shape as the chat-attach upload, session-free.
+  app.post(
+    "/context/upload",
+    bodyLimit({
+      maxSize: 48 * 1024 * 1024, // base64 inflates 4/3: ~36MB of real file
+      onError: (c) => c.json({ error: "file too large (max ~36MB)" }, 413),
+    }),
+    async (c) => {
+      const body = await parseBody(c, contextUploadSchema);
+      if (!body.ok) return body.res;
+      const filename = body.data.filename.replace(/[/\\]/g, "_");
+      if (!detectKind(filename)) {
+        return c.json(
+          { error: `unsupported file type (supported: ${supportedExtensions().join(", ")})` },
+          400,
+        );
+      }
+      const bytes = new Uint8Array(Buffer.from(body.data.contentBase64, "base64"));
+      if (bytes.length === 0) return c.json({ error: "empty file" }, 400);
+      return c.json(await memloom.contextUpload({ filename, bytes }));
+    },
+  );
+
   // Ingest a file, or a whole folder: directories are walked (bounded depth, hidden and
   // node_modules-style dirs skipped) and every supported file is added.
   app.post("/context/add", async (c) => {
@@ -799,6 +828,9 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const id = c.req.param("id");
     const doc = (await memloom.contextList()).find((d) => d.id === id);
     if (!doc) return c.json({ error: `no context document ${id}` }, 404);
+    if (doc.path.startsWith("upload://")) {
+      return c.json({ error: "this document was uploaded from the browser; no file on disk" }, 400);
+    }
     openPath(doc.path);
     return c.json({ ok: true });
   });

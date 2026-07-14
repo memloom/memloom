@@ -275,6 +275,24 @@ export class Memloom implements MemoryEngine {
     return { ...result, sessionId };
   }
 
+  /**
+   * Ingest an uploaded file's bytes as a GLOBAL document — the browser file dialog gives
+   * bytes, never disk paths. Provenance is upload://<filename>, so re-uploading the same
+   * name replaces it (hash short-circuit applies); there is no disk file to "open".
+   * Unlike contextAttach, the result is a first-class document: listed, graphed, indexed.
+   */
+  async contextUpload(input: {
+    filename: string;
+    bytes: Uint8Array;
+    ownerId?: string;
+  }): Promise<ContextAddResult> {
+    const owner = input.ownerId ?? SENTINEL_OWNER;
+    const file = await extractBytes(input.bytes, input.filename, (bytes) =>
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    return this.#ingestDocument(owner, `upload://${input.filename}`, file, null);
+  }
+
   /** The files attached to one assistant chat, newest first. */
   async sessionAttachments(
     sessionId: string,

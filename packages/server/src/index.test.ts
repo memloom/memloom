@@ -653,6 +653,47 @@ describe("server", () => {
     expect(graph.entities.map((e) => e.name)).toContain("Postgres");
   });
 
+  it("context upload: bytes become a global document; open refuses (no disk file)", async () => {
+    const server = await app();
+    const contentBase64 = Buffer.from("# Notes\nthe staging database runs on Postgres").toString(
+      "base64",
+    );
+
+    const res = await server.request("/context/upload", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename: "notes.md", contentBase64 }),
+    });
+    expect(res.status).toBe(200);
+    const uploaded = (await res.json()) as { documentId: string; outcome: string; chunks: number };
+    expect(uploaded.outcome).toBe("added");
+    expect(uploaded.chunks).toBeGreaterThan(0);
+
+    // First-class document: listed with upload:// provenance, same bytes are a no-op.
+    const docs = (await (await server.request("/context/documents")).json()) as {
+      documents: Array<{ id: string; path: string }>;
+    };
+    expect(docs.documents.map((d) => d.path)).toEqual(["upload://notes.md"]);
+    const again = await server.request("/context/upload", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename: "notes.md", contentBase64 }),
+    });
+    expect(((await again.json()) as { outcome: string }).outcome).toBe("unchanged");
+
+    // Nothing on disk to open; unsupported extensions refused.
+    const open = await server.request(`/context/documents/${uploaded.documentId}/open`, {
+      method: "POST",
+    });
+    expect(open.status).toBe(400);
+    const badExt = await server.request("/context/upload", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ filename: "image.png", contentBase64 }),
+    });
+    expect(badExt.status).toBe(400);
+  });
+
   it("attachments: upload creates a session-scoped doc, listed and removable", async () => {
     const server = await app();
     const contentBase64 = Buffer.from("# Brief\nthe kickoff is on tuesday").toString("base64");

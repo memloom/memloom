@@ -187,18 +187,6 @@ export interface AssistantSource {
   graphNodeId?: string;
 }
 
-export interface BrowseEntry {
-  name: string;
-  path: string;
-  kind: "dir" | "file";
-}
-
-export interface BrowseResult {
-  path: string;
-  parent: string | null;
-  entries: BrowseEntry[];
-}
-
 export interface AssistantSession {
   id: string;
   title: string;
@@ -260,6 +248,16 @@ export interface SessionAttachment {
   updatedAt: string;
 }
 
+/** Encode a picked File's bytes for the JSON upload endpoints (base64, sliced btoa). */
+export async function fileToBase64(file: File): Promise<string> {
+  const buf = new Uint8Array(await file.arrayBuffer());
+  let bin = "";
+  for (let i = 0; i < buf.length; i += 0x8000) {
+    bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
+  }
+  return btoa(bin);
+}
+
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
   const body = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -296,11 +294,14 @@ export const api = {
       unchanged?: number;
       errors?: string[];
     }>("/context/add", { path }),
-  browse: (path?: string) =>
-    json<BrowseResult>(`/context/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`),
-  // Opens the OS-native picker on the daemon's desktop; resolves when the user picks or
-  // cancels ([] = cancelled). 501 when the platform has no picker.
-  pick: (mode: "file" | "folder") => post<{ paths: string[] }>("/context/pick", { mode }),
+  // Upload a browser-picked file's bytes as a global document (upload:// provenance).
+  contextUpload: (filename: string, contentBase64: string) =>
+    post<{
+      documentId: string;
+      outcome: "added" | "updated" | "unchanged";
+      title: string;
+      chunks: number;
+    }>("/context/upload", { filename, contentBase64 }),
   save: (input: { content: string; canonical?: string }) => post<SaveResult>("/memory/save", input),
   recall: (query: string, limit?: number) =>
     post<{ memories: Memory[] }>("/memory/query", { query, limit }).then((r) => r.memories),

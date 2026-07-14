@@ -24,6 +24,7 @@ import {
   type AssistantSessionHit,
   type AssistantSource,
   api,
+  fileToBase64,
   type SessionAttachment,
 } from "./api";
 
@@ -493,15 +494,9 @@ export function AssistantView({
     for (const file of Array.from(files)) {
       setUploading((prev) => [...prev, file.name]);
       try {
-        const buf = new Uint8Array(await file.arrayBuffer());
-        // btoa needs a binary string; build it in slices to keep the stack flat.
-        let bin = "";
-        for (let i = 0; i < buf.length; i += 0x8000) {
-          bin += String.fromCharCode(...buf.subarray(i, i + 0x8000));
-        }
         const result = await api.assistantAttach({
           filename: file.name,
-          contentBase64: btoa(bin),
+          contentBase64: await fileToBase64(file),
           ...(sessionId ? { sessionId } : {}),
         });
         sessionId = result.sessionId;

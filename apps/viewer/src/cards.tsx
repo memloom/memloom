@@ -1,6 +1,5 @@
-import { ArrowUp, FileText, Folder, FolderOpen } from "lucide-react";
-import { useState } from "react";
-import { api, type BrowseResult, type Memory, type SaveResult } from "./api";
+import { useRef, useState } from "react";
+import { api, fileToBase64, type Memory, type SaveResult } from "./api";
 
 // Shared action cards: save a memory, recall, ingest a file. Used by the Console (both,
 // unfiltered), the Memories tab (save + memory-only recall), and the Documents tab
@@ -158,23 +157,24 @@ export function RecallCard({ only }: { only?: "memory" | "context" }) {
   );
 }
 
+const SUPPORTED_EXTENSIONS = [".md", ".markdown", ".txt", ".pdf"];
+const MAX_UPLOAD_FILES = 200;
+
+function isSupported(name: string): boolean {
+  const lower = name.toLowerCase();
+  return SUPPORTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
 export function AddFileCard({ onAdded }: { onAdded: () => void }) {
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // The daemon-side filesystem picker: the browser can't reveal absolute paths itself.
-  const [listing, setListing] = useState<BrowseResult | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const folderInputRef = useRef<HTMLInputElement | null>(null);
 
-  async function browse(target?: string) {
-    setError(null);
-    try {
-      setListing(await api.browse(target));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
-
+  // Path-based ingest (the text field): the daemon reads its own disk, so the document
+  // keeps a real path — "open file" works and re-adding the path detects changes.
   async function ingest(target: string) {
     setBusy(true);
     setError(null);
@@ -191,7 +191,6 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
             : `${r.outcome} "${r.title}" · ${r.chunks} chunks. Run index to extract entities.`,
       );
       setPath("");
-      setListing(null);
       onAdded();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -200,55 +199,71 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
     }
   }
 
-  async function ingestMany(targets: string[]) {
+  // Dialog-based ingest: the browser's own file/folder dialog (same as the assistant's
+  // "+"), which yields bytes, not paths — files upload to the daemon. A folder pick
+  // enumerates everything inside, so unsupported files are filtered out here.
+  async function upload(files: FileList | null) {
+    if (!files || files.length === 0) return;
+    const all = Array.from(files);
+    const supported = all.filter((f) => isSupported(f.name)).slice(0, MAX_UPLOAD_FILES);
+    const skipped = all.length - supported.length;
+    if (supported.length === 0) {
+      setError(`no supported files picked (${SUPPORTED_EXTENSIONS.join(", ")})`);
+      return;
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
-    let files = 0;
+    let added = 0;
     let unchanged = 0;
     let chunks = 0;
     const failures: string[] = [];
-    for (const target of targets) {
+    for (const file of supported) {
       try {
-        const r = await api.contextAdd(target);
+        const r = await api.contextUpload(file.name, await fileToBase64(file));
         chunks += r.chunks;
         if (r.outcome === "unchanged") unchanged += 1;
-        else files += r.documents ?? 1;
+        else added += 1;
       } catch (err) {
-        failures.push(err instanceof Error ? err.message : String(err));
+        failures.push(`${file.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     setNotice(
-      `ingested ${files} ${files === 1 ? "file" : "files"}` +
-        `${unchanged ? ` (${unchanged} unchanged)` : ""} · ${chunks} chunks. ` +
+      `ingested ${added} ${added === 1 ? "file" : "files"}` +
+        `${unchanged ? ` (${unchanged} unchanged)` : ""}` +
+        `${skipped ? ` (${skipped} unsupported skipped)` : ""} · ${chunks} chunks. ` +
         "Run index to extract entities.",
     );
     if (failures.length > 0) setError(failures.join("; "));
-    setPath("");
     setBusy(false);
     onAdded();
-  }
-
-  // The OS-native dialog opens on this machine (the daemon IS local). Systems without
-  // one (headless Linux) answer 501 — fall back to the in-app directory panel.
-  async function pickNative(mode: "file" | "folder") {
-    setError(null);
-    setBusy(true);
-    try {
-      const { paths } = await api.pick(mode);
-      setBusy(false);
-      if (paths.length === 0) return; // cancelled
-      if (paths.length === 1) await ingest(paths[0] ?? "");
-      else await ingestMany(paths);
-    } catch {
-      setBusy(false);
-      await browse(path.trim() || undefined);
-    }
   }
 
   return (
     <div className="card">
       {error && <div className="notice noticeError">{error}</div>}
+      <input
+        ref={fileInputRef}
+        type="file"
+        multiple
+        accept={SUPPORTED_EXTENSIONS.join(",")}
+        style={{ display: "none" }}
+        onChange={(e) => {
+          void upload(e.target.files);
+          e.target.value = "";
+        }}
+      />
+      <input
+        ref={folderInputRef}
+        type="file"
+        style={{ display: "none" }}
+        // Non-standard but universal: makes the dialog pick a directory (recursive).
+        {...({ webkitdirectory: "" } as object)}
+        onChange={(e) => {
+          void upload(e.target.files);
+          e.target.value = "";
+        }}
+      />
       <form
         className="formRow"
         onSubmit={(e) => {
@@ -266,7 +281,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
           type="button"
           className="btn"
           disabled={busy}
-          onClick={() => void pickNative("file")}
+          onClick={() => fileInputRef.current?.click()}
         >
           Browse…
         </button>
@@ -274,7 +289,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
           type="button"
           className="btn"
           disabled={busy}
-          onClick={() => void pickNative("folder")}
+          onClick={() => folderInputRef.current?.click()}
         >
           Folder…
         </button>
@@ -282,62 +297,6 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
           {busy ? "Ingesting…" : "Add"}
         </button>
       </form>
-
-      {listing && (
-        <div className="fsBrowser">
-          <div className="fsBrowserHead">
-            <button
-              type="button"
-              className="btn btnGhost"
-              disabled={!listing.parent}
-              onClick={() => listing.parent && void browse(listing.parent)}
-            >
-              <ArrowUp size={12} strokeWidth={1.75} /> up
-            </button>
-            <span className="fsBrowserPath">{listing.path}</span>
-            <button
-              type="button"
-              className="btn"
-              disabled={busy}
-              onClick={() => {
-                setPath(listing.path);
-                void ingest(listing.path);
-              }}
-            >
-              <FolderOpen size={12} strokeWidth={1.75} /> ingest this folder
-            </button>
-            <button type="button" className="btn btnGhost" onClick={() => setListing(null)}>
-              close
-            </button>
-          </div>
-          <div className="fsBrowserList">
-            {listing.entries.length === 0 && (
-              <div className="fsBrowserEmpty">nothing ingestible here</div>
-            )}
-            {listing.entries.map((entry) => (
-              <button
-                type="button"
-                key={entry.path}
-                className="fsBrowserRow"
-                onClick={() => {
-                  if (entry.kind === "dir") void browse(entry.path);
-                  else {
-                    setPath(entry.path);
-                    void ingest(entry.path);
-                  }
-                }}
-              >
-                {entry.kind === "dir" ? (
-                  <Folder size={13} strokeWidth={1.75} className="fsDirIcon" />
-                ) : (
-                  <FileText size={13} strokeWidth={1.75} />
-                )}
-                {entry.name}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
 
       {notice && <div className="resultOutcome outcome-added">{notice}</div>}
     </div>

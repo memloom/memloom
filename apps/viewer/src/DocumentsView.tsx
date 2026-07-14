@@ -98,17 +98,20 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
                 <button type="button" className="btn" onClick={() => toggleChunks(d.id)}>
                   {chunks ? "Hide chunks" : "Show chunks"}
                 </button>
-                <button
-                  type="button"
-                  className="btn"
-                  onClick={() =>
-                    api
-                      .openDocument(d.id)
-                      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
-                  }
-                >
-                  Open file
-                </button>
+                {/* Uploaded docs (browser dialog) have no file on the daemon's disk. */}
+                {!d.path.startsWith("upload://") && (
+                  <button
+                    type="button"
+                    className="btn"
+                    onClick={() =>
+                      api
+                        .openDocument(d.id)
+                        .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+                    }
+                  >
+                    Open file
+                  </button>
+                )}
                 <button
                   type="button"
                   className={`btn btnDanger ${arming === d.id ? "btnDangerArmed" : ""}`}
