@@ -942,6 +942,32 @@ textarea {
   line-height: 1.5;
 }
 
+/* Composer-style add card: full-width path input, action bar underneath. */
+.addFileForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.addFileForm input[type="text"] {
+  width: 100%;
+}
+
+.addFileBar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.addFileBarGroup {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 .schemaKindSelect {
   background: var(--bg-inset);
   border: 1px solid var(--border-strong);

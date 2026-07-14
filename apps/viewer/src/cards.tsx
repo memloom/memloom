@@ -298,8 +298,9 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
           e.target.value = "";
         }}
       />
+      {/* The composer layout: a full-width path input, then an action bar below it. */}
       <form
-        className="formRow"
+        className="addFileForm"
         onSubmit={(e) => {
           e.preventDefault();
           if (path.trim()) void ingest(path.trim());
@@ -311,33 +312,37 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
           onChange={(e) => setPath(e.target.value)}
           placeholder="Path to a file (.md, .txt, .pdf) or a folder on this machine…"
         />
-        <button
-          type="button"
-          className="btn"
-          disabled={busy}
-          onClick={() => void pickNative("file")}
-        >
-          Link file…
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={busy}
-          onClick={() => void pickNative("folder")}
-        >
-          Link folder…
-        </button>
-        <button
-          type="button"
-          className="btn"
-          disabled={busy}
-          onClick={() => fileInputRef.current?.click()}
-        >
-          Upload…
-        </button>
-        <button type="submit" className="btn btnPrimary" disabled={busy || path.trim() === ""}>
-          {busy ? "Ingesting…" : "Add"}
-        </button>
+        <div className="addFileBar">
+          <div className="addFileBarGroup">
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={() => void pickNative("file")}
+            >
+              Link file…
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={() => void pickNative("folder")}
+            >
+              Link folder…
+            </button>
+            <button
+              type="button"
+              className="btn"
+              disabled={busy}
+              onClick={() => fileInputRef.current?.click()}
+            >
+              Upload…
+            </button>
+          </div>
+          <button type="submit" className="btn btnPrimary" disabled={busy || path.trim() === ""}>
+            {busy ? "Ingesting…" : "Add"}
+          </button>
+        </div>
       </form>
       <p className="addFileHint">
         Linked files keep their place on disk: openable, re-scanned on add, and ready for file sync.
