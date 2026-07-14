@@ -102,9 +102,11 @@ async function nativePick(mode: "file" | "folder"): Promise<string[] | null> {
       owner +
       (mode === "folder"
         ? "$d = New-Object System.Windows.Forms.FolderBrowserDialog; " +
+          "$d.Description = 'memloom - link a folder'; " +
           "$r = $d.ShowDialog($owner); $owner.Close(); " +
           "if ($r -eq 'OK') { [Console]::WriteLine($d.SelectedPath) }"
         : "$f = New-Object System.Windows.Forms.OpenFileDialog; $f.Multiselect = $true; " +
+          "$f.Title = 'memloom - link files'; " +
           `$f.Filter = 'Supported files|${filter}|All files|*.*'; ` +
           "$r = $f.ShowDialog($owner); $owner.Close(); " +
           "if ($r -eq 'OK') { $f.FileNames | ForEach-Object { [Console]::WriteLine($_) } }");

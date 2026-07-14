@@ -294,6 +294,10 @@ export const api = {
       unchanged?: number;
       errors?: string[];
     }>("/context/add", { path }),
+  // Opens the OS-native picker on the daemon's desktop; resolves when the user picks or
+  // cancels ([] = cancelled). 501 when the platform has no picker. Picks return absolute
+  // paths, so linked documents stay openable and change-trackable (the sync roadmap).
+  pick: (mode: "file" | "folder") => post<{ paths: string[] }>("/context/pick", { mode }),
   // Upload a browser-picked file's bytes as a global document (upload:// provenance).
   contextUpload: (filename: string, contentBase64: string) =>
     post<{

@@ -935,6 +935,13 @@ textarea {
   line-height: 1.5;
 }
 
+.addFileHint {
+  color: var(--text-faint);
+  font-size: 12px;
+  margin: 0;
+  line-height: 1.5;
+}
+
 .schemaKindSelect {
   background: var(--bg-inset);
   border: 1px solid var(--border-strong);

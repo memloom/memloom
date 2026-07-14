@@ -171,10 +171,10 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const folderInputRef = useRef<HTMLInputElement | null>(null);
 
-  // Path-based ingest (the text field): the daemon reads its own disk, so the document
-  // keeps a real path — "open file" works and re-adding the path detects changes.
+  // Path-based ingest (link buttons + the text field): the daemon reads its own disk, so
+  // the document keeps a real path — "open file" works, re-adding detects changes, and
+  // the planned file-sync watcher can follow it. Upload (below) is the snapshot flow.
   async function ingest(target: string) {
     setBusy(true);
     setError(null);
@@ -199,9 +199,54 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
     }
   }
 
-  // Dialog-based ingest: the browser's own file/folder dialog (same as the assistant's
-  // "+"), which yields bytes, not paths — files upload to the daemon. A folder pick
-  // enumerates everything inside, so unsupported files are filtered out here.
+  async function ingestMany(targets: string[]) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    let files = 0;
+    let unchanged = 0;
+    let chunks = 0;
+    const failures: string[] = [];
+    for (const target of targets) {
+      try {
+        const r = await api.contextAdd(target);
+        chunks += r.chunks;
+        if (r.outcome === "unchanged") unchanged += 1;
+        else files += r.documents ?? 1;
+      } catch (err) {
+        failures.push(err instanceof Error ? err.message : String(err));
+      }
+    }
+    setNotice(
+      `linked ${files} ${files === 1 ? "file" : "files"}` +
+        `${unchanged ? ` (${unchanged} unchanged)` : ""} · ${chunks} chunks. ` +
+        "Run index to extract entities.",
+    );
+    if (failures.length > 0) setError(failures.join("; "));
+    setPath("");
+    setBusy(false);
+    onAdded();
+  }
+
+  // The OS-native dialog on this machine (the daemon IS local): the only dialog that can
+  // return absolute paths. Headless systems answer 501 — point at the alternatives.
+  async function pickNative(mode: "file" | "folder") {
+    setError(null);
+    setBusy(true);
+    try {
+      const { paths } = await api.pick(mode);
+      setBusy(false);
+      if (paths.length === 0) return; // cancelled
+      if (paths.length === 1) await ingest(paths[0] ?? "");
+      else await ingestMany(paths);
+    } catch {
+      setBusy(false);
+      setError("no file dialog on this system — type a path above, or use Upload");
+    }
+  }
+
+  // Snapshot ingest: the browser's own dialog yields bytes, never paths, so uploaded
+  // documents cannot be opened from disk or change-tracked. Quick adds only.
   async function upload(files: FileList | null) {
     if (!files || files.length === 0) return;
     const all = Array.from(files);
@@ -229,7 +274,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
       }
     }
     setNotice(
-      `ingested ${added} ${added === 1 ? "file" : "files"}` +
+      `uploaded ${added} ${added === 1 ? "file" : "files"}` +
         `${unchanged ? ` (${unchanged} unchanged)` : ""}` +
         `${skipped ? ` (${skipped} unsupported skipped)` : ""} · ${chunks} chunks. ` +
         "Run index to extract entities.",
@@ -253,17 +298,6 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
           e.target.value = "";
         }}
       />
-      <input
-        ref={folderInputRef}
-        type="file"
-        style={{ display: "none" }}
-        // Non-standard but universal: makes the dialog pick a directory (recursive).
-        {...({ webkitdirectory: "" } as object)}
-        onChange={(e) => {
-          void upload(e.target.files);
-          e.target.value = "";
-        }}
-      />
       <form
         className="formRow"
         onSubmit={(e) => {
@@ -281,22 +315,34 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
           type="button"
           className="btn"
           disabled={busy}
-          onClick={() => fileInputRef.current?.click()}
+          onClick={() => void pickNative("file")}
         >
-          Browse…
+          Link file…
         </button>
         <button
           type="button"
           className="btn"
           disabled={busy}
-          onClick={() => folderInputRef.current?.click()}
+          onClick={() => void pickNative("folder")}
         >
-          Folder…
+          Link folder…
+        </button>
+        <button
+          type="button"
+          className="btn"
+          disabled={busy}
+          onClick={() => fileInputRef.current?.click()}
+        >
+          Upload…
         </button>
         <button type="submit" className="btn btnPrimary" disabled={busy || path.trim() === ""}>
           {busy ? "Ingesting…" : "Add"}
         </button>
       </form>
+      <p className="addFileHint">
+        Linked files keep their place on disk: openable, re-scanned on add, and ready for file sync.
+        Uploads are one-time snapshots from the browser dialog.
+      </p>
 
       {notice && <div className="resultOutcome outcome-added">{notice}</div>}
     </div>
