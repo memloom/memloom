@@ -989,6 +989,28 @@ textarea {
 
 /* ---------- entity management (schema tab) ---------- */
 
+/* The entities card header doubles as its collapse toggle (collapsed by default so the
+   instance list never buries the vocabulary sections below it). */
+.cardLabelToggle {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+}
+
+.cardLabelToggle:hover {
+  color: var(--text-muted);
+}
+
+/* Even expanded, the list scrolls inside its own viewport instead of growing the page. */
+.entityList {
+  max-height: 380px;
+  overflow-y: auto;
+  margin-top: 4px;
+}
+
 .entityFilter {
   width: 100%;
   margin: 6px 0 8px;

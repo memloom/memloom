@@ -80,6 +80,9 @@ function EntitiesSection({
   onChanged: () => void;
 }) {
   const [entities, setEntities] = useState<EntityDetail[] | null>(null);
+  // Collapsed by default: the schema (types + predicates) is this tab's main content;
+  // the instance list can be hundreds of rows and must never push it below the fold.
+  const [open, setOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [renamingId, setRenamingId] = useState<string | null>(null);
@@ -123,139 +126,149 @@ function EntitiesSection({
 
   return (
     <div className="card">
-      <div className="cardLabel">entities · {entities.length}</div>
-      {error && <div className="notice noticeError">{error}</div>}
-      {entities.length > 8 && (
-        <input
-          type="text"
-          className="entityFilter"
-          placeholder="Filter entities..."
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-      )}
-      {entities.length === 0 && (
-        <p className="schemaHint">No entities yet — run an index to extract them.</p>
-      )}
-      {shown.map((e) => (
-        <div key={e.id} className="schemaRow">
-          <div className="schemaRowHead">
-            {renamingId === e.id ? (
-              <input
-                type="text"
-                className="entityRenameInput"
-                value={renameValue}
-                ref={(el) => el?.focus()}
-                onChange={(ev) => setRenameValue(ev.target.value)}
-                onBlur={() => setRenamingId(null)}
-                onKeyDown={(ev) => {
-                  if (ev.key === "Enter" && renameValue.trim()) {
-                    setRenamingId(null);
-                    void act(() => api.updateEntity(e.id, { name: renameValue.trim() }));
+      <button
+        type="button"
+        className="cardLabel cardLabelToggle"
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? "▾" : "▸"} entities · {entities.length}
+      </button>
+      {open && (
+        <div className="entityList">
+          {error && <div className="notice noticeError">{error}</div>}
+          {entities.length > 8 && (
+            <input
+              type="text"
+              className="entityFilter"
+              placeholder="Filter entities..."
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+          )}
+          {entities.length === 0 && (
+            <p className="schemaHint">No entities yet — run an index to extract them.</p>
+          )}
+          {shown.map((e) => (
+            <div key={e.id} className="schemaRow">
+              <div className="schemaRowHead">
+                {renamingId === e.id ? (
+                  <input
+                    type="text"
+                    className="entityRenameInput"
+                    value={renameValue}
+                    ref={(el) => el?.focus()}
+                    onChange={(ev) => setRenameValue(ev.target.value)}
+                    onBlur={() => setRenamingId(null)}
+                    onKeyDown={(ev) => {
+                      if (ev.key === "Enter" && renameValue.trim()) {
+                        setRenamingId(null);
+                        void act(() => api.updateEntity(e.id, { name: renameValue.trim() }));
+                      }
+                      if (ev.key === "Escape") setRenamingId(null);
+                    }}
+                  />
+                ) : (
+                  <span className="typeTag">{e.name}</span>
+                )}
+                <select
+                  className="entityTypeSelect"
+                  value={e.entityType}
+                  disabled={busy}
+                  onChange={(ev) =>
+                    void act(() => api.updateEntity(e.id, { entityType: ev.target.value }))
                   }
-                  if (ev.key === "Escape") setRenamingId(null);
-                }}
-              />
-            ) : (
-              <span className="typeTag">{e.name}</span>
-            )}
-            <select
-              className="entityTypeSelect"
-              value={e.entityType}
-              disabled={busy}
-              onChange={(ev) =>
-                void act(() => api.updateEntity(e.id, { entityType: ev.target.value }))
-              }
-            >
-              {/* An entity can carry a type that was since disabled; keep it selectable. */}
-              {[...new Set([e.entityType, ...activeTypes])].map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
-              ))}
-            </select>
-            <span className="docMeta">
-              {e.mentions > 0
-                ? `${e.mentions} mentions · ${e.documents} docs · ${e.memories} memories`
-                : "unused"}
-            </span>
-            <button
-              type="button"
-              className="metaAction"
-              disabled={busy}
-              onMouseDown={(ev) => {
-                // preventDefault: the default mousedown focus change would blur (and
-                // instantly close) the rename input React is about to render.
-                ev.preventDefault();
-                setArmedId(null);
-                setMergingId(null);
-                setRenameValue(e.name);
-                setRenamingId(e.id);
-              }}
-            >
-              rename
-            </button>
-            <button
-              type="button"
-              className="metaAction"
-              disabled={busy}
-              onClick={() => {
-                setArmedId(null);
-                setMergingId(mergingId === e.id ? null : e.id);
-              }}
-            >
-              merge
-            </button>
-            <button
-              type="button"
-              className={`metaAction ${armedId === e.id ? "metaActionDanger" : ""}`}
-              disabled={busy}
-              onClick={() => {
-                if (armedId !== e.id) {
-                  setMergingId(null);
-                  setArmedId(e.id);
-                  return;
-                }
-                setArmedId(null);
-                void act(() => api.deleteEntity(e.id));
-              }}
-            >
-              {armedId === e.id ? "confirm delete" : "delete"}
-            </button>
-          </div>
-          {mergingId === e.id && (
-            <div className="entityMergeRow">
-              <span className="docMeta">
-                fold "{e.name}" into — its mentions and relations move to the survivor:
-              </span>
-              <select
-                className="entityTypeSelect"
-                defaultValue=""
-                disabled={busy}
-                onChange={(ev) => {
-                  const into = ev.target.value;
-                  if (!into) return;
-                  setMergingId(null);
-                  void act(() => api.mergeEntity(e.id, into));
-                }}
-              >
-                <option value="" disabled>
-                  choose the surviving entity...
-                </option>
-                {entities
-                  .filter((other) => other.id !== e.id)
-                  .map((other) => (
-                    <option key={other.id} value={other.id}>
-                      {other.name} ({other.entityType})
+                >
+                  {/* An entity can carry a type that was since disabled; keep it selectable. */}
+                  {[...new Set([e.entityType, ...activeTypes])].map((t) => (
+                    <option key={t} value={t}>
+                      {t}
                     </option>
                   ))}
-              </select>
+                </select>
+                <span className="docMeta">
+                  {e.mentions > 0
+                    ? `${e.mentions} mentions · ${e.documents} docs · ${e.memories} memories`
+                    : "unused"}
+                </span>
+                <button
+                  type="button"
+                  className="metaAction"
+                  disabled={busy}
+                  onMouseDown={(ev) => {
+                    // preventDefault: the default mousedown focus change would blur (and
+                    // instantly close) the rename input React is about to render.
+                    ev.preventDefault();
+                    setArmedId(null);
+                    setMergingId(null);
+                    setRenameValue(e.name);
+                    setRenamingId(e.id);
+                  }}
+                >
+                  rename
+                </button>
+                <button
+                  type="button"
+                  className="metaAction"
+                  disabled={busy}
+                  onClick={() => {
+                    setArmedId(null);
+                    setMergingId(mergingId === e.id ? null : e.id);
+                  }}
+                >
+                  merge
+                </button>
+                <button
+                  type="button"
+                  className={`metaAction ${armedId === e.id ? "metaActionDanger" : ""}`}
+                  disabled={busy}
+                  onClick={() => {
+                    if (armedId !== e.id) {
+                      setMergingId(null);
+                      setArmedId(e.id);
+                      return;
+                    }
+                    setArmedId(null);
+                    void act(() => api.deleteEntity(e.id));
+                  }}
+                >
+                  {armedId === e.id ? "confirm delete" : "delete"}
+                </button>
+              </div>
+              {mergingId === e.id && (
+                <div className="entityMergeRow">
+                  <span className="docMeta">
+                    fold "{e.name}" into — its mentions and relations move to the survivor:
+                  </span>
+                  <select
+                    className="entityTypeSelect"
+                    defaultValue=""
+                    disabled={busy}
+                    onChange={(ev) => {
+                      const into = ev.target.value;
+                      if (!into) return;
+                      setMergingId(null);
+                      void act(() => api.mergeEntity(e.id, into));
+                    }}
+                  >
+                    <option value="" disabled>
+                      choose the surviving entity...
+                    </option>
+                    {entities
+                      .filter((other) => other.id !== e.id)
+                      .map((other) => (
+                        <option key={other.id} value={other.id}>
+                          {other.name} ({other.entityType})
+                        </option>
+                      ))}
+                  </select>
+                </div>
+              )}
             </div>
+          ))}
+          {shown.length === 0 && entities.length > 0 && (
+            <p className="schemaHint">no entities matched the filter</p>
           )}
         </div>
-      ))}
-      {shown.length === 0 && entities.length > 0 && (
-        <p className="schemaHint">no entities matched the filter</p>
       )}
     </div>
   );
