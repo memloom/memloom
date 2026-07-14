@@ -69,6 +69,11 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
       : undefined);
   const llmModel = process.env.OPENROUTER_LLM_MODEL;
   const chatModel = process.env.OPENROUTER_CHAT_MODEL;
+  // Auto-index needs the LLM, so offline mode never turns it on. Opt out with
+  // MEMLOOM_AUTO_INDEX=off (or false/0) when every LLM call should be explicit.
+  const autoIndex = !["off", "false", "0"].includes(
+    (process.env.MEMLOOM_AUTO_INDEX ?? "on").toLowerCase(),
+  );
 
   const memloom = apiKey
     ? new Memloom({
@@ -84,6 +89,7 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
           ...(llmModel ? { model: llmModel } : {}),
           ...(chatModel ? { chatModel } : {}),
         }),
+        autoIndex,
       })
     : new Memloom({
         storage,
@@ -159,7 +165,7 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   console.log(`  config     ${configPath()}`);
   if (apiKey) {
     console.log(
-      `  mode       cloud (${embedModel ?? "qwen/qwen3-embedding-8b"} @ ${embedDims ?? 1024} dims${embedProvider ? ` via ${embedProvider}` : ""}, ${llmModel ?? "google/gemini-2.5-flash"})`,
+      `  mode       cloud (${embedModel ?? "qwen/qwen3-embedding-8b"} @ ${embedDims ?? 1024} dims${embedProvider ? ` via ${embedProvider}` : ""}, ${llmModel ?? "google/gemini-2.5-flash"}, auto-index ${autoIndex ? "on" : "off"})`,
     );
   } else {
     console.log(

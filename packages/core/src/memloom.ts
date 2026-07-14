@@ -77,6 +77,15 @@ export interface MemloomConfig {
   llm: LLMProvider;
   /** Run the belief pipeline (dedup + conflict detection) on save. Default true. */
   dedup?: boolean;
+  /**
+   * Index new memories and chunks automatically, in the background, shortly after a
+   * save/ingest, so the entity arm of recall works without an explicit `memloom index`.
+   * Debounced (a folder ingest becomes one run) and single-flight. Default false; the
+   * daemon turns it on when an LLM is configured (extraction needs one).
+   */
+  autoIndex?: boolean;
+  /** Debounce window before an auto index run starts. Default 1500ms; tests shrink it. */
+  autoIndexDelayMs?: number;
 }
 
 interface MemoryRow {
@@ -169,12 +178,55 @@ export class Memloom implements MemoryEngine {
   readonly #embedding: EmbeddingProvider;
   readonly #llm: LLMProvider;
   readonly #dedup: boolean;
+  readonly #autoIndex: boolean;
+  readonly #autoIndexDelay: number;
+  #autoIndexTimer: ReturnType<typeof setTimeout> | undefined;
+  #autoIndexRunning = false;
+  #autoIndexAgain = false;
 
   constructor(config: MemloomConfig) {
     this.#storage = config.storage;
     this.#embedding = config.embedding;
     this.#llm = config.llm;
     this.#dedup = config.dedup ?? true;
+    this.#autoIndex = config.autoIndex ?? false;
+    this.#autoIndexDelay = config.autoIndexDelayMs ?? 1500;
+  }
+
+  /**
+   * Auto-index: schedule a background entity-extraction run after a write. Debounced so a
+   * burst of saves (a folder ingest) collapses into one run; single-flight so overlapping
+   * runs never double-process pending rows (a write DURING a run queues one trailing
+   * re-run). Failures are logged, never thrown: the write that triggered this already
+   * succeeded, and failed items stay unindexed for the next run to retry.
+   */
+  #scheduleAutoIndex(owner: string): void {
+    if (!this.#autoIndex) return;
+    clearTimeout(this.#autoIndexTimer);
+    this.#autoIndexTimer = setTimeout(() => void this.#runAutoIndex(owner), this.#autoIndexDelay);
+    // Never hold the process open for a pending background run.
+    this.#autoIndexTimer.unref?.();
+  }
+
+  async #runAutoIndex(owner: string): Promise<void> {
+    if (this.#autoIndexRunning) {
+      this.#autoIndexAgain = true;
+      return;
+    }
+    this.#autoIndexRunning = true;
+    try {
+      await this.index(owner);
+    } catch (err) {
+      console.error(
+        `memloom: auto-index failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      this.#autoIndexRunning = false;
+      if (this.#autoIndexAgain) {
+        this.#autoIndexAgain = false;
+        this.#scheduleAutoIndex(owner);
+      }
+    }
   }
 
   /** The injected dependencies, exposed read-only for host wiring and tests. */
@@ -236,7 +288,9 @@ export class Memloom implements MemoryEngine {
     const file = await extractFile(input.path, (bytes) =>
       createHash("sha256").update(bytes).digest("hex"),
     );
-    return this.#ingestDocument(owner, input.path, file, null);
+    const result = await this.#ingestDocument(owner, input.path, file, null);
+    if (result.outcome !== "unchanged") this.#scheduleAutoIndex(owner);
+    return result;
   }
 
   /**
@@ -290,7 +344,9 @@ export class Memloom implements MemoryEngine {
     const file = await extractBytes(input.bytes, input.filename, (bytes) =>
       createHash("sha256").update(bytes).digest("hex"),
     );
-    return this.#ingestDocument(owner, `upload://${input.filename}`, file, null);
+    const result = await this.#ingestDocument(owner, `upload://${input.filename}`, file, null);
+    if (result.outcome !== "unchanged") this.#scheduleAutoIndex(owner);
+    return result;
   }
 
   /** The files attached to one assistant chat, newest first. */
@@ -533,6 +589,13 @@ export class Memloom implements MemoryEngine {
    * records a conflict for the owner to resolve, and anything else is added.
    */
   async save(input: SaveInput): Promise<SaveResult> {
+    const result = await this.#save(input);
+    // A merge wrote nothing new; every other outcome left an unindexed row behind.
+    if (result.outcome !== "merged") this.#scheduleAutoIndex(input.ownerId ?? SENTINEL_OWNER);
+    return result;
+  }
+
+  async #save(input: SaveInput): Promise<SaveResult> {
     const owner = input.ownerId ?? SENTINEL_OWNER;
     const [embedding] = await this.#embedding.embed([input.content]);
     if (!embedding) throw new Error("memloom: embedding provider returned no vector");
@@ -659,6 +722,7 @@ export class Memloom implements MemoryEngine {
       embedding,
       hash,
     );
+    this.#scheduleAutoIndex(owner); // the new version is a fresh unindexed row
     return { id: childId, rootId: parent.root_id, version: Number(parent.version) + 1 };
   }
 

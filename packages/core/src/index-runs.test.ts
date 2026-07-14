@@ -107,6 +107,79 @@ describe("index run sessions", () => {
     expect(runsAfter[0]?.batchSize).toBe(1);
   });
 
+  it("auto-index: a save triggers a background run; a burst debounces into one", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const m = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+      autoIndex: true,
+      // Wide enough that three sequential PGLite saves always land inside one window.
+      autoIndexDelayMs: 200,
+    });
+    await m.init();
+
+    // Three quick writes: the debounce must collapse them into ONE run.
+    await m.save({ content: "the staging database runs on Postgres" });
+    await m.save({ content: "we cache queries in Redis" });
+    await m.save({ content: "the daily standup is at 9am" });
+
+    // Poll until the background run lands (bounded; the run itself is fast).
+    const deadline = Date.now() + 5000;
+    let runs = await m.listIndexRuns();
+    while ((runs.length === 0 || runs[0]?.status === "running") && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+      runs = await m.listIndexRuns();
+    }
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ trigger: "index", status: "success", batchSize: 3 });
+    expect((await m.graph()).entities.map((e) => e.name).sort()).toEqual(["Postgres", "Redis"]);
+
+    // Nothing left pending: a manual index right after is a no-op (no second run row).
+    expect(await m.index()).toEqual({ indexed: 0, chunksIndexed: 0 });
+    expect(await m.listIndexRuns()).toHaveLength(1);
+  });
+
+  it("auto-index off (the default): a save leaves rows unindexed and no runs", async () => {
+    const { m } = await fresh();
+    await m.save({ content: "the staging database runs on Postgres" });
+    await new Promise((r) => setTimeout(r, 100));
+    expect(await m.listIndexRuns()).toHaveLength(0);
+    expect((await m.graph()).entities).toHaveLength(0);
+  });
+
+  it("auto-index failures never reject the save that scheduled them", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const exploding = new ScriptedLLMProvider(() => {
+      throw new Error("provider exploded");
+    });
+    const m = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: exploding,
+      dedup: false,
+      autoIndex: true,
+      autoIndexDelayMs: 25,
+    });
+    await m.init();
+
+    await expect(
+      m.save({ content: "the staging database runs on Postgres" }),
+    ).resolves.toBeTruthy();
+    const deadline = Date.now() + 5000;
+    let runs = await m.listIndexRuns();
+    while ((runs.length === 0 || runs[0]?.status === "running") && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 25));
+      runs = await m.listIndexRuns();
+    }
+    // The run happened, failed per-item, and the memory stays unindexed for a retry.
+    expect(runs[0]?.status).toBe("error");
+    expect(runs[0]?.itemsFailed).toBe(1);
+  });
+
   it("reindex records a 'rebuild' session", async () => {
     const { m } = await fresh();
     await m.save({ content: "the staging database runs on Postgres" });

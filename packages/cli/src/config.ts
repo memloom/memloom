@@ -34,6 +34,10 @@ const CONFIG_TEMPLATE = `# memloom configuration. The daemon (\`memloom serve\`)
 # Preferred OpenRouter host for embeddings (latency varies a lot between hosts of the same
 # model; nebius is the fast one for the default model and is used automatically):
 # OPENROUTER_EMBED_PROVIDER=nebius
+
+# New memories and files are entity-indexed automatically in the background (one LLM call
+# per item, debounced). Set to off to index only via \`memloom index\` / the Console:
+# MEMLOOM_AUTO_INDEX=on
 `;
 
 /** Create the home + a commented config template if missing. Returns the config path. */

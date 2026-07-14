@@ -37,9 +37,13 @@ Only **active** memories and edges appear; stale versions and reverted resolutio
 
 ## How edges get made: `memloom index`
 
-Indexing is a separate, explicit step: save and ingest stay fast, and you pay the LLM cost
-when you choose. Extraction is **schema-constrained and precision-first**: it would rather
-miss an entity than add a wrong one.
+Indexing runs automatically: a few seconds after you save a memory or add a file, the
+daemon extracts entities in the background (debounced, so a folder ingest becomes one
+run), and the runs show up in the Console like any other. Saves and ingests stay fast
+because the LLM work never blocks them. Set `MEMLOOM_AUTO_INDEX=off` in the config to
+make indexing explicit again (`memloom index`, or the Console); offline mode has no
+auto-indexing since extraction needs the LLM. Extraction is **schema-constrained and
+precision-first**: it would rather miss an entity than add a wrong one.
 
 1. Every unindexed memory and context chunk goes to the LLM with an extraction prompt built
    from the graph schema: a **closed vocabulary of 8 entity types** (`person`,

@@ -28,7 +28,16 @@ OPENROUTER_EMBED_MODEL=qwen/qwen3-embedding-8b
 OPENROUTER_EMBED_DIMS=1024          # Matryoshka truncation from the native 4096
 OPENROUTER_EMBED_PROVIDER=nebius    # preferred OpenRouter host for embeddings
 OPENROUTER_LLM_MODEL=google/gemini-2.5-flash
+OPENROUTER_CHAT_MODEL=google/gemini-2.5-flash  # assistant chat; must support tool calling
+MEMLOOM_AUTO_INDEX=on               # background entity extraction after saves/ingests
 ```
+
+<Note>
+`MEMLOOM_AUTO_INDEX` controls the background indexing that runs a few seconds after a
+save or file ingest (one LLM call per new item, debounced into batched runs). Set it to
+`off` if you want every LLM call to be explicit; `memloom index` and the Console still
+work either way. Offline mode never auto-indexes.
+</Note>
 
 <Note>
 `OPENROUTER_EMBED_PROVIDER` exists because embedding latency varies wildly between hosts of
