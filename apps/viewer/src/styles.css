@@ -85,11 +85,13 @@ button {
   flex: none;
 }
 
+/* The wordmark is Inter everywhere memloom is written: docs, landing, here. Weight and
+   tracking match the docs nav logo (Inter 700, tracking-tight). */
 .wordmark {
-  font-family: var(--sans);
+  font-family: "Inter", var(--sans);
   font-weight: 700;
-  font-size: 16px;
-  letter-spacing: -0.02em;
+  font-size: 18px;
+  letter-spacing: -0.025em;
   color: var(--text);
 }
 
@@ -728,9 +730,16 @@ button {
   font-size: 13px;
 }
 
+/* Secondary buttons brighten to white on hover/focus; amber stays reserved for the one
+   primary action per card (btnPrimary keeps its own colors below). */
 .btn:hover:not(:disabled) {
-  border-color: var(--brand);
-  color: var(--brand);
+  border-color: var(--text);
+  color: var(--text);
+}
+
+.btn:focus-visible {
+  outline: none;
+  border-color: var(--text);
 }
 
 .btn:disabled {
@@ -766,9 +775,10 @@ textarea {
 }
 
 input[type="text"]:focus,
-textarea:focus {
+textarea:focus,
+select:focus {
   outline: none;
-  border-color: var(--brand);
+  border-color: var(--text);
 }
 
 textarea {
@@ -1007,8 +1017,10 @@ textarea {
   text-underline-offset: 2px;
 }
 
-.metaAction:hover {
-  color: var(--brand);
+.metaAction:hover,
+.metaAction:focus-visible {
+  color: var(--text);
+  outline: none;
 }
 
 .metaActionDanger,
@@ -1065,13 +1077,15 @@ textarea {
   color: var(--text);
 }
 
+/* On-state is white: a settings switch is a secondary control, amber would read as a
+   primary action. */
 .autoIndexToggleOn .autoIndexTrack {
-  border-color: var(--brand);
+  border-color: var(--text);
 }
 
 .autoIndexToggleOn .autoIndexKnob {
   transform: translateX(12px);
-  background: var(--brand);
+  background: var(--text);
 }
 
 /* ---------- entity management (schema tab) ---------- */
@@ -1111,7 +1125,7 @@ textarea {
 }
 
 .entityFilter:focus {
-  border-color: var(--border-strong);
+  border-color: var(--text);
 }
 
 .entityRenameInput {
@@ -1219,6 +1233,7 @@ textarea {
 .btnDangerArmed {
   border-color: var(--danger);
   color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .chunkList {
@@ -1960,7 +1975,7 @@ textarea {
 }
 
 .chatComposer textarea:focus {
-  border-color: var(--border-strong);
+  border-color: var(--text);
 }
 
 .chatComposerBar {

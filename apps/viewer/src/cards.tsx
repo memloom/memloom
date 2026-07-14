@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, fileToBase64, type Memory, type SaveResult } from "./api";
 
 // Shared action cards: save a memory, recall, ingest a file. Used by the Console (both,
@@ -170,7 +170,19 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // With auto-index on, "run index" would be stale advice: extraction is already queued.
+  const [autoIndexOn, setAutoIndexOn] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const indexHint = autoIndexOn
+    ? "Entities are being extracted in the background."
+    : "Run index to extract entities.";
+
+  useEffect(() => {
+    api
+      .autoIndex()
+      .then((r) => setAutoIndexOn(r.enabled))
+      .catch(() => {});
+  }, []);
 
   // Path-based ingest (link buttons + the text field): the daemon reads its own disk, so
   // the document keeps a real path: "open file" works, re-adding detects changes, and
@@ -185,10 +197,10 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
         r.documents !== undefined
           ? `ingested ${r.documents} ${r.documents === 1 ? "file" : "files"}` +
               `${r.unchanged ? ` (${r.unchanged} unchanged)` : ""} · ${r.chunks} chunks. ` +
-              "Run index to extract entities."
+              indexHint
           : r.outcome === "unchanged"
             ? `"${r.title}" is unchanged, nothing to do`
-            : `${r.outcome} "${r.title}" · ${r.chunks} chunks. Run index to extract entities.`,
+            : `${r.outcome} "${r.title}" · ${r.chunks} chunks. ${indexHint}`,
       );
       setPath("");
       onAdded();
@@ -220,7 +232,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
     setNotice(
       `linked ${files} ${files === 1 ? "file" : "files"}` +
         `${unchanged ? ` (${unchanged} unchanged)` : ""} · ${chunks} chunks. ` +
-        "Run index to extract entities.",
+        indexHint,
     );
     if (failures.length > 0) setError(failures.join("; "));
     setPath("");
@@ -277,7 +289,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
       `uploaded ${added} ${added === 1 ? "file" : "files"}` +
         `${unchanged ? ` (${unchanged} unchanged)` : ""}` +
         `${skipped ? ` (${skipped} unsupported skipped)` : ""} · ${chunks} chunks. ` +
-        "Run index to extract entities.",
+        indexHint,
     );
     if (failures.length > 0) setError(failures.join("; "));
     setBusy(false);
