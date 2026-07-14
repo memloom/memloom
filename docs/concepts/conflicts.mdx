@@ -1,6 +1,6 @@
 ---
 title: "Conflicts (human-in-the-loop)"
-description: "Contradictions are kept, surfaced, and resolved by you — reversibly"
+description: "Contradictions are kept, surfaced, and resolved by you, reversibly"
 ---
 
 ## The stance
@@ -15,18 +15,18 @@ is auto-overwritten; nothing is lost while the conflict is pending.
 
 On every save (with dedup enabled), memloom:
 
-1. Short-circuits exact duplicates by content hash — no LLM involved.
+1. Short-circuits exact duplicates by content hash (no LLM involved).
 2. Finds up to 5 existing active memories with cosine similarity ≥ 0.5 to the incoming one.
 3. Asks the LLM to classify each candidate's relation to the incoming memory:
 
 | Relation | Meaning | What happens |
 | --- | --- | --- |
 | `identical` | The same fact restated | New **version** of the existing belief |
-| `complementary` | Related, but both can be true | Both coexist — just added |
+| `complementary` | Related, but both can be true | Both coexist; the new one is added |
 | `contradictory` | They cannot both be true | **Conflict recorded**, both stay active |
 
 The conflict record stores the incoming memory, every contradicting candidate, and the
-classifier's stated *reason* — so when you look at it later you see why it was flagged.
+classifier's stated *reason*, so when you look at it later you see why it was flagged.
 
 ## Resolving
 

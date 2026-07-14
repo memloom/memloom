@@ -4,7 +4,7 @@ info:
   version: 0.1.0
   description: |
     The HTTP API served by the `memloom serve` daemon on your machine. The CLI, the MCP server,
-    and the viewer all route through this API — the daemon is the single owner of the store, so
+    and the viewer all route through this API. The daemon is the single owner of the store, so
     every client shares one consistent view of your memories.
 
     No authentication: the daemon binds to `127.0.0.1` only and is reachable solely from your
@@ -34,8 +34,8 @@ paths:
       summary: Save a memory
       description: |
         Save a memory through the belief pipeline: exact-duplicate detection, semantic dedup, and
-        contradiction detection. Instead of overwriting, a contradiction keeps **both** memories
-        active and returns `outcome: conflict` with a `conflictId` for you to resolve.
+        contradiction detection. A contradiction keeps **both** memories active and returns
+        `outcome: conflict` with a `conflictId` for you to resolve. Nothing is overwritten.
 
         In offline mode (no `OPENROUTER_API_KEY`) dedup is off and every save is `added`.
       operationId: saveMemory
@@ -61,8 +61,8 @@ paths:
       summary: Recall memories
       description: |
         Hybrid retrieval over active memories: vector similarity + exact keyword + entity match,
-        fused with reciprocal-rank fusion. Trust the result **order** (`rrfScore` is rank-based
-        and small by design, ~0.03 max); `similarity` is the cosine meaning-signal alone.
+        fused with reciprocal-rank fusion. Results are ordered by `rrfScore`, which is rank-based
+        and small by design (about 0.03 max). `similarity` is the plain cosine similarity score.
       operationId: queryMemory
       requestBody:
         required: true
@@ -100,8 +100,8 @@ paths:
     get:
       summary: List all active memories
       description: |
-        Every active memory, newest first — the browsing counterpart to query-driven recall.
-        Stale (superseded) memories are excluded.
+        Every active memory, newest first. Use this to browse the store; use /memory/query
+        for relevance-ranked recall. Stale (superseded) memories are excluded.
       operationId: listMemories
       responses:
         "200":
@@ -174,9 +174,9 @@ paths:
     post:
       summary: Rebuild the graph from scratch
       description: |
-        Wipes every extracted artifact — all entities, their mention edges, and all typed
-        entity-to-entity edges — then re-runs indexing over everything. Belief edges
-        (replaces, distinct) are never touched. The recovery path when an older extraction
+        Wipes every extracted artifact (all entities, their mention edges, and all typed
+        entity-to-entity edges), then re-runs indexing over everything. Belief edges
+        (replaces, distinct) are never touched. Use it to recover when an older extraction
         pipeline polluted the graph.
       operationId: reindexMemories
       requestBody:
@@ -269,7 +269,7 @@ paths:
           schema: { type: string, format: uuid }
       responses:
         "200":
-          description: Events oldest-first (reads like a terminal).
+          description: Events, oldest first.
           content:
             application\json:
               schema:
@@ -304,7 +304,7 @@ paths:
     get:
       summary: The graph schema registry with live counts
       description: |
-        The vocabularies the indexer extracts against — entity types and typed-relationship
+        The vocabularies the indexer extracts against: entity types and typed-relationship
         predicates as registry rows (tier system/user, status active/disabled), edge
         relations from the engine, and the LLM proposal review queue (names the extractor
         wanted, with occurrence counts).
@@ -415,9 +415,9 @@ paths:
       description: |
         Permanently remove a vocabulary entry. Only **disabled user-tier** entries qualify:
         built-in entries are re-seeded by name on the next run (a delete would bring them
-        back active), so disable is their only off-switch, and proposals are approved or
-        dismissed instead. Entities already extracted under the deleted type stay in the
-        graph.
+        back active), so disabling is the only way to turn them off, and proposals are
+        approved or dismissed instead. Entities already extracted under the deleted type
+        stay in the graph.
       operationId: deleteSchemaEntry
       parameters:
         - name: id
@@ -483,8 +483,8 @@ paths:
       summary: List entities with usage counts
       description: |
         Every extracted entity with its usage: active mention edges, distinct memories, and
-        distinct documents that mention it. Most-mentioned first. The management counterpart
-        to the graph view.
+        distinct documents that mention it. Most-mentioned first. Use this list to manage
+        entities; /memory/graph shows the same data as a graph.
       operationId: listEntities
       responses:
         "200":
@@ -502,9 +502,9 @@ paths:
     patch:
       summary: Rename or retype an entity
       description: |
-        A rename re-embeds the entity (the vector follows the name) and is refused with 409
-        when another entity already owns that name key; merge instead. A retype must name
-        an active vocabulary type.
+        A rename re-embeds the entity, since the embedding is computed from the name. It is
+        refused with 409 when another entity already owns that name key; use merge instead.
+        A retype must name an active vocabulary type.
       operationId: updateEntity
       parameters:
         - name: id
@@ -570,8 +570,8 @@ paths:
       description: |
         Fold this entity into a surviving one: every mention and typed relationship is
         repointed to the target (would-be duplicates and self-loops are dropped), then this
-        entity is deleted. The survivor keeps its own name and type. The fix for
-        near-duplicates automatic resolution could not fold.
+        entity is deleted. The survivor keeps its own name and type. Use it for
+        near-duplicates that automatic resolution could not fold.
       operationId: mergeEntity
       parameters:
         - name: id
@@ -609,9 +609,9 @@ paths:
     get:
       summary: Get the memory graph
       description: |
-        One graph, two granularities: active memories, extracted entities, and context
-        documents as nodes, with the edges between them. Chunk-level mention edges are rolled
-        up to one weighted document -> entity edge, so documents stay single nodes.
+        Returns active memories, extracted entities, and context documents as nodes, with
+        the edges between them. Chunk-level mention edges are rolled up to one weighted
+        document -> entity edge, so documents stay single nodes.
       operationId: getGraph
       responses:
         "200":
@@ -642,7 +642,8 @@ paths:
       summary: Resolve a conflict
       description: |
         Apply one of the four human-in-the-loop resolutions. Every resolution is non-destructive
-        (losers go `stale`, never deleted) and reversible via the revert endpoint.
+        and reversible via the revert endpoint: losing memories are marked `stale` and kept
+        in the store.
       operationId: resolveConflict
       parameters:
         - name: id
@@ -673,7 +674,7 @@ paths:
   /memory/conflicts/{id}/revert:
     post:
       summary: Revert a resolution
-      description: Undo a previous resolution — staled memories come back to active and the conflict returns to the pending list.
+      description: Undo a previous resolution. Staled memories come back to active and the conflict returns to the pending list.
       operationId: revertConflict
       parameters:
         - name: id
@@ -697,7 +698,7 @@ paths:
       summary: Ingest a file as context
       description: |
         Extract, chunk, embed, and store a .md/.txt/.pdf file from the daemon's machine.
-        Documents are **mirrors** of files: re-adding an unchanged file is a no-op
+        A document mirrors its file: re-adding an unchanged file is a no-op
         (`unchanged`), a changed file replaces its chunks (`updated`). Markdown chunks carry
         their heading breadcrumb; PDF chunks keep their page number. Chunks surface in normal
         `/memory/query` results with a `source`.
@@ -828,8 +829,9 @@ paths:
       summary: Open the source file on the daemon's machine
       description: |
         Opens the document's file with the OS default application (what the viewer's
-        "Open file" button calls). Only ingested documents can be opened — the id lookup is
-        the gate, so no arbitrary path ever reaches the opener.
+        "Open file" button calls). Only ingested documents can be opened: the path is read
+        from the document row looked up by id, so a client can never supply an arbitrary
+        path to open.
       operationId: openContextDocument
       parameters:
         - name: id
@@ -856,9 +858,9 @@ paths:
     post:
       summary: Upload file bytes as a document
       description: |
-        Ingest a file whose bytes come from the client (the viewer's Upload button uses
-        this; a browser file dialog yields bytes, never paths). The document is
-        first-class: listed, graphed, indexed. Its provenance is `upload://<filename>`,
+        Ingest a file whose bytes come from the client. The viewer's Upload button uses
+        this, because a browser file dialog yields file bytes without a usable path. The
+        document is listed, graphed, and indexed like any other. Its provenance is `upload://<filename>`,
         so re-uploading the same name replaces it and identical bytes are a no-op. Unlike
         path-linked documents there is no disk file to open or change-track; prefer
         /context/add when the daemon can read the file itself. Body limit ~48MB
@@ -1225,7 +1227,7 @@ components:
     StoreLocked:
       description: |
         The store is held by a connected Postgres wire client (Drizzle Studio, psql). PGLite is
-        single-connection — disconnect that client and retry. All `/memory/*` endpoints can
+        single-connection; disconnect that client and retry. All `/memory/*` endpoints can
         return this.
       content:
         application/json:
@@ -1234,7 +1236,7 @@ components:
             properties:
               error:
                 type: string
-                example: the store is locked by a connected Postgres wire client (Drizzle Studio, psql, a DB panel). PGLite is single-connection — disconnect that client and retry.
+                example: the store is locked by a connected Postgres wire client (Drizzle Studio, psql, a DB panel). PGLite is single-connection; disconnect that client and retry.
     ValidationError:
       description: The request body failed validation. `issues` names each offending field.
       content:
@@ -1275,10 +1277,10 @@ components:
           default: fact
           description: >-
             The kind of memory (defaults to `fact`):
-            `fact` — a stable truth about the world or the user;
-            `preference` — how the user likes things done;
-            `episode` — a time-bound event or decision;
-            `procedure` — reusable how-to steps.
+            `fact` is a stable truth about the world or the user;
+            `preference` is how the user likes things done;
+            `episode` is a time-bound event or decision;
+            `procedure` is reusable how-to steps.
           example: fact
         ownerId:
           type: string
@@ -1296,7 +1298,7 @@ components:
           description: What the belief pipeline did.
         conflictId:
           type: string
-          description: Present when `outcome` is `conflict` — resolve it via the conflicts endpoints.
+          description: Present when `outcome` is `conflict`; resolve it via the conflicts endpoints.
     Memory:
       type: object
       properties:
@@ -1333,7 +1335,7 @@ components:
           example: 0.85
         rrfScore:
           type: number
-          description: Fused reciprocal-rank-fusion score. Rank-based and small by design — use it for ordering, not as a percentage.
+          description: Fused reciprocal-rank-fusion score. Rank-based and small by design. Use it for ordering; it is not a percentage.
           example: 0.0328
         kind:
           type: string
@@ -1341,7 +1343,7 @@ components:
           description: Whether this result is a saved memory or a chunk of an ingested context document.
         source:
           type: object
-          description: Present on context-chunk results — where the text came from.
+          description: Present on context-chunk results; describes where the text came from.
           properties:
             documentId:
               type: string
@@ -1468,7 +1470,7 @@ components:
                 example: technology
         documents:
           type: array
-          description: Ingested context documents. The display granularity for context — chunk mentions roll up here.
+          description: Ingested context documents. Chunk-level mentions roll up to these nodes.
           items:
             type: object
             properties:
@@ -1494,7 +1496,7 @@ components:
                 example: mention
               weight:
                 type: integer
-                description: On document -> entity edges — how many of the document's chunks mention the entity.
+                description: On document -> entity edges, how many of the document's chunks mention the entity.
                 example: 3
     SchemaEntry:
       type: object

@@ -77,6 +77,6 @@ path-linked provenance and the reason linking is the primary add flow.
   short-circuit is impossible (bytes really changed) - consider hashing extracted
   text instead of raw bytes for PDFs.
 - Watch-set scale: chokidar handles thousands of files, but linked-folder roots with
-  huge trees need the depth/skip rules enforced at watch time, not just add time.
+  huge trees need the depth/skip rules enforced at watch time as well as add time.
 - Windows: chokidar's fsevents equivalent is fine, but paths need normalization
   (case-insensitive drive letters) before comparing against stored document paths.

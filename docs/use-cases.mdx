@@ -5,16 +5,16 @@ description: "What people actually do with a local memory engine"
 
 ## Persistent memory for coding agents
 
-The founding use case. Register memloom as an MCP server in Claude Code, Claude Desktop, or
+This is the use case memloom was built for. Register memloom as an MCP server in Claude Code, Claude Desktop, or
 Cursor, and the agent gets `save_memory` / `recall_memory` tools backed by *your* store:
 
-- The agent saves what it learns — *"deploys go through `scripts/release.sh`, never manual"*
-  (`procedure`), *"user prefers colocated tests"* (`preference`) — and recalls it in the next
-  session, the next week, the next tool.
+- The agent saves what it learns, like *"deploys go through `scripts/release.sh`, never manual"*
+  (`procedure`) or *"user prefers colocated tests"* (`preference`), and recalls it in later
+  sessions.
 - Because every agent talks to the **same daemon**, memory saved in Claude Code is there when
-  you switch to Cursor. The memory belongs to you, not to a vendor's session.
+  you switch to Cursor. The memory belongs to you. It is not tied to a vendor's session.
 - Dedup means agents can save enthusiastically without flooding the store, and contradiction
-  detection means a confused agent can't silently overwrite a fact — it opens a
+  detection means a confused agent can't silently overwrite a fact; it opens a
   [conflict](/concepts/conflicts) you'll see.
 
 ## A searchable second brain over your files
@@ -28,32 +28,32 @@ memloom recall "definicja granicy funkcji"
             from analiza-notatki.pdf › GRANICA FUNKCJI > 2. DEFINICJA 2. (p. 1)
 ```
 
-The outline chunker was built for exactly this material — lecture notes and exercise sheets
-where structure is ALL-CAPS titles and numbered definitions, not markdown. One definition =
-one chunk, so recall returns the definition, not a page-sized blob around it.
+The outline chunker was built for exactly this material: lecture notes and exercise sheets
+where structure is ALL-CAPS titles and numbered definitions rather than markdown. One definition =
+one chunk, so recall returns the definition itself rather than a page-sized blob around it.
 
 ## Team and project knowledge that survives the chat
 
 Conventions, decisions, and tribal knowledge normally live in chat scrollback. Saved as typed
 memories, they become queryable:
 
-- `episode` — *decided on 2026-07-02 to keep PGLite as the default tier* — with
+- `episode`: *decided on 2026-07-02 to keep PGLite as the default tier*, with
   [version history](/concepts/memory-types#walking-history) when the decision changes.
-- `procedure` — runbooks the whole team's agents can recall mid-incident.
+- `procedure`: runbooks the whole team's agents can recall mid-incident.
 - Ingested design docs connect to those memories [through the graph](/concepts/graph): the
   entities a decision mentions link it to the documents that discuss them.
 
 ## Seeing what your agents believe
 
 The viewer (`memloom ui`) is the audit surface: browse every memory by type, watch the graph
-of what connects to what, read a document chunk by chunk, and — most importantly — review the
+of what connects to what, read a document chunk by chunk, and, most importantly, review the
 **conflicts queue**, where contradictory beliefs wait for a human decision instead of being
-silently resolved. When you disagree with what an agent saved, edit it (`memloom update`) —
+silently resolved. When you disagree with what an agent saved, edit it (`memloom update`);
 the old belief stays in history, so the correction is itself auditable.
 
 ## Debugging and poking at the data
 
 The daemon speaks the Postgres wire protocol (`postgresql://postgres@127.0.0.1:54329/postgres`),
-so Drizzle Studio, psql, or any DB tool can inspect the raw tables — the memories, the edges,
+so Drizzle Studio, psql, or any DB tool can inspect the raw tables: the memories, the edges,
 the RRF inputs. Just disconnect when you're done: PGLite is single-connection, and the API
-politely 503s while a DB tool holds the lock.
+503s while a DB tool holds the lock.

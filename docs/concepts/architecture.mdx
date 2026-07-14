@@ -5,10 +5,9 @@ description: "One daemon owns the store; everything else is a client"
 
 ## The single-owner model
 
-memloom's store is PGLite — real Postgres compiled to WASM, embedded in the daemon process,
-with data in a plain folder. PGLite allows exactly **one** connection, so the entire
-architecture follows from one rule: **`memloom serve` is the single owner of the store, and
-every other surface is a client of the daemon.**
+memloom's store is PGLite: real Postgres compiled to WASM, embedded in the daemon process,
+with data in a plain folder. PGLite allows exactly **one** connection, so **`memloom serve`
+is the single owner of the store, and every other surface is a client of the daemon.**
 
 ```mermaid
 flowchart LR
@@ -66,19 +65,19 @@ interface MemoryEngine {
 
 Two implementations exist: `Memloom` (the real engine, in-process) and `HttpMemloomClient`
 (the same interface over HTTP). The CLI and MCP use the HTTP client, which is why many
-clients can share one store safely — they were never holding the store in the first place.
+clients can share one store safely: they were never holding the store in the first place.
 
 ## Storage tiers
 
 Storage is an adapter interface (`query`, `exec`, `tx`), with two implementations:
 
-- **`PgliteAdapter`** — the embedded tier. What the daemon uses. Zero setup, data in a folder.
-- **`PgAdapter`** — a real Postgres server over the wire (Docker, Supabase, any managed
+- **`PgliteAdapter`**: the embedded tier. What the daemon uses. Zero setup, data in a folder.
+- **`PgAdapter`**: a real Postgres server over the wire (Docker, Supabase, any managed
   Postgres with pgvector). Available programmatically today; see
   [Self-hosting](/guides/self-hosting).
 
 The schema is identical in both: memloom's migrations are plain SQL and its one stored
-function (`memloom_fuse`) is `LANGUAGE sql`, not plpgsql, precisely so it runs identically on
+function (`memloom_fuse`) is `LANGUAGE sql` rather than plpgsql, so it runs identically on
 PGLite and server Postgres.
 
 ## Design rules worth knowing
@@ -87,14 +86,14 @@ PGLite and server Postgres.
   the only place environment/config is read, then everything is passed in as constructor
   arguments. This is why the whole engine is testable without a network.
 - **The edge table has no foreign keys.** `memory_edges` links memories, entities, *and*
-  context chunks in one table — different node tables, so FKs are impossible by design. The
+  context chunks in one table. Those are different node tables, so FKs are impossible by design. The
   trade: cascade deletes can't clean edges, so every chunk/memory removal path deletes its
   edges explicitly.
 - **Nothing is destroyed.** Superseded memories go `status = 'stale'`, edges deactivate
   (`active = false`) rather than being deleted. This is what makes conflict resolution and
   versioning reversible.
 - **Migrations are ordered and idempotent.** `Memloom.init()` runs pending migrations, then
-  verifies the store's **embedding fingerprint** — a store embedded with one model refuses to
+  verifies the store's **embedding fingerprint**: a store embedded with one model refuses to
   open under another, because mixed vector spaces make similarity silently meaningless.
 
 ## Data layout
@@ -102,5 +101,5 @@ PGLite and server Postgres.
 ```
 ~/.memloom/            (override with MEMLOOM_HOME)
 ├── config.env         settings the daemon reads at startup
-└── data/              the Postgres data directory — your memory. Copy it = backup.
+└── data/              the Postgres data directory, your memory. Copy it = backup.
 ```

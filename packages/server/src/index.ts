@@ -362,7 +362,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         {
           error:
             "the store is locked by a connected Postgres wire client (Drizzle Studio, psql, a DB panel). " +
-            "PGLite is single-connection — disconnect that client and retry.",
+            "PGLite is single-connection; disconnect that client and retry.",
         },
         503,
       );

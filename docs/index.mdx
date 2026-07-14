@@ -4,8 +4,8 @@ description: "A memory engine you own, running on your machine"
 ---
 
 memloom is a local-first memory engine for AI agents: one Postgres-native store on your machine,
-shared by every client — CLI, MCP (Claude Desktop, Claude Code, Cursor, …), a browser viewer, and
-plain HTTP.
+shared by every client. That means the CLI, MCP (Claude Desktop, Claude Code, Cursor, …), a
+browser viewer, and plain HTTP.
 
 This page gets you running. For how the engine actually works, start with
 [Features](/features), then the concept pages: [Architecture](/concepts/architecture),
@@ -26,7 +26,7 @@ dedup, and contradiction detection.
 
 ## Memory types
 
-Every saved memory has a `memoryType` — the same taxonomy across every client, so a memory means
+Every saved memory has a `memoryType`: the same taxonomy across every client, so a memory means
 the same thing whether the CLI, MCP, or a raw HTTP call wrote it. Pass it on save (defaults to
 `fact`):
 
@@ -48,26 +48,26 @@ memloom recall "how do we restart the ingest worker"
 ```
 
 Files are chunked structure-aware, embedded, and fused into the **same recall** as memories.
-Markdown splits at headings; plain text and PDFs split along their outline — ALL-CAPS title
-lines and numbered points (`2. DEFINICJA 2. …`) — one point per chunk, so a chunk is exactly
+Markdown splits at headings; plain text and PDFs split along their outline: ALL-CAPS title
+lines and numbered points (`2. DEFINICJA 2. …`). One point per chunk, so a chunk is exactly
 one definition, theorem, or exercise. Each chunk carries its breadcrumb and PDFs keep page
 numbers, so results from files always say where they came from:
 `from notes.pdf › GRANICA FUNKCJI > 2. DEFINICJA 2. (p. 1)`.
 
-PDF text is rebuilt from glyph geometry, not stream order — equation-heavy PDFs (Word/LaTeX
-math) come out in reading order, and 2-up print layouts (the same content twice, side by
+PDF text is rebuilt from glyph geometry rather than stream order, so equation-heavy PDFs
+(Word/LaTeX math) come out in reading order, and 2-up print layouts (the same content twice, side by
 side) are de-duplicated. Symbols from unmapped fonts (∞, ∈, ≠) can't be recovered from the
 text layer; that would need OCR, which is out of scope.
 
 Documents are mirrors: re-adding an unchanged file is a no-op, a changed file replaces its
-chunks — and when memloom's extraction pipeline improves, the pipeline version bumps and
+chunks. When memloom's extraction pipeline improves, the pipeline version bumps and
 `context add` re-ingests files whose bytes didn't change. `memloom context list` /
 `memloom context remove <id>` manage them.
 
 Context joins the graph too: `memloom index` extracts entities from chunks as well as
 memories, so documents appear in the viewer's graph connected to your memories through the
-entities they share — and recall's entity arm can surface document sections by entity, not
-just by wording. The graph shows one node per **document** (chunk-level mentions roll up into
+entities they share. Recall's entity arm can surface document sections by entity as well as
+by wording. The graph shows one node per **document** (chunk-level mentions roll up into
 a weighted document → entity edge), so a 300-page PDF stays one node.
 
 ## The daemon
@@ -76,8 +76,8 @@ a weighted document → entity edge), so a 300-page PDF stays one node.
 
 | Surface | Where |
 | --- | --- |
-| HTTP API | `http://127.0.0.1:4319` — what the CLI, MCP, and this docs playground call |
-| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres` — for Drizzle Studio, psql, TablePlus |
+| HTTP API | `http://127.0.0.1:4319`: what the CLI, MCP, and this docs playground call |
+| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres`: for Drizzle Studio, psql, TablePlus |
 | Data | `~/.memloom/data` |
 | Config | `~/.memloom/config.env` |
 
@@ -105,13 +105,13 @@ OPENROUTER_LLM_MODEL=google/gemini-2.5-flash     # default
 
 <Note>
 Offline and cloud embeddings live in different vector spaces. If you switch modes, start from a
-fresh store (delete `~/.memloom/data`) — mixed embeddings make similarity meaningless.
+fresh store (delete `~/.memloom/data`); mixed embeddings make similarity meaningless.
 </Note>
 
 ## Testing the API by hand
 
 With the daemon running, use the interactive playground on any endpoint page in the
-[API Reference](/api-reference) — requests go straight to `http://127.0.0.1:4319`. Or curl:
+[API Reference](/api-reference); requests go straight to `http://127.0.0.1:4319`. Or curl:
 
 ```bash
 curl -s http://127.0.0.1:4319/memory/query \

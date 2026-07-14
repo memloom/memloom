@@ -6,9 +6,9 @@ description: "One graph over memories and context, at two granularities"
 ## One graph, two granularities
 
 Memories and ingested documents live in **one** graph, connected through the entities they
-mention. That's the whole design: your saved belief *"the ingest worker restarts via
+mention. Your saved belief *"the ingest worker restarts via
 systemd"* and the ops runbook you ingested both mention the entity **ingest worker**, so the
-graph puts them two hops apart — and recall's entity arm can travel the same road.
+graph puts them two hops apart, and recall's entity arm follows the same edges.
 
 The two granularities:
 
@@ -16,7 +16,7 @@ The two granularities:
   engine knows *which section* of a document mentions what.
 - **Display projects at document granularity.** The graph API rolls chunk-level edges up
   into one weighted `document → entity` edge (weight = how many chunks mention the entity),
-  so a 300-page PDF is one node, not a 300-node hairball.
+  so a 300-page PDF shows as one node instead of 300.
 
 ## Node and edge types
 
@@ -31,39 +31,39 @@ The two granularities:
 | --- | --- |
 | `mention` | A memory or chunk mentions an entity (document → entity edges carry a `weight`) |
 | `replaces` | Version lineage: this memory superseded that one |
-| `distinct` | A resolved *keep both* — these two are related but deliberately separate |
+| `distinct` | A resolved *keep both*: these two are related but deliberately separate |
 
 Only **active** memories and edges appear; stale versions and reverted resolutions drop out.
 
 ## How edges get made: `memloom index`
 
-Indexing is a separate, explicit step — save and ingest stay fast, and you pay the LLM cost
-when you choose. Extraction is **schema-constrained and precision-first**: a clean graph of
-real things beats a complete one full of noise.
+Indexing is a separate, explicit step: save and ingest stay fast, and you pay the LLM cost
+when you choose. Extraction is **schema-constrained and precision-first**: it would rather
+miss an entity than add a wrong one.
 
 1. Every unindexed memory and context chunk goes to the LLM with an extraction prompt built
-   from the graph schema — a **closed vocabulary of 8 entity types** (`person`,
-   `organization`, `project`, `tool`, `technology`, `place`, `event`, `concept` — the last
+   from the graph schema: a **closed vocabulary of 8 entity types** (`person`,
+   `organization`, `project`, `tool`, `technology`, `place`, `event`, and `concept`, which
    is explicitly a last resort). The prompt instructs the model to abstain when in doubt and
    caps output at the 5 most salient entities per text.
-2. The model is not trusted: a deterministic validator drops anything with an out-of-vocab
+2. A deterministic validator checks every extraction: it drops anything with an out-of-vocab
    type, anything shaped like a math expression (`f(x) = x^3 - 2x^2`), sentence fragments
    (over 40 characters or 5 words), and names with fewer than two letters.
-3. **Formula-dominated chunks skip the LLM entirely** — a cheap math-density check keeps
-   exercise sheets from becoming graphs of equations (those runs log `skipped: math-dense`).
+3. **Formula-dominated chunks skip the LLM entirely**: a cheap math-density check keeps
+   math worksheets from becoming graphs of equations (those runs log `skipped: math-dense`).
 4. Surviving entities resolve to a node by **name key**: casefolded, trimmed, a leading `@`
    stripped, whitespace collapsed. `@memloom/core` in one document and `memloom/core` in
-   another land on the same node, and the first-seen spelling and type stay (the type is an
-   attribute of the node, not part of its identity, so an extractor that says `technology`
+   another land on the same node, and the first-seen spelling and type stay (the node's
+   identity is its name key alone; type is an attribute, so an extractor that says `technology`
    today and `project` tomorrow cannot fork the node). The prompt also lists the names
    already in your graph, so the model reuses canonical spellings instead of minting
    variants. A `mention` edge links the source to each resolved entity.
 5. The same call also extracts **typed relationships between entities**, classified against a
    closed predicate vocabulary: `uses`, `depends_on`, `part_of`, `created_by`, `works_on`,
    `works_at`, `located_in`, `attended`. Out-of-vocab predicates and claims below 0.7
-   confidence are quarantined as plain `mention` edges instead of being trusted.
+   confidence are quarantined as plain `mention` edges.
 
-Indexing is idempotent (rows are stamped `indexed_at`) and incremental — re-running it only
+Indexing is idempotent (rows are stamped `indexed_at`) and incremental: re-running it only
 touches what's new. One LLM call per row, so a large PDF makes an index run proportionally
 longer. `GET /memory/schema` reports the vocabularies with live usage counts.
 
@@ -74,21 +74,21 @@ memloom index --rebuild   # wipes all extracted entities/edges, then re-runs ind
 ```
 
 Belief edges (`replaces`, `distinct`) are never touched by a rebuild. Note that rebuilding
-needs the LLM: run it offline and the wipe still happens — the store stays consistent
-(everything is simply unindexed), but nothing is re-extracted until a key is configured.
+needs the LLM: run it offline and the wipe still happens. The store stays consistent
+(everything is unindexed), but nothing is re-extracted until a key is configured.
 
 Indexed entities also feed retrieval: the entity arm of hybrid recall anchors a query to
-entities and pulls in whatever mentions them — including document sections whose wording
+entities and pulls in whatever mentions them, including document sections whose wording
 shares nothing with your query. See [Retrieval](/concepts/retrieval).
 
 ## The schema is yours
 
 The vocabularies live in a registry (the viewer's **schema** tab, `GET /memory/schema`,
-`memloom schema` in the CLI), not in code you have to fork:
+`memloom schema` in the CLI). There is no code to fork:
 
 - **Add your own.** A user-tier entity type or predicate (say, `medication`) joins the
   prompt on the next index run. The description you write is the extraction rule, so write
-  it like one: "a named drug or supplement", not "medications".
+  it like one: "a named drug or supplement" rather than "medications".
 - **Proposals.** When the extractor confidently wants a type or predicate the schema lacks,
   the name is held out of the graph and queued for review. Approve it and it becomes a
   user entry; dismiss it and the prompt blocklists the name from ever being proposed again.
@@ -96,8 +96,8 @@ The vocabularies live in a registry (the viewer's **schema** tab, `GET /memory/s
 - **Disable** anything, built-in or yours. Disabled entries leave the prompt; entities
   already extracted under them stay in the graph.
 - **Delete** a disabled user entry when you're sure. Built-ins can only be disabled: the
-  system tier is re-seeded by name, so a deleted built-in would come back active, which is
-  the opposite of what you wanted. Proposals are approved or dismissed, never deleted.
+  system tier is re-seeded by name, so a deleted built-in would come back active.
+  Proposals can only be approved or dismissed; there is no delete for them.
 
 ## Managing entities
 

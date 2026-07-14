@@ -6,15 +6,14 @@ description: "Chat with your store: grounded answers, cited sources, any OpenRou
 ## What it is
 
 `memloom ui` has an **assistant** tab: a chat that answers from your memories and your
-ingested files, and shows you exactly which passages it used. It is not a general
-chatbot with your data bolted on. The model is told to answer personal questions only
+ingested files, and shows you exactly which passages it used. The model is told to answer personal questions only
 from what recall returns, to say plainly when your store has nothing on the subject,
 and to never invent memories.
 
 Ask *"what are my plans for today?"* and it searches memories asserted on today's date.
 Ask *"how does the ingest worker restart?"* and it pulls the runbook section you
-ingested last month, answers from it, and cites it. Ask *"what day is it?"* and it just
-answers, because searching your memories for the date would be silly.
+ingested last month, answers from it, and cites it. Ask *"what day is it?"* and it
+answers directly, with no retrieval.
 
 ## How a turn works
 
@@ -31,22 +30,23 @@ One user message runs an agentic loop:
    when the first results look off, capped at three calls, and it cannot repeat a query
    it already made.
 4. The final answer streams in with `[n]` markers after sentences that used passage `n`.
-   Markers pointing at passages that don't exist are stripped server-side, so a citation
-   you can click is a citation that's real.
+   Markers pointing at passages that don't exist are stripped server-side, so every
+   clickable citation points at a real passage.
 
 Every answer carries its **sources**: each passage with its similarity, its type
 (a `fact` memory, a `procedure`, a document section), the exact text the model saw, and
 a jump link that opens the source node in the graph tab.
 
-Retrieved passages are treated as data, not instructions. A document that says "ignore
-your instructions" gets quoted, not obeyed. The assistant has no write tools, so the
+Retrieved passages are treated as data. A document that says "ignore
+your instructions" gets quoted like any other text; the instructions inside it are
+never followed. The assistant has no write tools, so the
 worst a hostile document can do is word an answer badly.
 
 ## Picking the model
 
 The composer's model picker lists every **tool-capable** model on OpenRouter, fetched
 live and grouped by provider, with input/output price per million tokens and the
-context window. Tool-capable is the filter because the whole design rests on native
+context window. The filter is tool-capable because the assistant depends on native
 tool calling: a model that can't call `recall_memory` can't ground itself.
 
 Your choice is remembered in the browser and rides each request; the daemon's
