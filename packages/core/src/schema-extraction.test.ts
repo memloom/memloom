@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildEntityPrompt, isMathDense, mathDensity, parseExtraction } from "./entities.js";
+import {
+  buildEntityPrompt,
+  entityNameKey,
+  isMathDense,
+  mathDensity,
+  parseExtraction,
+} from "./entities.js";
 import { ENTITY_TYPES, PREDICATES } from "./schema.js";
 
 // The deterministic layer of schema-constrained extraction: the prompt never gets to decide
@@ -274,5 +280,27 @@ describe("buildEntityPrompt", () => {
 
     const sourced = buildEntityPrompt("some text", { docTitle: "notes.pdf" });
     expect(sourced).toContain("SOURCE: notes.pdf");
+  });
+
+  it("lists known entities so the model reuses canonical spellings", () => {
+    const prompt = buildEntityPrompt("some text", {
+      knownEntities: ["@memloom/core", "Acme Robotics"],
+    });
+    expect(prompt).toContain("KNOWN ENTITIES");
+    expect(prompt).toContain("@memloom/core, Acme Robotics");
+
+    expect(buildEntityPrompt("some text")).not.toContain("KNOWN ENTITIES");
+    expect(buildEntityPrompt("some text", { knownEntities: [] })).not.toContain("KNOWN ENTITIES");
+  });
+});
+
+describe("entityNameKey", () => {
+  it("folds case, whitespace, and a leading @ into one identity", () => {
+    expect(entityNameKey("@memloom/core")).toBe("memloom/core");
+    expect(entityNameKey("memloom/core")).toBe("memloom/core");
+    expect(entityNameKey("  @Memloom/Core ")).toBe("memloom/core");
+    expect(entityNameKey("Maria  Skłodowska-Curie")).toBe("maria skłodowska-curie");
+    // Only a LEADING @ is identity noise; interior ones are part of the name.
+    expect(entityNameKey("user@example.com")).toBe("user@example.com");
   });
 });

@@ -8,10 +8,15 @@ import type { StorageAdapter } from "./storage.js";
 // event per item, so the Console's log is persistent (survives tab switches, page reloads,
 // daemon restarts) and CLI runs surface in the viewer too.
 
+// Match only the TEXT section — the prompt's KNOWN ENTITIES list would otherwise trip
+// the matcher with names extracted from earlier items.
+const textOf = (prompt: string) => prompt.slice(prompt.indexOf("TEXT:"));
+
 const extractor = new ScriptedLLMProvider((prompt) => {
+  const text = textOf(prompt);
   const entities: Array<{ name: string; type: string }> = [];
-  if (prompt.includes("Postgres")) entities.push({ name: "Postgres", type: "technology" });
-  if (prompt.includes("Redis")) entities.push({ name: "Redis", type: "technology" });
+  if (text.includes("Postgres")) entities.push({ name: "Postgres", type: "technology" });
+  if (text.includes("Redis")) entities.push({ name: "Redis", type: "technology" });
   return JSON.stringify({ entities, relationships: [] });
 });
 
@@ -70,9 +75,10 @@ describe("index run sessions", () => {
 
   it("a failing item is logged, left unindexed for retry, and the run finishes 'warning'", async () => {
     const failing = new ScriptedLLMProvider((prompt) => {
-      if (prompt.includes("Redis")) throw new Error("provider exploded");
+      const text = textOf(prompt);
+      if (text.includes("Redis")) throw new Error("provider exploded");
       return JSON.stringify({
-        entities: prompt.includes("Postgres") ? [{ name: "Postgres", type: "technology" }] : [],
+        entities: text.includes("Postgres") ? [{ name: "Postgres", type: "technology" }] : [],
         relationships: [],
       });
     });

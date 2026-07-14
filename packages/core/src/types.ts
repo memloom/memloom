@@ -123,6 +123,16 @@ export interface Entity {
   entityType: string;
 }
 
+/** An entity with usage counts — the management list in the schema tab. */
+export interface EntityDetail extends Entity {
+  /** Active mention edges pointing at this entity. */
+  mentions: number;
+  /** Distinct active memories that mention it. */
+  memories: number;
+  /** Distinct context documents whose chunks mention it. */
+  documents: number;
+}
+
 export interface GraphMemory {
   id: string;
   canonical: string | null;

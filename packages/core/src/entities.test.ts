@@ -12,12 +12,17 @@ import { PgliteAdapter } from "./pglite-adapter.js";
 // database" maps to Postgres WITHOUT the word appearing, so entity-arm tests can prove
 // retrieval that the keyword/vector arms cannot explain.
 
+// Match only the TEXT section: the prompt now also carries a KNOWN ENTITIES list, so an
+// entity name from an earlier item would otherwise trip the matcher on every later item.
+const textOf = (prompt: string) => prompt.slice(prompt.indexOf("TEXT:"));
+
 const extractor = new ScriptedLLMProvider((prompt) => {
+  const text = textOf(prompt);
   const entities: Array<{ name: string; type: string }> = [];
-  if (prompt.includes("Postgres")) entities.push({ name: "Postgres", type: "technology" });
-  if (prompt.includes("elephant database")) entities.push({ name: "Postgres", type: "technology" });
-  if (prompt.includes("Redis")) entities.push({ name: "Redis", type: "technology" });
-  if (prompt.includes("Fly")) entities.push({ name: "Fly.io", type: "tool" });
+  if (text.includes("Postgres")) entities.push({ name: "Postgres", type: "technology" });
+  if (text.includes("elephant database")) entities.push({ name: "Postgres", type: "technology" });
+  if (text.includes("Redis")) entities.push({ name: "Redis", type: "technology" });
+  if (text.includes("Fly")) entities.push({ name: "Fly.io", type: "tool" });
   return JSON.stringify({ entities, relationships: [] });
 });
 
@@ -460,6 +465,93 @@ describe("entities + indexer", () => {
     const schema = await m.describeSchema();
     expect(schema.entityTypes.find((t) => t.name === "medication")).toBeUndefined();
     await expect(m.deleteSchemaEntry(added.id)).rejects.toThrow(/no schema entry/);
+  });
+
+  it("folds name variants and type forks into the first-seen entity", async () => {
+    const prompts: string[] = [];
+    const forker = new ScriptedLLMProvider((prompt) => {
+      prompts.push(prompt);
+      const text = textOf(prompt);
+      if (text.includes("built the core package")) {
+        return JSON.stringify({
+          entities: [{ name: "@memloom/core", type: "technology" }],
+          relationships: [],
+        });
+      }
+      if (text.includes("shipped the core")) {
+        // Same thing, different spelling AND different type — both must fold.
+        return JSON.stringify({
+          entities: [{ name: "memloom/core", type: "project" }],
+          relationships: [],
+        });
+      }
+      return JSON.stringify({ entities: [], relationships: [] });
+    });
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const m = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: forker,
+      dedup: false,
+    });
+    await m.init();
+
+    await m.save({ content: "built the core package today" });
+    await m.save({ content: "shipped the core to npm" });
+    await m.index();
+
+    const graph = await m.graph();
+    expect(graph.entities).toHaveLength(1);
+    // First-seen spelling and classification win.
+    expect(graph.entities[0]).toMatchObject({ name: "@memloom/core", entityType: "technology" });
+    // Both memories mention the single node.
+    const mentions = graph.edges.filter(
+      (e) => e.to === graph.entities[0]?.id && e.relation === "mention",
+    );
+    expect(mentions).toHaveLength(2);
+    // The second extraction saw the canonical name in its prompt.
+    expect(prompts.at(-1)).toContain("KNOWN ENTITIES");
+    expect(prompts.at(-1)).toContain("@memloom/core");
+  });
+
+  it("entity management: list counts, rename, retype, merge, delete", async () => {
+    const m = await fresh();
+    await m.save({ content: "the staging database runs on Postgres" });
+    await m.save({ content: "we cache queries in Redis" });
+    await m.index();
+    const byName = async (name: string) => (await m.listEntities()).find((e) => e.name === name);
+
+    const postgres = await byName("Postgres");
+    expect(postgres).toMatchObject({ entityType: "technology", mentions: 1, memories: 1 });
+
+    // Rename re-embeds and refuses a name-key collision with another entity.
+    await m.updateEntity(postgres?.id ?? "", { name: "PostgreSQL" });
+    expect(await byName("PostgreSQL")).toBeDefined();
+    const redis = await byName("Redis");
+    await expect(m.updateEntity(redis?.id ?? "", { name: "@postgresql" })).rejects.toThrow(
+      /already exists/,
+    );
+
+    // Retype validates against the active vocabulary.
+    await m.updateEntity(redis?.id ?? "", { entityType: "tool" });
+    expect((await byName("Redis"))?.entityType).toBe("tool");
+    await expect(m.updateEntity(redis?.id ?? "", { entityType: "starship" })).rejects.toThrow(
+      /not an active entity type/,
+    );
+
+    // Merge: Redis folds into PostgreSQL; edges repoint, the source row is gone.
+    const pg = await byName("PostgreSQL");
+    await m.mergeEntities(redis?.id ?? "", pg?.id ?? "");
+    const merged = await m.listEntities();
+    expect(merged).toHaveLength(1);
+    expect(merged[0]).toMatchObject({ name: "PostgreSQL", mentions: 2, memories: 2 });
+
+    // Delete sweeps the edge table.
+    await m.deleteEntity(merged[0]?.id ?? "");
+    expect(await m.listEntities()).toHaveLength(0);
+    expect((await m.graph()).edges.filter((e) => e.relation === "mention")).toHaveLength(0);
+    await expect(m.deleteEntity(merged[0]?.id ?? "")).rejects.toThrow(/no entity/);
   });
 
   it("re-adding a changed file drops stale chunk edges until re-indexed", async () => {

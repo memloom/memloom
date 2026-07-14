@@ -14,8 +14,12 @@ import { createServer } from "./index.js";
 
 // Exercise the HTTP surface end-to-end via Hono's request helper (no network needed).
 
+// Match only the TEXT section — the prompt's KNOWN ENTITIES list would otherwise trip
+// the matcher with names extracted from earlier items.
 const extractor = new ScriptedLLMProvider((prompt) =>
-  prompt.includes("Postgres") ? '[{"name":"Postgres","type":"technology"}]' : "[]",
+  prompt.slice(prompt.indexOf("TEXT:")).includes("Postgres")
+    ? '[{"name":"Postgres","type":"technology"}]'
+    : "[]",
 );
 
 describe("server", () => {
@@ -240,6 +244,48 @@ describe("server", () => {
     expect(schema.entityTypes.find((t) => t.name === "person")?.count).toBe(0);
     expect(schema.relations.find((r) => r.name === "mention")?.count).toBe(1);
     expect(schema.predicates.map((p) => p.name)).toContain("works_on");
+  });
+
+  it("entity routes: list with counts, patch, merge, delete", async () => {
+    const server = await app();
+    await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "the staging database runs on Postgres" }),
+    });
+    await server.request("/memory/index", { method: "POST" });
+
+    const list = (await (await server.request("/memory/entities")).json()) as {
+      entities: Array<{ id: string; name: string; entityType: string; mentions: number }>;
+    };
+    expect(list.entities).toHaveLength(1);
+    const entity = list.entities[0];
+    expect(entity).toMatchObject({ name: "Postgres", entityType: "technology", mentions: 1 });
+
+    const patched = await server.request(`/memory/entities/${entity?.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ name: "PostgreSQL", entityType: "tool" }),
+    });
+    expect(patched.status).toBe(200);
+    const badType = await server.request(`/memory/entities/${entity?.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entityType: "starship" }),
+    });
+    expect(badType.status).toBe(400);
+
+    const selfMerge = await server.request(`/memory/entities/${entity?.id}/merge`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ into: entity?.id }),
+    });
+    expect(selfMerge.status).toBe(400);
+
+    const deleted = await server.request(`/memory/entities/${entity?.id}`, { method: "DELETE" });
+    expect(deleted.status).toBe(200);
+    const gone = await server.request(`/memory/entities/${entity?.id}`, { method: "DELETE" });
+    expect(gone.status).toBe(404);
   });
 
   it("schema delete: disabled user entries only, guards mapped to 409/404", async () => {

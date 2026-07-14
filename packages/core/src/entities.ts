@@ -41,6 +41,12 @@ export interface Extraction {
 export interface ExtractionContext {
   /** Title of the document a chunk came from — grounds salience judgments. */
   docTitle?: string;
+  /**
+   * Canonical names already in the owner's graph. Rendered into the prompt so the model
+   * reuses exact spellings ("@memloom/core", not "memloom/core") instead of minting
+   * near-duplicates that resolution then has to fold.
+   */
+  knownEntities?: string[];
 }
 
 const MAX_ENTITIES = 5;
@@ -82,6 +88,13 @@ export function buildEntityPrompt(
     "- numbers, dates, quantities, one-off literals, code fragments",
     "",
     "ONE ENTITY = ONE THING. Use the canonical name. At most 5 entities, the most salient only.",
+    ...(context.knownEntities && context.knownEntities.length > 0
+      ? [
+          "KNOWN ENTITIES already in the graph — when the text refers to one of these,",
+          "reuse the EXACT spelling below instead of a variant:",
+          context.knownEntities.join(", "),
+        ]
+      : []),
     "",
     "RELATIONSHIPS: only ones the text ACTUALLY STATES, between names in your entities array.",
     "ALLOWED PREDICATES:",
@@ -105,6 +118,16 @@ export function buildEntityPrompt(
     '"relationships":[{"subject":"...","predicate":"...","confidence":0.9,"object":"..."}]}',
     'Return {"entities":[],"relationships":[]} if nothing qualifies.',
   ].join("\n");
+}
+
+/**
+ * The identity key an entity name resolves under: casefolded, trimmed, leading "@"
+ * stripped, whitespace collapsed. "memloom/core" and "@Memloom/Core " are the same
+ * entity; the first-seen spelling stays the display name. Mirrored in SQL inside
+ * #resolveEntity — keep the two in sync.
+ */
+export function entityNameKey(name: string): string {
+  return name.trim().toLowerCase().replace(/^@/, "").replace(/\s+/g, " ");
 }
 
 function sliceJson(raw: string, open: string, close: string): unknown {

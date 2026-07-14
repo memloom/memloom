@@ -40,6 +40,13 @@ export interface Entity {
   entityType: string;
 }
 
+/** An entity with usage counts — the schema tab's management list. */
+export interface EntityDetail extends Entity {
+  mentions: number;
+  memories: number;
+  documents: number;
+}
+
 export interface GraphDocument {
   id: string;
   title: string;
@@ -329,6 +336,17 @@ export const api = {
   // Only disabled user-tier entries are deletable; the daemon explains any refusal.
   deleteSchemaEntry: (id: string) =>
     json<{ ok: boolean }>(`/memory/schema/${id}`, { method: "DELETE" }),
+  entities: () => json<{ entities: EntityDetail[] }>("/memory/entities").then((r) => r.entities),
+  updateEntity: (id: string, patch: { name?: string; entityType?: string }) =>
+    json<{ ok: boolean }>(`/memory/entities/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+  mergeEntity: (id: string, into: string) =>
+    post<{ ok: boolean }>(`/memory/entities/${id}/merge`, { into }),
+  deleteEntity: (id: string) =>
+    json<{ ok: boolean }>(`/memory/entities/${id}`, { method: "DELETE" }),
   assistantSessions: () =>
     json<{ sessions: AssistantSession[] }>("/assistant/sessions").then((r) => r.sessions),
   assistantSearch: (q: string) =>

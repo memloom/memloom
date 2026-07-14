@@ -987,6 +987,51 @@ textarea {
   color: var(--danger);
 }
 
+/* ---------- entity management (schema tab) ---------- */
+
+.entityFilter {
+  width: 100%;
+  margin: 6px 0 8px;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.entityFilter:focus {
+  border-color: var(--border-strong);
+}
+
+.entityRenameInput {
+  padding: 2px 6px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.entityTypeSelect {
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.entityMergeRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+
 .historyList {
   display: flex;
   flex-direction: column;

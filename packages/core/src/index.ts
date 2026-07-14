@@ -101,6 +101,7 @@ export type {
   ContextDocument,
   DocumentChunks,
   Entity,
+  EntityDetail,
   Graph,
   GraphDocument,
   GraphEdge,

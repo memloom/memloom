@@ -227,6 +227,19 @@ const schemaStatusSchema = z.object({
   status: z.enum(["active", "disabled"]),
 });
 
+const entityPatchSchema = z
+  .object({
+    name: z.string().min(1).max(80).optional(),
+    entityType: z.string().min(2).max(30).optional(),
+  })
+  .refine((v) => v.name !== undefined || v.entityType !== undefined, {
+    message: "provide name and/or entityType",
+  });
+
+const entityMergeSchema = z.object({
+  into: z.string().uuid(),
+});
+
 const assistantChatSchema = z.object({
   sessionId: z.string().uuid().optional(),
   message: z.string().min(1, "message must be a non-empty string"),
@@ -483,6 +496,44 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, /no schema entry/.test(message) ? 404 : 409);
+    }
+  });
+
+  // Entity instances (the schema tab's management list): rename/retype, merge, delete.
+  app.get("/memory/entities", async (c) => c.json({ entities: await memloom.listEntities() }));
+
+  app.patch("/memory/entities/:id", async (c) => {
+    const body = await parseBody(c, entityPatchSchema);
+    if (!body.ok) return body.res;
+    try {
+      await memloom.updateEntity(c.req.param("id"), body.data);
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/no entity/.test(message)) return c.json({ error: message }, 404);
+      return c.json({ error: message }, /already exists/.test(message) ? 409 : 400);
+    }
+  });
+
+  app.post("/memory/entities/:id/merge", async (c) => {
+    const body = await parseBody(c, entityMergeSchema);
+    if (!body.ok) return body.res;
+    try {
+      await memloom.mergeEntities(c.req.param("id"), body.data.into);
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no entity/.test(message) ? 404 : 400);
+    }
+  });
+
+  app.delete("/memory/entities/:id", async (c) => {
+    try {
+      await memloom.deleteEntity(c.req.param("id"));
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no entity/.test(message) ? 404 : 400);
     }
   });
 

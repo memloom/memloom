@@ -3,7 +3,7 @@ import { type AssistantEvent, runAssistantTurn } from "./assistant.js";
 import { chunkMarkdown, chunkOutline } from "./chunker.js";
 import { type Candidate, classify } from "./dedup.js";
 import type { MemoryEngine } from "./engine.js";
-import { type ExtractionContext, extractGraph, isMathDense } from "./entities.js";
+import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from "./entities.js";
 import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
 import { migrate } from "./migrate.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
@@ -41,6 +41,7 @@ import type {
   ContextDocument,
   DocumentChunks,
   Entity,
+  EntityDetail,
   Graph,
   GraphDocument,
   GraphEdge,
@@ -1719,7 +1720,24 @@ export class Memloom implements MemoryEngine {
     schema: ActiveSchema,
     context?: ExtractionContext,
   ): Promise<{ entities: string[]; relationships: number }> {
-    const extraction = await extractGraph(this.#llm, content, context, schema);
+    // Fetched per item (one cheap query next to one expensive LLM call) so within a single
+    // run, document 2's extraction already sees the canonical spellings document 1 created.
+    const known = await this.#storage.query<{ name: string }>(
+      `SELECT me.name
+       FROM memory_entities me
+       LEFT JOIN memory_edges e ON e.to_id = me.id AND e.relation = 'mention' AND e.active
+       WHERE me.owner_id = $1
+       GROUP BY me.id, me.name
+       ORDER BY count(e.id) DESC, me.created_at
+       LIMIT 75`,
+      [owner],
+    );
+    const extraction = await extractGraph(
+      this.#llm,
+      content,
+      { ...context, knownEntities: known.map((r) => r.name) },
+      schema,
+    );
     const idByName = new Map<string, string>();
     for (const entity of extraction.entities) {
       const entityId = await this.#resolveEntity(owner, entity.name, entity.type);
@@ -1894,9 +1912,18 @@ export class Memloom implements MemoryEngine {
   }
 
   async #resolveEntity(owner: string, name: string, type: string): Promise<string> {
+    // Identity is the NAME KEY alone (see entityNameKey) — the type is an attribute, not
+    // part of the key. The extractor classifies inconsistently across chunks ("@memloom/core"
+    // as technology here, project there); forking a node per type is never what a personal
+    // graph wants, and the rare true homonym merges into one node — a smaller failure than
+    // duplicates everywhere. First classification wins; oldest row wins over pre-fix dupes.
+    // The SQL expression mirrors entityNameKey: trim, casefold, strip leading @, collapse ws.
     const existing = await this.#storage.query<{ id: string }>(
-      "SELECT id FROM memory_entities WHERE owner_id = $1 AND lower(name) = lower($2) AND entity_type = $3 LIMIT 1",
-      [owner, name, type],
+      `SELECT id FROM memory_entities
+       WHERE owner_id = $1
+         AND regexp_replace(regexp_replace(btrim(lower(name)), '^@', ''), '\\s+', ' ', 'g') = $2
+       ORDER BY created_at LIMIT 1`,
+      [owner, entityNameKey(name)],
     );
     if (existing[0]) return existing[0].id;
     const [embedding] = await this.#embedding.embed([name]);
@@ -1908,6 +1935,174 @@ export class Memloom implements MemoryEngine {
     );
     if (!row) throw new Error("memloom: failed to insert entity");
     return row.id;
+  }
+
+  // --- entity management (the schema tab's instances list) ---
+
+  /** Every entity with usage counts, most-mentioned first. */
+  async listEntities(ownerId: string = SENTINEL_OWNER): Promise<EntityDetail[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      name: string;
+      entity_type: string;
+      mentions: number;
+      memories: number;
+      documents: number;
+    }>(
+      `SELECT me.id, me.name, me.entity_type,
+              count(e.id)::int AS mentions,
+              count(DISTINCT mo.id)::int AS memories,
+              count(DISTINCT cc.document_id)::int AS documents
+       FROM memory_entities me
+       LEFT JOIN memory_edges e
+         ON e.to_id = me.id AND e.relation = 'mention' AND e.active AND e.owner_id = me.owner_id
+       LEFT JOIN memory_objects mo ON mo.id = e.from_id AND mo.status = 'active'
+       LEFT JOIN context_chunks cc ON cc.id = e.from_id
+       WHERE me.owner_id = $1
+       GROUP BY me.id, me.name, me.entity_type
+       ORDER BY count(e.id) DESC, lower(me.name)`,
+      [ownerId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      entityType: r.entity_type,
+      mentions: Number(r.mentions),
+      memories: Number(r.memories),
+      documents: Number(r.documents),
+    }));
+  }
+
+  /**
+   * Rename and/or retype one entity. A rename re-embeds (the vector must follow the
+   * name) and refuses a name-key collision with another entity — that situation is a
+   * merge, not a rename. A retype must name an active vocabulary type.
+   */
+  async updateEntity(
+    id: string,
+    patch: { name?: string; entityType?: string },
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<void> {
+    const [row] = await this.#storage.query<{ id: string }>(
+      "SELECT id FROM memory_entities WHERE id = $1 AND owner_id = $2",
+      [id, ownerId],
+    );
+    if (!row) throw new Error(`memloom: no entity ${id}`);
+
+    if (patch.entityType !== undefined) {
+      const schema = await this.#activeSchema(ownerId);
+      if (!schema.entityTypes.some((t) => t.name === patch.entityType)) {
+        throw new Error(`memloom: "${patch.entityType}" is not an active entity type`);
+      }
+      await this.#storage.query(
+        "UPDATE memory_entities SET entity_type = $3 WHERE id = $1 AND owner_id = $2",
+        [id, ownerId, patch.entityType],
+      );
+    }
+
+    if (patch.name !== undefined) {
+      const name = patch.name.trim();
+      if (!name) throw new Error("memloom: entity name must be non-empty");
+      const clash = await this.#storage.query<{ id: string }>(
+        `SELECT id FROM memory_entities
+         WHERE owner_id = $1 AND id <> $2
+           AND regexp_replace(regexp_replace(btrim(lower(name)), '^@', ''), '\\s+', ' ', 'g') = $3
+         LIMIT 1`,
+        [ownerId, id, entityNameKey(name)],
+      );
+      if (clash[0]) {
+        throw new Error(`memloom: an entity named "${name}" already exists — merge instead`);
+      }
+      const [embedding] = await this.#embedding.embed([name]);
+      if (!embedding) throw new Error("memloom: embedding provider returned no vector");
+      await this.#storage.query(
+        "UPDATE memory_entities SET name = $3, embedding = $4::vector WHERE id = $1 AND owner_id = $2",
+        [id, ownerId, name, toVectorLiteral(embedding)],
+      );
+    }
+  }
+
+  /**
+   * Merge one entity into another: every edge touching the source is repointed to the
+   * target (would-be duplicates and would-be self-loops are dropped first), then the
+   * source row is deleted. The target's name and type win — merging IS choosing.
+   */
+  async mergeEntities(
+    sourceId: string,
+    targetId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<void> {
+    if (sourceId === targetId) throw new Error("memloom: cannot merge an entity into itself");
+    await this.#storage.tx(async (tx) => {
+      for (const eid of [sourceId, targetId]) {
+        const [row] = await tx.query<{ id: string }>(
+          "SELECT id FROM memory_entities WHERE id = $1 AND owner_id = $2",
+          [eid, ownerId],
+        );
+        if (!row) throw new Error(`memloom: no entity ${eid}`);
+      }
+      // Edges between the two would become self-loops after repointing.
+      await tx.query(
+        `DELETE FROM memory_edges
+         WHERE owner_id = $1
+           AND ((from_id = $2 AND to_id = $3) OR (from_id = $3 AND to_id = $2))`,
+        [ownerId, sourceId, targetId],
+      );
+      // Source edges that already exist against the target would become duplicates.
+      await tx.query(
+        `DELETE FROM memory_edges e
+         WHERE e.owner_id = $1 AND e.to_id = $2
+           AND EXISTS (
+             SELECT 1 FROM memory_edges t
+             WHERE t.owner_id = $1 AND t.to_id = $3
+               AND t.from_id = e.from_id AND t.relation = e.relation)`,
+        [ownerId, sourceId, targetId],
+      );
+      await tx.query(
+        `DELETE FROM memory_edges e
+         WHERE e.owner_id = $1 AND e.from_id = $2
+           AND EXISTS (
+             SELECT 1 FROM memory_edges t
+             WHERE t.owner_id = $1 AND t.from_id = $3
+               AND t.to_id = e.to_id AND t.relation = e.relation)`,
+        [ownerId, sourceId, targetId],
+      );
+      await tx.query("UPDATE memory_edges SET to_id = $3 WHERE owner_id = $1 AND to_id = $2", [
+        ownerId,
+        sourceId,
+        targetId,
+      ]);
+      await tx.query("UPDATE memory_edges SET from_id = $3 WHERE owner_id = $1 AND from_id = $2", [
+        ownerId,
+        sourceId,
+        targetId,
+      ]);
+      await tx.query("DELETE FROM memory_entities WHERE id = $1 AND owner_id = $2", [
+        sourceId,
+        ownerId,
+      ]);
+    });
+  }
+
+  /** Delete one entity and every edge touching it (no FK cascade on the shared edge table). */
+  async deleteEntity(id: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    await this.#storage.tx(async (tx) => {
+      await this.#deleteEntityEdges(tx, ownerId, id);
+      const deleted = await tx.query<{ id: string }>(
+        "DELETE FROM memory_entities WHERE id = $1 AND owner_id = $2 RETURNING id",
+        [id, ownerId],
+      );
+      if (deleted.length === 0) throw new Error(`memloom: no entity ${id}`);
+    });
+  }
+
+  // Entities appear on both edge ends (mentions point at them, typed predicates run
+  // between them), so cleanup must sweep both — the same manual story as document chunks.
+  async #deleteEntityEdges(tx: StorageAdapter, owner: string, entityId: string): Promise<void> {
+    await tx.query(
+      "DELETE FROM memory_edges WHERE owner_id = $1 AND (from_id = $2 OR to_id = $2)",
+      [owner, entityId],
+    );
   }
 
   async #findCandidates(owner: string, embedding: number[], hash: string): Promise<CandidateRow[]> {
