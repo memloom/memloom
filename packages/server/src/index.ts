@@ -242,6 +242,10 @@ const entityMergeSchema = z.object({
   into: z.string().uuid(),
 });
 
+const autoIndexSchema = z.object({
+  enabled: z.boolean(),
+});
+
 const assistantChatSchema = z.object({
   sessionId: z.string().uuid().optional(),
   message: z.string().min(1, "message must be a non-empty string"),
@@ -503,6 +507,22 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, /no schema entry/.test(message) ? 404 : 409);
+    }
+  });
+
+  // The Console's auto-index toggle. `available` is false in offline mode (no LLM means
+  // enabling it would only produce failing runs), and the setter refuses there too.
+  app.get("/memory/auto-index", (c) =>
+    c.json({ enabled: memloom.autoIndexEnabled, available: memloom.autoIndexAvailable }),
+  );
+  app.patch("/memory/auto-index", async (c) => {
+    const body = await parseBody(c, autoIndexSchema);
+    if (!body.ok) return body.res;
+    try {
+      await memloom.setAutoIndex(body.data.enabled);
+      return c.json({ enabled: memloom.autoIndexEnabled });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 409);
     }
   });
 

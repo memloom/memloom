@@ -154,6 +154,27 @@ export function ConsoleView({ onChanged }: { onChanged: () => void }) {
 
   const [runs, setRuns] = useState<IndexRun[] | null>(null);
   const [eventsByRun, setEventsByRun] = useState<Record<string, IndexRunEvent[]>>({});
+  // Auto-index toggle state; null until loaded, unavailable in offline mode.
+  const [autoIdx, setAutoIdx] = useState<{ enabled: boolean; available: boolean } | null>(null);
+
+  useEffect(() => {
+    api
+      .autoIndex()
+      .then(setAutoIdx)
+      .catch(() => setAutoIdx(null));
+  }, []);
+
+  async function toggleAutoIndex() {
+    if (!autoIdx?.available) return;
+    const next = !autoIdx.enabled;
+    setAutoIdx({ ...autoIdx, enabled: next }); // optimistic; revert on failure
+    try {
+      await api.setAutoIndex(next);
+    } catch (err) {
+      setAutoIdx({ ...autoIdx });
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
   // Explicit expand/collapse choices; the newest run is expanded unless overridden.
   const [expandOverride, setExpandOverride] = useState<Record<string, boolean>>({});
 
@@ -250,6 +271,25 @@ export function ConsoleView({ onChanged }: { onChanged: () => void }) {
             >
               {rebuildArmed ? "Confirm: wipe all entities & re-index" : "Re-index from scratch"}
             </button>
+            {autoIdx && (
+              <button
+                type="button"
+                className={`autoIndexToggle ${autoIdx.enabled ? "autoIndexToggleOn" : ""}`}
+                disabled={!autoIdx.available}
+                title={
+                  autoIdx.available
+                    ? "Index new memories and files automatically, a few seconds after they land"
+                    : "Auto-index needs an LLM; configure OPENROUTER_API_KEY"
+                }
+                onClick={() => void toggleAutoIndex()}
+              >
+                auto-index
+                <span className="autoIndexTrack">
+                  <span className="autoIndexKnob" />
+                </span>
+                {autoIdx.enabled ? "on" : "off"}
+              </button>
+            )}
           </div>
           {notice && <div className="sessionEmpty">{notice}</div>}
 

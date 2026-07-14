@@ -1016,6 +1016,64 @@ textarea {
   color: var(--danger);
 }
 
+/* ---------- console: auto-index toggle ---------- */
+
+.autoIndexToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-left: auto; /* right corner of the index action row */
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.autoIndexToggle:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.autoIndexToggle:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.autoIndexTrack {
+  display: inline-flex;
+  align-items: center;
+  width: 26px;
+  height: 12px;
+  padding: 1px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg);
+  transition: background 0.15s;
+}
+
+.autoIndexKnob {
+  width: 10px;
+  height: 8px;
+  background: var(--text-faint);
+  transition:
+    transform 0.15s,
+    background 0.15s;
+}
+
+.autoIndexToggleOn {
+  color: var(--text);
+}
+
+.autoIndexToggleOn .autoIndexTrack {
+  border-color: var(--brand);
+}
+
+.autoIndexToggleOn .autoIndexKnob {
+  transform: translateX(12px);
+  background: var(--brand);
+}
+
 /* ---------- entity management (schema tab) ---------- */
 
 /* The entities card header doubles as its collapse toggle (collapsed by default so the

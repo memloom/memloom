@@ -178,7 +178,11 @@ export class Memloom implements MemoryEngine {
   readonly #embedding: EmbeddingProvider;
   readonly #llm: LLMProvider;
   readonly #dedup: boolean;
-  readonly #autoIndex: boolean;
+  #autoIndex: boolean;
+  // Toggling only makes sense where the host declared a stance (the daemon passes the
+  // flag whenever an LLM is configured). Hosts that never mention autoIndex (library
+  // embedders, offline mode) have no toggle: enabling it would only produce failing runs.
+  readonly #autoIndexCapable: boolean;
   readonly #autoIndexDelay: number;
   #autoIndexTimer: ReturnType<typeof setTimeout> | undefined;
   #autoIndexRunning = false;
@@ -190,7 +194,35 @@ export class Memloom implements MemoryEngine {
     this.#llm = config.llm;
     this.#dedup = config.dedup ?? true;
     this.#autoIndex = config.autoIndex ?? false;
+    this.#autoIndexCapable = config.autoIndex !== undefined;
     this.#autoIndexDelay = config.autoIndexDelayMs ?? 1500;
+  }
+
+  /** Whether the host supports toggling auto-index at all (an LLM is configured). */
+  get autoIndexAvailable(): boolean {
+    return this.#autoIndexCapable;
+  }
+
+  get autoIndexEnabled(): boolean {
+    return this.#autoIndex;
+  }
+
+  /**
+   * Turn auto-indexing on or off at runtime (the Console toggle). Persisted in the store's
+   * meta table, so the choice survives daemon restarts; the config/env value is only the
+   * default before the toggle is ever used.
+   */
+  async setAutoIndex(enabled: boolean): Promise<void> {
+    if (!this.#autoIndexCapable) {
+      throw new Error("memloom: auto-index needs an LLM; configure OPENROUTER_API_KEY first");
+    }
+    await this.#storage.query(
+      `INSERT INTO _memloom_meta (key, value) VALUES ('auto_index', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [enabled ? "on" : "off"],
+    );
+    this.#autoIndex = enabled;
+    if (!enabled) clearTimeout(this.#autoIndexTimer);
   }
 
   /**
@@ -238,6 +270,14 @@ export class Memloom implements MemoryEngine {
   async init(): Promise<void> {
     await migrate(this.#storage, this.#embedding.dims);
     await this.#checkEmbeddingFingerprint();
+    // A persisted Console toggle beats the config/env default, but only where the host
+    // supports auto-indexing at all (see #autoIndexCapable).
+    if (this.#autoIndexCapable) {
+      const [row] = await this.#storage.query<{ value: string }>(
+        "SELECT value FROM _memloom_meta WHERE key = 'auto_index'",
+      );
+      if (row) this.#autoIndex = row.value === "on";
+    }
   }
 
   // A store's vectors are only comparable to vectors from the same provider+model+dims. The

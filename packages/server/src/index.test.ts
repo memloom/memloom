@@ -246,6 +246,51 @@ describe("server", () => {
     expect(schema.predicates.map((p) => p.name)).toContain("works_on");
   });
 
+  it("auto-index toggle: unavailable without a stance, toggles and persists with one", async () => {
+    // The default test engine never mentions autoIndex: no toggle, setter refused.
+    const bare = await app();
+    const off = (await (await bare.request("/memory/auto-index")).json()) as {
+      enabled: boolean;
+      available: boolean;
+    };
+    expect(off).toEqual({ enabled: false, available: false });
+    const refused = await bare.request("/memory/auto-index", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    });
+    expect(refused.status).toBe(409);
+
+    // A daemon-like engine (flag passed) can toggle, and the choice survives a "restart"
+    // (a second engine on the same storage reads the persisted value in init).
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const config = {
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+      autoIndex: false,
+      autoIndexDelayMs: 60_000, // never fires during the test
+    };
+    const memloom = new Memloom(config);
+    await memloom.init();
+    const server = createServer(memloom);
+
+    const patched = await server.request("/memory/auto-index", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled: true }),
+    });
+    expect(patched.status).toBe(200);
+    expect(await patched.json()).toEqual({ enabled: true });
+
+    const restarted = new Memloom(config);
+    await restarted.init();
+    expect(restarted.autoIndexEnabled).toBe(true);
+    expect(restarted.autoIndexAvailable).toBe(true);
+  });
+
   it("entity routes: list with counts, patch, merge, delete", async () => {
     const server = await app();
     await server.request("/memory/save", {

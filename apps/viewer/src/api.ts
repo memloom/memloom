@@ -314,6 +314,14 @@ export const api = {
   history: (id: string) =>
     json<{ versions: Memory[] }>(`/memory/${id}/history`).then((r) => r.versions),
   index: () => post<{ indexed: number; chunksIndexed: number }>("/memory/index"),
+  // The Console's auto-index toggle; `available` is false in offline mode.
+  autoIndex: () => json<{ enabled: boolean; available: boolean }>("/memory/auto-index"),
+  setAutoIndex: (enabled: boolean) =>
+    json<{ enabled: boolean }>("/memory/auto-index", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    }),
   // Recovery: wipe all extracted entities/edges, then re-run indexing from scratch.
   reindex: () => post<{ indexed: number; chunksIndexed: number }>("/memory/reindex"),
   // Index sessions: the engine writes a run row + per-item events to the store during a

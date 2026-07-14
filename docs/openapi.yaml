@@ -478,6 +478,53 @@ paths:
                 type: object
                 properties:
                   ok: { type: boolean, example: true }
+  /memory/auto-index:
+    get:
+      summary: Auto-index state
+      description: |
+        Whether new memories and files are entity-indexed automatically in the background
+        (debounced runs a few seconds after a save/ingest). `available` is false in offline
+        mode: extraction needs an LLM, so there is nothing to toggle.
+      operationId: getAutoIndex
+      responses:
+        "200":
+          description: The current state.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean, example: true }
+                  available: { type: boolean, example: true }
+    patch:
+      summary: Turn auto-index on or off
+      description: |
+        The Console's toggle. Persisted in the store, so the choice survives daemon
+        restarts; the MEMLOOM_AUTO_INDEX config value is only the default before the
+        toggle is first used. Refused with 409 in offline mode.
+      operationId: setAutoIndex
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled: { type: boolean }
+      responses:
+        "200":
+          description: The new state.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled: { type: boolean }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "409":
+          description: No LLM configured; auto-index cannot be enabled.
   /memory/entities:
     get:
       summary: List entities with usage counts
