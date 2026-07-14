@@ -51,9 +51,13 @@ real things beats a complete one full of noise.
    (over 40 characters or 5 words), and names with fewer than two letters.
 3. **Formula-dominated chunks skip the LLM entirely** — a cheap math-density check keeps
    exercise sheets from becoming graphs of equations (those runs log `skipped: math-dense`).
-4. Surviving entities are resolved case-insensitively by name + type — *Postgres* in a memory
-   and *postgres* in a PDF land on the same node — and a `mention` edge links the source to
-   each one.
+4. Surviving entities resolve to a node by **name key**: casefolded, trimmed, a leading `@`
+   stripped, whitespace collapsed. `@memloom/core` in one document and `memloom/core` in
+   another land on the same node, and the first-seen spelling and type stay (the type is an
+   attribute of the node, not part of its identity, so an extractor that says `technology`
+   today and `project` tomorrow cannot fork the node). The prompt also lists the names
+   already in your graph, so the model reuses canonical spellings instead of minting
+   variants. A `mention` edge links the source to each resolved entity.
 5. The same call also extracts **typed relationships between entities**, classified against a
    closed predicate vocabulary: `uses`, `depends_on`, `part_of`, `created_by`, `works_on`,
    `works_at`, `located_in`, `attended`. Out-of-vocab predicates and claims below 0.7
@@ -76,6 +80,41 @@ needs the LLM: run it offline and the wipe still happens — the store stays con
 Indexed entities also feed retrieval: the entity arm of hybrid recall anchors a query to
 entities and pulls in whatever mentions them — including document sections whose wording
 shares nothing with your query. See [Retrieval](/concepts/retrieval).
+
+## The schema is yours
+
+The vocabularies live in a registry (the viewer's **schema** tab, `GET /memory/schema`,
+`memloom schema` in the CLI), not in code you have to fork:
+
+- **Add your own.** A user-tier entity type or predicate (say, `medication`) joins the
+  prompt on the next index run. The description you write is the extraction rule, so write
+  it like one: "a named drug or supplement", not "medications".
+- **Proposals.** When the extractor confidently wants a type or predicate the schema lacks,
+  the name is held out of the graph and queued for review. Approve it and it becomes a
+  user entry; dismiss it and the prompt blocklists the name from ever being proposed again.
+  A name only surfaces after two independent extractions asked for it.
+- **Disable** anything, built-in or yours. Disabled entries leave the prompt; entities
+  already extracted under them stay in the graph.
+- **Delete** a disabled user entry when you're sure. Built-ins can only be disabled: the
+  system tier is re-seeded by name, so a deleted built-in would come back active, which is
+  the opposite of what you wanted. Proposals are approved or dismissed, never deleted.
+
+## Managing entities
+
+Extraction is precision-first but not perfect, so the schema tab also lists every entity
+in the graph with its usage (mentions, documents, memories) and the tools to correct it:
+
+- **Rename.** The node re-embeds under the new name. Renaming onto an existing entity's
+  name is refused; that situation is a merge.
+- **Retype** to any active vocabulary type.
+- **Merge into** another entity: every mention and typed relationship moves to the
+  survivor (duplicates and would-be self-loops are dropped), then the duplicate node is
+  deleted. This is the fix for near-duplicates the name key could not fold.
+- **Delete** an entity and every edge touching it. The memories and documents that
+  mentioned it are untouched.
+
+The HTTP surface is `GET /memory/entities`, `PATCH /memory/entities/{id}`,
+`POST /memory/entities/{id}/merge`, and `DELETE /memory/entities/{id}`.
 
 ## Navigating in the viewer
 

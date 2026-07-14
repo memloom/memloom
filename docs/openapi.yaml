@@ -307,9 +307,7 @@ paths:
         The vocabularies the indexer extracts against — entity types and typed-relationship
         predicates as registry rows (tier system/user, status active/disabled), edge
         relations from the engine, and the LLM proposal review queue (names the extractor
-        wanted, with occurrence counts). Manage with POST /memory/schema (add a user entry),
-        POST /memory/schema/{id}/approve, POST /memory/schema/{id}/dismiss, and
-        PATCH /memory/schema/{id} (status active|disabled).
+        wanted, with occurrence counts).
       operationId: getSchema
       responses:
         "200":
@@ -343,6 +341,270 @@ paths:
                         name: { type: string, example: works_on }
                         description: { type: string }
                         count: { type: integer }
+    post:
+      summary: Add a user-tier vocabulary entry
+      description: |
+        Add an entity type or predicate to the extraction vocabulary. The name is normalized
+        to snake_case; the description becomes part of the extraction prompt, so write it
+        like a rule ("a named drug or supplement"). Takes effect on the next index run.
+      operationId: addSchemaEntry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind, name]
+              properties:
+                kind:
+                  type: string
+                  enum: [entity_type, predicate]
+                name:
+                  type: string
+                  example: medication
+                description:
+                  type: string
+                  example: a named drug or supplement
+      responses:
+        "200":
+          description: The created (or re-activated) entry.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SchemaEntry"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+  /memory/schema/{id}:
+    patch:
+      summary: Enable or disable a vocabulary entry
+      description: |
+        Disabled entries leave the extraction prompt; entities already extracted under them
+        stay in the graph. Works on system and user tiers (proposals have their own
+        approve/dismiss lifecycle).
+      operationId: setSchemaStatus
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status:
+                  type: string
+                  enum: [active, disabled]
+      responses:
+        "200":
+          description: Status updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+    delete:
+      summary: Delete a disabled user-tier entry
+      description: |
+        Permanently remove a vocabulary entry. Only **disabled user-tier** entries qualify:
+        built-in entries are re-seeded by name on the next run (a delete would bring them
+        back active), so disable is their only off-switch, and proposals are approved or
+        dismissed instead. Entities already extracted under the deleted type stay in the
+        graph.
+      operationId: deleteSchemaEntry
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Entry deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        "404":
+          description: No such entry.
+        "409":
+          description: The entry exists but is not deletable (still active, a built-in, or a proposal); the error names the reason.
+  /memory/schema/{id}/approve:
+    post:
+      summary: Approve a proposal
+      description: Promote a proposed name to the user tier. The extractor starts using it on the next index run; re-index to capture earlier occurrences.
+      operationId: approveProposal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Proposal approved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+  /memory/schema/{id}/dismiss:
+    post:
+      summary: Dismiss a proposal
+      description: Reject a proposed name. The prompt blocklists it, so the extractor never proposes it again.
+      operationId: dismissProposal
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Proposal dismissed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+  /memory/entities:
+    get:
+      summary: List entities with usage counts
+      description: |
+        Every extracted entity with its usage: active mention edges, distinct memories, and
+        distinct documents that mention it. Most-mentioned first. The management counterpart
+        to the graph view.
+      operationId: listEntities
+      responses:
+        "200":
+          description: The entities.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  entities:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EntityDetail"
+  /memory/entities/{id}:
+    patch:
+      summary: Rename or retype an entity
+      description: |
+        A rename re-embeds the entity (the vector follows the name) and is refused with 409
+        when another entity already owns that name key; merge instead. A retype must name
+        an active vocabulary type.
+      operationId: updateEntity
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  example: PostgreSQL
+                entityType:
+                  type: string
+                  example: technology
+      responses:
+        "200":
+          description: Entity updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: No such entity.
+        "409":
+          description: The new name collides with an existing entity.
+    delete:
+      summary: Delete an entity
+      description: |
+        Remove the entity and every edge touching it (mentions pointing at it, typed
+        relationships from or to it). The memories and documents that mentioned it are
+        untouched.
+      operationId: deleteEntity
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Entity deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        "404":
+          description: No such entity.
+  /memory/entities/{id}/merge:
+    post:
+      summary: Merge an entity into another
+      description: |
+        Fold this entity into a surviving one: every mention and typed relationship is
+        repointed to the target (would-be duplicates and self-loops are dropped), then this
+        entity is deleted. The survivor keeps its own name and type. The fix for
+        near-duplicates automatic resolution could not fold.
+      operationId: mergeEntity
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The entity that disappears.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [into]
+              properties:
+                into:
+                  type: string
+                  format: uuid
+                  description: The surviving entity.
+      responses:
+        "200":
+          description: Merged.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        "400":
+          description: Self-merge, or validation failure.
+        "404":
+          description: Either entity id is unknown.
   /memory/graph:
     get:
       summary: Get the memory graph
@@ -586,8 +848,53 @@ paths:
                   ok:
                     type: boolean
                     example: true
+        "400":
+          description: The document was uploaded from the browser (upload:// provenance); there is no file on disk to open.
         "404":
           description: No document with that id.
+  /context/upload:
+    post:
+      summary: Upload file bytes as a document
+      description: |
+        Ingest a file whose bytes come from the client (the viewer's Upload button uses
+        this; a browser file dialog yields bytes, never paths). The document is
+        first-class: listed, graphed, indexed. Its provenance is `upload://<filename>`,
+        so re-uploading the same name replaces it and identical bytes are a no-op. Unlike
+        path-linked documents there is no disk file to open or change-track; prefer
+        /context/add when the daemon can read the file itself. Body limit ~48MB
+        (base64 inflates by a third, so roughly a 36MB file).
+      operationId: contextUpload
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, contentBase64]
+              properties:
+                filename:
+                  type: string
+                  description: Name with extension; picks the extractor and titles the document.
+                  example: notes.md
+                contentBase64:
+                  type: string
+                  description: The file bytes, base64-encoded.
+      responses:
+        "200":
+          description: The ingest outcome (same shape as /context/add for one file).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  documentId: { type: string, format: uuid }
+                  outcome: { type: string, enum: [added, updated, unchanged] }
+                  title: { type: string }
+                  chunks: { type: integer }
+        "400":
+          description: Unsupported file type or empty content.
+        "413":
+          description: File too large.
   /context/documents/{id}:
     delete:
       summary: Remove a context document
@@ -610,6 +917,288 @@ paths:
                   ok:
                     type: boolean
                     example: true
+  /assistant/chat:
+    post:
+      summary: One assistant turn (SSE)
+      description: |
+        Run one chat turn through the assistant's agentic loop: the model decides whether to
+        call hybrid recall (up to three times), then streams a grounded answer with `[n]`
+        citation markers validated against the returned sources. The response is a
+        server-sent-event stream of JSON events: `tool_call` and `tool_result` while the
+        model searches, `delta` per answer fragment, then one terminal `done` (sessionId,
+        messageId, answer, sources) or `error`.
+
+        Omit `sessionId` to start a new chat (titled from this message). `model` overrides
+        the configured chat model for this turn only; it must support tool calling on
+        OpenRouter. Requires a chat-capable LLM: offline mode answers 503 with a setup hint.
+      operationId: assistantChat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+                  example: what are my plans for today?
+                sessionId:
+                  type: string
+                  format: uuid
+                  description: Continue an existing chat; omit to create one.
+                model:
+                  type: string
+                  description: Per-turn OpenRouter model override (see /assistant/models).
+                  example: anthropic/claude-sonnet-5
+      responses:
+        "200":
+          description: The SSE event stream for this turn.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "503":
+          description: No chat-capable LLM configured (offline mode).
+  /assistant/models:
+    get:
+      summary: The model catalog for the picker
+      description: |
+        Tool-capable models from OpenRouter's public catalog (the assistant requires native
+        tool calling), shaped for display: USD per million input/output tokens, context
+        window, provider (the model id's prefix). Cached daemon-side for an hour; a stale
+        copy keeps serving if OpenRouter is unreachable. `defaultModel` is the daemon's
+        configured chat model, or null in offline mode.
+      operationId: assistantModels
+      responses:
+        "200":
+          description: The catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  defaultModel:
+                    type: [string, "null"]
+                    example: google/gemini-2.5-flash
+                  models:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, example: anthropic/claude-sonnet-5 }
+                        name: { type: string, example: "Anthropic: Claude Sonnet 5" }
+                        description: { type: string }
+                        contextLength: { type: [integer, "null"], example: 1000000 }
+                        promptPer1M: { type: [number, "null"], example: 2 }
+                        completionPer1M: { type: [number, "null"], example: 10 }
+                        provider: { type: string, example: anthropic }
+        "502":
+          description: OpenRouter unreachable and no cached copy yet.
+  /assistant/sessions:
+    get:
+      summary: List chat sessions
+      description: Starred first, then most recently active.
+      operationId: assistantSessions
+      responses:
+        "200":
+          description: The sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AssistantSession"
+    delete:
+      summary: Delete all chat sessions
+      description: Removes every session, its messages, and its attachments.
+      operationId: clearAssistantSessions
+      responses:
+        "200":
+          description: Cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+  /assistant/sessions/search:
+    get:
+      summary: Search chat sessions
+      description: |
+        Hybrid chat search: keyword over titles and message text, plus embedding similarity
+        over message content. Each hit carries the best-matching snippet.
+      operationId: searchAssistantSessions
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Matching sessions with snippets.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessions:
+                    type: array
+                    items:
+                      allOf:
+                        - $ref: "#/components/schemas/AssistantSession"
+                        - type: object
+                          properties:
+                            snippet: { type: string }
+  /assistant/sessions/{id}:
+    patch:
+      summary: Rename or star a session
+      operationId: patchAssistantSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title: { type: string }
+                starred: { type: boolean }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+    delete:
+      summary: Delete a session
+      description: Removes the session, its messages, and its attached files.
+      operationId: deleteAssistantSession
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+  /assistant/sessions/{id}/messages:
+    get:
+      summary: A session's messages
+      description: Oldest first. Assistant messages carry the sources their answer cited.
+      operationId: assistantMessages
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The messages.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AssistantMessage"
+  /assistant/sessions/{id}/attachments:
+    get:
+      summary: A session's attached files
+      operationId: sessionAttachments
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The attachments (context-document shape, upload provenance).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  attachments:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string, format: uuid }
+                        title: { type: string }
+                        kind: { type: string, example: pdf }
+                        chunkCount: { type: integer }
+                        path: { type: string, example: "attachment://<sessionId>/brief.pdf" }
+                        updatedAt: { type: string }
+  /assistant/attachments:
+    post:
+      summary: Attach a file to a chat
+      description: |
+        Upload file bytes into one chat's scope. The file is chunked and embedded like a
+        document, but only that session's recall searches it: it stays out of the documents
+        list, the graph, and entity extraction, and it is deleted with the chat. Omit
+        `sessionId` to create the session on the spot (titled 'New chat' until the first
+        message names it). Body limit ~48MB (~36MB of file). Remove an attachment with
+        DELETE /context/documents/{id}.
+      operationId: assistantAttach
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, contentBase64]
+              properties:
+                filename: { type: string, example: brief.pdf }
+                contentBase64: { type: string }
+                sessionId:
+                  type: string
+                  format: uuid
+                  description: The chat to attach to; omit to create one.
+      responses:
+        "200":
+          description: The ingest outcome plus the session it landed in.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessionId: { type: string, format: uuid }
+                  documentId: { type: string, format: uuid }
+                  outcome: { type: string, enum: [added, updated, unchanged] }
+                  title: { type: string }
+                  chunks: { type: integer }
+        "400":
+          description: Unsupported file type or empty content.
+        "404":
+          description: No such session.
+        "413":
+          description: File too large.
   /admin/shutdown:
     post:
       summary: Stop the daemon
@@ -907,3 +1496,117 @@ components:
                 type: integer
                 description: On document -> entity edges — how many of the document's chunks mention the entity.
                 example: 3
+    SchemaEntry:
+      type: object
+      description: One row of the vocabulary registry.
+      properties:
+        id:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [entity_type, predicate]
+        name:
+          type: string
+          example: medication
+        description:
+          type: string
+        tier:
+          type: string
+          enum: [system, user, proposed]
+        status:
+          type: string
+          enum: [active, disabled, dismissed]
+        occurrences:
+          type: integer
+          description: How many extraction runs suggested this name (proposals only).
+    EntityDetail:
+      type: object
+      description: An entity with its usage counts.
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: "@memloom/core"
+        entityType:
+          type: string
+          example: technology
+        mentions:
+          type: integer
+          description: Active mention edges pointing at this entity.
+        memories:
+          type: integer
+          description: Distinct active memories that mention it.
+        documents:
+          type: integer
+          description: Distinct context documents whose chunks mention it.
+    AssistantSession:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: what are my plans for today?
+        isStarred:
+          type: boolean
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+    AssistantMessage:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        role:
+          type: string
+          enum: [user, assistant]
+        content:
+          type: string
+        sources:
+          type: array
+          description: The passages an assistant answer cited (empty on user messages).
+          items:
+            $ref: "#/components/schemas/AssistantSource"
+        createdAt:
+          type: string
+    AssistantSource:
+      type: object
+      description: One recall hit an answer was grounded in; `n` matches the `[n]` markers in the text.
+      properties:
+        n:
+          type: integer
+          example: 1
+        kind:
+          type: string
+          enum: [memory, context]
+        id:
+          type: string
+          format: uuid
+        title:
+          type: string
+          example: "memloom > How it compares"
+        snippet:
+          type: string
+          description: The passage exactly as the model saw it.
+        similarity:
+          type: number
+          example: 0.81
+        date:
+          type: string
+          description: The memory's assertion day, YYYY-MM-DD (absent on context chunks).
+        memoryType:
+          type: string
+          enum: [fact, preference, episode, procedure]
+          description: Absent on context chunks.
+        rrfScore:
+          type: number
+        graphNodeId:
+          type: string
+          format: uuid
+          description: The graph node this source maps to (the memory, or the chunk's parent document).

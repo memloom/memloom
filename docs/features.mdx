@@ -28,6 +28,15 @@ Postgres full-text search (exact words — file paths, error codes, config keys)
 anchoring (things the query names). One query searches your saved memories **and** your
 ingested files, in one ranking. See [Retrieval](/concepts/retrieval).
 
+## An assistant grounded in your store
+
+The viewer's assistant tab chats over your memories and files. The model decides when to
+search (via the same hybrid recall), answers only from what it found, and cites passages
+you can open: each answer lists its sources with a jump into the graph. Pick any
+tool-capable OpenRouter model from the composer, with prices and context windows shown.
+Attach a file to a chat with **+** and it becomes searchable in that chat only, deleted
+with it. See [The assistant](/concepts/assistant).
+
 ## Context: your files, searchable and cited
 
 `memloom context add ./docs` ingests `.md`, `.txt`, and `.pdf` files (directories recurse).
@@ -43,7 +52,11 @@ changed file replaces its chunks. See [Extractors & chunking](/guides/extractors
 context chunks and links everything through them. The viewer renders it: memories as circles,
 entities as purple circles, documents as diamonds that expand into chunk squares on click.
 A 300-page PDF stays one node — chunk-level links roll up into one weighted document → entity
-edge. See [The graph](/concepts/graph).
+edge.
+
+The graph is yours to correct: the extraction vocabulary is a registry you can extend,
+review, and prune, and every entity can be renamed, retyped, merged into another, or
+deleted from the schema tab. See [The graph](/concepts/graph).
 
 ## Version history for every belief
 

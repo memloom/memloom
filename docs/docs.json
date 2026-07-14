@@ -37,7 +37,8 @@
               "concepts/memory-types",
               "concepts/conflicts",
               "concepts/graph",
-              "concepts/retrieval"
+              "concepts/retrieval",
+              "concepts/assistant"
             ]
           },
           {
@@ -57,8 +58,38 @@
               "POST /memory/query",
               "POST /memory/index",
               "POST /memory/reindex",
-              "GET /memory/schema",
               "GET /memory/graph"
+            ]
+          },
+          {
+            "group": "Schema & entities",
+            "openapi": "openapi.yaml",
+            "pages": [
+              "GET /memory/schema",
+              "POST /memory/schema",
+              "PATCH /memory/schema/{id}",
+              "DELETE /memory/schema/{id}",
+              "POST /memory/schema/{id}/approve",
+              "POST /memory/schema/{id}/dismiss",
+              "GET /memory/entities",
+              "PATCH /memory/entities/{id}",
+              "POST /memory/entities/{id}/merge",
+              "DELETE /memory/entities/{id}"
+            ]
+          },
+          {
+            "group": "Assistant",
+            "openapi": "openapi.yaml",
+            "pages": [
+              "POST /assistant/chat",
+              "GET /assistant/models",
+              "GET /assistant/sessions",
+              "GET /assistant/sessions/search",
+              "GET /assistant/sessions/{id}/messages",
+              "PATCH /assistant/sessions/{id}",
+              "DELETE /assistant/sessions/{id}",
+              "POST /assistant/attachments",
+              "GET /assistant/sessions/{id}/attachments"
             ]
           },
           {
@@ -66,6 +97,7 @@
             "openapi": "openapi.yaml",
             "pages": [
               "POST /context/add",
+              "POST /context/upload",
               "GET /context/documents",
               "DELETE /context/documents/{id}"
             ]
