@@ -56,6 +56,10 @@ Usage: memloom <command> [args]
   context add <path>   ingest files (or a directory) as context: ${supportedExtensions().join(" ")}
   context list         list ingested context documents
   context remove <id>  remove a context document and its chunks
+  schema               show the graph vocabulary (entity types + predicates, usage, status)
+  schema delete <entity_type|predicate> <name>
+                       permanently remove a DISABLED user-tier entry (disable it first;
+                       built-in entries can only be disabled)
   help                 show this help
 
 The CLI and the MCP talk to the daemon over HTTP, so many clients share one store safely.
@@ -243,6 +247,46 @@ export async function run(argv: readonly string[]): Promise<void> {
         for (const cand of c.candidates) console.log(`  EXISTING: ${cand.content}`);
       }
       return;
+    }
+
+    case "schema": {
+      const [sub, ...args] = rest;
+      const engine = await connect();
+
+      if (sub === undefined || sub === "list") {
+        const schema = await engine.describeSchema();
+        const line = (e: { name: string; tier: string; status: string; count: number }) => {
+          const marks = [e.tier === "user" ? "user" : "", e.status === "disabled" ? "disabled" : ""]
+            .filter(Boolean)
+            .join(", ");
+          const used = e.count > 0 ? `${e.count} in graph` : "unused";
+          console.log(`  ${e.name.padEnd(22)} ${used}${marks ? `  [${marks}]` : ""}`);
+        };
+        console.log(`entity types (${schema.entityTypes.length})`);
+        for (const e of schema.entityTypes) line(e);
+        console.log(`\npredicates (${schema.predicates.length})`);
+        for (const p of schema.predicates) line(p);
+        if (schema.proposals.length > 0) {
+          console.log(`\nproposals pending review: ${schema.proposals.length} (see the viewer)`);
+        }
+        return;
+      }
+
+      if (sub === "delete") {
+        const [kind, name] = args;
+        if ((kind !== "entity_type" && kind !== "predicate") || !name) {
+          throw new Error("usage: memloom schema delete <entity_type|predicate> <name>");
+        }
+        const schema = await engine.describeSchema();
+        const pool = kind === "entity_type" ? schema.entityTypes : schema.predicates;
+        const entry = pool.find((e) => e.name === name.toLowerCase());
+        if (!entry) throw new Error(`no ${kind} named "${name}"`);
+        await engine.deleteSchemaEntry(entry.id);
+        console.log(`deleted ${kind} "${entry.name}"`);
+        return;
+      }
+
+      throw new Error("usage: memloom schema [list|delete]");
     }
 
     default:

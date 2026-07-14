@@ -2,6 +2,7 @@ import { MEMORY_TYPES, type MemoryEngine } from "@memloom/core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
+  deleteSchemaEntry,
   listConflicts,
   memoryHistory,
   recallMemory,
@@ -67,6 +68,19 @@ export function buildServer(memloom: MemoryEngine): McpServer {
       content: z.string().optional(),
     },
     async (args) => ({ content: [{ type: "text", text: await resolveConflict(memloom, args) }] }),
+  );
+
+  server.tool(
+    "delete_schema_entry",
+    "Permanently remove a DISABLED user-defined vocabulary entry (an entity type or " +
+      "predicate) from the graph schema. Built-in entries can only be disabled, and an " +
+      "active entry must be disabled before deletion; the response explains any refusal. " +
+      "Entities already extracted under the deleted type stay in the graph.",
+    {
+      kind: z.enum(["entity_type", "predicate"]),
+      name: z.string(),
+    },
+    async (args) => ({ content: [{ type: "text", text: await deleteSchemaEntry(memloom, args) }] }),
   );
 
   return server;

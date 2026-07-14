@@ -326,6 +326,9 @@ export const api = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ status }),
     }),
+  // Only disabled user-tier entries are deletable; the daemon explains any refusal.
+  deleteSchemaEntry: (id: string) =>
+    json<{ ok: boolean }>(`/memory/schema/${id}`, { method: "DELETE" }),
   assistantSessions: () =>
     json<{ sessions: AssistantSession[] }>("/assistant/sessions").then((r) => r.sessions),
   assistantSearch: (q: string) =>

@@ -982,6 +982,11 @@ textarea {
   color: var(--brand);
 }
 
+.metaActionDanger,
+.metaActionDanger:hover {
+  color: var(--danger);
+}
+
 .historyList {
   display: flex;
   flex-direction: column;

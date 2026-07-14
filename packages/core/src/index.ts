@@ -67,6 +67,7 @@ export type {
   PredicateDef,
   PredicateName,
   SchemaEntry,
+  SchemaInfo,
   SchemaKind,
   SchemaStatus,
   SchemaTier,

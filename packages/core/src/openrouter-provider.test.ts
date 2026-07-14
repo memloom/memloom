@@ -64,7 +64,7 @@ describe("OpenRouterLLM per-request model override", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   function mockChatFetch() {
-    return vi.fn(async () => ({
+    return vi.fn(async (_url: unknown, _init?: { body?: string }) => ({
       ok: true,
       status: 200,
       text: async () => "",

@@ -242,6 +242,37 @@ describe("server", () => {
     expect(schema.predicates.map((p) => p.name)).toContain("works_on");
   });
 
+  it("schema delete: disabled user entries only, guards mapped to 409/404", async () => {
+    const server = await app();
+    const added = (await (
+      await server.request("/memory/schema", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ kind: "entity_type", name: "medication", description: "a drug" }),
+      })
+    ).json()) as { id: string };
+
+    // Still active: refused with the reason.
+    const active = await server.request(`/memory/schema/${added.id}`, { method: "DELETE" });
+    expect(active.status).toBe(409);
+
+    await server.request(`/memory/schema/${added.id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status: "disabled" }),
+    });
+    const deleted = await server.request(`/memory/schema/${added.id}`, { method: "DELETE" });
+    expect(deleted.status).toBe(200);
+
+    const again = await server.request(`/memory/schema/${added.id}`, { method: "DELETE" });
+    expect(again.status).toBe(404);
+
+    const schema = (await (await server.request("/memory/schema")).json()) as {
+      entityTypes: Array<{ name: string }>;
+    };
+    expect(schema.entityTypes.map((t) => t.name)).not.toContain("medication");
+  });
+
   it("allows local browser origins via CORS, refuses foreign ones", async () => {
     const server = await app();
     const local = await server.request("/health", {

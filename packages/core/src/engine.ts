@@ -1,3 +1,4 @@
+import type { SchemaInfo } from "./schema.js";
 import type {
   Conflict,
   ContextAddInput,
@@ -42,4 +43,8 @@ export interface MemoryEngine {
   /** One document at chunk granularity: chunks in order + their chunk -> entity edges. */
   contextChunks(documentId: string, ownerId?: string): Promise<DocumentChunks>;
   contextRemove(documentId: string, ownerId?: string): Promise<void>;
+  /** The graph vocabulary (entity types, relations, predicates, proposals) with usage counts. */
+  describeSchema(ownerId?: string): Promise<SchemaInfo>;
+  /** Permanently remove a DISABLED user-tier vocabulary entry (system rows only disable). */
+  deleteSchemaEntry(id: string, ownerId?: string): Promise<void>;
 }

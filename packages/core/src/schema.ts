@@ -158,6 +158,14 @@ export interface SchemaEntry {
   occurrences: number;
 }
 
+/** The full registry view with live usage counts — what describeSchema returns. */
+export interface SchemaInfo {
+  entityTypes: (SchemaEntry & { count: number })[];
+  relations: { name: string; description: string; count: number }[];
+  predicates: (SchemaEntry & { count: number })[];
+  proposals: SchemaEntry[];
+}
+
 /** Proposals surface in the review queue once they have been suggested this many times. */
 export const PROPOSAL_MIN_OCCURRENCES = 2;
 

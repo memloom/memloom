@@ -1,4 +1,5 @@
 import type { MemoryEngine } from "./engine.js";
+import type { SchemaInfo } from "./schema.js";
 import type {
   Conflict,
   ContextAddInput,
@@ -183,5 +184,13 @@ export class HttpMemloomClient implements MemoryEngine {
 
   async contextRemove(documentId: string): Promise<void> {
     await this.#json(`/context/documents/${documentId}`, { method: "DELETE" });
+  }
+
+  describeSchema(): Promise<SchemaInfo> {
+    return this.#json<SchemaInfo>("/memory/schema");
+  }
+
+  async deleteSchemaEntry(id: string): Promise<void> {
+    await this.#json(`/memory/schema/${id}`, { method: "DELETE" });
   }
 }

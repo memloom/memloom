@@ -6,6 +6,7 @@ import {
 } from "@memloom/core";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  deleteSchemaEntry,
   listConflicts,
   memoryHistory,
   recallMemory,
@@ -93,6 +94,34 @@ describe("mcp tools", () => {
     expect(entries[0]).toContain("v2 (current");
     expect(entries[0]).toContain("port 4000");
     expect(entries[1]).toContain("v1 (superseded");
+  });
+
+  it("delete_schema_entry deletes disabled user entries and explains refusals", async () => {
+    const m = await fresh();
+    await m.addSchemaEntry("entity_type", "medication", "a named drug");
+
+    // Active user entry: told to disable first, nothing deleted.
+    const refusedActive = await deleteSchemaEntry(m, { kind: "entity_type", name: "medication" });
+    expect(refusedActive).toContain("Disable it first");
+
+    // System entry: never deletable.
+    const person = (await m.describeSchema()).entityTypes.find((t) => t.name === "person");
+    await m.setSchemaStatus(person?.id ?? "", "disabled");
+    const refusedSystem = await deleteSchemaEntry(m, { kind: "entity_type", name: "person" });
+    expect(refusedSystem).toContain("built-in");
+    await m.setSchemaStatus(person?.id ?? "", "active");
+
+    // Disabled user entry: gone (name matching is case-insensitive).
+    const entry = (await m.describeSchema()).entityTypes.find((t) => t.name === "medication");
+    await m.setSchemaStatus(entry?.id ?? "", "disabled");
+    const deleted = await deleteSchemaEntry(m, { kind: "entity_type", name: "Medication" });
+    expect(deleted).toContain('Deleted entity_type "medication"');
+    expect(
+      (await m.describeSchema()).entityTypes.find((t) => t.name === "medication"),
+    ).toBeUndefined();
+
+    const missing = await deleteSchemaEntry(m, { kind: "predicate", name: "medication" });
+    expect(missing).toContain('No predicate named "medication"');
   });
 
   it("save_memory reports a conflict, list + resolve work", async () => {

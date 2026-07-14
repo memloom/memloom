@@ -22,6 +22,7 @@ import {
   PREDICATES,
   PROPOSAL_MIN_OCCURRENCES,
   type SchemaEntry,
+  type SchemaInfo,
   type SchemaKind,
 } from "./schema.js";
 import type { StorageAdapter } from "./storage.js";
@@ -1334,12 +1335,7 @@ export class Memloom implements MemoryEngine {
    * first use. Predicate counts consider entity-sourced edges only, so document/memory
    * mention edges don't pollute the quarantine count.
    */
-  async describeSchema(ownerId: string = SENTINEL_OWNER): Promise<{
-    entityTypes: (SchemaEntry & { count: number })[];
-    relations: { name: string; description: string; count: number }[];
-    predicates: (SchemaEntry & { count: number })[];
-    proposals: SchemaEntry[];
-  }> {
+  async describeSchema(ownerId: string = SENTINEL_OWNER): Promise<SchemaInfo> {
     await this.#ensureSchemaSeed(ownerId);
     const rows = await this.#storage.query<SchemaEntry & { created_at: string }>(
       `SELECT id, kind, name, description, tier, status, occurrences, created_at
@@ -1866,6 +1862,35 @@ export class Memloom implements MemoryEngine {
       [id, ownerId, status],
     );
     if (updated.length === 0) throw new Error(`memloom: no schema entry ${id}`);
+  }
+
+  /**
+   * Permanently remove a DISABLED user-tier vocabulary entry. Deliberately narrow:
+   * system rows are re-seeded by name as ACTIVE on the next run, so deleting one would
+   * silently re-enable it — disable is their only off-switch. Proposals have their own
+   * lifecycle (approve/dismiss). Entities already extracted under the deleted type stay
+   * in the graph, exactly as they do for a disabled type.
+   */
+  async deleteSchemaEntry(id: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    const deleted = await this.#storage.query<{ id: string }>(
+      `DELETE FROM memory_schema
+       WHERE id = $1 AND owner_id = $2 AND tier = 'user' AND status = 'disabled'
+       RETURNING id`,
+      [id, ownerId],
+    );
+    if (deleted.length > 0) return;
+    const [row] = await this.#storage.query<{ tier: string; status: string }>(
+      "SELECT tier, status FROM memory_schema WHERE id = $1 AND owner_id = $2",
+      [id, ownerId],
+    );
+    if (!row) throw new Error(`memloom: no schema entry ${id}`);
+    if (row.tier === "system") {
+      throw new Error("memloom: system entries cannot be deleted; disable instead");
+    }
+    if (row.tier === "proposed") {
+      throw new Error("memloom: proposals are approved or dismissed, not deleted");
+    }
+    throw new Error("memloom: only disabled entries can be deleted; disable it first");
   }
 
   async #resolveEntity(owner: string, name: string, type: string): Promise<string> {

@@ -441,6 +441,27 @@ describe("entities + indexer", () => {
     expect(entry?.description).toBe("a named drug");
   });
 
+  it("delete removes only disabled user entries; system and active rows refuse", async () => {
+    const m = await fresh();
+    const added = await m.addSchemaEntry("entity_type", "medication", "a named drug");
+
+    // Active user entry: must be disabled first.
+    await expect(m.deleteSchemaEntry(added.id)).rejects.toThrow(/disable it first/);
+
+    // System entry: only disable exists (a delete would be re-seeded active by name).
+    const person = (await m.describeSchema()).entityTypes.find((t) => t.name === "person");
+    await m.setSchemaStatus(person?.id ?? "", "disabled");
+    await expect(m.deleteSchemaEntry(person?.id ?? "")).rejects.toThrow(/system entries/);
+    await m.setSchemaStatus(person?.id ?? "", "active");
+
+    // Disabled user entry: deleted for good.
+    await m.setSchemaStatus(added.id, "disabled");
+    await m.deleteSchemaEntry(added.id);
+    const schema = await m.describeSchema();
+    expect(schema.entityTypes.find((t) => t.name === "medication")).toBeUndefined();
+    await expect(m.deleteSchemaEntry(added.id)).rejects.toThrow(/no schema entry/);
+  });
+
   it("re-adding a changed file drops stale chunk edges until re-indexed", async () => {
     const m = await fresh();
     const path = join(tempDir(), "notes.md");

@@ -475,6 +475,17 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     return c.json({ ok: true });
   });
 
+  // Permanently remove a disabled user-tier entry (the engine enforces the guards).
+  app.delete("/memory/schema/:id", async (c) => {
+    try {
+      await memloom.deleteSchemaEntry(c.req.param("id"));
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no schema entry/.test(message) ? 404 : 409);
+    }
+  });
+
   app.get("/memory/graph", async (c) => c.json(await memloom.graph()));
 
   app.get("/memory/conflicts", async (c) => c.json({ conflicts: await memloom.conflicts() }));

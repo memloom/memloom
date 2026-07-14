@@ -9,11 +9,15 @@ function VocabSection({
   title,
   entries,
   onToggle,
+  onDelete,
 }: {
   title: string;
   entries: (SchemaEntry & { count: number })[];
   onToggle: (entry: SchemaEntry) => void;
+  onDelete: (entry: SchemaEntry) => void;
 }) {
+  // Two-click delete (the DocumentsView pattern); clicking anything else disarms.
+  const [armedId, setArmedId] = useState<string | null>(null);
   return (
     <div className="card">
       <div className="cardLabel">
@@ -30,9 +34,34 @@ function VocabSection({
             <span className="docMeta">
               {entry.count > 0 ? `${entry.count} in graph` : "unused"}
             </span>
-            <button type="button" className="metaAction" onClick={() => onToggle(entry)}>
+            <button
+              type="button"
+              className="metaAction"
+              onClick={() => {
+                setArmedId(null);
+                onToggle(entry);
+              }}
+            >
               {entry.status === "disabled" ? "enable" : "disable"}
             </button>
+            {/* Delete exists only for disabled user entries: system rows are re-seeded by
+                name (a delete would resurrect them active), and active rows disable first. */}
+            {entry.tier === "user" && entry.status === "disabled" && (
+              <button
+                type="button"
+                className={`metaAction ${armedId === entry.id ? "metaActionDanger" : ""}`}
+                onClick={() => {
+                  if (armedId !== entry.id) {
+                    setArmedId(entry.id);
+                    return;
+                  }
+                  setArmedId(null);
+                  onDelete(entry);
+                }}
+              >
+                {armedId === entry.id ? "confirm delete" : "delete"}
+              </button>
+            )}
           </div>
           {entry.description && <div className="schemaRowBody">{entry.description}</div>}
         </div>
@@ -125,6 +154,7 @@ export function SchemaView({ onChanged }: { onChanged: () => void }) {
                   api.setSchemaStatus(e.id, e.status === "disabled" ? "active" : "disabled"),
                 )
               }
+              onDelete={(e) => act(() => api.deleteSchemaEntry(e.id))}
             />
             <VocabSection
               title="predicates"
@@ -134,6 +164,7 @@ export function SchemaView({ onChanged }: { onChanged: () => void }) {
                   api.setSchemaStatus(e.id, e.status === "disabled" ? "active" : "disabled"),
                 )
               }
+              onDelete={(e) => act(() => api.deleteSchemaEntry(e.id))}
             />
 
             <div className="card">
