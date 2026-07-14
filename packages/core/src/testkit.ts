@@ -3,7 +3,7 @@ import { PgAdapter } from "./pg-adapter.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
 import type { StorageAdapter } from "./storage.js";
 
-// Test-only helpers (never bundled into the published package — tsup ships only index.ts).
+// Test-only helpers (never bundled into the published package: tsup ships only index.ts).
 // A StorageFactory yields a fresh, isolated store per call so each test starts clean.
 
 export interface StorageFactory {

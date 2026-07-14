@@ -25,7 +25,7 @@ export interface HttpResponse {
   status: number;
   text(): Promise<string>;
   json(): Promise<unknown>;
-  /** Web-streams body (present on real fetch Responses) — used by the index progress stream. */
+  /** Web-streams body (present on real fetch Responses): used by the index progress stream. */
   body?: {
     getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array }> };
   } | null;

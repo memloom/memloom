@@ -115,7 +115,7 @@ describe("chunkOutline", () => {
   it("degrades to plain chunking when the text has no outline", () => {
     const prose = "just some ordinary prose without structure of any kind.";
     expect(chunkOutline(prose)).toEqual([{ content: prose, headingPath: null }]);
-    // Tiny but unstructured input still ingests — only debris inside structured docs drops.
+    // Tiny but unstructured input still ingests: only debris inside structured docs drops.
     expect(chunkOutline("fdsafdsa")).toEqual([{ content: "fdsafdsa", headingPath: null }]);
   });
 

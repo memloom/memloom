@@ -2,7 +2,7 @@ import type * as Pg from "pg";
 import type { StorageAdapter } from "./storage.js";
 
 // Server / cloud tier: a real Postgres server over the wire (local Docker, Supabase, or any
-// managed Postgres). `pg` is an optional dependency — imported lazily so embedded-only
+// managed Postgres). `pg` is an optional dependency: imported lazily so embedded-only
 // installs stay lean. The server must have the pgvector extension available.
 
 export class PgAdapter implements StorageAdapter {

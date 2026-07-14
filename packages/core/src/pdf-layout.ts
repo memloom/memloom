@@ -1,6 +1,6 @@
 // Geometry-aware text reconstruction for PDF pages. PDF.js returns text items in content-
-// stream order, which for equation-heavy PDFs (Word/LaTeX math objects) is NOT reading order
-// — glyphs of one formula arrive scrambled. Their positions are correct, though, so we
+// stream order, which for equation-heavy PDFs (Word/LaTeX math objects) is NOT reading order:
+// glyphs of one formula arrive scrambled. Their positions are correct, though, so we
 // rebuild reading order from geometry: split columns at an uncovered vertical gutter, group
 // items into lines by baseline, sort left-to-right, and space by horizontal gaps.
 //
@@ -8,7 +8,7 @@
 // detected columns are duplicates after whitespace normalization, one is dropped.
 //
 // What this cannot fix: glyphs from symbol fonts without a Unicode mapping (∞, ∈, ≠ …)
-// never reach the text layer at all — that needs OCR, which is out of scope by design.
+// never reach the text layer at all: that needs OCR, which is out of scope by design.
 
 /** The subset of PDF.js's TextItem we consume. */
 export interface PdfTextItem {
@@ -30,7 +30,7 @@ interface Placed {
 function place(items: PdfTextItem[]): Placed[] {
   const placed: Placed[] = [];
   for (const item of items) {
-    // getTextContent also yields marked-content markers without a str — skip anything unplaced.
+    // getTextContent also yields marked-content markers without a str: skip anything unplaced.
     if (typeof item.str !== "string" || item.str.trim().length === 0) continue;
     if (!Array.isArray(item.transform)) continue;
     const x = item.transform[4] ?? 0;
@@ -112,7 +112,7 @@ export function assemblePageText(items: PdfTextItem[], pageWidth: number): strin
   const placed = place(items);
   if (placed.length === 0) return "";
   const columns = splitColumns(placed, pageWidth).map(assembleColumn);
-  // 2-up print layouts duplicate the whole page side by side — keep one copy.
+  // 2-up print layouts duplicate the whole page side by side: keep one copy.
   if (columns.length === 2) {
     const [a, b] = columns as [string, string];
     if (a.replace(/\s+/g, "") === b.replace(/\s+/g, "")) return a;

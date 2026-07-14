@@ -6,7 +6,7 @@ import type { EmbeddingProvider } from "./providers.js";
 import type { StorageAdapter } from "./storage.js";
 
 // The embedding-fingerprint guard: a store embedded under one provider/model must refuse to
-// open under another — mixed vector spaces don't error, they just make recall garbage.
+// open under another: mixed vector spaces don't error, they make recall garbage.
 
 describe("embedding fingerprint guard", () => {
   const cleanups: Array<() => Promise<void>> = [];
@@ -23,7 +23,7 @@ describe("embedding fingerprint guard", () => {
     cleanups.push(() => storage.close());
 
     await engine(storage, new HashingEmbeddingProvider(1024)).init();
-    // Same config again — the normal restart path.
+    // Same config again: the normal restart path.
     await engine(storage, new HashingEmbeddingProvider(1024)).init();
 
     // Same dims, different vector space (what switching offline → cloud looks like).

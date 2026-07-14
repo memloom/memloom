@@ -1,18 +1,18 @@
 // Zero-dependency recursive character splitter with a markdown heading-aware pre-pass.
 // Research-backed defaults (Chroma/Snowflake/Firecrawl consensus, 2025-26): ~1,600-char
-// chunks (~400 tokens), 2,048 hard cap, ~12% overlap. Character-sized on purpose — tiktoken
+// chunks (~400 tokens), 2,048 hard cap, ~12% overlap. Character-sized on purpose; tiktoken
 // wouldn't be accurate for Qwen's tokenizer anyway, and the embedding model has ~20x context
 // headroom, so a tokenizer dependency buys nothing.
 //
 // The retrieval-quality lever: markdown chunks get their heading breadcrumb PREPENDED to the
-// chunk text ("Guide > Setup > Postgres"), not stored as metadata alone — so both the vector
+// chunk text ("Guide > Setup > Postgres"), not stored as metadata alone, so both the vector
 // and keyword arms of hybrid retrieval see the context (Anthropic's contextual-retrieval
 // result, approximated for free).
 
 export interface ChunkOptions {
   /** Preferred chunk size in characters; pieces merge up to this. */
   target?: number;
-  /** Hard cap — any piece longer is recursively re-split. */
+  /** Hard cap: any piece longer is recursively re-split. */
   max?: number;
   /** Characters of the previous chunk's tail carried into the next chunk. */
   overlap?: number;
@@ -142,7 +142,7 @@ export function chunkMarkdown(markdown: string, opts: ChunkOptions = {}): Chunk[
 
 // ---------------------------------------------------------------------------------------
 // Outline chunking for plain text and PDF pages: no markdown headings, but real documents
-// (lecture notes, exercise sheets, contracts) still have structure — ALL-CAPS title lines
+// (lecture notes, exercise sheets, contracts) still have structure: ALL-CAPS title lines
 // and numbered points ("2. DEFINICJA 2. …"). Split at those boundaries so a chunk never
 // starts mid-definition, and carry "TITLE > 2. DEFINICJA 2." as the breadcrumb.
 
@@ -156,7 +156,7 @@ function isCapsTitle(line: string): boolean {
 
 const POINT_START = /^\s*(\d{1,3})[.)]\s+\S/;
 
-// "DEFINICJA 1. Niech funkcja…" → "DEFINICJA 1." — the leading run of ALL-CAPS/number
+// "DEFINICJA 1. Niech funkcja…" → "DEFINICJA 1.": the leading run of ALL-CAPS/number
 // tokens after the point number, if any.
 function pointKeyword(rest: string): string | null {
   const tokens: string[] = [];
@@ -165,7 +165,7 @@ function pointKeyword(rest: string): string | null {
     tokens.push(token);
   }
   // The first token must be a real word ("DEFINICJA", "UWAGA"), not a stray capital like
-  // the Polish preposition "O" — single letters make noise breadcrumbs ("3. O").
+  // the Polish preposition "O": single letters make noise breadcrumbs ("3. O").
   const first = tokens[0];
   if (!first || !/\p{Lu}/u.test(first) || first.replace(/[.,]$/, "").length < 3) return null;
   const keyword = tokens.join(" ");
@@ -233,7 +233,7 @@ function outlineBreadcrumb(section: OutlineSection): string | null {
 export function chunkOutline(text: string, opts: ChunkOptions = {}): Chunk[] {
   const sections = outlineSections(text);
   // In a structured document, a tiny unlabeled fragment between points is extraction debris
-  // (e.g. a formula numerator whose baseline floats above its point) — not worth a chunk.
+  // (e.g. a formula numerator whose baseline floats above its point), not worth a chunk.
   // An unstructured document (single section) always survives, however small.
   const kept =
     sections.length > 1

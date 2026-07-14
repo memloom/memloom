@@ -11,7 +11,7 @@ const target = join(here, "..", "viewer");
 
 if (!existsSync(source)) {
   console.error(
-    `embed-viewer: no viewer build at ${source} — run \`pnpm --filter @memloom/viewer build\` first.`,
+    `embed-viewer: no viewer build at ${source}; run \`pnpm --filter @memloom/viewer build\` first.`,
   );
   process.exit(1);
 }

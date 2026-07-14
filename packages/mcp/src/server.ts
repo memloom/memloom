@@ -21,7 +21,7 @@ export function buildServer(memloom: MemoryEngine): McpServer {
     "Save a durable memory the user owns. Set `type` to classify it: fact (a stable truth), " +
       "preference (how the user likes things), episode (a time-bound event or decision), or " +
       "procedure (reusable how-to steps); defaults to fact. memloom dedupes automatically and " +
-      "flags contradictions instead of overwriting, so just save what is worth remembering; the " +
+      "flags contradictions instead of overwriting, so save what is worth remembering; the " +
       "response says if it created a conflict to resolve.",
     {
       content: z.string(),
@@ -44,8 +44,8 @@ export function buildServer(memloom: MemoryEngine): McpServer {
   server.tool(
     "memory_history",
     "Show how a memory changed over time: its full version chain, newest first, with the " +
-      "current version and every superseded one. Pass the `id` shown by recall_memory. Read-only " +
-      "— editing memories is a human action in the viewer or CLI.",
+      "current version and every superseded one. Pass the `id` shown by recall_memory. Read-only: " +
+      "editing memories is a human action in the viewer or CLI.",
     { memoryId: z.string() },
     async (args) => ({ content: [{ type: "text", text: await memoryHistory(memloom, args) }] }),
   );

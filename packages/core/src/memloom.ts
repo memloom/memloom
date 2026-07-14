@@ -69,7 +69,7 @@ export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
 const CANDIDATE_THRESHOLD = 0.5;
 const CANDIDATE_LIMIT = 5;
 
-// All config is injected — core never reads process.env or global state (build-plan
+// All config is injected: core never reads process.env or global state (build-plan
 // architectural rule 2).
 export interface MemloomConfig {
   storage: StorageAdapter;
@@ -189,7 +189,7 @@ export class Memloom implements MemoryEngine {
   }
 
   // A store's vectors are only comparable to vectors from the same provider+model+dims. The
-  // first init stamps the store; any later init with a different fingerprint is refused —
+  // first init stamps the store; any later init with a different fingerprint is refused:
   // otherwise recall degrades silently (offline-embedded and cloud-embedded memories look
   // fine individually but never match each other).
   async #checkEmbeddingFingerprint(): Promise<void> {
@@ -218,7 +218,7 @@ export class Memloom implements MemoryEngine {
 
   /**
    * Cheap liveness probe of the store. When a Postgres wire client (Drizzle Studio, psql) is
-   * attached to the daemon it holds PGLite's exclusive lock and this queues — the server races
+   * attached to the daemon it holds PGLite's exclusive lock and this queues: the server races
    * it against a timeout to fail fast instead of hanging every request.
    */
   async ping(): Promise<void> {
@@ -228,7 +228,7 @@ export class Memloom implements MemoryEngine {
   /**
    * Ingest a file as context (any registered extractor's format): extract, chunk, embed,
    * store. Documents are
-   * MIRRORS of files — no belief pipeline, no conflicts; re-adding a changed file replaces
+   * MIRRORS of files: no belief pipeline, no conflicts; re-adding a changed file replaces
    * its chunks in one transaction, and an unchanged file (same content hash) is a no-op.
    */
   async contextAdd(input: ContextAddInput): Promise<ContextAddResult> {
@@ -242,7 +242,7 @@ export class Memloom implements MemoryEngine {
   /**
    * Attach an uploaded file to one assistant chat: the same extract/chunk/embed pipeline
    * as contextAdd, but the document and its chunks carry the session id, so only that
-   * chat's recall sees them and deleting the chat deletes them. No file touches disk —
+   * chat's recall sees them and deleting the chat deletes them. No file touches disk:
    * the synthetic attachment:// path exists only to key the UNIQUE(owner, path) dedup
    * (re-attaching the same bytes to the same chat is a no-op).
    */
@@ -276,7 +276,7 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
-   * Ingest an uploaded file's bytes as a GLOBAL document — the browser file dialog gives
+   * Ingest an uploaded file's bytes as a GLOBAL document: the browser file dialog gives
    * bytes, never disk paths. Provenance is upload://<filename>, so re-uploading the same
    * name replaces it (hash short-circuit applies); there is no disk file to "open".
    * Unlike contextAttach, the result is a first-class document: listed, graphed, indexed.
@@ -346,13 +346,13 @@ export class Memloom implements MemoryEngine {
     }
 
     // The extractor declares its section strategy: markdown splits at headings, outline at
-    // ALL-CAPS titles and numbered points — either way a chunk never starts mid-section and
+    // ALL-CAPS titles and numbered points: either way a chunk never starts mid-section and
     // carries a citable breadcrumb.
     const sectionize = file.chunker === "markdown" ? chunkMarkdown : chunkOutline;
     const chunks = file.units.flatMap((unit) =>
       sectionize(unit.text).map((c) => ({ ...c, page: unit.page })),
     );
-    // Embed before the transaction — provider calls are slow and can fail; the store swap
+    // Embed before the transaction: provider calls are slow and can fail; the store swap
     // below stays a short, all-or-nothing write.
     const embeddings =
       chunks.length > 0 ? await this.#embedding.embed(chunks.map((c) => c.content)) : [];
@@ -360,7 +360,7 @@ export class Memloom implements MemoryEngine {
     return await this.#storage.tx(async (tx) => {
       let documentId: string;
       if (prior) {
-        // Replace the prior chunks (and their mention edges) before re-inserting — see
+        // Replace the prior chunks (and their mention edges) before re-inserting: see
         // #deleteDocumentChunks for why the edges can't ride a cascade.
         await this.#deleteDocumentChunks(tx, prior.id, owner);
         await tx.query(
@@ -486,7 +486,7 @@ export class Memloom implements MemoryEngine {
 
   // The single guarantee for the no-FK invariant: memory_edges has no foreign key to
   // context_chunks, so neither the document cascade nor a chunk delete ever cleans mention
-  // edges — every chunk removal must clear the edges by hand. Delete a document's chunks ONLY
+  // edges: every chunk removal must clear the edges by hand. Delete a document's chunks ONLY
   // through here (mention edges first, then the chunks), so no call site has to remember it.
   // Entities are intentionally left: they may be mentioned by other documents.
   async #deleteDocumentChunks(
@@ -495,7 +495,7 @@ export class Memloom implements MemoryEngine {
     owner: string,
   ): Promise<void> {
     // Relationships STATED BY these chunks go too (a document is a mirror; its claims
-    // leave with it) — entity nodes themselves intentionally survive.
+    // leave with it); entity nodes themselves intentionally survive.
     await tx.query(
       `DELETE FROM memory_edges
        WHERE owner_id = $2 AND source_id IN (
@@ -543,7 +543,7 @@ export class Memloom implements MemoryEngine {
       return { id, outcome: "added" };
     }
 
-    // Exact duplicate — cheap short-circuit, no LLM needed.
+    // Exact duplicate: cheap short-circuit, no LLM needed.
     const exact = await this.#storage.query<{ id: string }>(
       "SELECT id FROM memory_objects WHERE owner_id = $1 AND status = 'active' AND content_hash = $2 LIMIT 1",
       [owner, hash],
@@ -630,7 +630,7 @@ export class Memloom implements MemoryEngine {
 
   /**
    * Edit a belief: append a new current version with the given content and stale the prior one.
-   * An explicit edit — unlike a save, it never runs the dedup/conflict funnel. Reversible in the
+   * An explicit edit: unlike a save, it never runs the dedup/conflict funnel. Reversible in the
    * sense that the prior version stays queryable via history().
    */
   async update(input: UpdateInput): Promise<UpdateResult> {
@@ -675,7 +675,7 @@ export class Memloom implements MemoryEngine {
     const qvec = toVectorLiteral(embedding);
 
     // The temporal arm: a calendar-day filter over memories, ranked by similarity.
-    // Deliberately outside the fuse (which has no notion of time) — the day IS the filter,
+    // Deliberately outside the fuse (which has no notion of time): the day IS the filter,
     // similarity only orders within it. Context chunks are excluded by construction.
     if (opts.assertedOn) {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.assertedOn)) {
@@ -716,7 +716,7 @@ export class Memloom implements MemoryEngine {
 
   /**
    * Index unprocessed memories AND context chunks: extract entities, resolve them, and link
-   * each source to its entities with a 'mention' edge in the shared edge table. Idempotent —
+   * each source to its entities with a 'mention' edge in the shared edge table. Idempotent:
    * only touches rows not yet indexed. Chunks stay outside the belief pipeline; their edges
    * are how context connects to memory (rolled up per document in graph()). One LLM call per
    * row, so a large PDF makes indexing proportionally slower.
@@ -729,7 +729,7 @@ export class Memloom implements MemoryEngine {
   }
 
   // Run ids this process is executing right now. Any DB row still 'running' that is NOT in
-  // here belongs to a process that died mid-run — reconciled to 'interrupted' on read/start.
+  // here belongs to a process that died mid-run: reconciled to 'interrupted' on read/start.
   #activeRuns = new Set<string>();
 
   async #reconcileInterruptedRuns(ownerId: string): Promise<void> {
@@ -745,8 +745,8 @@ export class Memloom implements MemoryEngine {
 
   /**
    * The shared index pass behind index() and reindex(): processes every unindexed memory
-   * and chunk, and records the pass as a session — one memory_index_runs row plus one
-   * memory_index_events row per item — so progress survives the viewer navigating away
+   * and chunk, and records the pass as a session: one memory_index_runs row plus one
+   * memory_index_events row per item, so progress survives the viewer navigating away
    * and CLI runs show up in the Console. A failing item is logged and left unindexed
    * (the next run retries it); the run finishes 'warning' instead of dying mid-batch.
    */
@@ -757,7 +757,7 @@ export class Memloom implements MemoryEngine {
   ): Promise<IndexResult> {
     const snippet = (text: string) => (text.length > 64 ? `${text.slice(0, 61)}...` : text);
     // The vocabulary is loaded ONCE per run (registry rows: system + user tiers, active),
-    // then injected into every extraction — one query, not one per item.
+    // then injected into every extraction: one query, not one per item.
     const schema = await this.#activeSchema(ownerId);
 
     const pending = await this.#storage.query<{ id: string; content: string }>(
@@ -780,7 +780,7 @@ export class Memloom implements MemoryEngine {
        ORDER BY cc.created_at, cc.chunk_index`,
       [ownerId],
     );
-    // Nothing pending: no session row — an empty run every time someone clicks "index"
+    // Nothing pending: no session row; an empty run every time someone clicks "index"
     // would drown the real history.
     if (pending.length + pendingChunks.length === 0) return { indexed: 0, chunksIndexed: 0 };
 
@@ -876,7 +876,7 @@ export class Memloom implements MemoryEngine {
         };
         const prefix = `[${base.index}/${base.total}] chunk ${base.label}`;
         try {
-          // Formula-dominated chunks have nothing extractable — skip the LLM call entirely
+          // Formula-dominated chunks have nothing extractable: skip the LLM call entirely
           // (a math exercise sheet would otherwise become a graph of equations).
           const skipped = isMathDense(chunk.content);
           const linked = skipped
@@ -921,7 +921,7 @@ export class Memloom implements MemoryEngine {
         [runId, status],
       );
     } catch (err) {
-      // Something outside the per-item guards (storage failure, schema query) — finalize
+      // Something outside the per-item guards (storage failure, schema query): finalize
       // the session honestly before propagating.
       await this.#storage
         .query("UPDATE memory_index_runs SET status = 'error', finished_at = now() WHERE id = $1", [
@@ -936,7 +936,7 @@ export class Memloom implements MemoryEngine {
     return { indexed: totals.memories, chunksIndexed: totals.chunks };
   }
 
-  /** Index sessions, newest first — the Console's persistent log. Reconciles dead runs. */
+  /** Index sessions, newest first: the Console's persistent log. Reconciles dead runs. */
   async listIndexRuns(ownerId: string = SENTINEL_OWNER, limit = 100): Promise<IndexRun[]> {
     await this.#reconcileInterruptedRuns(ownerId);
     const rows = await this.#storage.query<{
@@ -1206,7 +1206,7 @@ export class Memloom implements MemoryEngine {
     await this.#storage.tx(async (tx) => {
       // Attachments are scoped to the chat, so they die with it. Chunks cascade from the
       // document FK, but edge cleanup must be explicit (see #deleteDocumentChunks); session
-      // chunks are never indexed so no edges exist in practice — this keeps the invariant
+      // chunks are never indexed so no edges exist in practice: this keeps the invariant
       // anyway. Messages cascade from the session FK.
       await this.#deleteSessionAttachments(tx, ownerId, sessionId);
       await tx.query("DELETE FROM assistant_sessions WHERE owner_id = $1 AND id = $2", [
@@ -1315,7 +1315,7 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
-   * Wipe every extracted artifact and re-run indexing from scratch — the recovery path for
+   * Wipe every extracted artifact and re-run indexing from scratch: the recovery path for
    * a store polluted by a weaker extraction pipeline. Deletes all entities, their mention
    * edges (from memories AND chunks), and every typed entity-to-entity edge; belief edges
    * (replaces/distinct) connect only memory_objects and are untouched by construction.
@@ -1395,7 +1395,7 @@ export class Memloom implements MemoryEngine {
       entityTypes: vocab
         .filter((r) => r.kind === "entity_type")
         .map((r) => ({ ...entry(r), count: byType.get(r.name) ?? 0 })),
-      // Edge relations are engine mechanics, not registry rows — reported from code.
+      // Edge relations are engine mechanics, not registry rows: reported from code.
       relations: EDGE_RELATIONS.map((r) => ({
         name: r.name,
         description: r.description,
@@ -1418,7 +1418,7 @@ export class Memloom implements MemoryEngine {
 
   /**
    * The memory graph for the owner: one graph, two granularities. Active memories, entities,
-   * and context documents as nodes. Chunk-level mention edges never leave the store — they
+   * and context documents as nodes. Chunk-level mention edges never leave the store; they
    * roll up to one weighted document -> entity edge, so a 300-chunk PDF is one node, not a
    * hairball (Zep/Cognee link raw content at fine grain but nobody renders chunks).
    */
@@ -1441,7 +1441,7 @@ export class Memloom implements MemoryEngine {
       "SELECT id, title, path FROM context_documents WHERE owner_id = $1 AND session_id IS NULL",
       [ownerId],
     );
-    // Memory-anchored edges only — chunk edges are represented by the rollup below.
+    // Memory-anchored edges only: chunk edges are represented by the rollup below.
     const edgeRows = await this.#storage.query<{
       from_id: string;
       to_id: string;
@@ -1542,7 +1542,7 @@ export class Memloom implements MemoryEngine {
 
     switch (decision.action) {
       case "keep_new": {
-        // The incoming belief continues the (primary) existing fact's lineage — a resolved
+        // The incoming belief continues the (primary) existing fact's lineage: a resolved
         // contradiction is a version step, so it shows up in that belief's history().
         const primary = candidateIds[0];
         if (primary) {
@@ -1866,7 +1866,7 @@ export class Memloom implements MemoryEngine {
     return row;
   }
 
-  /** Promote a proposal to the user tier — the extractor starts using it next run. */
+  /** Promote a proposal to the user tier: the extractor starts using it next run. */
   async approveProposal(id: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
     const updated = await this.#storage.query<{ id: string }>(
       `UPDATE memory_schema SET tier = 'user', status = 'active'
@@ -1876,7 +1876,7 @@ export class Memloom implements MemoryEngine {
     if (updated.length === 0) throw new Error(`memloom: no pending proposal ${id}`);
   }
 
-  /** Reject a proposal — the name is blocklisted from re-proposal in the prompt. */
+  /** Reject a proposal: the name is blocklisted from re-proposal in the prompt. */
   async dismissProposal(id: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
     const updated = await this.#storage.query<{ id: string }>(
       `UPDATE memory_schema SET status = 'dismissed'
@@ -1903,7 +1903,7 @@ export class Memloom implements MemoryEngine {
   /**
    * Permanently remove a DISABLED user-tier vocabulary entry. Deliberately narrow:
    * system rows are re-seeded by name as ACTIVE on the next run, so deleting one would
-   * silently re-enable it — disable is their only off-switch. Proposals have their own
+   * silently re-enable it: disable is their only off-switch. Proposals have their own
    * lifecycle (approve/dismiss). Entities already extracted under the deleted type stay
    * in the graph, exactly as they do for a disabled type.
    */
@@ -1930,10 +1930,10 @@ export class Memloom implements MemoryEngine {
   }
 
   async #resolveEntity(owner: string, name: string, type: string): Promise<string> {
-    // Identity is the NAME KEY alone (see entityNameKey) — the type is an attribute, not
+    // Identity is the NAME KEY alone (see entityNameKey): the type is an attribute, not
     // part of the key. The extractor classifies inconsistently across chunks ("@memloom/core"
     // as technology here, project there); forking a node per type is never what a personal
-    // graph wants, and the rare true homonym merges into one node — a smaller failure than
+    // graph wants, and the rare true homonym merges into one node: a smaller failure than
     // duplicates everywhere. First classification wins; oldest row wins over pre-fix dupes.
     // The SQL expression mirrors entityNameKey: trim, casefold, strip leading @, collapse ws.
     const existing = await this.#storage.query<{ id: string }>(
@@ -1993,7 +1993,7 @@ export class Memloom implements MemoryEngine {
 
   /**
    * Rename and/or retype one entity. A rename re-embeds (the vector must follow the
-   * name) and refuses a name-key collision with another entity — that situation is a
+   * name) and refuses a name-key collision with another entity: that situation is a
    * merge, not a rename. A retype must name an active vocabulary type.
    */
   async updateEntity(
@@ -2029,7 +2029,7 @@ export class Memloom implements MemoryEngine {
         [ownerId, id, entityNameKey(name)],
       );
       if (clash[0]) {
-        throw new Error(`memloom: an entity named "${name}" already exists — merge instead`);
+        throw new Error(`memloom: an entity named "${name}" already exists. Merge instead`);
       }
       const [embedding] = await this.#embedding.embed([name]);
       if (!embedding) throw new Error("memloom: embedding provider returned no vector");
@@ -2043,7 +2043,7 @@ export class Memloom implements MemoryEngine {
   /**
    * Merge one entity into another: every edge touching the source is repointed to the
    * target (would-be duplicates and would-be self-loops are dropped first), then the
-   * source row is deleted. The target's name and type win — merging IS choosing.
+   * source row is deleted. The target's name and type win.
    */
   async mergeEntities(
     sourceId: string,
@@ -2115,7 +2115,7 @@ export class Memloom implements MemoryEngine {
   }
 
   // Entities appear on both edge ends (mentions point at them, typed predicates run
-  // between them), so cleanup must sweep both — the same manual story as document chunks.
+  // between them), so cleanup must sweep both: the same manual story as document chunks.
   async #deleteEntityEdges(tx: StorageAdapter, owner: string, entityId: string): Promise<void> {
     await tx.query(
       "DELETE FROM memory_edges WHERE owner_id = $1 AND (from_id = $2 OR to_id = $2)",

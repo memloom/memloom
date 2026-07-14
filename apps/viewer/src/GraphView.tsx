@@ -24,7 +24,7 @@ import {
 import { useTheme } from "./useTheme";
 
 // The memory graph on a production-proven canvas architecture: home-anchor physics
-// (every node has a deterministic home a custom force pulls it toward — nothing is pinned,
+// (every node has a deterministic home a custom force pulls it toward; nothing is pinned,
 // nothing drifts), a full force stack (link/charge/collision + anchor) driven by a live
 // controls panel, animated hover focus, and neighbor-aware label placement. memloom's
 // pixel-motif stays: memories are squares, entities circles, documents diamonds; clicking
@@ -54,7 +54,7 @@ const PALETTES: Record<"dark" | "light", Palette> = {
     chunk: "#6ee7b7",
     linkBase: "rgba(148, 163, 184, 0.45)",
     mention: "rgba(192, 132, 252, 0.5)",
-    // Version lineage is indigo — amber is reserved for chrome/identity (DESIGN.md).
+    // Version lineage is indigo. Amber is reserved for chrome/identity (DESIGN.md).
     replaces: "rgba(93, 103, 245, 0.65)",
     distinct: "rgba(45, 212, 191, 0.5)",
     chunkLink: "rgba(52, 211, 153, 0.45)",
@@ -120,7 +120,7 @@ interface Link {
   source: string | Node;
   target: string | Node;
   relation: GraphRelation;
-  /** The raw relation string — typed predicates (works_on, uses, ...) keep their name here. */
+  /** The raw relation string: typed predicates (works_on, uses, ...) keep their name here. */
   label: string;
   weight: number;
 }
@@ -157,7 +157,7 @@ function getAnchorStrength(centerForce: number) {
   return 0.05 * (0.72 + compactness * 1.35);
 }
 
-// One path per node kind: square (memory, chunk — content is square), circle (entity),
+// One path per node kind: square (memory, chunk: content is square), circle (entity),
 // diamond (document).
 function traceNode(
   ctx: CanvasRenderingContext2D,
@@ -185,12 +185,29 @@ function buildGraphData(
   graph: Graph,
   expanded: Map<string, DocumentChunks>,
   config: ViewerGraphConfig,
+  activeId: string | null,
 ) {
   const sizeMul = config.display.nodeSizeMultiplier;
   const spread = getCenterLayoutSpreadMultiplier(config.forces.centerForce);
   const docIds = new Set(graph.documents.map((d) => d.id));
   const openDocs = [...expanded].filter(([id]) => docIds.has(id));
   const openIds = new Set(openDocs.map(([id]) => id));
+
+  // With "show entities" off, only entities touching the active (selected) node exist.
+  // Their edges vanish with them. The link builders below skip absent endpoints.
+  let revealedEntities: Set<string> | null = null;
+  if (!config.display.showEntities) {
+    revealedEntities = new Set();
+    if (activeId) {
+      revealedEntities.add(activeId);
+      const reveal = (from: string, to: string) => {
+        if (from === activeId) revealedEntities?.add(to);
+        if (to === activeId) revealedEntities?.add(from);
+      };
+      for (const e of graph.edges) reveal(e.from, e.to);
+      for (const [, dc] of openDocs) for (const e of dc.edges) reveal(e.from, e.to);
+    }
+  }
 
   const nodes: Node[] = [];
   const nodeMap = new Map<string, Node>();
@@ -229,6 +246,7 @@ function buildGraphData(
     });
   }
   for (const e of graph.entities) {
+    if (revealedEntities && !revealedEntities.has(e.id)) continue;
     const home = scatterHome(e.id);
     addNode({
       id: e.id,
@@ -255,7 +273,7 @@ function buildGraphData(
     });
   }
   // Chunks bloom around their parent document's LIVE position (phyllotaxis spiral), so an
-  // expansion appears where the document is, not somewhere random.
+  // expansion appears where the document is, rather than somewhere random.
   for (const [docId, dc] of openDocs) {
     const parent = POSITION_CACHE.get(docId) ?? nodeMap.get(docId);
     const px = parent?.x ?? 0;
@@ -347,7 +365,7 @@ export function GraphView({
   onChanged?: () => void;
 }) {
   const wrapRef = useRef<HTMLDivElement | null>(null);
-  // react-force-graph's methods surface (zoom, zoomToFit, d3Force, ...) — kept loose.
+  // react-force-graph's methods surface (zoom, zoomToFit, d3Force, ...). Kept loose.
   // biome-ignore lint/suspicious/noExplicitAny: untyped imperative handle from the lib
   const fgRef = useRef<any>(null);
   const [size, setSize] = useState({ width: 800, height: 600 });
@@ -431,9 +449,12 @@ export function GraphView({
     rafId: null,
   });
 
+  // The selected node feeds the build: with "show entities" off it decides which
+  // entities are revealed. Selecting/deselecting rebuilds; positions survive via the cache.
+  const selectedId = selected?.id ?? null;
   const { graphData, nodeMap, neighborMap, chunkParent } = useMemo(
-    () => buildGraphData(graph, expanded, config),
-    [graph, expanded, config],
+    () => buildGraphData(graph, expanded, config, selectedId),
+    [graph, expanded, config, selectedId],
   );
 
   const nodeMapRef = useRef(nodeMap);
@@ -451,10 +472,26 @@ export function GraphView({
     const node = nodeMap.get(focus);
     if (node) {
       setSelected({ kind: node.kind, title: node.label, body: node.full, id: node.id });
-      window.setTimeout(() => {
-        if (node.x != null && node.y != null) fgRef.current?.centerAt?.(node.x, node.y, 600);
-      }, 320);
+    } else {
+      // A hidden entity ("show entities" off) has no node yet; selecting it is what
+      // reveals it, so build the selection straight from the graph payload.
+      const entity = graph.entities.find((e) => e.id === focus);
+      if (entity) {
+        setSelected({
+          kind: "entity",
+          title: entity.name,
+          body: `${entity.name} (${entity.entityType})`,
+          id: entity.id,
+        });
+      }
     }
+    window.setTimeout(() => {
+      // Re-resolve: the reveal rebuild may have created the node after this effect ran.
+      const target = nodeMapRef.current.get(focus);
+      if (target?.x != null && target.y != null) {
+        fgRef.current?.centerAt?.(target.x, target.y, 600);
+      }
+    }, 320);
     onFocusConsumed?.();
   }, [focus]);
 
@@ -491,7 +528,7 @@ export function GraphView({
   }, []);
 
   // The full force stack: per-relation link tuning, bounded charge, collision, and the
-  // home-anchor force that replaces both pinning and d3's center force — every node is
+  // home-anchor force that replaces both pinning and d3's center force: every node is
   // gently pulled toward its own home, so the layout breathes without drifting.
   const configureForcesRef = useRef<() => void>(() => {});
   const configureForces = useCallback(() => {
@@ -520,7 +557,7 @@ export function GraphView({
     fg.d3Force?.("anchor", (alpha: number) => {
       const strength = getAnchorStrength(f.centerForce);
       nodeMapRef.current.forEach((node) => {
-        // Chunks anchor lightly — their short stiff tethers to the document do the work.
+        // Chunks anchor lightly. Their short stiff tethers to the document do the work.
         const s = node.kind === "chunk" ? strength * 0.5 : strength;
         node.vx = (node.vx ?? 0) + ((node.homeX ?? 0) - (node.x ?? 0)) * s * alpha;
         node.vy = (node.vy ?? 0) + ((node.homeY ?? 0) - (node.y ?? 0)) * s * alpha;
@@ -540,7 +577,7 @@ export function GraphView({
   useEffect(() => {
     configureForces();
   }, [configureForces]);
-  // Re-apply after (re)mount — the graph instance is fresh and has default forces.
+  // Re-apply after (re)mount: the graph instance is fresh and has default forces.
   // biome-ignore lint/correctness/useExhaustiveDependencies: remountKey IS the trigger
   useEffect(() => {
     const raf = requestAnimationFrame(() => configureForcesRef.current());
@@ -617,7 +654,7 @@ export function GraphView({
       void api
         .documentChunks(node.id)
         .then((dc) => setExpanded((prev) => new Map(prev).set(node.id, dc)))
-        .catch(() => {}); // daemon hiccup — stay collapsed, next click retries
+        .catch(() => {}); // daemon hiccup: stay collapsed, next click retries
     },
     [expanded],
   );
@@ -795,7 +832,7 @@ export function GraphView({
         <p>No memories yet.</p>
         <p>
           Save one from the Console tab, ingest a file with <code>memloom context add</code>, or ask
-          your agent to — then run <code>index</code> to extract entities and watch the graph grow.
+          your agent to, then run <code>index</code> to extract entities and watch the graph grow.
         </p>
       </div>
     );
@@ -822,7 +859,7 @@ export function GraphView({
           linkWidth={linkWidth}
           linkCanvasObjectMode={() => "after"}
           linkCanvasObject={linkCanvasObject}
-          // Predicates are directional facts (subject -> object) — labels without arrows
+          // Predicates are directional facts (subject -> object). Labels without arrows
           // read half a claim. Structural edges stay arrowless.
           linkDirectionalArrowLength={(l: Link) =>
             edgeLabelMode !== "off" && isPredicateLink(l) ? 3.5 : 0

@@ -38,7 +38,7 @@ export async function addEdge(
 /**
  * Insert an edge unless an active one with the same endpoints and relation already exists.
  * Typed entity-to-entity edges need this: many sources can state the same relationship
- * (mention edges can't duplicate — indexed_at gates re-processing and each source has a
+ * (mention edges can't duplicate: indexed_at gates re-processing and each source has a
  * distinct from_id). Carries the extractor's confidence and the stating source for
  * provenance.
  */

@@ -9,7 +9,7 @@ import { toVectorLiteral } from "./vector.js";
 // numbers without a real embedding model (that's the key-gated benchmark), but we can prove
 // the *structure* deterministically: the keyword arm surfaces an exact match the vector arm
 // misses. We do that by calling memloom_fuse with a query embedding that is lexically
-// unrelated to the target — so only the keyword arm can retrieve it.
+// unrelated to the target, so only the keyword arm can retrieve it.
 
 describe("hybrid retrieval", () => {
   const cleanups: Array<() => Promise<void>> = [];

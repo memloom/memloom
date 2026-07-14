@@ -1,4 +1,4 @@
-// Retrieval-quality metrics. Pure functions — the measurement foundation for the benchmark
+// Retrieval-quality metrics. Pure functions: the measurement foundation for the benchmark
 // (and unit-tested so we trust the numbers). `retrieved` is an ordered list of ids (best
 // first); `relevant` is the set of ids that count as correct for that query.
 

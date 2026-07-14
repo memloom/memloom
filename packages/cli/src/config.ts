@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 // memloom's home: ~/.memloom (override with MEMLOOM_HOME). Layout:
 //   ~/.memloom/config.env   settings the daemon reads at startup (API key, models)
-//   ~/.memloom/data/        the Postgres data directory — your memory, copy/back it up
+//   ~/.memloom/data/        the Postgres data directory: your memory, copy/back it up
 export function memloomHome(): string {
   return process.env.MEMLOOM_HOME ?? join(homedir(), ".memloom");
 }
@@ -47,7 +47,7 @@ export function ensureConfig(): string {
 /**
  * Load ~/.memloom/config.env into process.env (dotenv-style KEY=VALUE lines; # comments).
  * Values already present in the real environment win, so a shell/MCP-provided key overrides
- * the file. Called by the daemon at startup — the one place config needs to exist.
+ * the file. Called by the daemon at startup, the one place config needs to exist.
  */
 export function loadConfigEnv(): void {
   const path = configPath();

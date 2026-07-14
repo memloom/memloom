@@ -1,11 +1,11 @@
 # memloom architecture
 
 memloom is a Postgres-native, local-first memory engine you embed as a library, run as a local
-server, or consume from the cloud — **the same schema and the same SQL across all three**.
+server, or consume from the cloud, with **the same schema and the same SQL across all three**.
 
 ```
                  ┌──────────────────────────────────────────────┐
-   agents/CLI ──▶│  @memloom/core  (the engine — the product)    │
+   agents/CLI ──▶│  @memloom/core  (the engine, the product)     │
    viewer     ──▶│                                              │
                  │   write path (dedup, conflicts, HITL, revert) │
                  │   entity graph + closed predicate vocabulary  │
@@ -25,7 +25,8 @@ server, or consume from the cloud — **the same schema and the same SQL across 
 1. **The `StorageAdapter` boundary is the load-bearing abstraction.** Its contract is
    driver-agnostic parameterized SQL (`query`, `tx`, `close`). Nothing above it knows which
    driver it talks to, so the embedded (PGLite) and server/cloud (`pg`) tiers run identical
-   SQL — no dialect branching. Get this right and every lesser data-layer choice is reversible.
+   SQL with no dialect branching. Get this right and every lesser data-layer choice is
+   reversible.
 
 2. **Core never reads `process.env` or global config.** Connection and providers are *injected*
    into the `Memloom` facade. This is what lets a host application hand core a pooled connection
@@ -63,7 +64,7 @@ Because it's one real Postgres dialect everywhere, moving up a tier is a config 
   no-op (content hash), a changed file replaces its chunks in one transaction; no conflict
   machinery. If context changes, you edit the source file.
 
-Both feed the same entity graph and the same hybrid retrieval — one engine, two ingestion
+Both feed the same entity graph and the same hybrid retrieval: one engine, two ingestion
 primitives, one recall call (`memloom_fuse` unions memories and chunks in each retrieval arm).
 
 ### The extraction pipeline
@@ -73,13 +74,13 @@ primitives, one recall call (`memloom_fuse` unions memories and chunks in each r
 - **Extract** goes through a pluggable registry (`packages/core/src/extract.ts`). An
   `Extractor` declares its `kind`, `extensions`, a `version`, a `chunker` strategy, and an
   `extract(bytes, path) → units` function; `registerExtractor()` adds formats without touching
-  the engine. Built-ins: markdown, plain text, and PDF — where PDF text is rebuilt from glyph
+  the engine. Built-ins: markdown, plain text, and PDF, where PDF text is rebuilt from glyph
   *geometry* (baseline line grouping, column-gutter detection, 2-up duplicate collapse) because
   content-stream order is scrambled for equation-heavy documents.
 - **Section** by the extractor's declared strategy: `"markdown"` splits at headings;
   `"outline"` splits at ALL-CAPS title lines and numbered points (`2. DEFINICJA 2. …`), so a
   chunk never starts mid-definition. Each chunk gets its breadcrumb (`Guide > Setup >
-  Postgres`) **prepended into the embedded text** — both the vector and keyword arms see the
+  Postgres`) **prepended into the embedded text**, so both the vector and keyword arms see the
   heading context (the contextual-retrieval lever), and the same breadcrumb powers citations
   (`from notes.pdf › TITLE > 2. (p. 1)`).
 - **Size-split** with the recursive character splitter (~1,600-char target, 2,048 cap, ~200

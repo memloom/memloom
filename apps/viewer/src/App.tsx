@@ -41,9 +41,7 @@ export function App() {
   return (
     <div className="app">
       <header className="header">
-        <div className="wordmark">
-          mem<span>loom</span>
-        </div>
+        <div className="wordmark">memloom</div>
         <nav className="tabs">
           {(
             [
@@ -74,7 +72,7 @@ export function App() {
         </nav>
         <div className="headerStats">
           {daemonDown ? (
-            <span className="offline">daemon unreachable — run `memloom serve`</span>
+            <span className="offline">daemon unreachable: run `memloom serve`</span>
           ) : (
             graph && (
               <>

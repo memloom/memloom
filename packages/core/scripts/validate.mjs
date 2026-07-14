@@ -30,7 +30,7 @@ async function main() {
     storage,
     embedding: new OpenRouterEmbeddings({ apiKey, ...(embedModel ? { model: embedModel } : {}) }),
     llm: new OpenRouterLLM({ apiKey, ...(llmModel ? { model: llmModel } : {}) }),
-    // dedup ON (default) — we want the real belief pipeline.
+    // dedup ON (default): we want the real belief pipeline.
   });
   await memloom.init();
 
@@ -56,7 +56,7 @@ async function main() {
     }
   }
   if (conflicts.length === 0)
-    line("  (no conflict detected — the model did not classify these as contradictory)");
+    line("  (no conflict detected; the model did not classify these as contradictory)");
 
   if (conflicts[0]) {
     section("4. resolve the conflict: keep the new one (supersede)");
@@ -95,7 +95,7 @@ async function main() {
   }
 
   line();
-  line("VALIDATION COMPLETE — the engine ran end-to-end on a real model.");
+  line("VALIDATION COMPLETE: the engine ran end-to-end on a real model.");
   await storage.close();
 }
 

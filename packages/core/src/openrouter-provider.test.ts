@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { OpenRouterEmbeddings, OpenRouterLLM } from "./openrouter-provider.js";
 
-// Assert the exact request body we send OpenRouter — the dimensions param (Matryoshka
+// Assert the exact request body we send OpenRouter: the dimensions param (Matryoshka
 // truncation to 1024) and the provider preference both silently break retrieval/latency if
 // they fall off the request.
 

@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "memloom — a memory engine for AI agents. Monorepo root.",
+  "description": "memloom: a memory engine for AI agents. Monorepo root.",
   "license": "Apache-2.0",
   "author": "Kostek Sytnyk <kostek@versuno.ai>",
   "homepage": "https://memloom.dev",

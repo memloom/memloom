@@ -60,7 +60,7 @@ export function ConflictsView({
         {notices.map((n) => (
           <div key={n.conflictId} className="notice">
             <span>
-              Resolved with <b>{n.action}</b> — reversible.
+              Resolved with <b>{n.action}</b>, reversible.
             </span>
             <button type="button" className="btn btnGhost" onClick={() => undo(n.conflictId)}>
               Undo

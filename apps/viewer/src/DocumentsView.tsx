@@ -3,8 +3,8 @@ import { api, type ContextDocument, type DocumentChunks } from "./api";
 import { AddFileCard, RecallCard } from "./cards";
 
 // Ingested context documents: what's mirrored, how it was chunked, and the drill-down to the
-// chunks themselves. Removal is two-step (arm, then confirm) — no modal, matching the rest of
-// the tool — and only deletes the mirror; the file on disk is untouched.
+// chunks themselves. Removal is two-step (arm, then confirm) with no modal, matching the rest of
+// the tool, and only deletes the mirror; the file on disk is untouched.
 
 export function DocumentsView({ onChanged }: { onChanged: () => void }) {
   const [docs, setDocs] = useState<ContextDocument[] | null>(null);
@@ -77,7 +77,7 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
 
         {docs && docs.length === 0 && (
           <p style={{ color: "var(--text-faint)" }}>
-            No documents yet. Ingest files with <code>memloom context add &lt;path&gt;</code> —
+            No documents yet. Ingest files with <code>memloom context add &lt;path&gt;</code>,
             they're chunked, embedded, and fused into the same recall as memories.
           </p>
         )}

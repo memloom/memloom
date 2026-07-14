@@ -1,4 +1,4 @@
-// The graph schema. The constants below are the SYSTEM TIER — seeded into the
+// The graph schema. The constants below are the SYSTEM TIER: seeded into the
 // memory_schema table on first use, where they live alongside user-created entries and
 // LLM proposals (tier: system | user | proposed, status: active | disabled | dismissed).
 // The extraction prompt and validators read the ACTIVE registry (loaded once per index
@@ -18,7 +18,7 @@ export const ENTITY_TYPES: readonly EntityTypeDef[] = [
   {
     name: "person",
     description:
-      'A specific named human being ("Maria Skłodowska-Curie") — never roles, groups, or grammatical subjects.',
+      'A specific named human being ("Maria Skłodowska-Curie"). Never roles, groups, or grammatical subjects.',
   },
   {
     name: "organization",
@@ -45,12 +45,12 @@ export const ENTITY_TYPES: readonly EntityTypeDef[] = [
   {
     name: "event",
     description:
-      'A specific nameable occurrence — a conference, exam, release, trip ("matura 2026").',
+      'A specific nameable occurrence: a conference, exam, release, trip ("matura 2026").',
   },
   {
     name: "concept",
     description:
-      'LAST RESORT: a proper, named idea someone would search by name ("twierdzenie Pitagorasa", "Bayes\' theorem") — never generic domain words like "wzór" or "funkcja".',
+      'LAST RESORT: a proper, named idea someone would search by name ("twierdzenie Pitagorasa", "Bayes\' theorem"). Never generic domain words like "wzór" or "funkcja".',
   },
 ] as const;
 
@@ -84,7 +84,7 @@ export const EDGE_RELATIONS: readonly EdgeRelationDef[] = [
   {
     name: "chunk",
     description:
-      "Document contains chunk — synthesized in the viewer when a document blooms; never stored.",
+      "Document contains chunk. Synthesized in the viewer when a document blooms; never stored.",
     virtual: true,
   },
 ] as const;
@@ -96,7 +96,7 @@ export interface PredicateDef {
 
 // The closed predicate vocabulary for typed entity-to-entity relationships. The extractor
 // classifies against exactly these names; anything else (and anything under the confidence
-// floor) is stored as a plain 'mention' edge — quarantine semantics without a review UI.
+// floor) is stored as a plain 'mention' edge: quarantine semantics without a review UI.
 // No per-owner registry or proposal lifecycle here (that is multi-tenant machinery; future).
 export const PREDICATES: readonly PredicateDef[] = [
   {
@@ -158,7 +158,7 @@ export interface SchemaEntry {
   occurrences: number;
 }
 
-/** The full registry view with live usage counts — what describeSchema returns. */
+/** The full registry view with live usage counts: what describeSchema returns. */
 export interface SchemaInfo {
   entityTypes: (SchemaEntry & { count: number })[];
   relations: { name: string; description: string; count: number }[];
@@ -181,15 +181,15 @@ export function normalizeSchemaName(raw: string): string {
     .slice(0, 30);
 }
 
-/** The vocabulary an extraction run works against — loaded from the registry. */
+/** The vocabulary an extraction run works against: loaded from the registry. */
 export interface ActiveSchema {
   entityTypes: { name: string; description: string }[];
   predicates: { name: string; description: string }[];
-  /** Names the user rejected — the prompt forbids re-proposing them. */
+  /** Names the user rejected: the prompt forbids re-proposing them. */
   dismissed: string[];
 }
 
-/** The system tier as an ActiveSchema — the fallback and the seed. */
+/** The system tier as an ActiveSchema: the fallback and the seed. */
 export const DEFAULT_ACTIVE_SCHEMA: ActiveSchema = {
   entityTypes: ENTITY_TYPES.map((t) => ({ name: t.name, description: t.description })),
   predicates: PREDICATES.map((p) => ({ name: p.name, description: p.description })),

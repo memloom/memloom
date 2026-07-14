@@ -8,7 +8,7 @@ import type { StorageAdapter } from "./storage.js";
 // event per item, so the Console's log is persistent (survives tab switches, page reloads,
 // daemon restarts) and CLI runs surface in the viewer too.
 
-// Match only the TEXT section — the prompt's KNOWN ENTITIES list would otherwise trip
+// Match only the TEXT section: the prompt's KNOWN ENTITIES list would otherwise trip
 // the matcher with names extracted from earlier items.
 const textOf = (prompt: string) => prompt.slice(prompt.indexOf("TEXT:"));
 
@@ -98,7 +98,7 @@ describe("index run sessions", () => {
     expect(failure?.message).toContain("failed: provider exploded");
     expect(failure?.metadata.error).toBe("provider exploded");
 
-    // The failed memory stayed unindexed — the next run retries exactly it.
+    // The failed memory stayed unindexed: the next run retries exactly it.
     const retry = await m.index();
     expect(retry.indexed).toBe(0); // still fails, still unindexed
     const runsAfter = await m.listIndexRuns();

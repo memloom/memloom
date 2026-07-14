@@ -1,4 +1,4 @@
-// The controllable physics/display shape for the viewer graph — a proven
+// The controllable physics/display shape for the viewer graph: a proven
 // graph-config pattern adapted to memloom's node kinds (memory, entity, document,
 // chunk) and relations. Scalar fields drive the GraphControlsPanel sliders; the per-kind
 // and per-relation maps stay off the panel surface but tune how each species behaves.
@@ -15,6 +15,13 @@ export type ViewerGraphConfig = {
     linkThicknessMultiplier: number;
     labelFadeThreshold: number;
     edgeLabels: EdgeLabelMode;
+    /**
+     * On (default) shows every entity. Off hides them except the ones connected to the
+     * selected node, but since entities are the only tissue between memories and
+     * documents, off currently splits the graph into islands. It stays default-on until
+     * derived memory-document edges make the hidden mode readable.
+     */
+    showEntities: boolean;
   };
   forces: {
     centerForce: number;
@@ -39,9 +46,10 @@ export const DEFAULT_GRAPH_CONFIG: ViewerGraphConfig = {
     nodeSizeMultiplier: 1,
     linkThicknessMultiplier: 1,
     labelFadeThreshold: 1,
-    // Labeling mention/chunk edges would print the same word hundreds of times — typed
+    // Labeling mention/chunk edges would print the same word hundreds of times. Typed
     // predicate edges are the ones whose name carries information.
     edgeLabels: "predicates",
+    showEntities: true,
   },
   forces: {
     centerForce: 0.5,
@@ -54,7 +62,7 @@ export const DEFAULT_GRAPH_CONFIG: ViewerGraphConfig = {
     cooldownTicks: 320,
     chargeDistanceMax: 1400,
     chargeTheta: 0.9,
-    // Chunks barely repel — a 46-chunk PDF must bloom around its document, not detonate
+    // Chunks barely repel: a 46-chunk PDF must bloom around its document rather than detonate
     // the neighborhood. Documents push a little harder so their blooms get room.
     nodeRepulsionMultiplier: {
       memory: 1,

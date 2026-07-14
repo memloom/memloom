@@ -1,4 +1,4 @@
-// memloom Phase 0 spike — throwaway.
+// memloom Phase 0 spike, throwaway.
 // Question: can PGLite (embedded WASM Postgres, no Docker) run the memloom engine's
 // load-bearing DB primitives? If yes, the local-first differentiator is real.
 //
@@ -10,7 +10,7 @@
 //   5. data-dir lock behaviour (does a second opener of the same dir fail fast?)
 //
 // Exit non-zero if any of checks 1-4 fail (they gate the architecture). Check 5 is
-// informational — it tells us whether we must ship our own lockfile (D1) or PGLite
+// informational: it tells us whether we must ship our own lockfile (D1) or PGLite
 // already guards the dir.
 
 import { PGlite } from "@electric-sql/pglite";
@@ -25,7 +25,7 @@ const OWNER = "00000000-0000-0000-0000-000000000001";
 const results = [];
 const record = (name, ok, detail) => {
   results.push({ name, ok, detail });
-  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  — " + detail : ""}`);
+  console.log(`${ok ? "PASS" : "FAIL"}  ${name}${detail ? "  :: " + detail : ""}`);
 };
 
 // A random unit-ish vector as a pgvector literal string: "[0.01,-0.4,...]"
@@ -231,7 +231,7 @@ async function main() {
     }
     await a.close();
     // "PASS" here means PGLite REJECTED the second opener (safe by default).
-    // If it allowed it, we simply ship our own lockfile in Phase 1 (D1) — not a blocker.
+    // If it allowed it, we ship our own lockfile in Phase 1 (D1); not a blocker.
     record(
       "5. data-dir lock (informational)",
       true,
@@ -255,7 +255,7 @@ async function main() {
     console.log("VERDICT: PGLite runs the memloom primitives. Embedded tier is REAL.");
     process.exit(0);
   } else {
-    console.log(`VERDICT: ${failed.length} gating check(s) FAILED — embedded tier at risk.`);
+    console.log(`VERDICT: ${failed.length} gating check(s) FAILED: embedded tier at risk.`);
     console.log("Fallback per plan: Docker Postgres becomes tier 1; PGLite a later milestone.");
     process.exit(1);
   }

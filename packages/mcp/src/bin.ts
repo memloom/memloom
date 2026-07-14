@@ -3,7 +3,7 @@ import { connect } from "memloom";
 import { buildServer } from "./server.js";
 
 // memloom MCP server over stdio. Routes through the `memloom serve` daemon (auto-started by
-// connect() if needed), so it never opens the store directly — no lock conflicts with the CLI
+// connect() if needed), so it never opens the store directly: no lock conflicts with the CLI
 // or a DB client. Register in Claude Desktop as:
 //   { "command": "node", "args": ["<path>/dist/bin.js"], "env": { "OPENROUTER_API_KEY": "..." } }
 

@@ -1,4 +1,4 @@
-/* memloom viewer — dark developer style. Sharp corners everywhere (no border-radius), the
+/* memloom viewer: dark developer style. Sharp corners everywhere (no border-radius), the
    graph palette shared with the canvas renderer, monospace for identifiers and data. */
 
 :root {
@@ -10,14 +10,14 @@
   --text: #e2e8f0;
   --text-muted: #94a3b8;
   --text-faint: #64748b;
-  --brand: #f59e0b; /* memloom amber — chrome + identity ONLY, never data (DESIGN.md) */
+  --brand: #f59e0b; /* memloom amber: chrome + identity ONLY, never data (DESIGN.md) */
   --brand-bright: #fbbf24; /* amber hover/emphasis on dark */
   --memory: #38bdf8; /* memory-node sky (data) */
   --entity: #c084fc; /* entity purple (circles, data) */
   --ok: #34d399; /* documents / success */
   --lineage: #5d67f5; /* version lineage indigo (replaces edges, versioned outcome) */
-  --warn: #fbbf24; /* partial failures / interrupted runs — status, not chrome */
-  --danger: #f87171; /* errors AND conflicts — a contradiction is an alert */
+  --warn: #fbbf24; /* partial failures / interrupted runs: status, not chrome */
+  --danger: #f87171; /* errors AND conflicts: a contradiction is an alert */
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
@@ -86,15 +86,11 @@ button {
 }
 
 .wordmark {
-  font-family: var(--mono);
+  font-family: var(--sans);
   font-weight: 700;
-  font-size: 15px;
-  letter-spacing: 0.02em;
+  font-size: 16px;
+  letter-spacing: -0.02em;
   color: var(--text);
-}
-
-.wordmark span {
-  color: var(--brand);
 }
 
 .tabs {
@@ -1309,7 +1305,7 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-/* level color lands on the icon only — the message stays readable */
+/* level color lands on the icon only, the message stays readable */
 .level-info .levelIcon {
   color: var(--text-faint);
 }
@@ -1422,7 +1418,7 @@ textarea {
   min-height: 0;
 }
 
-/* Docked in the graph: no session sidebar, just a "new chat" header over the chat column. */
+/* Docked in the graph: no session sidebar, only a "new chat" header over the chat column. */
 .chatLayoutCompact {
   flex-direction: column;
 }
@@ -1447,7 +1443,7 @@ textarea {
 }
 
 /* In the dock the sprawling tab padding (up to 96px each side) leaves the composer and
-   messages stranded — tighten it so they use the full width. */
+   messages stranded, tighten it so they use the full width. */
 .chatLayoutCompact .chatMessages {
   padding: 16px 12px;
 }

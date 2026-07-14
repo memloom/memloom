@@ -16,7 +16,7 @@ export async function saveMemory(
     return `Saved (id ${result.id}), but it CONTRADICTS an existing memory. Both are kept; the user should resolve conflict ${result.conflictId} (keep new / keep existing / keep both / merge).`;
   }
   if (result.outcome === "merged") {
-    return `Already known — merged into memory ${result.id}, nothing duplicated.`;
+    return `Already known: merged into memory ${result.id}, nothing duplicated.`;
   }
   return `Saved memory ${result.id}.`;
 }
@@ -40,7 +40,7 @@ export async function recallMemory(
         `- similarity ${(m.similarity ?? 0).toFixed(2)}`,
       ];
       if (m.source) {
-        // Context chunks carry provenance — always show where the text came from.
+        // Context chunks carry provenance; always show where the text came from.
         const where = [
           `- from ${m.source.title}`,
           m.source.headingPath ? `› ${m.source.headingPath}` : "",
@@ -50,7 +50,7 @@ export async function recallMemory(
           .join(" ");
         lines.push(where);
       } else {
-        // A saved memory — surface its id (and version, if edited) so memory_history can look
+        // A saved memory: surface its id (and version, if edited) so memory_history can look
         // up how it changed.
         lines.push(`- id ${m.id}${m.version > 1 ? ` (v${m.version})` : ""}`);
       }
@@ -125,8 +125,8 @@ export async function deleteSchemaEntry(
   const pool = args.kind === "entity_type" ? schema.entityTypes : schema.predicates;
   const entry = pool.find((e) => e.name === args.name.toLowerCase());
   if (!entry) return `No ${args.kind} named "${args.name}" exists.`;
-  // Mirror the engine guards with readable answers instead of raw errors — the calling
-  // agent should relay these to the user, not retry.
+  // Mirror the engine guards with readable answers instead of raw errors: the calling
+  // agent should relay these to the user rather than retry.
   if (entry.tier === "system") {
     return `"${entry.name}" is a built-in ${args.kind}; it can be disabled but never deleted.`;
   }

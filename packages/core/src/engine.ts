@@ -23,11 +23,11 @@ import type {
 export interface MemoryEngine {
   save(input: SaveInput): Promise<SaveResult>;
   recall(query: string, opts?: RecallOptions): Promise<Memory[]>;
-  /** All active memories, newest first — browsing, where recall is querying. */
+  /** All active memories, newest first: the browse path, where recall is the query path. */
   memories(ownerId?: string): Promise<Memory[]>;
   /** Edit a belief: append a new current version and stale the prior one (explicit, no funnel). */
   update(input: UpdateInput): Promise<UpdateResult>;
-  /** The full version chain of a belief, newest first — pass any version's id. */
+  /** The full version chain of a belief, newest first: pass any version's id. */
   history(memoryId: string, ownerId?: string): Promise<Memory[]>;
   /** Extract entities from unindexed rows. `onProgress` fires after each item completes. */
   index(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
@@ -37,7 +37,7 @@ export interface MemoryEngine {
   conflicts(ownerId?: string): Promise<Conflict[]>;
   resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void>;
   revertConflict(conflictId: string): Promise<void>;
-  /** Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors — re-add replaces. */
+  /** Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors; re-add replaces. */
   contextAdd(input: ContextAddInput): Promise<ContextAddResult>;
   contextList(ownerId?: string): Promise<ContextDocument[]>;
   /** One document at chunk granularity: chunks in order + their chunk -> entity edges. */

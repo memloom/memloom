@@ -27,7 +27,7 @@ export interface ServerOptions {
   /** Log each request (method, path, status, timing) to stdout. Off by default (tests). */
   log?: boolean;
   /**
-   * Graceful shutdown hook. When set, POST /admin/shutdown responds ok and then invokes it —
+   * Graceful shutdown hook. When set, POST /admin/shutdown responds ok and then invokes it;
    * this is how `memloom stop` stops the daemon cleanly (releasing the data-dir lock) instead
    * of the user force-killing the process and leaving a stale lock behind.
    */
@@ -70,7 +70,7 @@ function platformOpen(path: string): void {
         ? ["open", [path]]
         : ["xdg-open", [path]];
   const child = spawn(cmd, args as string[], { detached: true, stdio: "ignore" });
-  child.on("error", () => {}); // opener missing — nothing useful to report back
+  child.on("error", () => {}); // opener missing, nothing useful to report back
   child.unref();
 }
 
@@ -311,7 +311,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   const app = new Hono();
 
   // Browser clients (the viewer in dev, docs playground) run on another localhost port. Allow
-  // only local origins — a permissive `*` would let any public web page drive the daemon.
+  // only local origins; a permissive `*` would let any public web page drive the daemon.
   app.use(
     "*",
     cors({
@@ -347,7 +347,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   // Fail fast when the store is unreachable: a connected Postgres wire client (Drizzle Studio,
   // psql) holds PGLite's exclusive lock and every query queues behind it. Probing BEFORE the
-  // handler turns an indefinite silent hang into an actionable 503 — and skips paying for an
+  // handler turns an indefinite silent hang into an actionable 503, and skips paying for an
   // embedding call whose result would only sit in the queue.
   const probeStore = async (c: Context, next: () => Promise<void>) => {
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -416,7 +416,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   app.post("/memory/index", async (c) => c.json(await memloom.index()));
 
-  // Indexing runs one LLM call per unindexed row — minutes for a big PDF. The stream
+  // Indexing runs one LLM call per unindexed row (minutes for a big PDF). The stream
   // variants respond with NDJSON progress ({type:"item"} per row, {type:"done"} with the
   // totals) so clients can show what's happening in real time instead of a spinner.
   type ProgressRun = (
@@ -436,7 +436,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         const result = await run((event) => write({ type: "item", ...event }));
         write({ type: "done", ...result });
       } catch (err) {
-        // Mid-stream failures can't become an HTTP error status — surface them in-band.
+        // Mid-stream failures can't become an HTTP error status: surface them in-band.
         write({ type: "error", error: err instanceof Error ? err.message : String(err) });
       }
       await chain;
@@ -446,7 +446,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/memory/index/stream", (c) => streamRun(c, (p) => memloom.index(undefined, p)));
 
   // Index sessions: the persistent, session-grouped log the Console tab renders. Runs are
-  // listed newest-first; a run's per-item events load on expand. History is user-managed —
+  // listed newest-first; a run's per-item events load on expand. History is user-managed:
   // per-run delete and clear-all instead of an automatic cap.
   app.get("/memory/index/runs", async (c) => c.json({ runs: await memloom.listIndexRuns() }));
   app.get("/memory/index/runs/:id/events", async (c) =>
@@ -622,7 +622,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   // The model catalog for the composer's picker: tool-capable OpenRouter models (the
   // harness needs native tool calling), shaped for display and cached for an hour. On a
-  // refresh failure the stale copy keeps serving — a model list is never worth an outage.
+  // refresh failure the stale copy keeps serving; a model list is never worth an outage.
   const MODELS_TTL_MS = 60 * 60 * 1000;
   let modelsCache: { at: number; payload: unknown } | null = null;
   app.get("/assistant/models", async (c) => {
@@ -671,7 +671,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     }
   });
 
-  // Attach a file to a chat: the browser uploads the bytes (base64 JSON — the daemon is
+  // Attach a file to a chat: the browser uploads the bytes (base64 JSON; the daemon is
   // localhost, simplicity beats multipart), the engine chunks/embeds them scoped to the
   // session. No sessionId creates the session, so attaching can precede the first message.
   app.post(
@@ -683,7 +683,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     async (c) => {
       const body = await parseBody(c, assistantAttachSchema);
       if (!body.ok) return body.res;
-      // The filename only picks the extractor and titles the document — never a disk path.
+      // The filename only picks the extractor and titles the document, never a disk path.
       const filename = body.data.filename.replace(/[/\\]/g, "_");
       if (!detectKind(filename)) {
         return c.json(
@@ -777,7 +777,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   });
 
   // Open the OS-native file/folder dialog and return the chosen absolute paths. 501 when
-  // the platform has no picker (headless Linux without zenity) — the viewer then falls
+  // the platform has no picker (headless Linux without zenity); the viewer then falls
   // back to the in-app /context/browse panel.
   const pickPaths = opts.pickPaths ?? nativePick;
   app.post("/context/pick", async (c) => {
@@ -791,7 +791,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   });
 
   // Server-side filesystem listing for the viewer's file/folder picker (the browser never
-  // sees absolute paths from its own file inputs). Directory names only — no file reads.
+  // sees absolute paths from its own file inputs). Directory names only, no file reads.
   app.get("/context/browse", async (c) => {
     const supported = new Set(supportedExtensions());
     const dir = resolve(c.req.query("path")?.trim() || homedir());
@@ -824,7 +824,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   );
 
   // Open the source file with the OS default app. Only paths already ingested by the owner
-  // can be opened — the id lookup is the gate; no arbitrary path ever reaches the opener.
+  // can be opened: the id lookup is the gate; no arbitrary path ever reaches the opener.
   const openPath = opts.openPath ?? platformOpen;
   app.post("/context/documents/:id/open", async (c) => {
     const id = c.req.param("id");
@@ -843,7 +843,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   });
 
   // The viewer bundle, mounted last so every API route wins first. Unknown paths fall back to
-  // index.html (the shell handles them) — standard single-page-app serving.
+  // index.html (the shell handles them). Standard single-page-app serving.
   if (opts.staticDir) {
     const root = resolve(opts.staticDir);
     app.get("*", async (c) => {
@@ -872,7 +872,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.onError((err, c) => {
     const message = err instanceof Error ? err.message : String(err);
     if (opts.log)
-      console.error(`${new Date().toISOString()}  ✖ ${c.req.method} ${c.req.path} — ${message}`);
+      console.error(`${new Date().toISOString()}  ✖ ${c.req.method} ${c.req.path}: ${message}`);
     return c.json({ error: message }, 500);
   });
 

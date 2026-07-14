@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Throwaway Phase 0 spike — validates PGLite can run the memloom engine's load-bearing DB primitives. Delete after.",
+  "description": "Throwaway Phase 0 spike: validates PGLite can run the memloom engine's load-bearing DB primitives. Delete after.",
   "scripts": {
     "spike": "node spike.mjs"
   },

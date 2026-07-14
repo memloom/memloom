@@ -62,11 +62,11 @@ export function SaveMemoryCard({
       {result && (
         <div className={`resultOutcome outcome-${result.outcome}`}>
           {result.outcome === "added" && `added ${result.id}`}
-          {result.outcome === "merged" && `already known — merged into ${result.id}`}
+          {result.outcome === "merged" && `already known, merged into ${result.id}`}
           {result.outcome === "versioned" && `new version v${result.version ?? "?"}`}
           {result.outcome === "conflict" && (
             <>
-              contradiction detected — both kept.
+              contradiction detected, both kept.
               {goToConflicts && (
                 <button type="button" className="btn btnGhost" onClick={goToConflicts}>
                   Review conflict →
@@ -173,7 +173,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Path-based ingest (link buttons + the text field): the daemon reads its own disk, so
-  // the document keeps a real path — "open file" works, re-adding detects changes, and
+  // the document keeps a real path: "open file" works, re-adding detects changes, and
   // the planned file-sync watcher can follow it. Upload (below) is the snapshot flow.
   async function ingest(target: string) {
     setBusy(true);
@@ -187,7 +187,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
               `${r.unchanged ? ` (${r.unchanged} unchanged)` : ""} · ${r.chunks} chunks. ` +
               "Run index to extract entities."
           : r.outcome === "unchanged"
-            ? `"${r.title}" is unchanged — nothing to do`
+            ? `"${r.title}" is unchanged, nothing to do`
             : `${r.outcome} "${r.title}" · ${r.chunks} chunks. Run index to extract entities.`,
       );
       setPath("");
@@ -229,7 +229,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
   }
 
   // The OS-native dialog on this machine (the daemon IS local): the only dialog that can
-  // return absolute paths. Headless systems answer 501 — point at the alternatives.
+  // return absolute paths. Headless systems answer 501. Point at the alternatives.
   async function pickNative(mode: "file" | "folder") {
     setError(null);
     setBusy(true);
@@ -241,7 +241,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
       else await ingestMany(paths);
     } catch {
       setBusy(false);
-      setError("no file dialog on this system — type a path above, or use Upload");
+      setError("no file dialog on this system: type a path above, or use Upload");
     }
   }
 

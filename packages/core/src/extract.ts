@@ -5,15 +5,15 @@ import { assemblePageText, type PdfTextItem } from "./pdf-layout.js";
 // File → text units for the context connector, behind a pluggable extractor registry.
 // Built-ins are local-first, text-layer only: .md/.txt read directly, PDF via unpdf
 // (pure-JS PDF.js wrapper) with geometry-aware reading-order reconstruction per page.
-// No OCR, no cloud parsers — the same line every OSS ingestion pipeline draws.
-// New formats plug in via registerExtractor() — one object, no fork.
+// No OCR, no cloud parsers: the same line every OSS ingestion pipeline draws.
+// New formats plug in via registerExtractor(): one object, no fork.
 
 /** The kind stored in context_documents.kind. Built-ins: "md" | "txt" | "pdf"; open set. */
 export type ContextKind = string;
 
 export interface ExtractedUnit {
   text: string;
-  /** 1-based PDF page; null for single-unit formats. Competitors that drop this regret it. */
+  /** 1-based PDF page; null for single-unit formats. Kept so chunks can cite their page. */
   page: number | null;
 }
 
@@ -54,7 +54,7 @@ export function detectKind(path: string): ContextKind | null {
   return registry.get(extname(path).toLowerCase())?.kind ?? null;
 }
 
-/** Every extension the registry can ingest, sorted — for help text and error messages. */
+/** Every extension the registry can ingest, sorted: for help text and error messages. */
 export function supportedExtensions(): string[] {
   return [...registry.keys()].sort();
 }

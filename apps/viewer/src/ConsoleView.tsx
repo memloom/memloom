@@ -11,11 +11,11 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type IndexEventLevel, type IndexRun, type IndexRunEvent } from "./api";
 
-// Console: exercise the engine by hand — save, recall, index — without leaving the viewer.
+// Console: exercise the engine by hand (save, recall, index) without leaving the viewer.
 // Indexing history is persistent and session-grouped (a production-proven memory_index_runs
 // pattern): the engine writes a run row + per-item events to the store, so the log
 // survives tab switches and page reloads, and CLI runs show up here too. While a run is
-// live the view polls the store — the DB is the single source of truth, no client state.
+// live the view polls the store. The DB is the single source of truth, no client state.
 
 const LEVEL_ICON: Record<IndexEventLevel, typeof Info> = {
   info: Info,
@@ -46,7 +46,7 @@ function runSummary(run: IndexRun): string {
   const indexed = parts.length > 0 ? `${parts.join(", ")} indexed` : "nothing indexed";
   const failed = run.itemsFailed > 0 ? `, ${run.itemsFailed} failed` : "";
   const prefix =
-    run.status === "interrupted" ? "interrupted — " : run.trigger === "rebuild" ? "rebuild — " : "";
+    run.status === "interrupted" ? "interrupted: " : run.trigger === "rebuild" ? "rebuild: " : "";
   return `${prefix}${indexed}${failed} · +${run.entitiesLinked} entities, +${run.relationsCreated} relations`;
 }
 
@@ -298,7 +298,7 @@ export function ConsoleView({ onChanged }: { onChanged: () => void }) {
           )}
           {runs && runs.length === 0 && (
             <div className="sessionEmpty">
-              no indexing activity yet — runs will show here as collapsible sessions
+              no indexing activity yet, runs will show here as collapsible sessions
             </div>
           )}
         </div>

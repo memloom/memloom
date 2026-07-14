@@ -3,10 +3,10 @@ export type MemoryStatus = "active" | "stale";
 // The saveable memory taxonomy, shared with the hosted platform's `type_hint` so a memory means the same
 // thing whichever client wrote it. One source of truth: the zod enum, the DB CHECK, and the docs
 // all derive from this list.
-//   fact       — a stable truth about the world or the user ("the staging DB runs on Postgres")
-//   preference — how the user likes things done ("prefers pnpm over npm")
-//   episode    — a time-bound event or decision ("shipped the viewer on 2026-07-05")
-//   procedure  — reusable how-to steps ("to release: bump VERSION, tag, push")
+//   fact       : a stable truth about the world or the user ("the staging DB runs on Postgres")
+//   preference : how the user likes things done ("prefers pnpm over npm")
+//   episode    : a time-bound event or decision ("shipped the viewer on 2026-07-05")
+//   procedure  : reusable how-to steps ("to release: bump VERSION, tag, push")
 export const MEMORY_TYPES = ["fact", "preference", "episode", "procedure"] as const;
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 
@@ -15,13 +15,13 @@ export interface Memory {
   ownerId: string;
   status: MemoryStatus;
   // Saved memories carry a MemoryType; recall results for ingested context chunks carry the
-  // sentinel "context" (their real discriminator is `kind`, below — not this field).
+  // sentinel "context" (their real discriminator is `kind`, below, not this field).
   memoryType: MemoryType | "context";
   canonical: string | null;
   content: string;
   summary: string | null;
   // Version lineage: every version of one belief shares a rootId; the newest active row is the
-  // current version. See history(). Chunks (kind "context") aren't versioned — rootId falls back
+  // current version. See history(). Chunks (kind "context") aren't versioned; rootId falls back
   // to their own id and version is 1.
   rootId: string;
   version: number;
@@ -34,7 +34,7 @@ export interface Memory {
   rrfScore?: number;
   /** Set on recall results: a saved memory, or a chunk of an ingested context document. */
   kind?: "memory" | "context";
-  /** Where a context chunk came from — surfaces show this so provenance is always clear. */
+  /** Where a context chunk came from; surfaces show this so provenance is always clear. */
   source?: RecallSource;
 }
 
@@ -123,7 +123,7 @@ export interface Entity {
   entityType: string;
 }
 
-/** An entity with usage counts — the management list in the schema tab. */
+/** An entity with usage counts: the management list in the schema tab. */
 export interface EntityDetail extends Entity {
   /** Active mention edges pointing at this entity. */
   mentions: number;
@@ -140,7 +140,7 @@ export interface GraphMemory {
   memoryType: MemoryType;
 }
 
-// A context document as a graph node. Documents — not chunks — are the display granularity:
+// A context document as a graph node. Documents, not chunks, are the display granularity:
 // one PDF can be hundreds of chunks, and a force graph of chunks is a hairball nobody reads.
 export interface GraphDocument {
   id: string;
@@ -169,11 +169,11 @@ export interface Graph {
 export interface IndexResult {
   /** Memories processed this run (entity extraction + mention edges). */
   indexed: number;
-  /** Context chunks processed this run — same extraction, edges roll up per document. */
+  /** Context chunks processed this run; same extraction, edges roll up per document. */
   chunksIndexed: number;
 }
 
-/** One item finished during an index run — the real-time progress signal. */
+/** One item finished during an index run: the real-time progress signal. */
 export interface IndexProgressEvent {
   kind: "memory" | "chunk";
   id: string;
@@ -218,7 +218,7 @@ export interface IndexRun {
 
 export type IndexEventLevel = "info" | "success" | "warning" | "error";
 
-/** One per-item log line under a run — what the Console shows when a session is expanded. */
+/** One per-item log line under a run: what the Console shows when a session is expanded. */
 export interface IndexRunEvent {
   id: string;
   level: IndexEventLevel;
@@ -310,7 +310,7 @@ export interface ContextDocument {
 // ---- Chat attachments (files uploaded into one assistant session's scope) ----
 
 export interface ContextAttachInput {
-  /** Filename with extension — picks the extractor and titles the document. */
+  /** Filename with extension: picks the extractor and titles the document. */
   filename: string;
   /** Raw file bytes (the browser upload, base64-decoded by the server). */
   bytes: Uint8Array;
@@ -333,7 +333,7 @@ export interface ContextChunk {
   page: number | null;
 }
 
-// One document exploded to chunk granularity — what the viewer fetches when a document node
+// One document exploded to chunk granularity: what the viewer fetches when a document node
 // is expanded. Edges are the chunk -> entity 'mention' edges the graph rollup summarizes.
 export interface DocumentChunks {
   chunks: ContextChunk[];

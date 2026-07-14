@@ -71,7 +71,7 @@ function VocabSection({
 }
 
 // The instances list: every extracted entity with usage counts, and the correction
-// primitives — rename, retype, merge-into (repoints edges), delete (sweeps edges).
+// primitives: rename, retype, merge-into (repoints edges), delete (sweeps edges).
 function EntitiesSection({
   activeTypes,
   onChanged,
@@ -146,7 +146,7 @@ function EntitiesSection({
             />
           )}
           {entities.length === 0 && (
-            <p className="schemaHint">No entities yet — run an index to extract them.</p>
+            <p className="schemaHint">No entities yet. Run an index to extract them.</p>
           )}
           {shown.map((e) => (
             <div key={e.id} className="schemaRow">
@@ -237,7 +237,7 @@ function EntitiesSection({
               {mergingId === e.id && (
                 <div className="entityMergeRow">
                   <span className="docMeta">
-                    fold "{e.name}" into — its mentions and relations move to the survivor:
+                    fold "{e.name}" into (its mentions and relations move to the survivor):
                   </span>
                   <select
                     className="entityTypeSelect"
@@ -401,7 +401,7 @@ export function SchemaView({ onChanged }: { onChanged: () => void }) {
                   type="text"
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Description — this text steers the extractor, write it like a rule"
+                  placeholder="Description: this text steers the extractor, write it like a rule"
                 />
                 <button
                   type="button"

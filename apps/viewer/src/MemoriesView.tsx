@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { api, type Memory, type MemoryType } from "./api";
 import { RecallCard, SaveMemoryCard } from "./cards";
 
-// Browse every active memory, newest first — the reading counterpart to the Console's
+// Browse every active memory, newest first. The reading counterpart to the Console's
 // query-driven recall. Each memory can be edited (a manual, human action that appends a new
 // version) and its version history expanded.
 
@@ -165,7 +165,7 @@ export function MemoriesView() {
 
         {memories && memories.length === 0 && (
           <p style={{ color: "var(--text-faint)" }}>
-            No memories yet. Save one from the Console tab, or ask your agent to — everything it
+            No memories yet. Save one from the Console tab, or ask your agent to. Everything it
             remembers shows up here.
           </p>
         )}

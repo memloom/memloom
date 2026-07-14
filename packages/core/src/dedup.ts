@@ -3,7 +3,7 @@ import type { LLMProvider } from "./providers.js";
 // The dedup classifier. Given an incoming memory and the existing memories most similar to it,
 // the LLM labels each existing one's relationship to the incoming: identical (same fact),
 // complementary (both can be true), or contradictory (cannot both be true). Contradictions
-// become human-in-the-loop conflicts; identicals dedupe; complementary just coexist.
+// become human-in-the-loop conflicts; identicals dedupe; complementary coexist.
 
 export type Relation = "identical" | "complementary" | "contradictory";
 

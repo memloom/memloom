@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { assemblePageText, type PdfTextItem } from "./pdf-layout.js";
 
-// Synthetic positioned glyphs — the shapes real math/2-up PDFs produce.
+// Synthetic positioned glyphs: the shapes real math/2-up PDFs produce.
 
 function item(str: string, x: number, y: number, w: number, h = 10): PdfTextItem {
   return { str, transform: [h, 0, 0, h, x, y], width: w, height: h };
@@ -11,7 +11,7 @@ const PAGE_WIDTH = 612;
 
 describe("assemblePageText", () => {
   it("restores reading order from geometry when content-stream order is scrambled", () => {
-    // Word equation objects emit ").( 0xS" for "S(x0)." — positions are correct, order isn't.
+    // Word equation objects emit ").( 0xS" for "S(x0).": positions are correct, order isn't.
     const scrambled = [
       item(").", 86, 700, 10),
       item("(", 60, 700, 10),

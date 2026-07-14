@@ -141,7 +141,7 @@ describe("entities + indexer", () => {
     const path = join(tempDir(), "infra.md");
     // "elephant database" -> Postgres entity, but the word "Postgres" never appears in the
     // text, so keyword search abstains and hashing-embedding similarity is near zero for both
-    // rows. Only the entity anchor (query == entity name, cosine 1.0) separates them — the
+    // rows. Only the entity anchor (query == entity name, cosine 1.0) separates them: the
     // chunk collects the whole entity arm's score, so it must rank first.
     writeFileSync(path, "# Infra\nthe elephant database powers the staging environment");
     await m.contextAdd({ path });
@@ -194,7 +194,7 @@ describe("entities + indexer", () => {
     const graph = await m.graph();
     expect(graph.documents).toHaveLength(0);
     expect(graph.edges.some((e) => e.from === added.documentId)).toBe(false);
-    // The entity survives — it may be mentioned by memories or other documents.
+    // The entity survives: it may be mentioned by memories or other documents.
     expect(graph.entities.map((e) => e.name)).toContain("Postgres");
   });
 
@@ -479,7 +479,7 @@ describe("entities + indexer", () => {
         });
       }
       if (text.includes("shipped the core")) {
-        // Same thing, different spelling AND different type — both must fold.
+        // Same thing, different spelling AND different type: both must fold.
         return JSON.stringify({
           entities: [{ name: "memloom/core", type: "project" }],
           relationships: [],

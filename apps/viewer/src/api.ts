@@ -40,7 +40,7 @@ export interface Entity {
   entityType: string;
 }
 
-/** An entity with usage counts — the schema tab's management list. */
+/** An entity with usage counts: the schema tab's management list. */
 export interface EntityDetail extends Entity {
   mentions: number;
   memories: number;
@@ -145,7 +145,7 @@ export interface SchemaInfo {
 
 export type IndexRunStatus = "running" | "success" | "warning" | "error" | "interrupted";
 
-/** One index/reindex pass — a session row in the Console's persistent log. */
+/** One index/reindex pass: a session row in the Console's persistent log. */
 export interface IndexRun {
   id: string;
   trigger: "index" | "rebuild";
@@ -316,7 +316,7 @@ export const api = {
   index: () => post<{ indexed: number; chunksIndexed: number }>("/memory/index"),
   // Recovery: wipe all extracted entities/edges, then re-run indexing from scratch.
   reindex: () => post<{ indexed: number; chunksIndexed: number }>("/memory/reindex"),
-  // Index sessions — the engine writes a run row + per-item events to the store during a
+  // Index sessions: the engine writes a run row + per-item events to the store during a
   // run, so the Console polls these while a run is live and history survives everything.
   indexRuns: () => json<{ runs: IndexRun[] }>("/memory/index/runs").then((r) => r.runs),
   runEvents: (runId: string) =>

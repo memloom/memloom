@@ -1,6 +1,6 @@
 // Migrations are TS constants (not .sql files) so they bundle cleanly into the published
-// library — no runtime fs/path resolution. Ordered by id; applied once, tracked in
-// _memloom_migrations. The schema is DDL + `language sql` only — zero plpgsql (D2), so it
+// library: no runtime fs/path resolution. Ordered by id; applied once, tracked in
+// _memloom_migrations. The schema is DDL + `language sql` only, zero plpgsql (D2), so it
 // runs identically on PGLite and real Postgres.
 
 export interface Migration {
@@ -56,7 +56,7 @@ export function buildMigrations(dims: number): Migration[] {
       id: "0002_hybrid_fuse",
       sql: /* sql */ `
       -- Reciprocal-rank fusion over two arms: vector (cosine) and keyword (FTS). Returns the
-      -- fused top-K as (id, rrf_score). Pure 'language sql' — no plpgsql (D2), so it runs
+      -- fused top-K as (id, rrf_score). Pure 'language sql', no plpgsql (D2), so it runs
       -- identically on PGLite. The entity arm is added in Phase 4. Weights default to the
       -- eval-tuned winner (keyword up-weighted; FTS abstains on lexical misses, so this is
       -- free). Callers that want vector-only pass p_use_keyword => false.
@@ -265,7 +265,7 @@ export function buildMigrations(dims: number): Migration[] {
     },
     {
       // The context connector (P7): files mirrored into chunked, embedded, searchable rows.
-      // Documents are mirrors of files on disk — re-adding a changed file REPLACES its chunks
+      // Documents are mirrors of files on disk: re-adding a changed file REPLACES its chunks
       // (no belief pipeline, no HITL); content_hash makes re-adds idempotent.
       id: "0006_context",
       sql: /* sql */ `
@@ -410,7 +410,7 @@ export function buildMigrations(dims: number): Migration[] {
       // One graph, two granularities: context chunks join the entity layer. The indexer now
       // extracts entities from chunks too (indexed_at tracks progress, same as memory_objects)
       // and links them with chunk -> entity 'mention' edges in the shared, FK-free memory_edges
-      // table — the Graphiti MENTIONS pattern. Chunks stay mirrors: no belief pipeline.
+      // table: the Graphiti MENTIONS pattern. Chunks stay mirrors: no belief pipeline.
       id: "0008_context_graph",
       sql: /* sql */ `
       ALTER TABLE context_chunks ADD COLUMN indexed_at timestamptz;
@@ -518,8 +518,8 @@ export function buildMigrations(dims: number): Migration[] {
       // active row per root_id is the current belief; older ones are stale (never deleted),
       // linked child -> parent by the existing 'replaces' edge. History = WHERE root_id = ...
       // ORDER BY version. Recall is unaffected: it already filters status = 'active', so stale
-      // old versions never surface. Validity interval reuses existing columns — asserted_at is
-      // "valid from", stale_since is "valid to" — so no new temporal columns are needed.
+      // old versions never surface. Validity interval reuses existing columns: asserted_at is
+      // "valid from", stale_since is "valid to", so no new temporal columns are needed.
       id: "0009_node_versions",
       sql: /* sql */ `
       ALTER TABLE memory_objects ADD COLUMN root_id uuid;
@@ -534,7 +534,7 @@ export function buildMigrations(dims: number): Migration[] {
     {
       // Typed entity-to-entity relationships ride the shared edge table. confidence is the
       // extractor's stated 0..1; source_id is the memory/chunk that stated the relationship
-      // (provenance — a removed document takes its relationships with it). Nullable, no
+      // (provenance: a removed document takes its relationships with it). Nullable, no
       // backfill: existing mention/replaces/distinct edges are legitimately source-less.
       id: "0010_typed_edges",
       sql: /* sql */ `
@@ -544,7 +544,7 @@ export function buildMigrations(dims: number): Migration[] {
     `,
     },
     {
-      // The schema registry: entity types and predicates as rows, in three tiers —
+      // The schema registry: entity types and predicates as rows, in three tiers:
       // 'system' (seeded from the schema.ts constants), 'user' (created in the viewer/API),
       // and 'proposed' (LLM suggestions awaiting review). The extraction prompt and
       // validators read the ACTIVE rows; 'dismissed' names are blocklisted from

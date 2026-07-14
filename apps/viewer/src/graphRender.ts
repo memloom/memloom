@@ -1,5 +1,5 @@
 // Pure render helpers ported from a production graph canvas implementation.
-// No React, no DOM — deterministic scatter, color math, and label placement.
+// No React, no DOM. Deterministic scatter, color math, and label placement.
 
 export type LabelAnchor = "right" | "left" | "top" | "bottom";
 
@@ -13,7 +13,7 @@ export function clamp01(value: number) {
   return Math.max(0, Math.min(1, value));
 }
 
-// Deterministic 0..1 from a string — used to scatter nodes to stable home positions.
+// Deterministic 0..1 from a string, used to scatter nodes to stable home positions.
 export function stable01(input: string) {
   let hash = 2166136261;
   for (let index = 0; index < input.length; index += 1) {
@@ -87,7 +87,7 @@ export function mixColors(from: string, to: string, mix: number) {
   return `rgba(${blendChannel(fromColor.red, toColor.red)}, ${blendChannel(fromColor.green, toColor.green)}, ${blendChannel(fromColor.blue, toColor.blue)}, ${alpha.toFixed(3)})`;
 }
 
-// Pick the side to draw a node's label on — away from its neighbors and outward from
+// Pick the side to draw a node's label on: away from its neighbors and outward from
 // the graph center, so labels collide as little as possible.
 export function pickLabelAnchor<T extends PositionedNode>(
   node: T,

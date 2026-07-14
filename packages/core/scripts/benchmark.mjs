@@ -1,5 +1,5 @@
 // Live retrieval benchmark against a real embedding model. Reproduces production-grade
-// recall@k / MRR numbers — the Phase 2 "validate the real numbers" gate.
+// recall@k / MRR numbers: the Phase 2 "validate the real numbers" gate.
 //
 // Usage:
 //   pnpm --filter @memloom/core build

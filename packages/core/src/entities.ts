@@ -8,7 +8,7 @@ import {
 } from "./schema.js";
 
 // Graph extraction: entities AND typed relationships in one LLM call, constrained by the
-// ACTIVE schema (the registry rows, defaulting to the system tier) at BOTH ends — the
+// ACTIVE schema (the registry rows, defaulting to the system tier) at BOTH ends: the
 // prompt renders the vocabularies, and parseExtraction enforces them because the prompt
 // is not trusted. Precision first: a clean graph of real things beats a complete one
 // full of noise. Unknown-but-clean names become PROPOSALS for the review queue instead
@@ -34,12 +34,12 @@ export interface SchemaProposal {
 export interface Extraction {
   entities: ExtractedEntity[];
   relationships: ExtractedRelationship[];
-  /** Vocabulary names the model wanted but the schema lacks — review-queue input. */
+  /** Vocabulary names the model wanted but the schema lacks: review-queue input. */
   proposals: SchemaProposal[];
 }
 
 export interface ExtractionContext {
-  /** Title of the document a chunk came from — grounds salience judgments. */
+  /** Title of the document a chunk came from: grounds salience judgments. */
   docTitle?: string;
   /**
    * Canonical names already in the owner's graph. Rendered into the prompt so the model
@@ -55,12 +55,12 @@ const MAX_NAME_LENGTH = 40;
 const MAX_NAME_WORDS = 5;
 // Any hard math symbol anywhere in the name, or LaTeX residue.
 const MATH_SYMBOLS = /[=^√∫∑∏∈∉≤≥≠→±≈∞′²³]|\\(frac|sqrt|int|sum)/;
-// "3 + 4", "2x·5", "10/2" — digit, arithmetic operator, digit.
+// "3 + 4", "2x·5", "10/2": digit, arithmetic operator, digit.
 const DIGIT_OP_DIGIT = /\d\s*[+\-*/·×:^]\s*\d/;
-// "f(x)", "g'(2)" — single ASCII letter (optionally primed) followed by parens.
+// "f(x)", "g'(2)": single ASCII letter (optionally primed) followed by parens.
 // ASCII-only on purpose: math function names are ASCII; Polish words never match.
 const FUNC_CALL = /\b[a-zA-Z]['′]?\s*\([^)]*\)/;
-const LETTER = /\p{L}/gu; // Unicode letters — Ł, ż, ó all count
+const LETTER = /\p{L}/gu; // Unicode letters: Ł, ż, ó all count
 
 export function buildEntityPrompt(
   content: string,
@@ -77,7 +77,7 @@ export function buildEntityPrompt(
     "ALLOWED ENTITY TYPES:",
     typeLines,
     '"concept" is a LAST RESORT.',
-    "If a clearly reusable category is missing, you may use a NEW short snake_case type —",
+    "If a clearly reusable category is missing, you may use a NEW short snake_case type;",
     "the entity is then held for the user's review instead of entering the graph. Rare.",
     "",
     "DO NOT EXTRACT:",
@@ -90,7 +90,7 @@ export function buildEntityPrompt(
     "ONE ENTITY = ONE THING. Use the canonical name. At most 5 entities, the most salient only.",
     ...(context.knownEntities && context.knownEntities.length > 0
       ? [
-          "KNOWN ENTITIES already in the graph — when the text refers to one of these,",
+          "KNOWN ENTITIES already in the graph: when the text refers to one of these,",
           "reuse the EXACT spelling below instead of a variant:",
           context.knownEntities.join(", "),
         ]
@@ -100,7 +100,7 @@ export function buildEntityPrompt(
     "ALLOWED PREDICATES:",
     predicateLines,
     "confidence is 0..1: how explicitly the text states it. If no predicate fits, you may",
-    "supply a NEW short snake_case name — the link is stored as a plain mention and the",
+    "supply a NEW short snake_case name; the link is stored as a plain mention and the",
     "name is proposed for the user's review. Propose sparingly.",
     ...(schema.dismissed.length > 0
       ? [`NEVER propose these rejected names: ${schema.dismissed.join(", ")}.`]
@@ -124,7 +124,7 @@ export function buildEntityPrompt(
  * The identity key an entity name resolves under: casefolded, trimmed, leading "@"
  * stripped, whitespace collapsed. "memloom/core" and "@Memloom/Core " are the same
  * entity; the first-seen spelling stays the display name. Mirrored in SQL inside
- * #resolveEntity — keep the two in sync.
+ * #resolveEntity; keep the two in sync.
  */
 export function entityNameKey(name: string): string {
   return name.trim().toLowerCase().replace(/^@/, "").replace(/\s+/g, " ");
@@ -141,7 +141,7 @@ function sliceJson(raw: string, open: string, close: string): unknown {
   }
 }
 
-// The deterministic validation layer. Entities: drop, never coerce (precision first) —
+// The deterministic validation layer. Entities: drop, never coerce (precision first),
 // but a CLEAN name with an unknown type becomes a schema proposal instead of a graph row.
 // Relationships: coerce to 'mention' when the predicate is out-of-vocab or under-confident
 // (quarantine semantics; confident unknown predicates are proposed), drop when the
@@ -197,7 +197,7 @@ export function parseExtraction(
       .trim()
       .toLowerCase();
     if (!typeNames.has(type)) {
-      // No default sink — the entity is held out of the graph, its type goes to review.
+      // No default sink: the entity is held out of the graph, its type goes to review.
       if (type) propose("entity_type", type);
       continue;
     }
@@ -258,7 +258,7 @@ export async function extractGraph(
 
 // Math-density pre-filter: exercise-sheet chunks are formula-and-enumeration soup
 // (30-60% math-ish characters) while prose in any language runs ~2-6%. Chunks over the
-// threshold skip the LLM entirely — nothing worth extracting lives there.
+// threshold skip the LLM entirely: nothing worth extracting lives there.
 export const MATH_DENSITY_THRESHOLD = 0.25;
 const MATH_DENSITY_MIN_CHARS = 40; // don't judge tiny chunks
 

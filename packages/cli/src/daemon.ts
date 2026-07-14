@@ -21,7 +21,7 @@ export const HTTP_PORT = 4319;
 export const PG_PORT = 54329;
 
 // `memloom serve`: the single owner of the store. Holds the one PGLite connection (lock, D1)
-// and exposes it two ways from one process — the HTTP API (CLI + MCP route here) and the
+// and exposes it two ways from one process: the HTTP API (CLI + MCP route here) and the
 // Postgres wire protocol (Drizzle Studio / TablePlus / psql). Everything else is a client, so
 // there are no more "store already open" conflicts.
 async function alreadyServing(httpPort: number): Promise<boolean> {
@@ -42,14 +42,14 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
     return;
   }
 
-  // Config lives in ~/.memloom/config.env — the ONE place the key/models need to be set,
+  // Config lives in ~/.memloom/config.env, the ONE place the key/models need to be set,
   // regardless of which process spawned the daemon. Real env vars win over the file.
   ensureConfig();
   loadConfigEnv();
 
   const dir = dataDir();
   // waitMs rides out the stale window of a force-killed daemon's leftover lock (15s), so
-  // "kill then serve" just works instead of erroring on a lock that's about to expire.
+  // "kill then serve" works instead of erroring on a lock that's about to expire.
   const release = await acquireDataDirLock(dir, { waitMs: 20_000 });
   const db = await PGlite.create({ dataDir: dir, extensions: { vector } });
   const storage = PgliteAdapter.fromInstance(db);
@@ -61,7 +61,7 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
     : undefined;
   // Prefer a specific OpenRouter host for embeddings (latency varies 20x between hosts of the
   // same model). Defaults to nebius for the default model (even when the config spells it out
-  // explicitly) — mirrors OpenRouterEmbeddings.
+  // explicitly). Mirrors OpenRouterEmbeddings.
   const embedProvider =
     process.env.OPENROUTER_EMBED_PROVIDER ??
     ((embedModel ?? "qwen/qwen3-embedding-8b") === "qwen/qwen3-embedding-8b"
@@ -142,7 +142,7 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
     warnedClients.add(key);
     console.log(
       `${new Date().toISOString()}  ⚠ Postgres client connected (${key}). ` +
-        "The HTTP API (Claude/MCP/CLI saves + recalls) is PAUSED until it disconnects — close Drizzle Studio/psql when done inspecting.",
+        "The HTTP API (Claude/MCP/CLI saves + recalls) is PAUSED until it disconnects; close Drizzle Studio/psql when done inspecting.",
     );
   });
   await pgServer.start();
@@ -163,7 +163,7 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
     );
   } else {
     console.log(
-      "  mode       OFFLINE — no OPENROUTER_API_KEY (deterministic embeddings, dedup off).",
+      "  mode       OFFLINE, no OPENROUTER_API_KEY (deterministic embeddings, dedup off).",
     );
     console.log(`             Set it in ${configPath()} and restart to enable real recall.`);
   }

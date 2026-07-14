@@ -9,7 +9,7 @@ import {
 import { ENTITY_TYPES, PREDICATES } from "./schema.js";
 
 // The deterministic layer of schema-constrained extraction: the prompt never gets to decide
-// what enters the graph — parseExtraction does. Pure unit tests, no DB, no LLM.
+// what enters the graph; parseExtraction does. Pure unit tests, no DB, no LLM.
 
 function extraction(
   entities: Array<Record<string, unknown>>,
@@ -18,7 +18,7 @@ function extraction(
   return JSON.stringify({ entities, relationships });
 }
 
-describe("parseExtraction — entity guards", () => {
+describe("parseExtraction: entity guards", () => {
   it("drops out-of-vocab and missing types (no thing sink)", () => {
     const out = parseExtraction(
       extraction([
@@ -101,7 +101,7 @@ describe("parseExtraction — entity guards", () => {
   });
 });
 
-describe("parseExtraction — relationship guards", () => {
+describe("parseExtraction: relationship guards", () => {
   const pair = [
     { name: "Ada Lovelace", type: "person" },
     { name: "Analytical Engine", type: "project" },
@@ -182,7 +182,7 @@ describe("parseExtraction — relationship guards", () => {
   });
 });
 
-describe("parseExtraction — schema proposals", () => {
+describe("parseExtraction: schema proposals", () => {
   it("a clean name with an unknown type is held out and its type proposed", () => {
     const out = parseExtraction(
       extraction([

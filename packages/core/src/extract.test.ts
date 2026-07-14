@@ -7,8 +7,8 @@ import { HashingEmbeddingProvider, NullLLMProvider } from "./hashing-provider.js
 import { Memloom } from "./memloom.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
 
-// extractFile through the real unpdf path, with PDFs whose text items are positioned —
-// proving the geometry reconstruction end-to-end, not just on synthetic items.
+// extractFile through the real unpdf path, with PDFs whose text items are positioned,
+// proving the geometry reconstruction end-to-end, not only on synthetic items.
 
 interface PdfLine {
   x: number;
@@ -53,7 +53,7 @@ describe("extractFile (pdf geometry)", () => {
 
   it("reorders scrambled items and drops the duplicate 2-up column", async () => {
     // Emit the right (duplicate) column first, and each line's later word before the
-    // earlier one — both must come back in reading order, once.
+    // earlier one: both must come back in reading order, once.
     const column = (x0: number): PdfLine[] => [
       { x: x0 + 70, y: 700, text: "world" },
       { x: x0, y: 700, text: "hello" },
@@ -70,7 +70,7 @@ describe("extractFile (pdf geometry)", () => {
   });
 
   it("built-in extractors ship at pipeline version 1, so they don't salt the content hash", async () => {
-    // The salt only kicks in for version > 1 (a pipeline bump forces re-ingest) — covered by
+    // The salt only kicks in for version > 1 (a pipeline bump forces re-ingest): covered by
     // the custom version-2 extractor below. At the launch baseline every built-in is unsalted.
     const pdfPath = join(dir, "salted.pdf");
     writeFileSync(pdfPath, makePdf([{ x: 72, y: 720, text: "content" }]));

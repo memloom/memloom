@@ -14,7 +14,7 @@ import { createServer } from "./index.js";
 
 // Exercise the HTTP surface end-to-end via Hono's request helper (no network needed).
 
-// Match only the TEXT section — the prompt's KNOWN ENTITIES list would otherwise trip
+// Match only the TEXT section: the prompt's KNOWN ENTITIES list would otherwise trip
 // the matcher with names extracted from earlier items.
 const extractor = new ScriptedLLMProvider((prompt) =>
   prompt.slice(prompt.indexOf("TEXT:")).includes("Postgres")

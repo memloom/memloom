@@ -107,7 +107,7 @@ describe("assistant harness", () => {
     expect(types.indexOf("tool_call")).toBeLessThan(types.indexOf("tool_result"));
     expect(types.indexOf("tool_result")).toBeLessThan(types.indexOf("delta"));
     // The tool result reached the model as a numbered passage, inlined as plain text
-    // (role "user", never role "tool" — Gemini via OpenRouter ignores tool messages).
+    // (role "user", never role "tool": Gemini via OpenRouter ignores tool messages).
     expect(provider.chatCalls[1]?.some((m) => m.role === "tool")).toBe(false);
     const resultMsg = provider.chatCalls[1]?.filter((m) => m.role === "user").at(-1);
     expect(resultMsg?.content).toContain("[1] (memory)");

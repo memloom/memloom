@@ -117,7 +117,7 @@ function SourcesPanel({
       {sources.map((s) => {
         const isOpen = openN === s.n;
         return (
-          // The detail frame opens right under its own row, not below the whole list.
+          // The detail frame opens right under its own row, rather than below the whole list.
           <div key={s.n} className="sourceItem">
             <button
               type="button"
@@ -410,7 +410,7 @@ function SessionRow({
   );
 }
 
-// `compact` drops the session-list sidebar for the docked graph view — the chat column fills
+// `compact` drops the session-list sidebar for the docked graph view. The chat column fills
 // the dock, keeping one "new chat" affordance so context can still be reset.
 export function AssistantView({
   onOpenInGraph,

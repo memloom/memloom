@@ -38,7 +38,7 @@ function openBrowser(url: string): void {
   spawn(cmd, args as string[], { detached: true, stdio: "ignore" }).unref();
 }
 
-const HELP = `memloom — a memory engine you own, running on your machine
+const HELP = `memloom: a memory engine you own, running on your machine
 
 Usage: memloom <command> [args]
 

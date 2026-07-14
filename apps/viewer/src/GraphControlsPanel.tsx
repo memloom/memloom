@@ -59,7 +59,7 @@ export function GraphControlsPanel({
 
   const updateDisplay = (
     key: keyof ViewerGraphConfig["display"],
-    value: number | EdgeLabelMode,
+    value: number | EdgeLabelMode | boolean,
   ) => {
     onChange({ ...graphConfig, display: { ...graphConfig.display, [key]: value } });
   };
@@ -104,6 +104,25 @@ export function GraphControlsPanel({
         </button>
         {isDisplayOpen && (
           <div className="graphControlRows">
+            <div className="graphControlRow">
+              <div className="graphControlMeta">
+                <span className="graphControlLabel">show entities</span>
+              </div>
+              <div className="graphSegment">
+                {([false, true] as const).map((on) => (
+                  <button
+                    key={String(on)}
+                    type="button"
+                    className={`graphSegmentBtn ${
+                      graphConfig.display.showEntities === on ? "graphSegmentBtnActive" : ""
+                    }`}
+                    onClick={() => updateDisplay("showEntities", on)}
+                  >
+                    {on ? "yes" : "no"}
+                  </button>
+                ))}
+              </div>
+            </div>
             <ControlRow
               label="node size"
               value={graphConfig.display.nodeSizeMultiplier}

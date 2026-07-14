@@ -2,7 +2,7 @@ import type { EmbeddingProvider, LLMProvider } from "./providers.js";
 
 // A deterministic, offline embedding provider used for tests and local development without an
 // API key. It uses signed feature hashing over word tokens, so texts that share words get
-// higher cosine similarity — a real (if crude) semantic signal that is fully reproducible.
+// higher cosine similarity: a real (if crude) semantic signal that is fully reproducible.
 // NOT for production recall quality; swap in a real model (OpenRouter/Ollama) for that.
 
 const FNV_OFFSET = 2166136261;
