@@ -21,6 +21,7 @@ import {
   normalizeSchemaName,
   PREDICATES,
   PROPOSAL_MIN_OCCURRENCES,
+  type ProposalExample,
   type SchemaEntry,
   type SchemaInfo,
   type SchemaKind,
@@ -53,6 +54,9 @@ import type {
   Memory,
   MemoryType,
   RecallOptions,
+  ReembedOptions,
+  ReembedProgressEvent,
+  ReembedResult,
   ResolveDecision,
   SaveInput,
   SaveResult,
@@ -68,6 +72,36 @@ export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
 // Dedup only considers existing memories at least this similar to the incoming one.
 const CANDIDATE_THRESHOLD = 0.5;
 const CANDIDATE_LIMIT = 5;
+
+// _memloom_meta key set while a reembed() is underway; its presence means the store's vectors
+// are partially NULL and must not be served until the migration finishes.
+const REEMBED_MARKER_KEY = "embedding_migration_target";
+
+/**
+ * The fingerprint guard's refusal, as a typed error so hosts (the CLI daemon) can attach the
+ * `memloom reembed` hint. `reembedInProgress` distinguishes "config changed" from "a re-embed
+ * was started but never finished".
+ */
+export class EmbeddingFingerprintError extends Error {
+  constructor(
+    readonly stored: string | null,
+    readonly current: string,
+    readonly reembedInProgress: boolean,
+    message: string,
+  ) {
+    super(message);
+    this.name = "EmbeddingFingerprintError";
+  }
+}
+
+export interface InitOptions {
+  /**
+   * "require" (default) refuses to open a store whose vectors came from a different embedding
+   * config. "tolerate" skips the refusal without ever overwriting the stored fingerprint: the
+   * reembed() maintenance path, which is ABOUT to replace those vectors.
+   */
+  fingerprint?: "require" | "tolerate";
+}
 
 // All config is injected: core never reads process.env or global state (build-plan
 // architectural rule 2).
@@ -272,9 +306,9 @@ export class Memloom implements MemoryEngine {
   }
 
   /** Run pending migrations. Idempotent; call once after constructing. */
-  async init(): Promise<void> {
+  async init(opts: InitOptions = {}): Promise<void> {
     await migrate(this.#storage, this.#embedding.dims);
-    await this.#checkEmbeddingFingerprint();
+    await this.#checkEmbeddingFingerprint(opts.fingerprint ?? "require");
     // A persisted Console toggle beats the config/env default, but only where the host
     // supports auto-indexing at all (see #autoIndexCapable).
     if (this.#autoIndexCapable) {
@@ -288,13 +322,27 @@ export class Memloom implements MemoryEngine {
   // A store's vectors are only comparable to vectors from the same provider+model+dims. The
   // first init stamps the store; any later init with a different fingerprint is refused:
   // otherwise recall degrades silently (offline-embedded and cloud-embedded memories look
-  // fine individually but never match each other).
-  async #checkEmbeddingFingerprint(): Promise<void> {
+  // fine individually but never match each other). "tolerate" is reembed()'s way in.
+  async #checkEmbeddingFingerprint(mode: "require" | "tolerate"): Promise<void> {
     const current = this.#embedding.fingerprint;
-    const rows = await this.#storage.query<{ value: string }>(
-      "SELECT value FROM _memloom_meta WHERE key = 'embedding_fingerprint'",
+    const rows = await this.#storage.query<{ key: string; value: string }>(
+      `SELECT key, value FROM _memloom_meta
+       WHERE key IN ('embedding_fingerprint', '${REEMBED_MARKER_KEY}')`,
     );
-    const stored = rows[0]?.value;
+    const stored = rows.find((r) => r.key === "embedding_fingerprint")?.value;
+    const marker = rows.find((r) => r.key === REEMBED_MARKER_KEY)?.value;
+    if (mode === "tolerate") return;
+    // A half-finished reembed leaves NULL vectors behind; refuse to serve even when the
+    // fingerprint matches (the user may have restored the old config after interrupting).
+    if (marker !== undefined) {
+      throw new EmbeddingFingerprintError(
+        stored ?? null,
+        current,
+        true,
+        `a re-embed of this store (to "${marker}") was started but not finished, so some ` +
+          "embeddings are missing. Run `memloom reembed` to finish it.",
+      );
+    }
     if (stored === undefined) {
       await this.#storage.query(
         `INSERT INTO _memloom_meta (key, value) VALUES ('embedding_fingerprint', $1)
@@ -304,11 +352,15 @@ export class Memloom implements MemoryEngine {
       return;
     }
     if (stored !== current) {
-      throw new Error(
+      throw new EmbeddingFingerprintError(
+        stored,
+        current,
+        false,
         `this store's memories were embedded with "${stored}", but the engine is now configured ` +
           `with "${current}". Different embedding providers/models produce incompatible vector ` +
           "spaces, so recall would silently return garbage. Either restore the previous embedding " +
-          "config, or start fresh by deleting the data directory.",
+          "config, run `memloom reembed` with the new one, or start fresh by deleting the data " +
+          "directory.",
       );
     }
   }
@@ -1458,6 +1510,131 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
+   * Recompute every stored embedding with the CURRENTLY configured provider, then stamp the
+   * store with its fingerprint: the migration path for switching embedding configs (offline
+   * hashing to a real cloud model being the one that matters). Same crash-safety story as
+   * reindex(): the wipe (all vectors NULLed + a marker in _memloom_meta) commits before the
+   * first provider call, `embedding IS NULL` is the resume cursor, and an interrupted run
+   * resumes by calling reembed() again. While the marker exists a normal init() refuses to
+   * serve. Store-wide on purpose: a store is one vector space, owners share it.
+   *
+   * Not on MemoryEngine/HTTP: a maintenance path for hosts that own the store directly, and
+   * it requires init({ fingerprint: "tolerate" }) to have been used when fingerprints differ.
+   */
+  async reembed(opts: ReembedOptions = {}): Promise<ReembedResult> {
+    const current = this.#embedding.fingerprint;
+    // Defense in depth behind the CLI's pre-init check: a provider of the wrong width would
+    // otherwise fail row by row with an opaque pgvector cast error.
+    const [col] = await this.#storage.query<{ dims: number | null }>(
+      `SELECT atttypmod AS dims FROM pg_attribute
+       WHERE attrelid = to_regclass('memory_objects') AND attname = 'embedding'`,
+    );
+    if (col?.dims != null && col.dims !== -1 && col.dims !== this.#embedding.dims) {
+      throw new Error(
+        `this store's embedding columns are vector(${col.dims}) but the configured provider ` +
+          `produces ${this.#embedding.dims} dims ("${current}"). Changing dimensions is not ` +
+          "supported by reembed yet; configure a model with matching dims, or start fresh.",
+      );
+    }
+
+    const meta = await this.#storage.query<{ key: string; value: string }>(
+      `SELECT key, value FROM _memloom_meta
+       WHERE key IN ('embedding_fingerprint', '${REEMBED_MARKER_KEY}')`,
+    );
+    const stored = meta.find((r) => r.key === "embedding_fingerprint")?.value ?? null;
+    const marker = meta.find((r) => r.key === REEMBED_MARKER_KEY)?.value;
+
+    // Each table's re-embeddable text. Everything with a vector column, ALL rows (stale
+    // memories and session chunks included): a store is one vector space or none.
+    const tables: Array<{
+      table: ReembedProgressEvent["table"];
+      name: string;
+      text: string;
+      touch: string;
+    }> = [
+      { table: "memories", name: "memory_objects", text: "content", touch: ", updated_at = now()" },
+      { table: "entities", name: "memory_entities", text: "name", touch: "" },
+      { table: "chunks", name: "context_chunks", text: "content", touch: "" },
+      { table: "messages", name: "assistant_messages", text: "content", touch: "" },
+    ];
+
+    const countNulls = async () => {
+      const counts = {} as Record<ReembedProgressEvent["table"], number>;
+      for (const t of tables) {
+        const [row] = await this.#storage.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM ${t.name} WHERE embedding IS NULL`,
+        );
+        counts[t.table] = row?.n ?? 0;
+      }
+      return counts;
+    };
+
+    const resuming = marker !== undefined && marker === current;
+    if (!resuming) {
+      const pending = await countNulls();
+      const anyNull = Object.values(pending).some((n) => n > 0);
+      if (stored === current && marker === undefined && !anyNull && !opts.force) {
+        return {
+          outcome: "up-to-date",
+          previousFingerprint: stored,
+          fingerprint: current,
+          counts: { memories: 0, entities: 0, chunks: 0, messages: 0 },
+        };
+      }
+      // The wipe: marker first, then every vector, one tx. From here until the finish tx the
+      // store refuses a normal init(), which is exactly right: half its vectors are NULL.
+      // A marker for a DIFFERENT target (config changed mid-migration) lands here too and
+      // simply re-wipes toward the new one.
+      await this.#storage.tx(async (tx) => {
+        await tx.query(
+          `INSERT INTO _memloom_meta (key, value) VALUES ('${REEMBED_MARKER_KEY}', $1)
+           ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+          [current],
+        );
+        for (const t of tables) {
+          await tx.query(`UPDATE ${t.name} SET embedding = NULL WHERE embedding IS NOT NULL`);
+        }
+      });
+    }
+
+    // Backfill, paged. 128 = two of the OpenRouter provider's internal batches of 64; a crash
+    // loses at most one page of API spend. The provider call stays OUTSIDE any tx (slow,
+    // fallible), mirroring the ingest path.
+    const PAGE = 128;
+    const totals = await countNulls();
+    const counts = { memories: 0, entities: 0, chunks: 0, messages: 0 };
+    for (const t of tables) {
+      for (;;) {
+        const rows = await this.#storage.query<{ id: string; text: string }>(
+          `SELECT id, ${t.text} AS text FROM ${t.name}
+           WHERE embedding IS NULL ORDER BY created_at, id LIMIT ${PAGE}`,
+        );
+        if (rows.length === 0) break;
+        const vectors = await this.#embedding.embed(rows.map((r) => r.text));
+        await this.#storage.query(
+          `UPDATE ${t.name} AS x
+           SET embedding = v.emb::vector${t.touch}
+           FROM (SELECT unnest($1::uuid[]) AS id, unnest($2::text[]) AS emb) v
+           WHERE x.id = v.id`,
+          [rows.map((r) => r.id), vectors.map(toVectorLiteral)],
+        );
+        counts[t.table] += rows.length;
+        opts.onProgress?.({ table: t.table, done: counts[t.table], total: totals[t.table] });
+      }
+    }
+
+    await this.#storage.tx(async (tx) => {
+      await tx.query(
+        `INSERT INTO _memloom_meta (key, value) VALUES ('embedding_fingerprint', $1)
+         ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+        [current],
+      );
+      await tx.query(`DELETE FROM _memloom_meta WHERE key = '${REEMBED_MARKER_KEY}'`);
+    });
+    return { outcome: "reembedded", previousFingerprint: stored, fingerprint: current, counts };
+  }
+
+  /**
    * The graph schema with live usage counts: the closed entity-type vocabulary and the
    * relation/predicate vocabulary, zero-filled so every schema row appears even before
    * first use. Predicate counts consider entity-sourced edges only, so document/memory
@@ -1465,8 +1642,10 @@ export class Memloom implements MemoryEngine {
    */
   async describeSchema(ownerId: string = SENTINEL_OWNER): Promise<SchemaInfo> {
     await this.#ensureSchemaSeed(ownerId);
-    const rows = await this.#storage.query<SchemaEntry & { created_at: string }>(
-      `SELECT id, kind, name, description, tier, status, occurrences, created_at
+    const rows = await this.#storage.query<
+      SchemaEntry & { created_at: string; examples: ProposalExample[] | string }
+    >(
+      `SELECT id, kind, name, description, tier, status, occurrences, examples, created_at
        FROM memory_schema WHERE owner_id = $1 ORDER BY created_at`,
       [ownerId],
     );
@@ -1513,7 +1692,8 @@ export class Memloom implements MemoryEngine {
       predicates: vocab
         .filter((r) => r.kind === "predicate")
         .map((r) => ({ ...entry(r), count: byPredicate.get(r.name) ?? 0 })),
-      // The review queue: suggested often enough, not yet approved or dismissed.
+      // The review queue: suggested often enough, not yet approved or dismissed. Each
+      // carries the saved occurrences, so review shows the evidence and approval links it.
       proposals: rows
         .filter(
           (r) =>
@@ -1521,7 +1701,14 @@ export class Memloom implements MemoryEngine {
             r.status === "active" &&
             Number(r.occurrences) >= PROPOSAL_MIN_OCCURRENCES,
         )
-        .map(entry),
+        .map((r) => ({
+          ...entry(r),
+          examples: Array.isArray(r.examples)
+            ? r.examples
+            : typeof r.examples === "string"
+              ? JSON.parse(r.examples)
+              : [],
+        })),
     };
   }
 
@@ -1883,9 +2070,11 @@ export class Memloom implements MemoryEngine {
       stored += 1;
     }
     // Vocabulary the model wanted but the schema lacks: accumulate occurrences; the
-    // review queue surfaces a name once enough independent extractions ask for it.
+    // review queue surfaces a name once enough independent extractions ask for it. The
+    // motivating occurrences are saved with it (stamped with this source), so approval can
+    // link them without a re-index.
     for (const proposal of extraction.proposals) {
-      await this.#recordProposal(owner, proposal.kind, proposal.name);
+      await this.#recordProposal(owner, proposal.kind, proposal.name, proposal.examples, sourceId);
     }
     return { entities: extraction.entities.map((e) => e.name), relationships: stored };
   }
@@ -1940,16 +2129,48 @@ export class Memloom implements MemoryEngine {
     };
   }
 
-  async #recordProposal(owner: string, kind: SchemaKind, name: string): Promise<void> {
+  // Examples kept per proposal; enough evidence to judge and materialize, bounded so a
+  // hot name can't grow a row without limit.
+  static readonly #MAX_PROPOSAL_EXAMPLES = 20;
+
+  async #recordProposal(
+    owner: string,
+    kind: SchemaKind,
+    name: string,
+    examples: ProposalExample[] = [],
+    sourceId?: string,
+  ): Promise<void> {
+    // Merge the new occurrences into what earlier runs saved: dedupe by entity name-key
+    // (or endpoint pair), first sighting wins, capped. Read-then-upsert is fine here: the
+    // embedded store is single-process and index runs are single-flight.
+    const [existing] = await this.#storage.query<{ examples: ProposalExample[] | string }>(
+      `SELECT examples FROM memory_schema
+       WHERE owner_id = $1 AND kind = $2 AND name = $3
+         AND tier = 'proposed' AND status = 'active'`,
+      [owner, kind, name],
+    );
+    const parse = (v: ProposalExample[] | string | undefined): ProposalExample[] =>
+      Array.isArray(v) ? v : typeof v === "string" ? JSON.parse(v) : [];
+    const merged = parse(existing?.examples);
+    const keyOf = (e: ProposalExample) =>
+      e.entity ? entityNameKey(e.entity) : `${e.from?.toLowerCase()}|${e.to?.toLowerCase()}`;
+    const seen = new Set(merged.map(keyOf));
+    for (const example of examples) {
+      if (merged.length >= Memloom.#MAX_PROPOSAL_EXAMPLES) break;
+      const key = keyOf(example);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      merged.push({ ...example, ...(sourceId ? { sourceId } : {}) });
+    }
     // Dismissed and existing names never re-enter the queue (the unique index holds the
     // line; occurrences only grow while the row stays a proposal).
     await this.#storage.query(
-      `INSERT INTO memory_schema (owner_id, kind, name, tier, status, occurrences)
-       VALUES ($1, $2, $3, 'proposed', 'active', 1)
+      `INSERT INTO memory_schema (owner_id, kind, name, tier, status, occurrences, examples)
+       VALUES ($1, $2, $3, 'proposed', 'active', 1, $4)
        ON CONFLICT (owner_id, kind, name)
-       DO UPDATE SET occurrences = memory_schema.occurrences + 1
+       DO UPDATE SET occurrences = memory_schema.occurrences + 1, examples = EXCLUDED.examples
          WHERE memory_schema.tier = 'proposed' AND memory_schema.status = 'active'`,
-      [owner, kind, name],
+      [owner, kind, name, JSON.stringify(merged)],
     );
   }
 
@@ -1975,14 +2196,74 @@ export class Memloom implements MemoryEngine {
     return row;
   }
 
-  /** Promote a proposal to the user tier: the extractor starts using it next run. */
-  async approveProposal(id: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
-    const updated = await this.#storage.query<{ id: string }>(
+  /**
+   * Promote a proposal to the user tier AND materialize its saved occurrences: held-out
+   * entities enter the graph with mention edges from their original sources, quarantined
+   * relationships get their typed edge. No re-index needed; a second extraction run is not
+   * deterministic and might never re-find what the first one saw.
+   */
+  async approveProposal(
+    id: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<{ entitiesLinked: number; edgesLinked: number }> {
+    const [row] = await this.#storage.query<{
+      kind: SchemaKind;
+      name: string;
+      examples: ProposalExample[] | string;
+    }>(
       `UPDATE memory_schema SET tier = 'user', status = 'active'
-       WHERE id = $1 AND owner_id = $2 AND tier = 'proposed' RETURNING id`,
+       WHERE id = $1 AND owner_id = $2 AND tier = 'proposed'
+       RETURNING kind, name, examples`,
       [id, ownerId],
     );
-    if (updated.length === 0) throw new Error(`memloom: no pending proposal ${id}`);
+    if (!row) throw new Error(`memloom: no pending proposal ${id}`);
+    const examples: ProposalExample[] = Array.isArray(row.examples)
+      ? row.examples
+      : typeof row.examples === "string"
+        ? JSON.parse(row.examples)
+        : [];
+
+    let entitiesLinked = 0;
+    let edgesLinked = 0;
+    // A saved source may have been deleted or versioned away since; link only what still
+    // stands (an entity without a live mention would be an orphan node in the graph).
+    const sourceAlive = async (sourceId: string | undefined): Promise<boolean> => {
+      if (!sourceId) return false;
+      const rows = await this.#storage.query<{ ok: number }>(
+        `SELECT 1 AS ok FROM memory_objects WHERE id = $1 AND status = 'active'
+         UNION ALL
+         SELECT 1 AS ok FROM context_chunks WHERE id = $1`,
+        [sourceId],
+      );
+      return rows.length > 0;
+    };
+
+    for (const example of examples) {
+      if (row.kind === "entity_type" && example.entity) {
+        if (!(await sourceAlive(example.sourceId))) continue;
+        const entityId = await this.#resolveEntity(ownerId, example.entity, row.name);
+        await addEdgeIfAbsent(
+          this.#storage,
+          ownerId,
+          example.sourceId as string,
+          entityId,
+          "mention",
+        );
+        entitiesLinked += 1;
+      } else if (row.kind === "predicate" && example.from && example.to) {
+        // Endpoints had known types, so they exist as entities iff that extraction stored
+        // them; look them up by name-key and never create them here.
+        const fromId = await this.#findEntityId(ownerId, example.from);
+        const toId = await this.#findEntityId(ownerId, example.to);
+        if (!fromId || !toId) continue;
+        await addEdgeIfAbsent(this.#storage, ownerId, fromId, toId, row.name, {
+          ...(example.confidence !== undefined ? { confidence: example.confidence } : {}),
+          ...(example.sourceId ? { sourceId: example.sourceId } : {}),
+        });
+        edgesLinked += 1;
+      }
+    }
+    return { entitiesLinked, edgesLinked };
   }
 
   /** Reject a proposal: the name is blocklisted from re-proposal in the prompt. */
@@ -2062,6 +2343,18 @@ export class Memloom implements MemoryEngine {
     );
     if (!row) throw new Error("memloom: failed to insert entity");
     return row.id;
+  }
+
+  /** #resolveEntity's lookup half: find by name key, never create. */
+  async #findEntityId(owner: string, name: string): Promise<string | null> {
+    const [row] = await this.#storage.query<{ id: string }>(
+      `SELECT id FROM memory_entities
+       WHERE owner_id = $1
+         AND regexp_replace(regexp_replace(btrim(lower(name)), '^@', ''), '\\s+', ' ', 'g') = $2
+       ORDER BY created_at LIMIT 1`,
+      [owner, entityNameKey(name)],
+    );
+    return row?.id ?? null;
   }
 
   // --- entity management (the schema tab's instances list) ---

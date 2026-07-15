@@ -441,7 +441,7 @@ paths:
   /memory/schema/{id}/approve:
     post:
       summary: Approve a proposal
-      description: Promote a proposed name to the user tier. The extractor starts using it on the next index run; re-index to capture earlier occurrences.
+      description: Promote a proposed name to the user tier and link its saved occurrences into the graph immediately (no re-index needed). The extractor also starts using the name on the next index run.
       operationId: approveProposal
       parameters:
         - name: id

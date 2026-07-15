@@ -15,7 +15,7 @@
       "expanded": "all"
     },
     "examples": {
-      "languages": ["curl", "javascript", "python"],
+      "languages": ["curl", "python", "javascript", "go", "php", "ruby", "java", "csharp"],
       "defaults": "required",
       "prefill": true,
       "autogenerate": true
@@ -117,6 +117,14 @@
             "pages": ["GET /health", "POST /admin/shutdown"]
           }
         ]
+      }
+    ]
+  },
+  "navbar": {
+    "links": [
+      {
+        "label": "Website",
+        "href": "https://memloom.dev"
       }
     ]
   }

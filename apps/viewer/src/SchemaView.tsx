@@ -323,15 +323,17 @@ export function SchemaView({ onChanged }: { onChanged: () => void }) {
           <div className="card">
             <div className="cardLabel">proposed by the indexer · {schema.proposals.length}</div>
             <p className="schemaHint">
-              The extraction model wanted these vocabulary names. Approve to start extracting with
-              them (re-index to capture earlier occurrences); dismiss to never see them proposed
-              again.
+              The extraction model wants these new entity types and predicates. Each shows what it
+              found; approving adds the name to the vocabulary and links those finds into the graph
+              right away, no re-index needed. Dismissing blocks the name for good.
             </p>
             {schema.proposals.map((p) => (
               <div key={p.id} className="schemaRow">
                 <div className="schemaRowHead">
                   <span className="typeTag">{p.name}</span>
-                  <span className="tierTag">{p.kind === "entity_type" ? "type" : "predicate"}</span>
+                  <span className="tierTag">
+                    {p.kind === "entity_type" ? "entity type" : "predicate"}
+                  </span>
                   <span className="docMeta">suggested {p.occurrences}×</span>
                   <button
                     type="button"
@@ -350,6 +352,19 @@ export function SchemaView({ onChanged }: { onChanged: () => void }) {
                     dismiss
                   </button>
                 </div>
+                {p.examples && p.examples.length > 0 && (
+                  <div className="docMeta">
+                    {p.kind === "entity_type"
+                      ? `will add: ${p.examples
+                          .map((e) => e.entity)
+                          .filter(Boolean)
+                          .join(", ")}`
+                      : `will link: ${p.examples
+                          .filter((e) => e.from && e.to)
+                          .map((e) => `${e.from} ${p.name} ${e.to}`)
+                          .join(", ")}`}
+                  </div>
+                )}
               </div>
             ))}
           </div>

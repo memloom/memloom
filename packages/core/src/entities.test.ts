@@ -360,7 +360,7 @@ describe("entities + indexer", () => {
     expect(await m.index()).toEqual({ indexed: 0, chunksIndexed: 0 });
   });
 
-  it("proposal lifecycle: suggest twice, review, approve, extract with the new type", async () => {
+  it("proposal lifecycle: suggest twice, review, approve materializes without re-index", async () => {
     const storage = await PgliteAdapter.open();
     cleanups.push(() => storage.close());
     const rel = new ScriptedLLMProvider((prompt) => {
@@ -385,21 +385,80 @@ describe("entities + indexer", () => {
     await m.save({ content: "ibuprofen twice a day after meals" });
     await m.index();
 
-    // Held out of the graph, queued for review.
+    // Held out of the graph, queued for review WITH the motivating entity saved.
     expect((await m.graph()).entities).toHaveLength(0);
     let schema = await m.describeSchema();
     const proposal = schema.proposals.find((p) => p.name === "medication");
     expect(proposal).toBeDefined();
     expect(proposal?.kind).toBe("entity_type");
     expect(proposal?.occurrences).toBe(2);
+    expect(proposal?.examples?.map((e) => e.entity)).toEqual(["Ibuprofen"]);
+    expect(proposal?.examples?.[0]?.sourceId).toBeTruthy();
 
-    // Approve, re-index from scratch: the entity now enters the graph.
-    await m.approveProposal(proposal?.id ?? "");
-    await m.reindex();
-    expect((await m.graph()).entities.map((e) => e.name)).toEqual(["Ibuprofen"]);
+    // Approve: the saved occurrence enters the graph immediately. NO re-index; a second
+    // extraction run is nondeterministic and might never re-find it.
+    const linked = await m.approveProposal(proposal?.id ?? "");
+    expect(linked.entitiesLinked).toBe(1);
+    const graph = await m.graph();
+    expect(graph.entities.map((e) => e.name)).toEqual(["Ibuprofen"]);
+    // The mention edge points at the saved source memory.
+    expect(
+      graph.edges.some(
+        (e) => e.relation === "mention" && e.from === proposal?.examples?.[0]?.sourceId,
+      ),
+    ).toBe(true);
     schema = await m.describeSchema();
     expect(schema.proposals).toHaveLength(0);
     expect(schema.entityTypes.find((t) => t.name === "medication")?.tier).toBe("user");
+  });
+
+  it("approving a predicate proposal upgrades the quarantined pair to a typed edge", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const rel = new ScriptedLLMProvider((prompt) => {
+      if (!prompt.includes("lovelace")) return JSON.stringify({ entities: [], relationships: [] });
+      return JSON.stringify({
+        entities: [
+          { name: "Ada Lovelace", type: "person" },
+          { name: "Analytical Engine", type: "project" },
+        ],
+        relationships: [
+          {
+            subject: "Ada Lovelace",
+            predicate: "invented",
+            confidence: 0.95,
+            object: "Analytical Engine",
+          },
+        ],
+      });
+    });
+    const m = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: rel,
+      dedup: false,
+    });
+    await m.init();
+
+    // Two extractions confidently want "invented" -> it crosses the surfacing floor. The
+    // relationship itself is stored quarantined as 'mention' both times.
+    await m.save({ content: "lovelace designed the engine" });
+    await m.save({ content: "lovelace kept refining the engine" });
+    await m.index();
+
+    const proposal = (await m.describeSchema()).proposals.find((p) => p.name === "invented");
+    expect(proposal?.kind).toBe("predicate");
+    expect(proposal?.examples?.[0]).toMatchObject({
+      from: "Ada Lovelace",
+      to: "Analytical Engine",
+      confidence: 0.95,
+    });
+    expect((await m.graph()).edges.some((e) => e.relation === "invented")).toBe(false);
+
+    const linked = await m.approveProposal(proposal?.id ?? "");
+    expect(linked.edgesLinked).toBe(1);
+    const edges = (await m.graph()).edges.filter((e) => e.relation === "invented");
+    expect(edges).toHaveLength(1);
   });
 
   it("dismissed proposals are blocklisted in the prompt", async () => {

@@ -853,5 +853,16 @@ export function buildMigrations(dims: number): Migration[] {
       $fn$;
     `,
     },
+    {
+      // Proposals remember what motivated them: the entities (or relationship endpoints)
+      // the extractor held out because their type/predicate wasn't in the vocabulary yet.
+      // Review shows them, and approval links them into the graph directly, so the user
+      // never has to re-index and hope a nondeterministic second run re-finds the same
+      // occurrences. Shape: ProposalExample[] (schema.ts).
+      id: "0016_proposal_examples",
+      sql: /* sql */ `
+      ALTER TABLE memory_schema ADD COLUMN examples jsonb NOT NULL DEFAULT '[]'::jsonb;
+    `,
+    },
   ];
 }

@@ -52,6 +52,10 @@ describe("cli router", () => {
     await run(["auto-index", "--help"]);
     expect(logs.join("\n")).toContain("memloom auto-index [on|off]");
 
+    logs = [];
+    await run(["reembed", "--help"]);
+    expect(logs.join("\n")).toContain("memloom reembed [--force]");
+
     // help <command> is the same output; an unknown topic falls back to the main help.
     logs = [];
     await run(["help", "conflicts"]);

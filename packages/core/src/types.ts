@@ -233,6 +233,32 @@ export interface IndexRunEvent {
   createdAt: string;
 }
 
+// ---- Re-embedding (the offline provider-switch migration; `memloom reembed`) ----
+
+/** One page of rows re-embedded: the progress signal for the CLI's per-table counters. */
+export interface ReembedProgressEvent {
+  table: "memories" | "entities" | "chunks" | "messages";
+  /** Rows embedded so far in this table during this run. */
+  done: number;
+  /** Rows pending in this table when the run started. */
+  total: number;
+}
+
+export interface ReembedOptions {
+  /** Re-embed even when the fingerprint already matches and nothing is missing. */
+  force?: boolean;
+  onProgress?: (event: ReembedProgressEvent) => void;
+}
+
+export interface ReembedResult {
+  outcome: "reembedded" | "up-to-date";
+  /** Fingerprint the store was stamped with before this run (null on a never-stamped store). */
+  previousFingerprint: string | null;
+  /** The current provider's fingerprint; what the store is stamped with afterwards. */
+  fingerprint: string;
+  counts: { memories: number; entities: number; chunks: number; messages: number };
+}
+
 // ---- Assistant chat (the viewer's assistant tab; docs/design/assistant-tab.md) ----
 
 /** One recall hit the assistant grounded an answer in. `n` matches the [n] markers. */

@@ -37,31 +37,6 @@ How to run the CLI while testing:
 - [ ] `memloom serve` in a second terminal.
       EXPECTED: "already serving" message, exits cleanly, does not corrupt anything.
 
-```
-# memloom configuration. The daemon (`memloom serve`) reads this at startup.
-# Real environment variables take precedence over values here.
-
-# OpenRouter API key: enables real embeddings + LLM dedup/conflict detection/entities.
-# Without it, memloom runs in offline mode (deterministic embeddings, no dedup).
-OPENROUTER_API_KEY=sk-or-...   # NEVER paste a real key into this file
-
-# Optional model overrides (defaults shown):
-OPENROUTER_EMBED_MODEL=qwen/qwen3-embedding-8b
-OPENROUTER_EMBED_DIMS=1024
-OPENROUTER_LLM_MODEL=google/gemini-2.5-flash
-# Assistant chat model (defaults to OPENROUTER_LLM_MODEL; must support tool calling):
-OPENROUTER_CHAT_MODEL=google/gemini-2.5-flash
-
-# Preferred OpenRouter host for embeddings (latency varies a lot between hosts of the same
-# model; nebius is the fast one for the default model and is used automatically):
-OPENROUTER_EMBED_PROVIDER=nebius
-
-# New memories and files are entity-indexed automatically in the background (one LLM call
-# per item, debounced). Set to off to index only via `memloom index` / the Console:
-MEMLOOM_AUTO_INDEX=on
-
-```
-
 ## Phase 2: offline basics
 
 Offline mode has deterministic hashing embeddings and dedup off. Recall works best

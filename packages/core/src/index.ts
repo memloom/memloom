@@ -28,13 +28,13 @@ export type { FetchLike, HttpResponse } from "./http-client.js";
 export { HttpMemloomClient } from "./http-client.js";
 export type { ReleaseLock } from "./lock.js";
 export { acquireDataDirLock } from "./lock.js";
-export type { MemloomConfig } from "./memloom.js";
+export type { InitOptions, MemloomConfig } from "./memloom.js";
 // The engine facade + contract
-export { Memloom, SENTINEL_OWNER } from "./memloom.js";
+export { EmbeddingFingerprintError, Memloom, SENTINEL_OWNER } from "./memloom.js";
 export type { EvalReport, QueryResult } from "./metrics.js";
 export { evaluate, mean, recallAtK, reciprocalRank } from "./metrics.js";
 // Migrations
-export { migrate } from "./migrate.js";
+export { migrate, storedEmbeddingDims } from "./migrate.js";
 export type { Migration } from "./migrations.js";
 export { buildMigrations } from "./migrations.js";
 export type {
@@ -66,6 +66,7 @@ export type {
   EntityTypeDef,
   PredicateDef,
   PredicateName,
+  ProposalExample,
   SchemaEntry,
   SchemaInfo,
   SchemaKind,
@@ -118,6 +119,9 @@ export type {
   MemoryType,
   RecallOptions,
   RecallSource,
+  ReembedOptions,
+  ReembedProgressEvent,
+  ReembedResult,
   ResolveDecision,
   SaveInput,
   SaveOutcome,

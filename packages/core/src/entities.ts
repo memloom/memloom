@@ -4,6 +4,7 @@ import {
   DEFAULT_ACTIVE_SCHEMA,
   MIN_RELATIONSHIP_CONFIDENCE,
   normalizeSchemaName,
+  type ProposalExample,
   type SchemaKind,
 } from "./schema.js";
 
@@ -29,6 +30,12 @@ export interface ExtractedRelationship {
 export interface SchemaProposal {
   kind: SchemaKind;
   name: string;
+  /**
+   * The occurrences that triggered this proposal: the held-out entity (entity_type) or the
+   * quarantined relationship's endpoints (predicate). Persisted with the proposal so review
+   * shows the evidence and approval can materialize it without a re-index.
+   */
+  examples: ProposalExample[];
 }
 
 export interface Extraction {
@@ -172,14 +179,31 @@ export function parseExtraction(
   }
 
   const proposals: SchemaProposal[] = [];
-  const proposed = new Set<string>();
-  const propose = (kind: SchemaKind, rawName: string) => {
+  const byKey = new Map<string, SchemaProposal>();
+  const propose = (kind: SchemaKind, rawName: string, example?: ProposalExample) => {
     const name = normalizeSchemaName(rawName);
     if (!name || name === "mention" || dismissed.has(name)) return;
     const key = `${kind}:${name}`;
-    if (proposed.has(key)) return;
-    proposed.add(key);
-    proposals.push({ kind, name });
+    let proposal = byKey.get(key);
+    if (!proposal) {
+      proposal = { kind, name, examples: [] };
+      byKey.set(key, proposal);
+      proposals.push(proposal);
+    }
+    // Same name suggested twice in one item still counts once, but every distinct
+    // occurrence is kept as evidence.
+    if (example) {
+      const exampleKey = example.entity
+        ? entityNameKey(example.entity)
+        : `${example.from?.toLowerCase()}|${example.to?.toLowerCase()}`;
+      const exists = proposal.examples.some(
+        (e) =>
+          (e.entity
+            ? entityNameKey(e.entity)
+            : `${e.from?.toLowerCase()}|${e.to?.toLowerCase()}`) === exampleKey,
+      );
+      if (!exists) proposal.examples.push(example);
+    }
   };
 
   const entities: ExtractedEntity[] = [];
@@ -197,8 +221,9 @@ export function parseExtraction(
       .trim()
       .toLowerCase();
     if (!typeNames.has(type)) {
-      // No default sink: the entity is held out of the graph, its type goes to review.
-      if (type) propose("entity_type", type);
+      // No default sink: the entity is held out of the graph; its type goes to review WITH
+      // the entity attached, so approval can add it to the graph later.
+      if (type) propose("entity_type", type, { entity: name });
       continue;
     }
     const key = `${name.toLowerCase()} ${type}`;
@@ -226,13 +251,14 @@ export function parseExtraction(
     const rawConfidence = Number(rec.confidence);
     const confidence = Number.isFinite(rawConfidence) ? Math.max(0, Math.min(1, rawConfidence)) : 0;
     if (!predicateNames.has(predicate) || confidence < MIN_RELATIONSHIP_CONFIDENCE) {
-      // A CONFIDENT classification against a missing predicate is vocabulary signal.
+      // A CONFIDENT classification against a missing predicate is vocabulary signal. The
+      // endpoints ride along so approval can upgrade the quarantined edge to the real one.
       if (
         predicate &&
         !predicateNames.has(predicate) &&
         confidence >= MIN_RELATIONSHIP_CONFIDENCE
       ) {
-        propose("predicate", predicate);
+        propose("predicate", predicate, { from: subject, to: object, confidence });
       }
       predicate = "mention"; // quarantine: keep the connection, drop the unproven claim
     }

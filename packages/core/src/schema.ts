@@ -147,6 +147,21 @@ export type SchemaKind = "entity_type" | "predicate";
 export type SchemaTier = "system" | "user" | "proposed";
 export type SchemaStatus = "active" | "disabled" | "dismissed";
 
+/**
+ * One occurrence that motivated a schema proposal, saved with it so review shows what the
+ * model actually found and approval can link it into the graph WITHOUT re-indexing (a second
+ * extraction run is not deterministic and may never re-find it). entity_type proposals carry
+ * `entity`; predicate proposals carry `from`/`to`/`confidence`. `sourceId` is the memory or
+ * chunk the extraction ran over, once persisted.
+ */
+export interface ProposalExample {
+  entity?: string;
+  from?: string;
+  to?: string;
+  confidence?: number;
+  sourceId?: string;
+}
+
 export interface SchemaEntry {
   id: string;
   kind: SchemaKind;
@@ -156,6 +171,8 @@ export interface SchemaEntry {
   status: SchemaStatus;
   /** How many extraction runs suggested this name (proposals only). */
   occurrences: number;
+  /** The saved occurrences behind a proposal (proposals only). */
+  examples?: ProposalExample[];
 }
 
 /** The full registry view with live usage counts: what describeSchema returns. */

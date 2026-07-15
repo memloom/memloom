@@ -481,10 +481,11 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     );
   });
 
-  // Review a proposal: approve promotes it to the user tier; dismiss blocklists the name.
+  // Review a proposal: approve promotes it to the user tier AND links its saved
+  // occurrences into the graph (no re-index); dismiss blocklists the name.
   app.post("/memory/schema/:id/approve", async (c) => {
-    await memloom.approveProposal(c.req.param("id"));
-    return c.json({ ok: true });
+    const linked = await memloom.approveProposal(c.req.param("id"));
+    return c.json({ ok: true, ...linked });
   });
   app.post("/memory/schema/:id/dismiss", async (c) => {
     await memloom.dismissProposal(c.req.param("id"));

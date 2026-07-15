@@ -5,6 +5,7 @@ import { detectKind, type Memory, supportedExtensions } from "@memloom/core";
 import { configPath, dataDir, ensureConfig, memloomHome } from "./config.js";
 import { connect } from "./connect.js";
 import { startDaemon } from "./daemon.js";
+import { runReembed } from "./reembed.js";
 
 /** "from setup.md › Guide > Postgres (p. 3)" for context-chunk recall results. */
 function describeSource(m: Memory): string | null {
@@ -52,6 +53,8 @@ Usage: memloom <command> [args]
   history <id>         show a memory's full version chain (newest first)
   index [--rebuild]    extract entities from unindexed memories and context chunks;
                        --rebuild wipes all extracted entities/edges and re-runs from scratch
+  reembed [--force]    re-embed the whole store with the currently configured embedding
+                       provider (run after switching providers; daemon must be stopped)
   auto-index [on|off]  show or set background entity extraction after saves/ingests
   conflicts            list pending conflicts
   context add <path>   ingest files (or a directory) as context: ${supportedExtensions().join(" ")}
@@ -137,6 +140,22 @@ the background and this command usually reports nothing pending.
 
   --rebuild   wipe ALL extracted entities and edges, then re-run from scratch.
               The recovery path after extraction changes; belief edges survive.`,
+
+  reembed: `memloom reembed [--force]
+
+Recompute every stored embedding with the embedding provider currently
+configured in ${configPath()}, then stamp the store with the new fingerprint.
+Run this after switching providers or models, e.g. after adding
+OPENROUTER_API_KEY to leave offline mode: without it the daemon refuses to
+start because old and new vectors live in incompatible spaces.
+
+The daemon must be stopped first (memloom stop); reembed opens the store
+directly. Interrupting is safe: memories and files are never touched, only
+their vectors, and running the command again resumes where it stopped.
+Costs one embedding API call per 64 items.
+
+  --force   re-embed even when the store already matches the configured
+            provider and nothing is missing`,
 
   conflicts: `memloom conflicts
 
@@ -348,6 +367,11 @@ export async function run(argv: readonly string[]): Promise<void> {
       return;
     }
 
+    // No connect(): reembed opens the store directly and must NOT auto-start the daemon.
+    case "reembed":
+      await runReembed({ force: rest.includes("--force") });
+      return;
+
     case "conflicts": {
       const engine = await connect();
       const conflicts = await engine.conflicts();
@@ -378,7 +402,21 @@ export async function run(argv: readonly string[]): Promise<void> {
         console.log(`\npredicates (${schema.predicates.length})`);
         for (const p of schema.predicates) line(p);
         if (schema.proposals.length > 0) {
-          console.log(`\nproposals pending review: ${schema.proposals.length} (see the viewer)`);
+          console.log(`\nproposals pending review (${schema.proposals.length})`);
+          for (const p of schema.proposals) {
+            const kind = p.kind === "entity_type" ? "entity type" : "predicate";
+            const finds = (p.examples ?? [])
+              .map((e) =>
+                e.entity ? e.entity : e.from && e.to ? `${e.from} ${p.name} ${e.to}` : "",
+              )
+              .filter(Boolean)
+              .join(", ");
+            console.log(
+              `  ${p.name.padEnd(22)} ${kind}, suggested ${p.occurrences}x` +
+                (finds ? `  will add: ${finds}` : ""),
+            );
+          }
+          console.log("  approve or dismiss in the viewer (memloom ui, schema tab)");
         }
         return;
       }

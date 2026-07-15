@@ -6,15 +6,13 @@ import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { serve as nodeServe } from "@hono/node-server";
 import {
   acquireDataDirLock,
-  HashingEmbeddingProvider,
+  EmbeddingFingerprintError,
   Memloom,
-  NullLLMProvider,
-  OpenRouterEmbeddings,
-  OpenRouterLLM,
   PgliteAdapter,
 } from "@memloom/core";
 import { createServer } from "@memloom/server";
 import { configPath, dataDir, ensureConfig, loadConfigEnv } from "./config.js";
+import { buildEngineDeps } from "./engine-config.js";
 
 export const HTTP_PORT = 4319;
 // A distinctive port so it never collides with a local Postgres on 5432.
@@ -54,49 +52,12 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   const db = await PGlite.create({ dataDir: dir, extensions: { vector } });
   const storage = PgliteAdapter.fromInstance(db);
 
-  const apiKey = process.env.OPENROUTER_API_KEY;
-  const embedModel = process.env.OPENROUTER_EMBED_MODEL;
-  const embedDims = process.env.OPENROUTER_EMBED_DIMS
-    ? Number(process.env.OPENROUTER_EMBED_DIMS)
-    : undefined;
-  // Prefer a specific OpenRouter host for embeddings (latency varies 20x between hosts of the
-  // same model). Defaults to nebius for the default model (even when the config spells it out
-  // explicitly). Mirrors OpenRouterEmbeddings.
-  const embedProvider =
-    process.env.OPENROUTER_EMBED_PROVIDER ??
-    ((embedModel ?? "qwen/qwen3-embedding-8b") === "qwen/qwen3-embedding-8b"
-      ? "nebius"
-      : undefined);
-  const llmModel = process.env.OPENROUTER_LLM_MODEL;
-  const chatModel = process.env.OPENROUTER_CHAT_MODEL;
-  // Auto-index needs the LLM, so offline mode never turns it on. Opt out with
-  // MEMLOOM_AUTO_INDEX=off (or false/0) when every LLM call should be explicit.
-  const autoIndex = !["off", "false", "0"].includes(
-    (process.env.MEMLOOM_AUTO_INDEX ?? "on").toLowerCase(),
-  );
+  const deps = buildEngineDeps();
+  const { apiKey, embedModel, embedDims, embedProvider, llmModel, chatModel, autoIndex } = deps;
 
   const memloom = apiKey
-    ? new Memloom({
-        storage,
-        embedding: new OpenRouterEmbeddings({
-          apiKey,
-          ...(embedModel ? { model: embedModel } : {}),
-          ...(embedDims ? { dims: embedDims } : {}),
-          ...(embedProvider ? { provider: embedProvider } : {}),
-        }),
-        llm: new OpenRouterLLM({
-          apiKey,
-          ...(llmModel ? { model: llmModel } : {}),
-          ...(chatModel ? { chatModel } : {}),
-        }),
-        autoIndex,
-      })
-    : new Memloom({
-        storage,
-        embedding: new HashingEmbeddingProvider(1024),
-        llm: new NullLLMProvider(),
-        dedup: false,
-      });
+    ? new Memloom({ storage, embedding: deps.embedding, llm: deps.llm, autoIndex })
+    : new Memloom({ storage, embedding: deps.embedding, llm: deps.llm, dedup: false });
   try {
     await memloom.init();
   } catch (err) {
@@ -105,6 +66,11 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
     await db.close();
     await release();
     console.error(`memloom: ${err instanceof Error ? err.message : String(err)}`);
+    if (err instanceof EmbeddingFingerprintError) {
+      console.error(
+        "  hint: run `memloom reembed` (with the daemon stopped) to migrate the store to the new embedding config.",
+      );
+    }
     console.error(`  data dir: ${dir}`);
     console.error(`  config:   ${configPath()}`);
     process.exitCode = 1;

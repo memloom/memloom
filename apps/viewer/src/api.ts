@@ -125,6 +125,18 @@ export type ResolveDecision =
   | { action: "keep_both" }
   | { action: "merge"; content: string; canonical?: string };
 
+/**
+ * One saved occurrence behind a proposal: the entity (entity_type) or relationship endpoints
+ * (predicate) the extractor held out. Approval links these into the graph directly.
+ */
+export interface ProposalExample {
+  entity?: string;
+  from?: string;
+  to?: string;
+  confidence?: number;
+  sourceId?: string;
+}
+
 /** A schema registry row: a vocabulary entry or a pending LLM proposal. */
 export interface SchemaEntry {
   id: string;
@@ -134,6 +146,7 @@ export interface SchemaEntry {
   tier: "system" | "user" | "proposed";
   status: "active" | "disabled" | "dismissed";
   occurrences: number;
+  examples?: ProposalExample[];
 }
 
 export interface SchemaInfo {

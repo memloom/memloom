@@ -191,7 +191,10 @@ describe("parseExtraction: schema proposals", () => {
       ]),
     );
     expect(out.entities).toEqual([]);
-    expect(out.proposals).toEqual([{ kind: "entity_type", name: "medication" }]);
+    // The held-out entity rides along as evidence, so approval can materialize it later.
+    expect(out.proposals).toEqual([
+      { kind: "entity_type", name: "medication", examples: [{ entity: "Ibuprofen" }] },
+    ]);
   });
 
   it("a confident unknown predicate is quarantined AND proposed; a weak one is not", () => {
@@ -216,7 +219,13 @@ describe("parseExtraction: schema proposals", () => {
       ]),
     );
     expect(out.relationships.map((r) => r.predicate)).toEqual(["mention", "mention"]);
-    expect(out.proposals).toEqual([{ kind: "predicate", name: "invented" }]);
+    expect(out.proposals).toEqual([
+      {
+        kind: "predicate",
+        name: "invented",
+        examples: [{ from: "Ada Lovelace", to: "Analytical Engine", confidence: 0.95 }],
+      },
+    ]);
   });
 
   it("dismissed names are never re-proposed", () => {
