@@ -5,6 +5,7 @@ import {
   deleteSchemaEntry,
   listConflicts,
   memoryHistory,
+  readPassage,
   recallMemory,
   resolveConflict,
   saveMemory,
@@ -36,9 +37,18 @@ export function buildServer(memloom: MemoryEngine): McpServer {
     "Recall the user's memories AND ingested context documents by meaning, ranked by hybrid " +
       "retrieval (semantic + exact keyword + entity). Exact identifiers like file paths, " +
       "config keys, or error codes make excellent queries. Document results say which file " +
-      "and section they came from. Only active (non-superseded) memories are returned.",
+      "and section they came from. Only active (non-superseded) memories are returned. Very " +
+      "long results are truncated with a marker; read_passage fetches the full text by id.",
     { query: z.string(), limit: z.number().optional() },
     async (args) => ({ content: [{ type: "text", text: await recallMemory(memloom, args) }] }),
+  );
+
+  server.tool(
+    "read_passage",
+    "The full text of one recall_memory result, by the `id` shown with it. Call ONLY when " +
+      "a result ended with a truncation marker and the answer may be in the cut part.",
+    { id: z.string() },
+    async (args) => ({ content: [{ type: "text", text: await readPassage(memloom, args) }] }),
   );
 
   server.tool(

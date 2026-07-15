@@ -144,3 +144,144 @@ describe("context connector", () => {
     await expect(memloom.contextAdd({ path })).rejects.toThrow(/unsupported file type/);
   });
 });
+
+// One document per file across the upload:// and linked namespaces: a link (the stronger
+// identity, it refreshes from disk) absorbs upload snapshots of the same file; an upload
+// whose content or filename already lives here creates nothing.
+describe("upload/link dedup", () => {
+  const cleanups: Array<() => Promise<void> | void> = [];
+  afterEach(async () => {
+    while (cleanups.length) await cleanups.pop()?.();
+  });
+
+  async function fresh() {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(256),
+      llm: new NullLLMProvider(),
+      dedup: false,
+    });
+    await memloom.init();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-dedup-"));
+    cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
+    return { memloom, storage, dir };
+  }
+
+  const CONTENT = "# Notes\nthe deploy window is friday afternoon";
+  const bytes = (s: string) => new TextEncoder().encode(s);
+
+  it("upload then link identical content: the snapshot becomes the link, chunks kept", async () => {
+    const { memloom, storage, dir } = await fresh();
+    const uploaded = await memloom.contextUpload({ filename: "notes.md", bytes: bytes(CONTENT) });
+    expect(uploaded.outcome).toBe("added");
+
+    const path = join(dir, "notes.md");
+    writeFileSync(path, CONTENT);
+    const linked = await memloom.contextAdd({ path });
+
+    expect(linked.outcome).toBe("converted");
+    expect(linked.rechunked).toBe(false);
+    expect(linked.documentId).toBe(uploaded.documentId);
+    expect(linked.path).toBe(path);
+    const docs = await memloom.contextList();
+    expect(docs).toHaveLength(1);
+    expect(docs[0]?.path).toBe(path);
+    // Same chunk rows survived the conversion: nothing to re-embed or re-extract.
+    const chunkIds = await storage.query<{ id: string }>(
+      "SELECT id FROM context_chunks WHERE document_id = $1",
+      [uploaded.documentId],
+    );
+    expect(chunkIds.length).toBe(uploaded.chunks);
+  });
+
+  it("upload then link the same filename with changed content: converted and re-chunked", async () => {
+    const { memloom, dir } = await fresh();
+    const uploaded = await memloom.contextUpload({ filename: "notes.md", bytes: bytes(CONTENT) });
+
+    const path = join(dir, "notes.md");
+    writeFileSync(path, "# Notes\nthe deploy window moved to monday morning");
+    const linked = await memloom.contextAdd({ path });
+
+    expect(linked.outcome).toBe("converted");
+    expect(linked.rechunked).toBe(true);
+    expect(linked.documentId).toBe(uploaded.documentId);
+    expect(await memloom.contextList()).toHaveLength(1);
+    const results = await memloom.recall("deploy window monday");
+    expect(results.some((r) => r.content.includes("monday"))).toBe(true);
+  });
+
+  it("link then upload identical content: nothing new, points at the link", async () => {
+    const { memloom, dir } = await fresh();
+    const path = join(dir, "notes.md");
+    writeFileSync(path, CONTENT);
+    const linked = await memloom.contextAdd({ path });
+
+    const uploaded = await memloom.contextUpload({ filename: "notes.md", bytes: bytes(CONTENT) });
+    expect(uploaded.outcome).toBe("exists");
+    expect(uploaded.documentId).toBe(linked.documentId);
+    expect(uploaded.path).toBe(path);
+    expect(await memloom.contextList()).toHaveLength(1);
+  });
+
+  it("link then upload the same filename with different content: refused toward the link", async () => {
+    const { memloom, dir } = await fresh();
+    const path = join(dir, "notes.md");
+    writeFileSync(path, CONTENT);
+    const linked = await memloom.contextAdd({ path });
+
+    const uploaded = await memloom.contextUpload({
+      filename: "notes.md",
+      bytes: bytes("# Notes\ncompletely different words in here"),
+    });
+    expect(uploaded.outcome).toBe("exists");
+    expect(uploaded.documentId).toBe(linked.documentId);
+    expect(uploaded.path).toBe(path);
+    expect(await memloom.contextList()).toHaveLength(1);
+  });
+
+  it("re-linking heals a store that already has the duplicate pair", async () => {
+    const { memloom, storage, dir } = await fresh();
+    const path = join(dir, "notes.md");
+    writeFileSync(path, CONTENT);
+    const linked = await memloom.contextAdd({ path });
+    // Recreate the pre-fix state: force a second row in the upload namespace.
+    const dupUpload = await storage.query<{ id: string }>(
+      `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count)
+       SELECT owner_id, 'upload://notes.md', title, kind, content_hash, 0
+       FROM context_documents WHERE id = $1 RETURNING id`,
+      [linked.documentId],
+    );
+
+    const relinked = await memloom.contextAdd({ path });
+    expect(relinked.outcome).toBe("unchanged");
+    expect(relinked.absorbed).toBe(1);
+    const docs = await memloom.contextList();
+    expect(docs).toHaveLength(1);
+    expect(docs[0]?.id).toBe(linked.documentId);
+    expect(dupUpload[0]?.id).toBeTruthy();
+  });
+
+  it("uploading the same content under a different filename is still a duplicate", async () => {
+    const { memloom } = await fresh();
+    const first = await memloom.contextUpload({ filename: "notes.md", bytes: bytes(CONTENT) });
+    const second = await memloom.contextUpload({ filename: "copy.md", bytes: bytes(CONTENT) });
+    expect(second.outcome).toBe("exists");
+    expect(second.documentId).toBe(first.documentId);
+    expect(await memloom.contextList()).toHaveLength(1);
+  });
+
+  it("chat attachments stay session-scoped copies, never absorbed by globals", async () => {
+    const { memloom, dir } = await fresh();
+    const path = join(dir, "notes.md");
+    writeFileSync(path, CONTENT);
+    await memloom.contextAdd({ path });
+
+    const attached = await memloom.contextAttach({ filename: "notes.md", bytes: bytes(CONTENT) });
+    expect(attached.outcome).toBe("added");
+    // The global list still shows only the linked doc; the attachment lives on the session.
+    expect(await memloom.contextList()).toHaveLength(1);
+    expect(await memloom.sessionAttachments(attached.sessionId)).toHaveLength(1);
+  });
+});

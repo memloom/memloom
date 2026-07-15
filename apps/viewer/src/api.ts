@@ -299,9 +299,13 @@ export const api = {
   contextAdd: (path: string) =>
     post<{
       documentId?: string;
-      outcome: "added" | "updated" | "unchanged";
+      outcome: "added" | "updated" | "unchanged" | "converted";
       title: string;
       chunks: number;
+      /** "converted": false when the upload's chunks were kept as-is (content matched). */
+      rechunked?: boolean;
+      /** Duplicate upload snapshots removed while linking. */
+      absorbed?: number;
       /** Present when a folder was ingested: how many files were added/updated. */
       documents?: number;
       unchanged?: number;
@@ -312,12 +316,15 @@ export const api = {
   // paths, so linked documents stay openable and change-trackable (the sync roadmap).
   pick: (mode: "file" | "folder") => post<{ paths: string[] }>("/context/pick", { mode }),
   // Upload a browser-picked file's bytes as a global document (upload:// provenance).
+  // "exists" = the content or filename already lives here (often as a linked file, see
+  // `path`): nothing new is created; a link stays the single source of truth.
   contextUpload: (filename: string, contentBase64: string) =>
     post<{
       documentId: string;
-      outcome: "added" | "updated" | "unchanged";
+      outcome: "added" | "updated" | "unchanged" | "exists";
       title: string;
       chunks: number;
+      path?: string;
     }>("/context/upload", { filename, contentBase64 }),
   save: (input: { content: string; canonical?: string }) => post<SaveResult>("/memory/save", input),
   recall: (query: string, limit?: number) =>

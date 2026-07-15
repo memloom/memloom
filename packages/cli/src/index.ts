@@ -1,7 +1,13 @@
 import { spawn } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { detectKind, type Memory, supportedExtensions } from "@memloom/core";
+import {
+  detectKind,
+  MEMORY_TYPES,
+  type Memory,
+  type MemoryType,
+  supportedExtensions,
+} from "@memloom/core";
 import { configPath, dataDir, ensureConfig, memloomHome } from "./config.js";
 import { connect } from "./connect.js";
 import { startDaemon } from "./daemon.js";
@@ -47,7 +53,7 @@ Usage: memloom <command> [args]
   stop                 stop the running daemon gracefully (releases the store cleanly)
   ui                   open the viewer (graph, conflicts, console) in your browser
   init                 ensure the daemon is running and the store is ready
-  save <text...>       save a memory
+  save <text...>       save a memory (--type fact|preference|episode|procedure)
   recall <text...>     recall memories AND context by meaning
   update <id> <text>   edit a memory into a new version (keeps the old one in history)
   history <id>         show a memory's full version chain (newest first)
@@ -102,13 +108,21 @@ First-run setup: creates ~/.memloom with a commented config.env template and
 starts the daemon. Set OPENROUTER_API_KEY in the config for real embeddings,
 dedup, and entity extraction, then restart the daemon.`,
 
-  save: `memloom save <text...>
+  save: `memloom save [--type <type>] <text...>
 
 Save a memory. With an API key configured, the belief pipeline runs: an exact or
 reworded duplicate merges or versions instead of duplicating, and a contradiction
 keeps both memories active and reports a conflict id to resolve.
 
   memloom save "the staging database runs on Postgres"
+  memloom save --type procedure "to release: bump VERSION, tag, push"
+
+  --type   fact (default), preference, episode, or procedure. The same taxonomy
+           the viewer filters by:
+             fact        a stable truth ("the staging DB runs on Postgres")
+             preference  how you like things done ("prefers pnpm over npm")
+             episode     a time-bound event ("shipped the viewer on 2026-07-05")
+             procedure   reusable how-to steps ("to release: bump, tag, push")
 
 Outcomes: added | merged | versioned | conflict.`,
 
@@ -248,10 +262,23 @@ export async function run(argv: readonly string[]): Promise<void> {
     }
 
     case "save": {
-      const content = rest.join(" ").trim();
-      if (!content) throw new Error("usage: memloom save <text>");
+      // --type=episode or --type episode; everything else is the memory text.
+      const words = [...rest];
+      let memoryType: MemoryType | undefined;
+      const flagAt = words.findIndex((w) => w === "--type" || w.startsWith("--type="));
+      if (flagAt !== -1) {
+        const flag = words[flagAt] ?? "";
+        const value = flag.includes("=") ? flag.slice(flag.indexOf("=") + 1) : words[flagAt + 1];
+        words.splice(flagAt, flag.includes("=") ? 1 : 2);
+        if (!value || !(MEMORY_TYPES as readonly string[]).includes(value)) {
+          throw new Error(`--type must be one of: ${MEMORY_TYPES.join(", ")}`);
+        }
+        memoryType = value as MemoryType;
+      }
+      const content = words.join(" ").trim();
+      if (!content) throw new Error("usage: memloom save [--type <type>] <text>");
       const engine = await connect();
-      const result = await engine.save({ content });
+      const result = await engine.save({ content, ...(memoryType ? { memoryType } : {}) });
       const extra = result.version
         ? `  v${result.version}`
         : result.conflictId
@@ -312,7 +339,22 @@ export async function run(argv: readonly string[]): Promise<void> {
         }
         for (const file of files) {
           const result = await engine.contextAdd({ path: file });
-          console.log(`${result.outcome.padEnd(9)}  ${result.title}  (${result.chunks} chunks)`);
+          const extras = [
+            result.outcome === "converted"
+              ? result.rechunked
+                ? "replaced the uploaded snapshot, re-chunked"
+                : "replaced the uploaded snapshot, chunks kept"
+              : "",
+            result.absorbed
+              ? `removed ${result.absorbed} duplicate upload${result.absorbed === 1 ? "" : "s"}`
+              : "",
+          ]
+            .filter(Boolean)
+            .join("; ");
+          console.log(
+            `${result.outcome.padEnd(9)}  ${result.title}  (${result.chunks} chunks)` +
+              (extras ? `  [${extras}]` : ""),
+          );
         }
         return;
       }

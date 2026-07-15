@@ -9,6 +9,7 @@ import {
   deleteSchemaEntry,
   listConflicts,
   memoryHistory,
+  readPassage,
   recallMemory,
   resolveConflict,
   saveMemory,
@@ -94,6 +95,34 @@ describe("mcp tools", () => {
     expect(entries[0]).toContain("v2 (current");
     expect(entries[0]).toContain("port 4000");
     expect(entries[1]).toContain("v1 (superseded");
+  });
+
+  it("recall truncates monster passages at the shared budget; read_passage serves the rest", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const m = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: new ScriptedLLMProvider(() => "[]"),
+      dedup: false,
+    });
+    await m.init();
+
+    // >8k chars with the payload past the cut: same budget as the viewer assistant.
+    const big = `the release runbook starts here ${"step ".repeat(1800)}FINAL STEP AT THE END`;
+    const saved = await m.save({ content: big });
+
+    const recalled = await recallMemory(m, { query: "release runbook" });
+    expect(recalled).toContain(
+      `[truncated: call read_passage with id ${saved.id} for the full text]`,
+    );
+    expect(recalled).not.toContain("FINAL STEP AT THE END");
+
+    const full = await readPassage(m, { id: saved.id });
+    expect(full).toContain("FINAL STEP AT THE END");
+
+    const missing = await readPassage(m, { id: "not-a-real-id" });
+    expect(missing).toContain("No memory or document passage");
   });
 
   it("delete_schema_entry deletes disabled user entries and explains refusals", async () => {

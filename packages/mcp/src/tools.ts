@@ -1,4 +1,9 @@
-import type { MemoryEngine, MemoryType, ResolveDecision } from "@memloom/core";
+import {
+  type MemoryEngine,
+  type MemoryType,
+  PASSAGE_CHARS,
+  type ResolveDecision,
+} from "@memloom/core";
 
 // The MCP tool implementations, kept as pure functions over a Memloom so they're testable
 // without an MCP transport. server.ts wires them to the protocol.
@@ -33,9 +38,15 @@ export async function recallMemory(
       const title =
         m.canonical ?? (m.content.length > 60 ? `${m.content.slice(0, 57)}...` : m.content);
       const saved = new Date(m.createdAt).toISOString().slice(0, 16).replace("T", " ");
+      // The same passage budget the viewer assistant uses: a markdown chunk is a whole
+      // heading section (up to 16k chars), so a cut passage names the escape hatch.
+      const passage =
+        m.content.length > PASSAGE_CHARS
+          ? `${m.content.slice(0, PASSAGE_CHARS)}... [truncated: call read_passage with id ${m.id} for the full text]`
+          : m.content;
       const lines = [
         title,
-        `- ${m.content}`,
+        `- ${passage}`,
         `- saved ${saved} UTC`,
         `- similarity ${(m.similarity ?? 0).toFixed(2)}`,
       ];
@@ -49,14 +60,22 @@ export async function recallMemory(
           .filter(Boolean)
           .join(" ");
         lines.push(where);
-      } else {
-        // A saved memory: surface its id (and version, if edited) so memory_history can look
-        // up how it changed.
-        lines.push(`- id ${m.id}${m.version > 1 ? ` (v${m.version})` : ""}`);
       }
+      // Every hit surfaces its id: memory_history looks up how a memory changed, and
+      // read_passage fetches a truncated hit's full text (memories AND chunks).
+      lines.push(`- id ${m.id}${!m.source && m.version > 1 ? ` (v${m.version})` : ""}`);
       return lines.join("\n");
     })
     .join("\n---\n");
+}
+
+/** The full text of one recall hit: the follow-up for a passage recall_memory truncated. */
+export async function readPassage(memloom: MemoryEngine, args: { id: string }): Promise<string> {
+  const content = await memloom.passage(args.id);
+  if (content === null) {
+    return `No memory or document passage with id ${args.id}. Use an id from recall_memory results.`;
+  }
+  return content;
 }
 
 export async function memoryHistory(

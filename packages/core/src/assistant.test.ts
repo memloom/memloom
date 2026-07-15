@@ -174,12 +174,13 @@ describe("assistant harness", () => {
     expect(out.sources).toEqual([]);
   });
 
-  it("caps tool rounds at 3 and still answers", async () => {
+  it("caps tool rounds at 4 and still answers", async () => {
     const provider = scripted([
       { content: null, toolCalls: [toolCall("a")] },
       { content: null, toolCalls: [toolCall("b", "c2")] },
       { content: null, toolCalls: [toolCall("c", "c3")] },
-      { content: null, toolCalls: [toolCall("d", "c4")] }, // never reached
+      { content: null, toolCalls: [toolCall("d", "c4")] },
+      { content: null, toolCalls: [toolCall("e", "c5")] }, // never reached
     ]);
     let recalled = 0;
     const out = await runAssistantTurn({
@@ -192,9 +193,67 @@ describe("assistant harness", () => {
       message: "q",
       today: "d",
     });
-    expect(recalled).toBe(3);
+    expect(recalled).toBe(4);
     expect(out.answer).toBe("answer");
     expect(provider.streamed).toBe(true);
+  });
+
+  it("truncates a monster passage with a marker and serves the rest via read_source", async () => {
+    // >8k chars, with the payload past the cut so only read_source can surface it.
+    const big = `INTRO ${"filler ".repeat(1300)}THE SECRET IS AT THE END`;
+    const provider = scripted(
+      [
+        { content: null, toolCalls: [toolCall("big section")] },
+        {
+          content: null,
+          toolCalls: [{ id: "c2", name: "read_source", arguments: JSON.stringify({ n: 1 }) }],
+        },
+        { content: null, toolCalls: [] },
+      ],
+      "The secret is at the end. [1]",
+    );
+    const out = await runAssistantTurn({
+      provider,
+      recall: async () => [memory("m1", big)],
+      history: [],
+      message: "what is the secret?",
+      today: "d",
+    });
+    // chatCalls holds references to the one mutating messages array; assert on the final
+    // transcript's individual messages instead of per-call snapshots.
+    const transcript = provider.chatCalls.at(-1) ?? [];
+    const injected = transcript.find((m) => m.content?.includes("Results of recall_memory"));
+    expect(injected?.content).toContain("[truncated: call read_source(1) for the full text]");
+    expect(injected?.content).not.toContain("THE SECRET IS AT THE END");
+    const full = transcript.find((m) => m.content?.includes("Results of read_source"));
+    expect(full?.content).toContain("Full text of [1]");
+    expect(full?.content).toContain("THE SECRET IS AT THE END");
+    expect(out.sources).toHaveLength(1);
+    expect(out.answer).toContain("[1]");
+  });
+
+  it("read_source with an unknown passage number returns an error without crashing", async () => {
+    const provider = scripted(
+      [
+        {
+          content: null,
+          toolCalls: [{ id: "c1", name: "read_source", arguments: JSON.stringify({ n: 7 }) }],
+        },
+        { content: null, toolCalls: [] },
+      ],
+      "done",
+    );
+    const out = await runAssistantTurn({
+      provider,
+      recall: async () => [],
+      history: [],
+      message: "hi",
+      today: "d",
+    });
+    const transcript = provider.chatCalls.at(-1) ?? [];
+    const resultMessage = transcript.find((m) => m.content?.includes("Results of read_source"));
+    expect(resultMessage?.content).toContain("no passage [7]");
+    expect(out.answer).toBe("done");
   });
 
   it("a mid-loop model failure still answers with gathered context", async () => {

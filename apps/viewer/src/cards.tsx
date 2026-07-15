@@ -193,14 +193,22 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
     setNotice(null);
     try {
       const r = await api.contextAdd(target);
+      const absorbedNote = r.absorbed
+        ? ` Removed ${r.absorbed} duplicate ${r.absorbed === 1 ? "upload" : "uploads"}.`
+        : "";
       setNotice(
         r.documents !== undefined
           ? `ingested ${r.documents} ${r.documents === 1 ? "file" : "files"}` +
               `${r.unchanged ? ` (${r.unchanged} unchanged)` : ""} · ${r.chunks} chunks. ` +
-              indexHint
-          : r.outcome === "unchanged"
-            ? `"${r.title}" is unchanged, nothing to do`
-            : `${r.outcome} "${r.title}" · ${r.chunks} chunks. ${indexHint}`,
+              indexHint +
+              absorbedNote
+          : r.outcome === "converted"
+            ? r.rechunked
+              ? `linked "${r.title}"; replaced the uploaded snapshot and re-chunked · ${r.chunks} chunks. ${indexHint}${absorbedNote}`
+              : `linked "${r.title}"; replaced the uploaded snapshot, chunks and entities kept.${absorbedNote}`
+            : r.outcome === "unchanged"
+              ? `"${r.title}" is unchanged, nothing to do.${absorbedNote}`
+              : `${r.outcome} "${r.title}" · ${r.chunks} chunks. ${indexHint}${absorbedNote}`,
       );
       setPath("");
       onAdded();
@@ -274,22 +282,33 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
     let added = 0;
     let unchanged = 0;
     let chunks = 0;
+    let existsNote: string | null = null;
     const failures: string[] = [];
     for (const file of supported) {
       try {
         const r = await api.contextUpload(file.name, await fileToBase64(file));
         chunks += r.chunks;
         if (r.outcome === "unchanged") unchanged += 1;
-        else added += 1;
+        else if (r.outcome === "exists") {
+          // Nothing was created: the content or filename already lives in the store,
+          // usually as a linked file (the stronger identity: it refreshes from disk).
+          unchanged += 1;
+          existsNote =
+            r.path && !r.path.startsWith("upload://")
+              ? `"${r.title}" is already in your context as a linked file (${r.path}); re-link it to refresh from disk.`
+              : `"${r.title}" is already in your context, nothing to do.`;
+        } else added += 1;
       } catch (err) {
         failures.push(`${file.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
     setNotice(
-      `uploaded ${added} ${added === 1 ? "file" : "files"}` +
-        `${unchanged ? ` (${unchanged} unchanged)` : ""}` +
-        `${skipped ? ` (${skipped} unsupported skipped)` : ""} · ${chunks} chunks. ` +
-        indexHint,
+      supported.length === 1 && existsNote
+        ? existsNote
+        : `uploaded ${added} ${added === 1 ? "file" : "files"}` +
+            `${unchanged ? ` (${unchanged} already here)` : ""}` +
+            `${skipped ? ` (${skipped} unsupported skipped)` : ""} · ${chunks} chunks. ` +
+            indexHint,
     );
     if (failures.length > 0) setError(failures.join("; "));
     setBusy(false);
@@ -358,7 +377,8 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
       </form>
       <p className="addFileHint">
         Linked files keep their place on disk: openable, re-scanned on add, and ready for file sync.
-        Uploads are one-time snapshots from the browser dialog.
+        Uploads are one-time snapshots from the browser dialog; linking the same file later replaces
+        its snapshot, and an upload never duplicates a linked file.
       </p>
 
       {notice && <div className="resultOutcome outcome-added">{notice}</div>}

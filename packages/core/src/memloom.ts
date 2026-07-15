@@ -442,7 +442,9 @@ export class Memloom implements MemoryEngine {
       createHash("sha256").update(bytes).digest("hex"),
     );
     const result = await this.#ingestDocument(owner, `upload://${input.filename}`, file, null);
-    if (result.outcome !== "unchanged") this.#scheduleAutoIndex(owner);
+    if (result.outcome !== "unchanged" && result.outcome !== "exists") {
+      this.#scheduleAutoIndex(owner);
+    }
     return result;
   }
 
@@ -473,13 +475,23 @@ export class Memloom implements MemoryEngine {
     }));
   }
 
-  /** Shared ingest: hash short-circuit, replace-or-insert document, insert chunks. */
+  /**
+   * Shared ingest: hash short-circuit, replace-or-insert document, insert chunks. For
+   * global docs it also enforces ONE document per file across the upload:// and linked
+   * namespaces: a link absorbs matching upload snapshots (same content, or same filename
+   * when the file evolved since the snapshot), and an upload whose content or filename
+   * already lives here creates nothing ("exists"). A link is the stronger identity: it can
+   * refresh from disk; an upload is a one-time snapshot.
+   */
   async #ingestDocument(
     owner: string,
     path: string,
     file: ExtractedFile,
     sessionId: string | null,
   ): Promise<ContextAddResult> {
+    const isUpload = path.startsWith("upload://");
+    const basenameOf = (p: string) => p.toLowerCase().split(/[/\\]/).pop() ?? "";
+
     const existing = await this.#storage.query<{
       id: string;
       content_hash: string;
@@ -489,12 +501,117 @@ export class Memloom implements MemoryEngine {
       [owner, path],
     );
     const prior = existing[0];
+
+    // The cross-namespace dedup (global docs only; chat attachments are session-scoped
+    // copies on purpose).
+    let convert: { id: string; keepChunks: boolean; chunkCount: number } | null = null;
+    let absorbTargets: Array<{ id: string }> = [];
+    if (sessionId === null && !isUpload) {
+      // Linking: this link takes over any upload snapshot of the same file: identical
+      // content, or the same filename when the content moved on since the snapshot.
+      const uploads = await this.#storage.query<{
+        id: string;
+        path: string;
+        content_hash: string;
+        chunk_count: number;
+      }>(
+        `SELECT id, path, content_hash, chunk_count FROM context_documents
+         WHERE owner_id = $1 AND session_id IS NULL AND path LIKE 'upload://%'
+         ORDER BY created_at`,
+        [owner],
+      );
+      const base = basenameOf(path);
+      const twins = uploads.filter(
+        (u) => u.content_hash === file.contentHash || basenameOf(u.path) === base,
+      );
+      if (!prior && twins.length > 0) {
+        const hashTwin = twins.find((t) => t.content_hash === file.contentHash);
+        const primary = hashTwin ?? twins[0];
+        if (primary) {
+          convert = {
+            id: primary.id,
+            keepChunks: primary.content_hash === file.contentHash,
+            chunkCount: Number(primary.chunk_count),
+          };
+          absorbTargets = twins.filter((t) => t.id !== primary.id);
+        }
+      } else {
+        absorbTargets = twins; // the link already exists; stray snapshots just go
+      }
+    } else if (sessionId === null && isUpload && !prior) {
+      // Uploading something new: refuse when the content already lives here (any global
+      // doc) or a linked file with the same name exists; the link syncs from disk and
+      // must stay the single source of truth.
+      const globals = await this.#storage.query<{
+        id: string;
+        path: string;
+        title: string;
+        content_hash: string;
+        chunk_count: number;
+      }>(
+        `SELECT id, path, title, content_hash, chunk_count FROM context_documents
+         WHERE owner_id = $1 AND session_id IS NULL ORDER BY created_at`,
+        [owner],
+      );
+      const base = basenameOf(path);
+      const twin =
+        globals.find((g) => g.content_hash === file.contentHash) ??
+        globals.find((g) => !g.path.startsWith("upload://") && basenameOf(g.path) === base);
+      if (twin) {
+        return {
+          documentId: twin.id,
+          outcome: "exists",
+          title: twin.title,
+          chunks: Number(twin.chunk_count),
+          path: twin.path,
+        };
+      }
+    }
+
+    const absorb = async (tx: StorageAdapter): Promise<number> => {
+      for (const t of absorbTargets) {
+        await this.#deleteDocumentChunks(tx, t.id, owner);
+        await tx.query("DELETE FROM context_documents WHERE id = $1 AND owner_id = $2", [
+          t.id,
+          owner,
+        ]);
+      }
+      return absorbTargets.length;
+    };
+
     if (prior && prior.content_hash === file.contentHash) {
+      // Unchanged, but stray upload duplicates (from before this dedup existed) still get
+      // absorbed, so a plain re-link heals an already-duplicated store.
+      const absorbed = absorbTargets.length > 0 ? await this.#storage.tx((tx) => absorb(tx)) : 0;
       return {
         documentId: prior.id,
         outcome: "unchanged",
         title: file.title,
         chunks: prior.chunk_count,
+        ...(absorbed > 0 ? { absorbed } : {}),
+      };
+    }
+
+    // Same bytes as the snapshot: adopt it in place. Chunks, embeddings, and any entities
+    // already extracted from them survive untouched; only the identity (path) upgrades.
+    if (convert?.keepChunks) {
+      const converted = convert;
+      const absorbed = await this.#storage.tx(async (tx) => {
+        await tx.query(
+          `UPDATE context_documents SET path = $2, title = $3, kind = $4, updated_at = now()
+           WHERE id = $1`,
+          [converted.id, path, file.title, file.kind],
+        );
+        return absorb(tx);
+      });
+      return {
+        documentId: converted.id,
+        outcome: "converted",
+        title: file.title,
+        chunks: converted.chunkCount,
+        path,
+        rechunked: false,
+        ...(absorbed > 0 ? { absorbed } : {}),
       };
     }
 
@@ -512,17 +629,20 @@ export class Memloom implements MemoryEngine {
 
     return await this.#storage.tx(async (tx) => {
       let documentId: string;
-      if (prior) {
+      // Replacement target: the same path re-added with new content, OR an upload snapshot
+      // being converted to this link with the file's newer content (path moves too).
+      const replaceId = prior?.id ?? convert?.id;
+      if (replaceId) {
         // Replace the prior chunks (and their mention edges) before re-inserting: see
         // #deleteDocumentChunks for why the edges can't ride a cascade.
-        await this.#deleteDocumentChunks(tx, prior.id, owner);
+        await this.#deleteDocumentChunks(tx, replaceId, owner);
         await tx.query(
           `UPDATE context_documents
-           SET title = $2, kind = $3, content_hash = $4, chunk_count = $5, updated_at = now()
+           SET path = $2, title = $3, kind = $4, content_hash = $5, chunk_count = $6, updated_at = now()
            WHERE id = $1`,
-          [prior.id, file.title, file.kind, file.contentHash, chunks.length],
+          [replaceId, path, file.title, file.kind, file.contentHash, chunks.length],
         );
-        documentId = prior.id;
+        documentId = replaceId;
       } else {
         const inserted = await tx.query<{ id: string }>(
           `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count, session_id)
@@ -554,11 +674,18 @@ export class Memloom implements MemoryEngine {
         );
       }
 
+      const absorbed = await absorb(tx);
       return {
         documentId,
-        outcome: prior ? ("updated" as const) : ("added" as const),
+        outcome: prior
+          ? ("updated" as const)
+          : convert
+            ? ("converted" as const)
+            : ("added" as const),
         title: file.title,
         chunks: chunks.length,
+        ...(convert ? { path, rechunked: true } : {}),
+        ...(absorbed > 0 ? { absorbed } : {}),
       };
     });
   }
@@ -786,6 +913,23 @@ export class Memloom implements MemoryEngine {
       [ownerId, row.root_id],
     );
     return rows.map(mapRow);
+  }
+
+  /**
+   * The complete text of one recall hit by id: a saved memory or a context chunk. The
+   * fetch-the-rest path behind truncated recall passages (assistant read_source, MCP
+   * read_passage); null when the id matches neither.
+   */
+  async passage(id: string, ownerId: string = SENTINEL_OWNER): Promise<string | null> {
+    // A non-uuid id is "not found", not a Postgres cast error (agents pass free text).
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) return null;
+    const [row] = await this.#storage.query<{ content: string }>(
+      `SELECT content FROM memory_objects WHERE id = $1 AND owner_id = $2
+       UNION ALL
+       SELECT content FROM context_chunks WHERE id = $1 AND owner_id = $2`,
+      [id, ownerId],
+    );
+    return row?.content ?? null;
   }
 
   /**

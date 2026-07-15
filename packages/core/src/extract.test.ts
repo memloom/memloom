@@ -69,9 +69,10 @@ describe("extractFile (pdf geometry)", () => {
     expect(text).toBe("hello world 1. DEFINICJA 1. Tekst punktu. 2. DEFINICJA 2. Dalszy tekst.");
   });
 
-  it("built-in extractors ship at pipeline version 1, so they don't salt the content hash", async () => {
-    // The salt only kicks in for version > 1 (a pipeline bump forces re-ingest): covered by
-    // the custom version-2 extractor below. At the launch baseline every built-in is unsalted.
+  it("pdf/txt stay at unsalted v1; md's v2 (whole-section chunking) salts the hash", async () => {
+    // The salt only kicks in for version > 1: a pipeline bump forces already-ingested files
+    // through the re-chunk path on their next add instead of no-oping as "unchanged". md
+    // bumped to v2 when chunking became one-section-one-chunk.
     const pdfPath = join(dir, "salted.pdf");
     writeFileSync(pdfPath, makePdf([{ x: 72, y: 720, text: "content" }]));
     const txtPath = join(dir, "salted.txt");
@@ -81,7 +82,7 @@ describe("extractFile (pdf geometry)", () => {
 
     expect((await extractFile(pdfPath, hash)).contentHash).not.toContain("#");
     expect((await extractFile(txtPath, hash)).contentHash).not.toContain("#");
-    expect((await extractFile(mdPath, hash)).contentHash).not.toContain("#");
+    expect((await extractFile(mdPath, hash)).contentHash).toMatch(/#p2$/);
   });
 
   it("rejects unregistered extensions with the supported list", async () => {

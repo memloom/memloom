@@ -73,7 +73,9 @@ function decodeText(bytes: Uint8Array): string {
 registerExtractor({
   kind: "md",
   extensions: [".md", ".markdown"],
-  version: 1, // v1 = unsalted hash; existing md documents stay "unchanged" on re-add
+  // v2 = whole-section chunking (one heading section per chunk, no overlap). The salted
+  // hash makes every already-ingested md re-chunk on its next add instead of no-oping.
+  version: 2,
   chunker: "markdown",
   async extract(bytes, path) {
     const text = decodeText(bytes);

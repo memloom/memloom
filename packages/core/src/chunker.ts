@@ -1,8 +1,17 @@
 // Zero-dependency recursive character splitter with a markdown heading-aware pre-pass.
-// Research-backed defaults (Chroma/Snowflake/Firecrawl consensus, 2025-26): ~1,600-char
-// chunks (~400 tokens), 2,048 hard cap, ~12% overlap. Character-sized on purpose; tiktoken
-// wouldn't be accurate for Qwen's tokenizer anyway, and the embedding model has ~20x context
-// headroom, so a tokenizer dependency buys nothing.
+//
+// MARKDOWN POLICY: one heading section = one chunk. Sections are split at every heading
+// level (h1-h6), so a section is always a leaf body with exact semantic boundaries; cutting
+// inside one is pure loss. The embedding model (qwen3-embedding-8b, 32k tokens) fits any
+// realistic section whole, so a section only splits past a 16k-char safety valve, at
+// paragraph boundaries, with ZERO overlap (an overlap tail duplicates content between
+// consecutive chunks, which reads as a bug in the viewer and adds noise to both retrieval
+// arms).
+//
+// Plain text / PDF outline chunking keeps the small classic defaults (~1,600-char chunks,
+// 2,048 cap, ~12% overlap): unstructured prose has no semantic boundaries to preserve, and
+// tighter chunks keep single-topic vectors. Character-sized on purpose; tiktoken wouldn't
+// be accurate for Qwen's tokenizer anyway.
 //
 // The retrieval-quality lever: markdown chunks get their heading breadcrumb PREPENDED to the
 // chunk text ("Guide > Setup > Postgres"), not stored as metadata alone, so both the vector
@@ -26,6 +35,14 @@ export interface Chunk {
 }
 
 const DEFAULTS = { target: 1600, max: 2048, overlap: 200 };
+
+/**
+ * A markdown section this size or smaller is ONE chunk, never split (~4k tokens, well
+ * inside the embedding model's 32k window). Only a monster section splits, at paragraph
+ * boundaries, into pieces merged toward MD_SPLIT_TARGET, with no overlap.
+ */
+export const MD_SECTION_MAX = 16_000;
+export const MD_SPLIT_TARGET = 8_000;
 
 // Coarse → fine. Sentence boundaries via lookbehind split; the empty string means "hard cut".
 const SEPARATORS = ["\n\n", "\n"] as const;
@@ -127,17 +144,20 @@ function sectionize(markdown: string): Section[] {
 }
 
 /**
- * Chunk markdown: heading-aware sections, each recursively split, each chunk prefixed with
- * its heading breadcrumb. Overlap never crosses a heading boundary (sections chunk
- * independently).
+ * Chunk markdown: one heading section = one chunk, prefixed with its heading breadcrumb.
+ * A section beyond MD_SECTION_MAX (the rare safety valve) splits at paragraph boundaries
+ * with no overlap; every piece keeps the section's breadcrumb and headingPath.
  */
 export function chunkMarkdown(markdown: string, opts: ChunkOptions = {}): Chunk[] {
-  return sectionize(markdown).flatMap((section) =>
-    chunkText(section.text, opts).map((piece) => ({
+  const max = opts.max ?? MD_SECTION_MAX;
+  const splitOpts: ChunkOptions = { target: MD_SPLIT_TARGET, overlap: 0, ...opts, max };
+  return sectionize(markdown).flatMap((section) => {
+    const pieces = section.text.length <= max ? [section.text] : chunkText(section.text, splitOpts);
+    return pieces.map((piece) => ({
       content: section.headingPath ? `${section.headingPath}\n\n${piece}` : piece,
       headingPath: section.headingPath,
-    })),
-  );
+    }));
+  });
 }
 
 // ---------------------------------------------------------------------------------------

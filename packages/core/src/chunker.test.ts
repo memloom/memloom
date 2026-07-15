@@ -80,6 +80,39 @@ describe("chunkMarkdown", () => {
     expect(chunks[0]?.headingPath).toBeNull();
     expect(chunks[0]?.content).toBe("plain preamble");
   });
+
+  it("keeps a large section as ONE chunk up to the 16k safety cap", () => {
+    // ~5k chars of body: far past the old 2048 cap, comfortably under MD_SECTION_MAX.
+    const body = Array.from({ length: 25 }, (_, i) => `Paragraph ${i}: ${"words ".repeat(35)}`);
+    const md = `# Changelog\n## 0.2.0\n${body.join("\n\n")}`;
+    const chunks = chunkMarkdown(md);
+    const section = chunks.filter((c) => c.headingPath === "Changelog > 0.2.0");
+    expect(section).toHaveLength(1);
+    expect(section[0]?.content.startsWith("Changelog > 0.2.0")).toBe(true);
+    expect(section[0]?.content).toContain("Paragraph 24");
+  });
+
+  it("splits a monster section at paragraph boundaries with zero duplicated text", () => {
+    // ~24k chars: past MD_SECTION_MAX, so the safety valve splits it.
+    const paras = Array.from({ length: 40 }, (_, i) => `Para ${i}: ${"steady word ".repeat(52)}`);
+    const md = `## Monster\n${paras.join("\n\n")}`;
+    const chunks = chunkMarkdown(md);
+    expect(chunks.length).toBeGreaterThan(1);
+    for (const c of chunks) {
+      expect(c.headingPath).toBe("Monster"); // every piece keeps the section's path
+      expect(c.content.length).toBeLessThanOrEqual(16_000 + "Monster\n\n".length);
+    }
+    // No overlap: consecutive chunks share no carried tail. The old chunker prepended the
+    // previous chunk's last 200 chars; assert the boundary is clean instead.
+    for (let i = 1; i < chunks.length; i++) {
+      const prev = chunks[i - 1]?.content ?? "";
+      const tail = prev.slice(-120);
+      const bodyOfNext = (chunks[i]?.content ?? "").slice("Monster\n\n".length);
+      expect(bodyOfNext.startsWith(tail.trimStart())).toBe(false);
+      // Splits land on paragraph starts, never mid-word.
+      expect(bodyOfNext.startsWith("Para ")).toBe(true);
+    }
+  });
 });
 
 describe("chunkOutline", () => {

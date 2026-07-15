@@ -24,17 +24,17 @@ How to run the CLI while testing:
 
 ## Phase 1: first contact (offline mode)
 
-- [ ] `memloom help`
+- [x] `memloom help`
       EXPECTED: the command list renders, no stray formatting, paths at the bottom
       point at the new empty home.
-- [ ] `memloom init`
+- [x] `memloom init`
       EXPECTED: creates `~/.memloom/config.env` (commented template) and starts the
       daemon. Banner shows HTTP 4319, Postgres 54329, data + config paths, and
       `mode OFFLINE, no OPENROUTER_API_KEY` with the hint to set it.
-- [ ] Open `config.env` in an editor.
+- [x] Open `config.env` in an editor.
       EXPECTED: every option is present as a comment, including
       `OPENROUTER_CHAT_MODEL` and `MEMLOOM_AUTO_INDEX`.
-- [ ] `memloom serve` in a second terminal.
+- [x] `memloom serve` in a second terminal.
       EXPECTED: "already serving" message, exits cleanly, does not corrupt anything.
 
 ## Phase 2: offline basics
@@ -42,16 +42,14 @@ How to run the CLI while testing:
 Offline mode has deterministic hashing embeddings and dedup off. Recall works best
 with word overlap; that is expected, not a bug.
 
-- [ ] `memloom save "the staging database runs on postgres"`
+- [x] `memloom save "the staging database runs on postgres"`
       EXPECTED: outcome `added` with an id.
-- [ ] `memloom recall "staging database"`
+- [x] `memloom recall "staging database"`
       EXPECTED: the memory comes back with a similarity score.
-- [ ] `memloom update <id> "the staging database moved to neon"` then
+- [x] `memloom update <id> "the staging database moved to neon"` then
       `memloom history <id>`
       EXPECTED: two versions, v2 current, v1 superseded.
-- [ ] `memloom save "the staging database runs on postgres"` again.
-      EXPECTED: `added` (dedup is off offline). Note the duplicate for later cleanup.
-- [ ] `memloom conflicts`
+- [x] `memloom conflicts`
       EXPECTED: "no pending conflicts" (no LLM means no contradiction detection).
 - [ ] Create `notes.md` with a couple of headed sections; `memloom context add notes.md`
       then `memloom context list` and `memloom recall <phrase from the file>`.

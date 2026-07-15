@@ -315,13 +315,24 @@ export interface ContextAddInput {
   ownerId?: string;
 }
 
-export type ContextAddOutcome = "added" | "updated" | "unchanged";
+/**
+ * "converted": an upload:// snapshot became this linked document (a link is the stronger
+ * identity: it can refresh from disk). "exists": an upload was skipped because the same
+ * content, or a linked file with the same name, is already in the store.
+ */
+export type ContextAddOutcome = "added" | "updated" | "unchanged" | "converted" | "exists";
 
 export interface ContextAddResult {
   documentId: string;
   outcome: ContextAddOutcome;
   title: string;
   chunks: number;
+  /** Where the document lives: set for "converted" (the new real path) and "exists" (the existing doc's path). */
+  path?: string;
+  /** "converted" only: false when the snapshot's content matched, so chunks and their indexed entities were kept. */
+  rechunked?: boolean;
+  /** Duplicate upload snapshots deleted while processing this link. */
+  absorbed?: number;
 }
 
 export interface ContextDocument {

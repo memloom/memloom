@@ -29,6 +29,11 @@ export interface MemoryEngine {
   update(input: UpdateInput): Promise<UpdateResult>;
   /** The full version chain of a belief, newest first: pass any version's id. */
   history(memoryId: string, ownerId?: string): Promise<Memory[]>;
+  /**
+   * The complete text of one recall hit (a memory or a context chunk) by its id: the
+   * fetch-the-rest path when a recall surface truncated the passage (PASSAGE_CHARS).
+   */
+  passage(id: string, ownerId?: string): Promise<string | null>;
   /** Extract entities from unindexed rows. `onProgress` fires after each item completes. */
   index(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
   /** Wipe all extracted entities/edges and re-run indexing from scratch (recovery path). */

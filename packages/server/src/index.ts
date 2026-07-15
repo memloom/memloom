@@ -418,6 +418,14 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     c.json({ versions: await memloom.history(c.req.param("id")) }),
   );
 
+  // The full text of one recall hit (memory or context chunk): the fetch-the-rest path
+  // behind truncated recall passages (MCP read_passage, assistant read_source).
+  app.get("/memory/passage/:id", async (c) => {
+    const content = await memloom.passage(c.req.param("id"));
+    if (content === null) return c.json({ error: "no such passage" }, 404);
+    return c.json({ content });
+  });
+
   app.post("/memory/index", async (c) => c.json(await memloom.index()));
 
   // Indexing runs one LLM call per unindexed row (minutes for a big PDF). The stream
@@ -776,13 +784,15 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     let added = 0;
     let unchanged = 0;
     let chunks = 0;
+    let absorbed = 0;
     const errors: string[] = [];
     for (const file of files) {
       try {
         const r = await memloom.contextAdd({ path: file });
         chunks += r.chunks;
+        absorbed += r.absorbed ?? 0;
         if (r.outcome === "unchanged") unchanged += 1;
-        else added += 1;
+        else added += 1; // "converted" counts as processed: an upload became a link
       } catch (err) {
         errors.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -793,6 +803,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       documents: added,
       unchanged,
       chunks,
+      ...(absorbed > 0 ? { absorbed } : {}),
       ...(errors.length > 0 ? { errors } : {}),
     });
   });

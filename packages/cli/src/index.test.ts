@@ -39,6 +39,15 @@ describe("cli router", () => {
     errSpy.mockRestore();
   });
 
+  it("save --type validates against the taxonomy before touching the daemon", async () => {
+    await expect(run(["save", "--type", "how-to", "some text"])).rejects.toThrow(
+      /--type must be one of: fact, preference, episode, procedure/,
+    );
+    await expect(run(["save", "--type=diary", "some text"])).rejects.toThrow(/--type must be one/);
+    // Flag with no text left over: usage error, not a save of the flag itself.
+    await expect(run(["save", "--type", "fact"])).rejects.toThrow(/usage: memloom save/);
+  });
+
   it("<command> --help prints that command's help without touching the daemon", async () => {
     // These must never call connect(); a daemon-less environment is the whole point.
     await run(["index", "--help"]);
@@ -46,7 +55,7 @@ describe("cli router", () => {
 
     logs = [];
     await run(["save", "-h"]);
-    expect(logs.join("\n")).toContain("memloom save <text...>");
+    expect(logs.join("\n")).toContain("memloom save [--type <type>] <text...>");
 
     logs = [];
     await run(["auto-index", "--help"]);

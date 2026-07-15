@@ -2,7 +2,12 @@
 
 // Domain types
 export type { AssistantEvent } from "./assistant.js";
-export { buildAssistantSystemPrompt, runAssistantTurn, stripInvalidMarkers } from "./assistant.js";
+export {
+  buildAssistantSystemPrompt,
+  PASSAGE_CHARS,
+  runAssistantTurn,
+  stripInvalidMarkers,
+} from "./assistant.js";
 export type { BenchCorpus, BenchDoc, BenchQuery } from "./benchmark.js";
 // Retrieval benchmark + metrics
 export { runBenchmark } from "./benchmark.js";

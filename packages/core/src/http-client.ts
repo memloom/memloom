@@ -89,6 +89,14 @@ export class HttpMemloomClient implements MemoryEngine {
     return versions;
   }
 
+  async passage(id: string): Promise<string | null> {
+    const res = await this.#fetch(`${this.#baseUrl}/memory/passage/${id}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`memloom server ${res.status}: ${await res.text()}`);
+    const { content } = (await res.json()) as { content: string };
+    return content;
+  }
+
   index(_ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult> {
     if (!onProgress) return this.#post<IndexResult>("/memory/index", {});
     return this.#streamRun("/memory/index/stream", onProgress);
