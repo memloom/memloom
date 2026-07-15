@@ -42,8 +42,8 @@ with it. See [The assistant](/concepts/assistant).
 `memloom context add ./docs` ingests `.md`, `.txt`, and `.pdf` files (directories recurse).
 Files are chunked along their real structure (markdown headings, ALL-CAPS titles, numbered
 points), so a chunk is one definition or one section instead of a blind 1,000-character window.
-Every result from a file says where it came from: `from notes.pdf › GRANICA FUNKCJI >
-2. DEFINICJA 2. (p. 1)`. Documents are mirrors: re-adding an unchanged file is a no-op, a
+Every result from a file says where it came from: `from lecture-notes.pdf › LIMITS OF
+FUNCTIONS > 2. DEFINITION (p. 1)`. Documents are mirrors: re-adding an unchanged file is a no-op, a
 changed file replaces its chunks. See [Extractors & chunking](/guides/extractors).
 
 ## One graph over memories and context

@@ -49,10 +49,10 @@ memloom recall "how do we restart the ingest worker"
 
 Files are chunked structure-aware, embedded, and fused into the **same recall** as memories.
 Markdown splits at headings; plain text and PDFs split along their outline: ALL-CAPS title
-lines and numbered points (`2. DEFINICJA 2. …`). One point per chunk, so a chunk is exactly
+lines and numbered points (`2. DEFINITION. …`). One point per chunk, so a chunk is exactly
 one definition, theorem, or exercise. Each chunk carries its breadcrumb and PDFs keep page
 numbers, so results from files always say where they came from:
-`from notes.pdf › GRANICA FUNKCJI > 2. DEFINICJA 2. (p. 1)`.
+`from lecture-notes.pdf › LIMITS OF FUNCTIONS > 2. DEFINITION (p. 1)`.
 
 PDF text is rebuilt from glyph geometry rather than stream order, so equation-heavy PDFs
 (Word/LaTeX math) come out in reading order, and 2-up print layouts (the same content twice, side by

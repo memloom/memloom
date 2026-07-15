@@ -168,7 +168,7 @@ paths:
               schema:
                 type: string
                 example: |
-                  {"type":"item","kind":"chunk","id":"...","label":"notes.pdf › 2. DEFINICJA 2.","index":3,"total":46,"entities":["granica","funkcja"]}
+                  {"type":"item","kind":"chunk","id":"...","label":"runbook.pdf › DATABASE FAILOVER","index":3,"total":46,"entities":["Postgres"]}
                   {"type":"done","indexed":0,"chunksIndexed":46}
   /memory/reindex:
     post:
@@ -1313,11 +1313,11 @@ components:
         content:
           type: string
           description: The memory text to save.
-          example: Acme reached $100 MRR.
+          example: the staging database runs on Postgres 17
         canonical:
           type: string
           description: Optional short canonical form used for exact-duplicate detection.
-          example: Acme $100 MRR milestone
+          example: staging database engine
         memoryType:
           type: string
           enum: [fact, preference, episode, procedure]
@@ -1578,7 +1578,7 @@ components:
           format: uuid
         name:
           type: string
-          example: "@memloom/core"
+          example: PostgreSQL
         entityType:
           type: string
           example: technology
@@ -1639,7 +1639,7 @@ components:
           format: uuid
         title:
           type: string
-          example: "memloom > How it compares"
+          example: "runbook.pdf › Database failover"
         snippet:
           type: string
           description: The passage exactly as the model saw it.

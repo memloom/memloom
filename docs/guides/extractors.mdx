@@ -49,11 +49,11 @@ tracking the heading stack. Each chunk gets its breadcrumb *prepended to the tex
 section context along with the paragraph.
 
 **Outline** handles documents without markdown structure: lecture notes, contracts,
-exercise sheets. It recognizes ALL-CAPS title lines (Unicode-aware, so `GRANICA NIEWŁAŚCIWA
-FUNKCJI` qualifies) and numbered points (`2. DEFINICJA 2. …`) as boundaries. One point = one
+exercise sheets. It recognizes ALL-CAPS title lines (Unicode-aware, so `ŚREDNIA WAŻONA`
+qualifies) and numbered points (`2. DEFINITION. …`) as boundaries. One point = one
 chunk, so a chunk is exactly one definition, theorem, or clause, with a breadcrumb like
-`GRANICA FUNKCJI > 2. DEFINICJA 2.`. Text with no such structure degrades gracefully to plain
-size-based splitting.
+`LIMITS OF FUNCTIONS > 2. DEFINITION`. Text with no such structure degrades gracefully to
+plain size-based splitting.
 
 Within a section, chunks target ~1,600 characters (≈400 tokens) with a 2,048 hard cap and
 ~200 characters of overlap carried across boundaries. These are research-consensus defaults,
