@@ -193,4 +193,16 @@ export class HttpMemloomClient implements MemoryEngine {
   async deleteSchemaEntry(id: string): Promise<void> {
     await this.#json(`/memory/schema/${id}`, { method: "DELETE" });
   }
+
+  getAutoIndex(): Promise<{ enabled: boolean; available: boolean }> {
+    return this.#json<{ enabled: boolean; available: boolean }>("/memory/auto-index");
+  }
+
+  async setAutoIndex(enabled: boolean): Promise<void> {
+    await this.#json("/memory/auto-index", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    });
+  }
 }

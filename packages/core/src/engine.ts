@@ -47,4 +47,8 @@ export interface MemoryEngine {
   describeSchema(ownerId?: string): Promise<SchemaInfo>;
   /** Permanently remove a DISABLED user-tier vocabulary entry (system rows only disable). */
   deleteSchemaEntry(id: string, ownerId?: string): Promise<void>;
+  /** Background auto-index state; `available` is false when no LLM is configured. */
+  getAutoIndex(): Promise<{ enabled: boolean; available: boolean }>;
+  /** Turn background auto-indexing on or off (persisted; refused when unavailable). */
+  setAutoIndex(enabled: boolean): Promise<void>;
 }

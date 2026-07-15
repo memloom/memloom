@@ -203,6 +203,11 @@ export class Memloom implements MemoryEngine {
     return this.#autoIndexCapable;
   }
 
+  /** MemoryEngine shape of the two getters, for HTTP-routed surfaces (CLI, MCP). */
+  async getAutoIndex(): Promise<{ enabled: boolean; available: boolean }> {
+    return { enabled: this.#autoIndex, available: this.#autoIndexCapable };
+  }
+
   get autoIndexEnabled(): boolean {
     return this.#autoIndex;
   }

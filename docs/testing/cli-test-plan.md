@@ -37,6 +37,31 @@ How to run the CLI while testing:
 - [ ] `memloom serve` in a second terminal.
       EXPECTED: "already serving" message, exits cleanly, does not corrupt anything.
 
+```
+# memloom configuration. The daemon (`memloom serve`) reads this at startup.
+# Real environment variables take precedence over values here.
+
+# OpenRouter API key: enables real embeddings + LLM dedup/conflict detection/entities.
+# Without it, memloom runs in offline mode (deterministic embeddings, no dedup).
+OPENROUTER_API_KEY=sk-or-...   # NEVER paste a real key into this file
+
+# Optional model overrides (defaults shown):
+OPENROUTER_EMBED_MODEL=qwen/qwen3-embedding-8b
+OPENROUTER_EMBED_DIMS=1024
+OPENROUTER_LLM_MODEL=google/gemini-2.5-flash
+# Assistant chat model (defaults to OPENROUTER_LLM_MODEL; must support tool calling):
+OPENROUTER_CHAT_MODEL=google/gemini-2.5-flash
+
+# Preferred OpenRouter host for embeddings (latency varies a lot between hosts of the same
+# model; nebius is the fast one for the default model and is used automatically):
+OPENROUTER_EMBED_PROVIDER=nebius
+
+# New memories and files are entity-indexed automatically in the background (one LLM call
+# per item, debounced). Set to off to index only via `memloom index` / the Console:
+MEMLOOM_AUTO_INDEX=on
+
+```
+
 ## Phase 2: offline basics
 
 Offline mode has deterministic hashing embeddings and dedup off. Recall works best
@@ -102,6 +127,13 @@ with word overlap; that is expected, not a bug.
       EXPECTED: that file `updated`, chunks replaced, auto-index picks it up again.
 - [ ] Add a PDF; recall something from it.
       EXPECTED: provenance includes the page number `(p. N)`.
+- [ ] `memloom index --help`
+      EXPECTED: usage for the index command itself (flags, what --rebuild does),
+      NOT an index run. Spot-check one or two others (`save --help`, `recall -h`).
+- [ ] `memloom auto-index` then `memloom auto-index off` then `on`.
+      EXPECTED: status line each time; after `off`, a save stays unindexed until a
+      manual `memloom index`; after `on`, saves index in the background again. The
+      Console toggle mirrors the state.
 - [ ] `memloom index --rebuild`
       EXPECTED: wipes and re-extracts; progress lines show entities per item;
       `memloom schema` counts repopulate.

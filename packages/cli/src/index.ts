@@ -60,7 +60,8 @@ Usage: memloom <command> [args]
   schema delete <entity_type|predicate> <name>
                        permanently remove a DISABLED user-tier entry (disable it first;
                        built-in entries can only be disabled)
-  help                 show this help
+  auto-index [on|off]  show or set background entity extraction after saves/ingests
+  help [command]       show this help, or a command's own help (same as <command> --help)
 
 The CLI and the MCP talk to the daemon over HTTP, so many clients share one store safely.
 Any command auto-starts the daemon if it isn't running. Inspect the data by pointing Drizzle
@@ -70,16 +71,126 @@ Configuration lives in ${configPath()} (created by init). Set OPENROUTER_API_KEY
 real embeddings + LLM dedup/entities; restart the daemon after changing it.
 Home: ${memloomHome()}  ·  data: ${memloomHome()}/data`;
 
+// Per-command help, printed by `<command> --help` and `help <command>`. Kept next to the
+// implementations below; a new command is not done until it has an entry here.
+const COMMAND_HELP: Record<string, string> = {
+  serve: `memloom serve
+
+Run the store daemon in the foreground: HTTP API on 4319, the viewer, and the
+Postgres wire on 54329. The daemon is the single owner of the store; every other
+command talks to it over HTTP (and auto-starts it when needed). Ctrl+C to stop.
+
+Reads ${configPath()} at startup; real environment variables win over the file.`,
+
+  stop: `memloom stop
+
+Stop the running daemon gracefully: closes the HTTP and Postgres servers and
+releases the store lock. Prints a notice when no daemon is running.`,
+
+  ui: `memloom ui
+
+Open the viewer in your browser (starting the daemon first if needed):
+graph, assistant, memories, documents, schema, conflicts, console.`,
+
+  init: `memloom init
+
+First-run setup: creates ~/.memloom with a commented config.env template and
+starts the daemon. Set OPENROUTER_API_KEY in the config for real embeddings,
+dedup, and entity extraction, then restart the daemon.`,
+
+  save: `memloom save <text...>
+
+Save a memory. With an API key configured, the belief pipeline runs: an exact or
+reworded duplicate merges or versions instead of duplicating, and a contradiction
+keeps both memories active and reports a conflict id to resolve.
+
+  memloom save "the staging database runs on Postgres"
+
+Outcomes: added | merged | versioned | conflict.`,
+
+  recall: `memloom recall <text...>
+
+Recall memories AND ingested files by meaning, exact keywords, and entities,
+fused into one ranking. Results from files carry their source (file › section,
+PDF page).
+
+  memloom recall "staging database"
+  memloom recall "ECONNREFUSED 54329"     (exact identifiers work well)`,
+
+  update: `memloom update <memory-id> <text...>
+
+Edit a memory into a new version. The old version stays in history; recall only
+returns the current one. Get ids from recall output or the viewer.`,
+
+  history: `memloom history <memory-id>
+
+Show a memory's full version chain, newest first. The * marks the current
+version. Any version's id works.`,
+
+  index: `memloom index [--rebuild]
+
+Extract entities from unindexed memories and context chunks into the graph (one
+LLM call per item; needs an API key). Prints one line per item with the entities
+found. With auto-index on (the default in cloud mode) new items are indexed in
+the background and this command usually reports nothing pending.
+
+  --rebuild   wipe ALL extracted entities and edges, then re-run from scratch.
+              The recovery path after extraction changes; belief edges survive.`,
+
+  conflicts: `memloom conflicts
+
+List pending contradictions: the new memory and the existing ones it clashes
+with. Resolve them in the viewer (Conflicts tab) or over MCP; every resolution
+is reversible.`,
+
+  context: `memloom context <add|list|remove>
+
+  add <path...>   ingest files or folders as searchable context
+                  (${supportedExtensions().join(" ")}; folders recurse)
+  list            ingested documents with ids and chunk counts
+  remove <id>     delete a document and its chunks (the file on disk is untouched)
+
+Re-adding an unchanged file is a no-op; a changed file replaces its chunks.`,
+
+  schema: `memloom schema [list|delete]
+
+  (no args)                          the extraction vocabulary with usage counts
+  delete <entity_type|predicate> <name>
+                                     permanently remove a DISABLED user-tier
+                                     entry. Built-ins can only be disabled, and
+                                     an active entry must be disabled first
+                                     (viewer, schema tab).`,
+
+  "auto-index": `memloom auto-index [on|off]
+
+Show or set background entity extraction. When on, new memories and files are
+indexed a few seconds after they land (debounced into batched runs, visible in
+the Console). The setting persists across daemon restarts; MEMLOOM_AUTO_INDEX in
+config.env is only the default before the first use of this switch. Needs an
+API key; offline mode cannot enable it.
+
+  memloom auto-index        show the current state
+  memloom auto-index off    index only via 'memloom index' / the Console`,
+};
+
 export async function run(argv: readonly string[]): Promise<void> {
   const [command, ...rest] = argv;
+
+  // `<command> --help` prints that command's help without touching the daemon.
+  if (command && (rest.includes("--help") || rest.includes("-h"))) {
+    console.log(COMMAND_HELP[command] ?? HELP);
+    return;
+  }
 
   switch (command) {
     case undefined:
     case "help":
     case "--help":
-    case "-h":
-      console.log(HELP);
+    case "-h": {
+      const topic = rest[0];
+      console.log(topic && COMMAND_HELP[topic] ? COMMAND_HELP[topic] : HELP);
       return;
+    }
 
     case "serve":
       await startDaemon();
@@ -287,6 +398,35 @@ export async function run(argv: readonly string[]): Promise<void> {
       }
 
       throw new Error("usage: memloom schema [list|delete]");
+    }
+
+    case "auto-index": {
+      const arg = rest[0];
+      if (arg !== undefined && arg !== "on" && arg !== "off") {
+        throw new Error("usage: memloom auto-index [on|off]");
+      }
+      const engine = await connect();
+      let state = await engine.getAutoIndex();
+      if (!state.available) {
+        console.log(
+          "auto-index unavailable: extraction needs an LLM. Set OPENROUTER_API_KEY in " +
+            `${configPath()} and restart the daemon.`,
+        );
+        return;
+      }
+      if (arg !== undefined) {
+        await engine.setAutoIndex(arg === "on");
+        state = await engine.getAutoIndex();
+      }
+      console.log(
+        `auto-index ${state.enabled ? "on" : "off"}` +
+          (arg === undefined
+            ? ""
+            : state.enabled
+              ? "  (new memories and files are indexed in the background)"
+              : "  (index manually with 'memloom index' or the Console)"),
+      );
+      return;
     }
 
     default:

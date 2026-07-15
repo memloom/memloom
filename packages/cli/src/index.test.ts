@@ -38,4 +38,27 @@ describe("cli router", () => {
     process.exitCode = 0;
     errSpy.mockRestore();
   });
+
+  it("<command> --help prints that command's help without touching the daemon", async () => {
+    // These must never call connect(); a daemon-less environment is the whole point.
+    await run(["index", "--help"]);
+    expect(logs.join("\n")).toContain("memloom index [--rebuild]");
+
+    logs = [];
+    await run(["save", "-h"]);
+    expect(logs.join("\n")).toContain("memloom save <text...>");
+
+    logs = [];
+    await run(["auto-index", "--help"]);
+    expect(logs.join("\n")).toContain("memloom auto-index [on|off]");
+
+    // help <command> is the same output; an unknown topic falls back to the main help.
+    logs = [];
+    await run(["help", "conflicts"]);
+    expect(logs.join("\n")).toContain("memloom conflicts");
+
+    logs = [];
+    await run(["help", "frobnicate"]);
+    expect(logs.join("\n")).toContain("Usage: memloom");
+  });
 });
