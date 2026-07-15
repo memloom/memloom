@@ -67,6 +67,10 @@ Usage: memloom <command> [args]
   context list         list ingested context documents
   context remove <id>  remove a context document and its chunks
   schema               show the graph vocabulary (entity types + predicates, usage, status)
+  schema disable <entity_type|predicate> <name>
+                       stop using an entry for future extraction (built-ins too)
+  schema enable <entity_type|predicate> <name>
+                       re-enable a disabled entry
   schema delete <entity_type|predicate> <name>
                        permanently remove a DISABLED user-tier entry (disable it first;
                        built-in entries can only be disabled)
@@ -152,8 +156,9 @@ LLM call per item; needs an API key). Prints one line per item with the entities
 found. With auto-index on (the default in cloud mode) new items are indexed in
 the background and this command usually reports nothing pending.
 
-  --rebuild   wipe ALL extracted entities and edges, then re-run from scratch.
-              The recovery path after extraction changes; belief edges survive.`,
+  --rebuild   wipe extracted entities and their edges (mentions + relationships found
+              in your content), then re-extract from scratch. Does not touch memories,
+              conflicts, or the replaces/distinct edges from resolving them.`,
 
   reembed: `memloom reembed [--force]
 
@@ -186,14 +191,21 @@ is reversible.`,
 
 Re-adding an unchanged file is a no-op; a changed file replaces its chunks.`,
 
-  schema: `memloom schema [list|delete]
+  schema: `memloom schema [list|disable|enable|delete]
 
   (no args)                          the extraction vocabulary with usage counts
+  disable <entity_type|predicate> <name>
+                                     stop using an entry for future extraction.
+                                     Entities already extracted under it stay in
+                                     the graph. Works on built-ins and user-tier
+                                     entries alike.
+  enable <entity_type|predicate> <name>
+                                     re-enable a disabled entry.
   delete <entity_type|predicate> <name>
                                      permanently remove a DISABLED user-tier
                                      entry. Built-ins can only be disabled, and
                                      an active entry must be disabled first
-                                     (viewer, schema tab).`,
+                                     (schema disable).`,
 
   "auto-index": `memloom auto-index [on|off]
 
@@ -463,6 +475,20 @@ export async function run(argv: readonly string[]): Promise<void> {
         return;
       }
 
+      if (sub === "disable" || sub === "enable") {
+        const [kind, name] = args;
+        if ((kind !== "entity_type" && kind !== "predicate") || !name) {
+          throw new Error(`usage: memloom schema ${sub} <entity_type|predicate> <name>`);
+        }
+        const schema = await engine.describeSchema();
+        const pool = kind === "entity_type" ? schema.entityTypes : schema.predicates;
+        const entry = pool.find((e) => e.name === name.toLowerCase());
+        if (!entry) throw new Error(`no ${kind} named "${name}"`);
+        await engine.setSchemaStatus(entry.id, sub === "disable" ? "disabled" : "active");
+        console.log(`${sub}d ${kind} "${entry.name}"`);
+        return;
+      }
+
       if (sub === "delete") {
         const [kind, name] = args;
         if ((kind !== "entity_type" && kind !== "predicate") || !name) {
@@ -477,7 +503,7 @@ export async function run(argv: readonly string[]): Promise<void> {
         return;
       }
 
-      throw new Error("usage: memloom schema [list|delete]");
+      throw new Error("usage: memloom schema [list|disable|enable|delete]");
     }
 
     case "auto-index": {

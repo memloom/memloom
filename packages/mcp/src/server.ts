@@ -9,6 +9,7 @@ import {
   recallMemory,
   resolveConflict,
   saveMemory,
+  setSchemaEntryStatus,
 } from "./tools.js";
 
 // Wire the tool functions to the MCP protocol. Descriptions tell the calling agent when to
@@ -78,6 +79,22 @@ export function buildServer(memloom: MemoryEngine): McpServer {
       content: z.string().optional(),
     },
     async (args) => ({ content: [{ type: "text", text: await resolveConflict(memloom, args) }] }),
+  );
+
+  server.tool(
+    "set_schema_entry_status",
+    "Enable or disable a graph schema entry (an entity type or predicate). A disabled entry " +
+      "stops being used by future extraction, but entities already extracted under it stay " +
+      "in the graph. Built-in entries can only be disabled, never deleted; user-defined " +
+      "entries must be disabled before delete_schema_entry will remove them.",
+    {
+      kind: z.enum(["entity_type", "predicate"]),
+      name: z.string(),
+      status: z.enum(["active", "disabled"]),
+    },
+    async (args) => ({
+      content: [{ type: "text", text: await setSchemaEntryStatus(memloom, args) }],
+    }),
   );
 
   server.tool(

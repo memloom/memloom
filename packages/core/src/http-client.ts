@@ -198,6 +198,14 @@ export class HttpMemloomClient implements MemoryEngine {
     return this.#json<SchemaInfo>("/memory/schema");
   }
 
+  async setSchemaStatus(id: string, status: "active" | "disabled"): Promise<void> {
+    await this.#json(`/memory/schema/${id}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ status }),
+    });
+  }
+
   async deleteSchemaEntry(id: string): Promise<void> {
     await this.#json(`/memory/schema/${id}`, { method: "DELETE" });
   }

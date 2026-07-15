@@ -50,6 +50,8 @@ export interface MemoryEngine {
   contextRemove(documentId: string, ownerId?: string): Promise<void>;
   /** The graph vocabulary (entity types, relations, predicates, proposals) with usage counts. */
   describeSchema(ownerId?: string): Promise<SchemaInfo>;
+  /** Enable or disable a vocabulary entry (system or user tier); system rows only disable. */
+  setSchemaStatus(id: string, status: "active" | "disabled", ownerId?: string): Promise<void>;
   /** Permanently remove a DISABLED user-tier vocabulary entry (system rows only disable). */
   deleteSchemaEntry(id: string, ownerId?: string): Promise<void>;
   /** Background auto-index state; `available` is false when no LLM is configured. */

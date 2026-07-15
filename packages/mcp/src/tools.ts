@@ -136,6 +136,21 @@ export async function resolveConflict(
   return `Resolved conflict ${args.conflictId} with "${args.action}" (reversible).`;
 }
 
+export async function setSchemaEntryStatus(
+  memloom: MemoryEngine,
+  args: { kind: "entity_type" | "predicate"; name: string; status: "active" | "disabled" },
+): Promise<string> {
+  const schema = await memloom.describeSchema();
+  const pool = args.kind === "entity_type" ? schema.entityTypes : schema.predicates;
+  const entry = pool.find((e) => e.name === args.name.toLowerCase());
+  if (!entry) return `No ${args.kind} named "${args.name}" exists.`;
+  if (entry.status === args.status) {
+    return `"${entry.name}" is already ${args.status}.`;
+  }
+  await memloom.setSchemaStatus(entry.id, args.status);
+  return `${args.status === "disabled" ? "Disabled" : "Enabled"} ${args.kind} "${entry.name}".`;
+}
+
 export async function deleteSchemaEntry(
   memloom: MemoryEngine,
   args: { kind: "entity_type" | "predicate"; name: string },
@@ -150,7 +165,7 @@ export async function deleteSchemaEntry(
     return `"${entry.name}" is a built-in ${args.kind}; it can be disabled but never deleted.`;
   }
   if (entry.status !== "disabled") {
-    return `"${entry.name}" is still active. Disable it first (viewer schema tab), then delete.`;
+    return `"${entry.name}" is still active. Disable it first (set_schema_entry_status), then delete.`;
   }
   await memloom.deleteSchemaEntry(entry.id);
   return `Deleted ${args.kind} "${entry.name}" from the vocabulary. Entities already extracted under it stay in the graph.`;

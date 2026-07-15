@@ -13,6 +13,7 @@ import {
   recallMemory,
   resolveConflict,
   saveMemory,
+  setSchemaEntryStatus,
 } from "./tools.js";
 
 // The MCP tool functions are pure over a Memloom, so we test them directly (the stdio wiring
@@ -123,6 +124,41 @@ describe("mcp tools", () => {
 
     const missing = await readPassage(m, { id: "not-a-real-id" });
     expect(missing).toContain("No memory or document passage");
+  });
+
+  it("set_schema_entry_status disables and re-enables built-in and user entries", async () => {
+    const m = await fresh();
+
+    const disabledPerson = await setSchemaEntryStatus(m, {
+      kind: "entity_type",
+      name: "person",
+      status: "disabled",
+    });
+    expect(disabledPerson).toContain('Disabled entity_type "person"');
+    expect(
+      (await m.describeSchema()).entityTypes.find((t) => t.name === "person")?.status,
+    ).toBe("disabled");
+
+    const already = await setSchemaEntryStatus(m, {
+      kind: "entity_type",
+      name: "person",
+      status: "disabled",
+    });
+    expect(already).toContain("already disabled");
+
+    const enabledPerson = await setSchemaEntryStatus(m, {
+      kind: "entity_type",
+      name: "person",
+      status: "active",
+    });
+    expect(enabledPerson).toContain('Enabled entity_type "person"');
+
+    const missing = await setSchemaEntryStatus(m, {
+      kind: "predicate",
+      name: "not-a-real-predicate",
+      status: "disabled",
+    });
+    expect(missing).toContain('No predicate named "not-a-real-predicate"');
   });
 
   it("delete_schema_entry deletes disabled user entries and explains refusals", async () => {
