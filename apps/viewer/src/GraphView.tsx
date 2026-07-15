@@ -295,7 +295,7 @@ function buildGraphData(
     });
   }
 
-  const links: Link[] = [
+  const rawLinks: Link[] = [
     // An expanded document swaps its rolled-up mention edges for the chunk-level truth.
     ...graph.edges
       .filter((e) => !(openIds.has(e.from) && e.relation === "mention"))
@@ -326,6 +326,30 @@ function buildGraphData(
         })),
     ]),
   ];
+
+  // Parallel typed predicates between the same pair (Gniezno located_in AND part_of
+  // Poland) are legal in the store, but drawn separately they overprint: two identical
+  // lines, two stacked arrowheads, two labels smeared into garbage at the midpoint.
+  // Merge same-direction predicate links into one, with the names joined in the label.
+  const links: Link[] = [];
+  const predicateByPair = new Map<string, Link>();
+  for (const link of rawLinks) {
+    if (!isPredicateLink(link)) {
+      links.push(link);
+      continue;
+    }
+    const key = `${link.source}|${link.target}`;
+    const prior = predicateByPair.get(key);
+    if (prior) {
+      if (!prior.label.split(", ").includes(link.label)) {
+        prior.label = `${prior.label}, ${link.label}`;
+      }
+      prior.weight = Math.max(prior.weight, link.weight);
+    } else {
+      predicateByPair.set(key, link);
+      links.push(link);
+    }
+  }
 
   const neighborMap = new Map<string, Set<string>>();
   for (const node of nodes) neighborMap.set(node.id, new Set());
