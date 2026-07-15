@@ -52,6 +52,7 @@ Usage: memloom <command> [args]
   history <id>         show a memory's full version chain (newest first)
   index [--rebuild]    extract entities from unindexed memories and context chunks;
                        --rebuild wipes all extracted entities/edges and re-runs from scratch
+  auto-index [on|off]  show or set background entity extraction after saves/ingests
   conflicts            list pending conflicts
   context add <path>   ingest files (or a directory) as context: ${supportedExtensions().join(" ")}
   context list         list ingested context documents
@@ -60,7 +61,6 @@ Usage: memloom <command> [args]
   schema delete <entity_type|predicate> <name>
                        permanently remove a DISABLED user-tier entry (disable it first;
                        built-in entries can only be disabled)
-  auto-index [on|off]  show or set background entity extraction after saves/ingests
   help [command]       show this help, or a command's own help (same as <command> --help)
 
 The CLI and the MCP talk to the daemon over HTTP, so many clients share one store safely.
@@ -69,7 +69,8 @@ Studio / psql at the daemon's Postgres wire: postgresql://postgres@127.0.0.1:543
 
 Configuration lives in ${configPath()} (created by init). Set OPENROUTER_API_KEY there for
 real embeddings + LLM dedup/entities; restart the daemon after changing it.
-Home: ${memloomHome()}  ·  data: ${memloomHome()}/data`;
+Home: ${memloomHome()}
+Data: ${dataDir()}`;
 
 // Per-command help, printed by `<command> --help` and `help <command>`. Kept next to the
 // implementations below; a new command is not done until it has an entry here.
@@ -222,9 +223,8 @@ export async function run(argv: readonly string[]): Promise<void> {
       await connect(); // starts the daemon if needed
       console.log(`memloom is running. data: ${dataDir()}`);
       console.log(`config: ${config}  (set OPENROUTER_API_KEY there, then restart the daemon)`);
-      console.log(
-        "HTTP api http://127.0.0.1:4319 · Postgres postgresql://postgres@127.0.0.1:54329/postgres",
-      );
+      console.log("HTTP api http://127.0.0.1:4319");
+      console.log("Postgres postgresql://postgres@127.0.0.1:54329/postgres");
       return;
     }
 
