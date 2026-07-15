@@ -45,12 +45,12 @@ export const ENTITY_TYPES: readonly EntityTypeDef[] = [
   {
     name: "event",
     description:
-      'A specific nameable occurrence: a conference, exam, release, trip ("matura 2026").',
+      'A specific nameable occurrence: a conference, exam, release, trip ("KubeCon 2026").',
   },
   {
     name: "concept",
     description:
-      'LAST RESORT: a proper, named idea someone would search by name ("twierdzenie Pitagorasa", "Bayes\' theorem"). Never generic domain words like "wzór" or "funkcja".',
+      'LAST RESORT: a proper, named idea someone would search by name ("Bayes\' theorem", "teorema de Pitágoras"). Never generic domain words like "formula" or "función".',
   },
 ] as const;
 

@@ -163,10 +163,11 @@ export function chunkMarkdown(markdown: string, opts: ChunkOptions = {}): Chunk[
 // ---------------------------------------------------------------------------------------
 // Outline chunking for plain text and PDF pages: no markdown headings, but real documents
 // (lecture notes, exercise sheets, contracts) still have structure: ALL-CAPS title lines
-// and numbered points ("2. DEFINICJA 2. …"). Split at those boundaries so a chunk never
-// starts mid-definition, and carry "TITLE > 2. DEFINICJA 2." as the breadcrumb.
+// and numbered points ("2. DEFINITION. …"). Split at those boundaries so a chunk never
+// starts mid-definition, and carry "TITLE > 2. DEFINITION." as the breadcrumb.
 
-// An ALL-CAPS line (Unicode-aware, so Polish "GRANICA NIEWŁAŚCIWA FUNKCJI" qualifies).
+// An ALL-CAPS line (Unicode-aware, so a diacritics-heavy title like "ŚREDNIA WAŻONA"
+// qualifies).
 function isCapsTitle(line: string): boolean {
   const t = line.trim();
   if (t.length < 4 || t.length > 120) return false;
@@ -176,7 +177,7 @@ function isCapsTitle(line: string): boolean {
 
 const POINT_START = /^\s*(\d{1,3})[.)]\s+\S/;
 
-// "DEFINICJA 1. Niech funkcja…" → "DEFINICJA 1.": the leading run of ALL-CAPS/number
+// "DEFINITION 1. Let f be…" → "DEFINITION 1.": the leading run of ALL-CAPS/number
 // tokens after the point number, if any.
 function pointKeyword(rest: string): string | null {
   const tokens: string[] = [];
@@ -184,8 +185,9 @@ function pointKeyword(rest: string): string | null {
     if (tokens.length >= 4 || !/^[\p{Lu}\p{N}]+[.,]?$/u.test(token)) break;
     tokens.push(token);
   }
-  // The first token must be a real word ("DEFINICJA", "UWAGA"), not a stray capital like
-  // the Polish preposition "O": single letters make noise breadcrumbs ("3. O").
+  // The first token must be a real word ("DEFINITION", "NOTE"), not a stray capital:
+  // some languages use single-letter words (Polish "O"), and those make noise
+  // breadcrumbs ("3. O").
   const first = tokens[0];
   if (!first || !/\p{Lu}/u.test(first) || first.replace(/[.,]$/, "").length < 3) return null;
   const keyword = tokens.join(" ");
@@ -247,7 +249,7 @@ function outlineBreadcrumb(section: OutlineSection): string | null {
 /**
  * Chunk plain text (or an extracted PDF page) along its outline: ALL-CAPS title lines and
  * numbered points are section boundaries. One point = one chunk (split further only past
- * the cap), each prefixed with its "TITLE > 2. DEFINICJA 2." breadcrumb. Text without any
+ * the cap), each prefixed with its "TITLE > 2. DEFINITION." breadcrumb. Text without any
  * such structure degrades to plain `chunkText`.
  */
 export function chunkOutline(text: string, opts: ChunkOptions = {}): Chunk[] {
