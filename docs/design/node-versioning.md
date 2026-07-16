@@ -86,8 +86,7 @@ with the owner ("people manually edit memories, not agents").
   lineage continuation; `mapRow` carries root/version; `#findCandidates` selects root/version.
 - `packages/core/src/engine.ts`, `http-client.ts`, `packages/server/src/index.ts`,
   `packages/cli/src/index.ts`: the surfaces.
-- Docs: `ARCHITECTURE.md` (belief lifecycle), `CODEBASE-GUIDE.md` (retire the `asserted_at`
-  dormant note), `CHANGELOG.md`.
+- Docs: `ARCHITECTURE.md` (belief lifecycle), `CHANGELOG.md`.
 
 ## Verification
 
