@@ -1,0 +1,56 @@
+---
+title: "Daemon"
+description: "serve, stop, ui, init: running and managing the store's single owner"
+---
+
+## serve
+
+```bash
+memloom serve
+```
+
+Run the store daemon in the foreground: the HTTP API on 4319, the viewer, and the Postgres
+wire on 54329. The daemon is the single owner of the store; every other command talks to it
+over HTTP (and auto-starts it when needed). Ctrl+C to stop.
+
+Reads `~/.memloom/config.env` at startup; real environment variables win over the file. After
+editing the config, restart the daemon to pick up changes.
+
+The terminal logs every request twice: an arrow on arrival and a closing line with status and
+duration. It also warns when a Postgres wire client connects and pauses the API.
+
+## stop
+
+```bash
+memloom stop
+```
+
+Stop the running daemon gracefully: closes the HTTP and Postgres servers and releases the
+store lock. Prints a notice when no daemon is running.
+
+One command requires a stopped daemon because it opens the store directly:
+[`reembed`](/cli/graph#reembed).
+
+## ui
+
+```bash
+memloom ui
+```
+
+Open the viewer in your browser, starting the daemon first if needed: graph, assistant,
+memories, documents, schema, conflicts, console.
+
+## init
+
+```bash
+memloom init
+```
+
+First-run setup: creates `~/.memloom` with a commented `config.env` template and starts the
+daemon. Set `OPENROUTER_API_KEY` in the config for real embeddings, dedup, and entity
+extraction, then restart the daemon.
+
+<Note>
+`init` is idempotent. Running it on an existing setup just ensures the daemon is up and the
+store is ready.
+</Note>

@@ -1,0 +1,62 @@
+---
+title: "CLI overview"
+description: "Every memloom command, and how the CLI relates to the daemon"
+---
+
+The `memloom` CLI is a thin client. Every command talks to the `memloom serve` daemon over
+HTTP on `127.0.0.1:4319`, and auto-starts it if it isn't running. The daemon is the single
+owner of the store, so the CLI, MCP clients, and the viewer all read and write the same
+memories with no lock conflicts.
+
+```bash
+npx memloom init           # creates ~/.memloom, starts the daemon
+                           # or: npm install -g memloom, then plain 'memloom'
+```
+
+Configuration lives in `~/.memloom/config.env` (created by `init`). Set `OPENROUTER_API_KEY`
+there for real embeddings plus LLM dedup and entity extraction, then restart the daemon. See
+[Configuration](/guides/configuration) for the full reference.
+
+## Getting help
+
+Every command documents itself:
+
+```bash
+memloom help              # all commands
+memloom help save         # one command, same as: memloom save --help
+```
+
+## Commands
+
+| Command | What it does | Page |
+| --- | --- | --- |
+| `serve` | Run the store daemon in the foreground | [Daemon](/cli/daemon) |
+| `stop` | Stop the daemon gracefully | [Daemon](/cli/daemon) |
+| `ui` | Open the viewer in your browser | [Daemon](/cli/daemon) |
+| `init` | First-run setup: config template + daemon | [Daemon](/cli/daemon) |
+| `save` | Save a memory (`--type fact\|preference\|episode\|procedure`) | [Memories](/cli/memories) |
+| `recall` | Recall memories and context by meaning | [Memories](/cli/memories) |
+| `update` | Edit a memory into a new version | [Memories](/cli/memories) |
+| `history` | Show a memory's version chain | [Memories](/cli/memories) |
+| `index` | Extract entities into the graph (`--rebuild` to redo) | [Graph](/cli/graph) |
+| `reembed` | Re-embed the store after switching providers | [Graph](/cli/graph) |
+| `auto-index` | Show or set background extraction | [Graph](/cli/graph) |
+| `schema` | Manage the graph vocabulary | [Graph](/cli/graph) |
+| `context add` | Ingest files or folders as searchable context | [Context](/cli/context) |
+| `context list` | List ingested documents | [Context](/cli/context) |
+| `context remove` | Delete a document and its chunks | [Context](/cli/context) |
+| `conflicts` | List pending contradictions | [Conflicts](/cli/conflicts) |
+
+## Inspecting the store directly
+
+The daemon also speaks the Postgres wire protocol. Point Drizzle Studio, psql, or any DB
+client at:
+
+```
+postgresql://postgres@127.0.0.1:54329/postgres
+```
+
+<Warning>
+PGLite is a single-connection database: while a DB client is connected on 54329, the HTTP
+API answers 503 for memory endpoints. Disconnect the client to resume.
+</Warning>

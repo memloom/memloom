@@ -1,0 +1,116 @@
+---
+title: "MCP tools"
+description: "The eight tools memloom exposes to MCP clients, and how they chain together"
+---
+
+Eight tools, split by what they touch: memories, conflicts, and the graph vocabulary. The
+descriptions the calling agent sees are written so it knows when to reach for each one; this
+page is the human-readable version, with the flows between tools spelled out.
+
+## save_memory
+
+Save a durable memory the user owns.
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `content` | string | required |
+| `canonical` | string | optional short title; becomes the recall result heading |
+| `type` | enum | `fact` (default), `preference`, `episode`, `procedure` |
+
+memloom dedupes automatically and flags contradictions instead of overwriting. The response
+says what happened: saved, merged into an existing memory, or saved WITH a conflict id that
+the user should resolve. A conflict response is the start of the
+[conflict flow](#list_conflicts) below.
+
+## recall_memory
+
+Recall memories AND ingested context documents by meaning, ranked by hybrid retrieval
+(semantic, exact keyword, entity). Exact identifiers like file paths, config keys, or error
+codes make excellent queries.
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `query` | string | required |
+| `limit` | number | optional, default 10 |
+
+Each result carries a title, the passage, when it was saved, a similarity score, provenance
+for document chunks (file, section, PDF page), and an `id`. Only active memories are
+returned; superseded versions never appear.
+
+Very long passages are truncated at 8k characters with a marker naming the escape hatch:
+
+```
+... [truncated: call read_passage with id <id> for the full text]
+```
+
+## read_passage
+
+The full text of one recall result, by the `id` shown with it.
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `id` | string | an id from recall_memory results |
+
+Exists for exactly one flow: a recall result ended with the truncation marker and the answer
+may be in the cut part. Works for memories and document chunks alike. A markdown chunk is a
+whole heading section (up to 16k characters), so the tail of a big section is always
+reachable even though recall injects at most 8k.
+
+## memory_history
+
+Show how a memory changed over time: its full version chain, newest first, with the current
+version and every superseded one.
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `memoryId` | string | the `id` shown by recall_memory |
+
+Read-only: editing memories is a human action in the viewer or CLI.
+
+## list_conflicts
+
+List pending memory conflicts: contradictions the user has not resolved yet. No parameters.
+Each entry shows the conflict id, the new memory, and the existing memories it clashes with.
+
+## resolve_conflict
+
+Resolve a conflict the way the user decided. The agent relays the choice; it should not
+decide on its own.
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `conflictId` | string | required |
+| `action` | enum | `keep_new`, `keep_existing`, `keep_both`, `merge` |
+| `candidateId` | string | required for `keep_existing` |
+| `content` | string | the reconciled text, required for `merge` |
+
+Every resolution is reversible.
+
+The full conflict flow: `save_memory` reports "CONTRADICTS an existing memory" with a
+conflict id, `list_conflicts` shows what clashes, the user picks an action, and
+`resolve_conflict` applies it.
+
+## set_schema_entry_status
+
+Enable or disable a graph schema entry (an entity type or predicate). A disabled entry stops
+being used by future extraction, but entities already extracted under it stay in the graph.
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `kind` | enum | `entity_type` or `predicate` |
+| `name` | string | case-insensitive |
+| `status` | enum | `active` or `disabled` |
+
+## delete_schema_entry
+
+Permanently remove a DISABLED user-defined vocabulary entry from the graph schema.
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `kind` | enum | `entity_type` or `predicate` |
+| `name` | string | case-insensitive |
+
+Two guard rails, and the response explains any refusal instead of erroring: built-in entries
+can only be disabled, never deleted, and an active entry must be disabled first with
+`set_schema_entry_status`. Entities already extracted under the deleted type stay in the
+graph.

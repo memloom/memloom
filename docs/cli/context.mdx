@@ -1,0 +1,44 @@
+---
+title: "Context"
+description: "context add, list, remove: ingesting files as searchable context"
+---
+
+## context add
+
+```bash
+memloom context add <path...>
+```
+
+Ingest files or folders as searchable context (`.md .txt .pdf`; folders recurse). Chunks are
+embedded into the same recall as memories, and each chunk carries its breadcrumb (file,
+heading path, PDF page), so results always say where they came from.
+
+Documents are mirrors of the files they came from:
+
+- Re-adding an unchanged file is a no-op.
+- A changed file replaces its chunks.
+- When memloom's extraction pipeline improves, the pipeline version bumps and `context add`
+  re-ingests files whose bytes didn't change.
+
+<Note>
+A file can enter memloom two ways: linked from disk (this command, stays in sync on re-add)
+or uploaded as a snapshot (the viewer's upload). Linking is the stronger identity: linking a
+file that was previously uploaded absorbs the upload into the link, and uploading a file
+that is already linked is refused with a pointer to the existing document.
+</Note>
+
+## context list
+
+```bash
+memloom context list
+```
+
+List ingested documents with their ids and chunk counts.
+
+## context remove
+
+```bash
+memloom context remove <id>
+```
+
+Delete a document and its chunks from the store. The file on disk is untouched.

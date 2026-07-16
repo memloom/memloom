@@ -10,7 +10,8 @@ browser viewer, and plain HTTP.
 This page gets you running. If you want to understand how the engine actually works, start with
 [Features](/features), then the concept pages: [Architecture](/concepts/architecture),
 [Memory types & versioning](/concepts/memory-types), [Conflicts](/concepts/conflicts),
-[The graph](/concepts/graph), and [Retrieval](/concepts/retrieval).
+[The graph](/concepts/graph), and [Retrieval](/concepts/retrieval). For the command and tool
+surfaces, see the [CLI Reference](/cli/overview) and the [MCP Reference](/mcp/setup) tabs.
 
 ## Quickstart
 
@@ -104,8 +105,10 @@ OPENROUTER_LLM_MODEL=google/gemini-2.5-flash     # default
 ```
 
 <Note>
-Offline and cloud embeddings live in different vector spaces. If you switch modes, start from a
-fresh store (delete `~/.memloom/data`); mixed embeddings make similarity meaningless.
+Offline and cloud embeddings live in different vector spaces. If you switch modes, run
+[`memloom reembed`](/cli/graph#reembed) (daemon stopped) to recompute every vector with the
+new provider; mixed embeddings make similarity meaningless, so the daemon refuses to start
+until the store matches the config.
 </Note>
 
 ## Testing the API by hand

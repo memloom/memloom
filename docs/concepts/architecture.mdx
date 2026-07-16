@@ -42,7 +42,7 @@ when a wire client attaches. Disconnect the client to resume.
 | `@memloom/core` | The engine: belief pipeline, retrieval, graph, context ingestion, migrations, storage adapters, providers. No HTTP, no CLI, no `process.env`. |
 | `@memloom/server` | A thin Hono HTTP layer over the engine. Validates requests, maps engine calls to routes, serves the viewer bundle. |
 | `memloom` (CLI) | Commands + the daemon. Wires PGLite, config, and providers together and starts the server. |
-| `@memloom/mcp` | MCP tools (`save_memory`, `recall_memory`, `memory_history`, `list_conflicts`, `resolve_conflict`) for agents. |
+| `@memloom/mcp` | The [MCP tools](/mcp/tools) for agents: save, recall, read_passage, history, conflicts, and schema management. |
 | `@memloom/viewer` | The browser UI (React). Built and baked into the CLI package, so the daemon serves it with no separate process. |
 
 ## The engine contract

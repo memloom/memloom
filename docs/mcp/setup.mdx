@@ -1,0 +1,83 @@
+---
+title: "MCP setup"
+description: "Connect Claude Code, Claude Desktop, or Cursor to your memloom store"
+---
+
+memloom ships an MCP server over stdio: the `@memloom/mcp` package. It routes through the
+`memloom serve` daemon (auto-starting it if needed) rather than opening the store itself, so
+MCP clients, the CLI, and the viewer all share one store with no lock conflicts. You can run
+several MCP clients at once against the same daemon.
+
+No separate install is needed: the configs below run the package with `npx`. If you prefer a
+global install, `npm install -g @memloom/mcp` puts the `memloom-mcp` command on your PATH,
+and you can use that as the `command` with no args.
+
+## Claude Code
+
+```bash
+claude mcp add memloom -- npx -y @memloom/mcp
+```
+
+Or in `.mcp.json` (project scope) / `~/.claude.json` (user scope):
+
+```json
+{
+  "mcpServers": {
+    "memloom": {
+      "command": "npx",
+      "args": ["-y", "@memloom/mcp"]
+    }
+  }
+}
+```
+
+## Claude Desktop
+
+In `claude_desktop_config.json` (Settings, Developer, Edit Config):
+
+```json
+{
+  "mcpServers": {
+    "memloom": {
+      "command": "npx",
+      "args": ["-y", "@memloom/mcp"]
+    }
+  }
+}
+```
+
+## Cursor
+
+In `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
+
+```json
+{
+  "mcpServers": {
+    "memloom": {
+      "command": "npx",
+      "args": ["-y", "@memloom/mcp"]
+    }
+  }
+}
+```
+
+## Where the API key goes
+
+Put `OPENROUTER_API_KEY` in `~/.memloom/config.env`, not in the MCP client config. The
+daemon owns all provider calls; the MCP server never talks to OpenRouter itself. An `env`
+block in the client config only matters when the MCP process is the one that auto-starts
+the daemon, because real environment variables win over the config file. Keeping the key in
+`config.env` gives every surface the same behavior.
+
+After changing the config, restart the daemon (`memloom stop`, then any command).
+
+## Verify it works
+
+Ask your client to save and recall something:
+
+> Save a memory: the staging database runs on Postgres.
+> What do you know about the staging database?
+
+You should see `save_memory` and `recall_memory` tool calls, and the memory appears in the
+viewer (`memloom ui`) alongside everything saved from the CLI. The full tool list is on
+[Tools](/mcp/tools).

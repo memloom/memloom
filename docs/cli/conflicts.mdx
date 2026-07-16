@@ -1,0 +1,22 @@
+---
+title: "Conflicts"
+description: "conflicts: listing pending contradictions from the terminal"
+---
+
+## conflicts
+
+```bash
+memloom conflicts
+```
+
+List pending contradictions: the new memory and the existing ones it clashes with. A
+conflict appears when a save contradicts something already stored; both memories stay
+active until you decide.
+
+Resolving is a human decision, so it lives where a human is: the viewer's Conflicts tab, or
+an MCP client relaying your choice via [`resolve_conflict`](/mcp/tools#resolve_conflict).
+The four actions are keep new, keep existing, keep both, and merge; every resolution is
+reversible.
+
+How contradiction detection works, and what each resolution does to the version chain, is
+covered in [Conflicts](/concepts/conflicts).

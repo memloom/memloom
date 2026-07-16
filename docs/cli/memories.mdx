@@ -1,0 +1,67 @@
+---
+title: "Memories"
+description: "save, recall, update, history: the memory lifecycle from the terminal"
+---
+
+## save
+
+```bash
+memloom save [--type <type>] <text...>
+```
+
+Save a memory. With an API key configured, the belief pipeline runs: an exact or reworded
+duplicate merges or versions instead of duplicating, and a contradiction keeps both memories
+active and reports a conflict id to resolve.
+
+```bash
+memloom save "the staging database runs on Postgres"
+memloom save --type procedure "to release: bump VERSION, tag, push"
+```
+
+`--type` picks one of the four memory types, the same taxonomy the viewer filters by
+(defaults to `fact`):
+
+| Type | What it holds | Example |
+| --- | --- | --- |
+| `fact` | A stable truth | *the staging DB runs on Postgres* |
+| `preference` | How you like things done | *prefers pnpm over npm* |
+| `episode` | A time-bound event | *shipped the viewer on 2026-07-05* |
+| `procedure` | Reusable how-to steps | *to release: bump, tag, push* |
+
+Outcomes: `added`, `merged`, `versioned`, or `conflict`. A conflict is not an error: both
+memories stay active until you resolve it. See [Conflicts](/cli/conflicts).
+
+## recall
+
+```bash
+memloom recall <text...>
+```
+
+Recall memories AND ingested files by meaning, exact keywords, and entities, fused into one
+ranking. Results from files carry their source (file, section, PDF page).
+
+```bash
+memloom recall "staging database"
+memloom recall "ECONNREFUSED 54329"     # exact identifiers work well
+```
+
+Only active memories are returned; superseded versions stay in history. How the ranking
+works is covered in [Retrieval](/concepts/retrieval).
+
+## update
+
+```bash
+memloom update <memory-id> <text...>
+```
+
+Edit a memory into a new version. The old version stays in history; recall only returns the
+current one. Get ids from recall output or the viewer.
+
+## history
+
+```bash
+memloom history <memory-id>
+```
+
+Show a memory's full version chain, newest first. The `*` marks the current version. Any
+version's id works, so an id from an old note still finds the chain.

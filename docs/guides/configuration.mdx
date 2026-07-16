@@ -69,10 +69,10 @@ first init, memloom stamps the store with the embedding fingerprint (e.g.
 fingerprint is refused with an explicit error, because mixed embedding spaces don't fail
 with an error; they silently return garbage recall.
 
-This means **switching between offline and cloud mode (or changing embedding models) requires
-a fresh store**: stop the daemon and delete `~/.memloom/data`, or restore the previous
-embedding config. The LLM model, by contrast, can be changed freely; it doesn't touch the
-vector space.
+Switching between offline and cloud mode (or changing embedding models) is a migration, not
+a dead end: stop the daemon and run [`memloom reembed`](/cli/graph#reembed), which recomputes
+every vector with the new provider and stamps the new fingerprint. The LLM model, by
+contrast, can be changed freely; it doesn't touch the vector space.
 
 ## Daemon endpoints
 

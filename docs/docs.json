@@ -117,6 +117,31 @@
             "pages": ["GET /health", "POST /admin/shutdown"]
           }
         ]
+      },
+      {
+        "tab": "CLI Reference",
+        "groups": [
+          {
+            "group": "CLI",
+            "pages": [
+              "cli/overview",
+              "cli/daemon",
+              "cli/memories",
+              "cli/graph",
+              "cli/context",
+              "cli/conflicts"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "MCP Reference",
+        "groups": [
+          {
+            "group": "MCP",
+            "pages": ["mcp/setup", "mcp/tools"]
+          }
+        ]
       }
     ]
   },
