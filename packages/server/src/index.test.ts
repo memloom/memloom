@@ -447,6 +447,60 @@ describe("server", () => {
     for (const m of memories) expect(new Date(m.createdAt).getTime()).not.toBeNaN();
   });
 
+  it("conflict round trip over HTTP: resolve, list resolved history, revert re-queues", async () => {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const contradictory = new ScriptedLLMProvider((prompt) =>
+      prompt.includes("classify how each existing")
+        ? '[{"candidate": 1, "relation": "contradictory", "reason": "different value"}]'
+        : "[]",
+    );
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: contradictory,
+    });
+    await memloom.init();
+    const server = createServer(memloom);
+
+    for (const content of ["the deploy window is friday", "the deploy window is monday"]) {
+      await server.request("/memory/save", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content }),
+      });
+    }
+    const { conflicts } = (await (await server.request("/memory/conflicts")).json()) as {
+      conflicts: Array<{ id: string }>;
+    };
+    expect(conflicts).toHaveLength(1);
+    const conflictId = conflicts[0]?.id as string;
+
+    await server.request(`/memory/conflicts/${conflictId}/resolve`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ action: "keep_new" }),
+    });
+    const resolvedRes = await server.request("/memory/conflicts/resolved");
+    expect(resolvedRes.status).toBe(200);
+    const resolved = (await resolvedRes.json()) as {
+      conflicts: Array<{ id: string; resolution: string; resolvedAt: string }>;
+    };
+    expect(resolved.conflicts).toHaveLength(1);
+    expect(resolved.conflicts[0]?.resolution).toBe("keep_new");
+    expect(new Date(resolved.conflicts[0]?.resolvedAt as string).getTime()).not.toBeNaN();
+
+    await server.request(`/memory/conflicts/${conflictId}/revert`, { method: "POST" });
+    const requeued = (await (await server.request("/memory/conflicts")).json()) as {
+      conflicts: unknown[];
+    };
+    expect(requeued.conflicts).toHaveLength(1);
+    const emptied = (await (await server.request("/memory/conflicts/resolved")).json()) as {
+      conflicts: unknown[];
+    };
+    expect(emptied.conflicts).toHaveLength(0);
+  });
+
   it("deletes a memory over HTTP; a made-up id maps to 404", async () => {
     const server = await app();
     const saved = await server.request("/memory/save", {

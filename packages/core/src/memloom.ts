@@ -58,6 +58,7 @@ import type {
   ReembedProgressEvent,
   ReembedResult,
   ResolveDecision,
+  ResolvedConflict,
   SaveInput,
   SaveResult,
   UpdateInput,
@@ -2007,6 +2008,45 @@ export class Memloom implements MemoryEngine {
       createdAt: r.created_at,
       incoming: { id: r.incoming_id, canonical: r.incoming_canonical, content: r.incoming_content },
       candidates: r.candidates,
+    }));
+  }
+
+  /**
+   * Resolved conflicts, newest resolution first: the revertable history behind the pending
+   * queue. The stored action collapses keep_new and keep_existing into 'supersede'; the
+   * winner side tells them apart again.
+   */
+  async resolvedConflicts(ownerId: string = SENTINEL_OWNER): Promise<ResolvedConflict[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      incoming_id: string;
+      incoming_canonical: string | null;
+      incoming_content: string;
+      candidates: ConflictCandidate[];
+      resolution_action: "supersede" | "keep_both" | "merge";
+      resolution_winner_id: string | null;
+      resolved_at: string;
+      created_at: string;
+    }>(
+      `SELECT id, incoming_id, incoming_canonical, incoming_content, candidates,
+              resolution_action, resolution_winner_id, resolved_at, created_at
+       FROM memory_dedup_decisions
+       WHERE owner_id = $1 AND action = 'conflict' AND resolution_action IS NOT NULL
+       ORDER BY resolved_at DESC`,
+      [ownerId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      createdAt: r.created_at,
+      incoming: { id: r.incoming_id, canonical: r.incoming_canonical, content: r.incoming_content },
+      candidates: r.candidates,
+      resolution:
+        r.resolution_action === "supersede"
+          ? r.resolution_winner_id === r.incoming_id
+            ? "keep_new"
+            : "keep_existing"
+          : r.resolution_action,
+      resolvedAt: r.resolved_at,
     }));
   }
 

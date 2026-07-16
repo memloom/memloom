@@ -1,13 +1,17 @@
-import { useState } from "react";
-import { api, type Conflict, type ResolveDecision } from "./api";
+import { useEffect, useState } from "react";
+import { api, type Conflict, type ResolveDecision, type ResolvedConflict } from "./api";
 
 // The human-in-the-loop queue: contradictions the belief pipeline flagged. Every resolution
-// is non-destructive and reversible, so each success gets an inline Undo (revert).
+// is non-destructive and reversible, so resolved conflicts stay listed below the queue with
+// a Revert that restores both memories and re-queues the pair. The history is read from the
+// decision log, so resolutions made over MCP or the CLI show up here too.
 
-interface ResolvedNotice {
-  conflictId: string;
-  action: string;
-}
+const RESOLUTION_LABEL: Record<ResolvedConflict["resolution"], string> = {
+  keep_new: "kept new",
+  keep_existing: "kept existing",
+  keep_both: "kept both",
+  merge: "merged",
+};
 
 export function ConflictsView({
   conflicts,
@@ -16,18 +20,27 @@ export function ConflictsView({
   conflicts: Conflict[];
   onChanged: () => void;
 }) {
+  const [resolved, setResolved] = useState<ResolvedConflict[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [notices, setNotices] = useState<ResolvedNotice[]>([]);
   const [mergeOpen, setMergeOpen] = useState<string | null>(null);
   const [mergeText, setMergeText] = useState("");
 
-  async function resolve(conflict: Conflict, decision: ResolveDecision, label: string) {
+  // The pending list arrives via props; reloading it (onChanged) gives it a new identity,
+  // so this effect also refreshes the resolved history after every resolve/revert.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: conflicts is the refresh signal, not an input
+  useEffect(() => {
+    api
+      .resolvedConflicts()
+      .then(setResolved)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, [conflicts]);
+
+  async function resolve(conflict: Conflict, decision: ResolveDecision) {
     setBusy(conflict.id);
     setError(null);
     try {
       await api.resolve(conflict.id, decision);
-      setNotices((n) => [{ conflictId: conflict.id, action: label }, ...n]);
       setMergeOpen(null);
       onChanged();
     } catch (err) {
@@ -37,14 +50,16 @@ export function ConflictsView({
     }
   }
 
-  async function undo(conflictId: string) {
+  async function revert(conflictId: string) {
+    setBusy(conflictId);
     setError(null);
     try {
       await api.revert(conflictId);
-      setNotices((n) => n.filter((x) => x.conflictId !== conflictId));
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -57,18 +72,7 @@ export function ConflictsView({
 
         {error && <div className="notice noticeError">{error}</div>}
 
-        {notices.map((n) => (
-          <div key={n.conflictId} className="notice">
-            <span>
-              Resolved with <b>{n.action}</b>, reversible.
-            </span>
-            <button type="button" className="btn btnGhost" onClick={() => undo(n.conflictId)}>
-              Undo
-            </button>
-          </div>
-        ))}
-
-        {conflicts.length === 0 && notices.length === 0 && (
+        {conflicts.length === 0 && (
           <p style={{ color: "var(--text-faint)" }}>
             No conflicts to review. When a new memory contradicts an existing one, both are kept and
             the pair appears here for you to decide.
@@ -93,7 +97,7 @@ export function ConflictsView({
                   type="button"
                   className="btn btnPrimary"
                   disabled={busy === conflict.id}
-                  onClick={() => resolve(conflict, { action: "keep_new" }, "keep new")}
+                  onClick={() => resolve(conflict, { action: "keep_new" })}
                 >
                   Keep new
                 </button>
@@ -103,11 +107,7 @@ export function ConflictsView({
                     className="btn"
                     disabled={busy === conflict.id}
                     onClick={() =>
-                      resolve(
-                        conflict,
-                        { action: "keep_existing", candidateId: single.id },
-                        "keep existing",
-                      )
+                      resolve(conflict, { action: "keep_existing", candidateId: single.id })
                     }
                   >
                     Keep existing
@@ -117,7 +117,7 @@ export function ConflictsView({
                   type="button"
                   className="btn"
                   disabled={busy === conflict.id}
-                  onClick={() => resolve(conflict, { action: "keep_both" }, "keep both")}
+                  onClick={() => resolve(conflict, { action: "keep_both" })}
                 >
                   Keep both
                 </button>
@@ -146,7 +146,7 @@ export function ConflictsView({
                       className="btn btnPrimary"
                       disabled={busy === conflict.id || mergeText.trim().length === 0}
                       onClick={() =>
-                        resolve(conflict, { action: "merge", content: mergeText.trim() }, "merge")
+                        resolve(conflict, { action: "merge", content: mergeText.trim() })
                       }
                     >
                       Save merged memory
@@ -157,6 +157,35 @@ export function ConflictsView({
             </div>
           );
         })}
+
+        {resolved && resolved.length > 0 && (
+          <>
+            <h2 className="sectionTitle">Resolved; {resolved.length}</h2>
+            {resolved.map((r) => (
+              <div key={r.id} className="card">
+                <div className="cardLabel">
+                  {RESOLUTION_LABEL[r.resolution]}; {new Date(r.resolvedAt).toLocaleString()}
+                </div>
+                <div className="statement statementNew">{r.incoming.content}</div>
+                {r.candidates.map((candidate) => (
+                  <div key={candidate.id} className="statement statementExisting">
+                    {candidate.content}
+                  </div>
+                ))}
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy === r.id}
+                    onClick={() => revert(r.id)}
+                  >
+                    Revert
+                  </button>
+                </div>
+              </div>
+            ))}
+          </>
+        )}
       </div>
     </div>
   );

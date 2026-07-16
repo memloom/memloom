@@ -128,6 +128,7 @@ export type {
   ReembedProgressEvent,
   ReembedResult,
   ResolveDecision,
+  ResolvedConflict,
   SaveInput,
   SaveOutcome,
   SaveResult,

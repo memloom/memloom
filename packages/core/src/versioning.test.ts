@@ -99,6 +99,30 @@ describe("node versioning", () => {
     expect(await m.history(b.id)).toHaveLength(1); // b back on its own root
   });
 
+  it("resolvedConflicts lists the decision log with the user-facing action; revert re-queues", async () => {
+    const m = await fresh(classifierReturning("contradictory"));
+    await m.save({ content: "staging runs Postgres" });
+    const b = await m.save({ content: "staging runs MySQL" });
+    expect(b.outcome).toBe("conflict");
+    expect(await m.resolvedConflicts()).toHaveLength(0);
+
+    await m.resolveConflict(b.conflictId as string, { action: "keep_new" });
+    const afterKeepNew = await m.resolvedConflicts();
+    expect(afterKeepNew).toHaveLength(1);
+    expect(afterKeepNew[0]?.resolution).toBe("keep_new");
+    expect(afterKeepNew[0]?.incoming.content).toBe("staging runs MySQL");
+    expect(await m.conflicts()).toHaveLength(0);
+
+    await m.revertConflict(b.conflictId as string);
+    expect(await m.resolvedConflicts()).toHaveLength(0);
+    expect(await m.conflicts()).toHaveLength(1);
+
+    // The stored action collapses both supersede directions; the winner side splits them.
+    const candidateId = (await m.conflicts())[0]?.candidates[0]?.id as string;
+    await m.resolveConflict(b.conflictId as string, { action: "keep_existing", candidateId });
+    expect((await m.resolvedConflicts())[0]?.resolution).toBe("keep_existing");
+  });
+
   it("deleteMemory removes the whole version chain from any version's id", async () => {
     const m = await fresh(classifierReturning("identical"));
     const a = await m.save({ content: "the sky is blue" });

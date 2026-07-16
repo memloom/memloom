@@ -11,6 +11,7 @@ import type {
   Memory,
   RecallOptions,
   ResolveDecision,
+  ResolvedConflict,
   SaveInput,
   SaveResult,
   UpdateInput,
@@ -42,6 +43,8 @@ export interface MemoryEngine {
   reindex(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
   graph(ownerId?: string): Promise<Graph>;
   conflicts(ownerId?: string): Promise<Conflict[]>;
+  /** Resolved conflicts, newest first: the revertable history behind the pending queue. */
+  resolvedConflicts(ownerId?: string): Promise<ResolvedConflict[]>;
   resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void>;
   revertConflict(conflictId: string): Promise<void>;
   /** Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors; re-add replaces. */

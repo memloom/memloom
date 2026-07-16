@@ -588,6 +588,11 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   app.get("/memory/conflicts", async (c) => c.json({ conflicts: await memloom.conflicts() }));
 
+  // The revertable history behind the pending queue: resolved conflicts, newest first.
+  app.get("/memory/conflicts/resolved", async (c) =>
+    c.json({ conflicts: await memloom.resolvedConflicts() }),
+  );
+
   app.post("/memory/conflicts/:id/resolve", async (c) => {
     const body = await parseBody(c, resolveSchema);
     if (!body.ok) return body.res;

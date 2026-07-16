@@ -117,6 +117,12 @@ export interface Conflict {
   candidates: ConflictCandidate[];
 }
 
+/** A resolved conflict from the decision log: the revertable history behind the pending queue. */
+export interface ResolvedConflict extends Conflict {
+  resolution: "keep_new" | "keep_existing" | "keep_both" | "merge";
+  resolvedAt: string;
+}
+
 export interface Entity {
   id: string;
   name: string;

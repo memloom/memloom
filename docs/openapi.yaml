@@ -684,6 +684,25 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Conflict"
+  /memory/conflicts/resolved:
+    get:
+      summary: List resolved conflicts
+      description: |
+        The revertable history behind the pending queue, newest resolution first. Each entry
+        carries the action that resolved it and can be undone via the revert endpoint.
+      operationId: listResolvedConflicts
+      responses:
+        "200":
+          description: Resolved conflicts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conflicts:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ResolvedConflict"
   /memory/conflicts/{id}/resolve:
     post:
       summary: Resolve a conflict
@@ -1443,6 +1462,18 @@ components:
               reason:
                 type: string
                 description: The classifier's explanation of why these contradict.
+    ResolvedConflict:
+      allOf:
+        - $ref: "#/components/schemas/Conflict"
+        - type: object
+          properties:
+            resolution:
+              type: string
+              enum: [keep_new, keep_existing, keep_both, merge]
+              description: The action that resolved it.
+            resolvedAt:
+              type: string
+              format: date-time
     ResolveDecision:
       oneOf:
         - type: object

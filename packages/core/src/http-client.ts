@@ -12,6 +12,7 @@ import type {
   Memory,
   RecallOptions,
   ResolveDecision,
+  ResolvedConflict,
   SaveInput,
   SaveResult,
   UpdateInput,
@@ -170,6 +171,13 @@ export class HttpMemloomClient implements MemoryEngine {
 
   async conflicts(): Promise<Conflict[]> {
     const { conflicts } = await this.#json<{ conflicts: Conflict[] }>("/memory/conflicts");
+    return conflicts;
+  }
+
+  async resolvedConflicts(): Promise<ResolvedConflict[]> {
+    const { conflicts } = await this.#json<{ conflicts: ResolvedConflict[] }>(
+      "/memory/conflicts/resolved",
+    );
     return conflicts;
   }
 

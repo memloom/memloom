@@ -106,6 +106,12 @@ export interface Conflict {
   candidates: ConflictCandidate[];
 }
 
+/** A resolved conflict from the decision log: the revertable history behind the pending queue. */
+export interface ResolvedConflict extends Conflict {
+  resolution: "keep_new" | "keep_existing" | "keep_both" | "merge";
+  resolvedAt: string;
+}
+
 export interface SaveResult {
   id: string;
   outcome: "added" | "merged" | "conflict" | "versioned";
@@ -455,6 +461,8 @@ export const api = {
     return done;
   },
   conflicts: () => json<{ conflicts: Conflict[] }>("/memory/conflicts").then((r) => r.conflicts),
+  resolvedConflicts: () =>
+    json<{ conflicts: ResolvedConflict[] }>("/memory/conflicts/resolved").then((r) => r.conflicts),
   resolve: (id: string, decision: ResolveDecision) =>
     post<{ ok: boolean }>(`/memory/conflicts/${id}/resolve`, decision),
   revert: (id: string) => post<{ ok: boolean }>(`/memory/conflicts/${id}/revert`),
