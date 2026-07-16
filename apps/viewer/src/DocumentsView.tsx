@@ -70,7 +70,7 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
         <h2 className="sectionTitle">Recall</h2>
         <RecallCard only="context" />
 
-        <h2 className="sectionTitle">Documents {docs ? `· ${docs.length}` : ""}</h2>
+        <h2 className="sectionTitle">Documents{docs ? `; ${docs.length}` : ""}</h2>
 
         {error && <div className="notice noticeError">{error}</div>}
         {!docs && !error && <div className="spin">loading…</div>}
@@ -90,7 +90,7 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
                 <span className="docTitle">{d.title}</span>
                 <span className="kindTag">{d.kind}</span>
                 <span className="docMeta">
-                  {d.chunkCount} chunks · updated {new Date(d.updatedAt).toLocaleString()}
+                  {d.chunkCount} chunks; updated {new Date(d.updatedAt).toLocaleString()}
                 </span>
               </div>
               <div className="docPath">{d.path}</div>
@@ -128,7 +128,7 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
                     <div key={c.id} className="statement">
                       <div className="chunkCrumb">
                         {c.headingPath ?? `#${c.chunkIndex + 1}`}
-                        {c.page != null ? ` · p. ${c.page}` : ""}
+                        {c.page != null ? `; p. ${c.page}` : ""}
                       </div>
                       {c.content}
                     </div>

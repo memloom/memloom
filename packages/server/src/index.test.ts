@@ -447,6 +447,26 @@ describe("server", () => {
     for (const m of memories) expect(new Date(m.createdAt).getTime()).not.toBeNaN();
   });
 
+  it("deletes a memory over HTTP; a made-up id maps to 404", async () => {
+    const server = await app();
+    const saved = await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "the staging database runs on Postgres" }),
+    });
+    const { id } = (await saved.json()) as { id: string };
+
+    const del = await server.request(`/memory/${id}`, { method: "DELETE" });
+    expect(del.status).toBe(200);
+    const list = (await (await server.request("/memory/list")).json()) as {
+      memories: unknown[];
+    };
+    expect(list.memories).toHaveLength(0);
+
+    const missing = await server.request(`/memory/${crypto.randomUUID()}`, { method: "DELETE" });
+    expect(missing.status).toBe(404);
+  });
+
   it("accepts a valid memoryType and rejects one outside the taxonomy", async () => {
     const server = await app();
 

@@ -99,6 +99,30 @@ describe("node versioning", () => {
     expect(await m.history(b.id)).toHaveLength(1); // b back on its own root
   });
 
+  it("deleteMemory removes the whole version chain from any version's id", async () => {
+    const m = await fresh(classifierReturning("identical"));
+    const a = await m.save({ content: "the sky is blue" });
+    const b = await m.save({ content: "the sky is blue today" });
+    expect(b.version).toBe(2);
+
+    await m.deleteMemory(a.id); // the stale v1 id reaches the whole chain
+    expect(await m.memories()).toHaveLength(0);
+    await expect(m.history(b.id)).rejects.toThrow(/no memory/);
+    await expect(m.deleteMemory(a.id)).rejects.toThrow(/no memory/);
+  });
+
+  it("deleteMemory drops pending conflicts naming the memory on either side", async () => {
+    const m = await fresh(classifierReturning("contradictory"));
+    const a = await m.save({ content: "staging runs Postgres" });
+    const b = await m.save({ content: "staging runs MySQL" });
+    expect(b.outcome).toBe("conflict");
+    expect(await m.conflicts()).toHaveLength(1);
+
+    await m.deleteMemory(a.id); // a is the candidate side of the conflict
+    expect(await m.conflicts()).toHaveLength(0);
+    expect((await m.memories()).map((x) => x.content)).toEqual(["staging runs MySQL"]);
+  });
+
   it("keep_both leaves two independent beliefs, not a version chain", async () => {
     const m = await fresh(classifierReturning("contradictory"));
     const a = await m.save({ content: "cats are better" });

@@ -47,7 +47,7 @@ function runSummary(run: IndexRun): string {
   const failed = run.itemsFailed > 0 ? `, ${run.itemsFailed} failed` : "";
   const prefix =
     run.status === "interrupted" ? "interrupted: " : run.trigger === "rebuild" ? "rebuild: " : "";
-  return `${prefix}${indexed}${failed} · +${run.entitiesLinked} entities, +${run.relationsCreated} relations`;
+  return `${prefix}${indexed}${failed}; +${run.entitiesLinked} entities, +${run.relationsCreated} relations`;
 }
 
 function runLevel(run: IndexRun): IndexEventLevel {
@@ -296,7 +296,7 @@ export function ConsoleView({ onChanged }: { onChanged: () => void }) {
           {runs && runs.length > 0 && (
             <>
               <div className="sessionListHead">
-                <span className="cardLabel">sessions · {runs.length}</span>
+                <span className="cardLabel">sessions; {runs.length}</span>
                 <button
                   type="button"
                   className={`btn btnGhost ${clearArmed ? "btnDangerArmed" : ""}`}

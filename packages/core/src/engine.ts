@@ -29,6 +29,8 @@ export interface MemoryEngine {
   update(input: UpdateInput): Promise<UpdateResult>;
   /** The full version chain of a belief, newest first: pass any version's id. */
   history(memoryId: string, ownerId?: string): Promise<Memory[]>;
+  /** Delete a belief outright: every version, its edges, and pending conflicts naming it. */
+  deleteMemory(memoryId: string, ownerId?: string): Promise<void>;
   /**
    * The complete text of one recall hit (a memory or a context chunk) by its id: the
    * fetch-the-rest path when a recall surface truncated the passage (PASSAGE_CHARS).

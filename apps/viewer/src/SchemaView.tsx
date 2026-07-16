@@ -21,7 +21,7 @@ function VocabSection({
   return (
     <div className="card">
       <div className="cardLabel">
-        {title} · {entries.length}
+        {title}; {entries.length}
       </div>
       {entries.map((entry) => (
         <div
@@ -131,7 +131,7 @@ function EntitiesSection({
         className="cardLabel cardLabelToggle"
         onClick={() => setOpen((v) => !v)}
       >
-        {open ? "▾" : "▸"} entities · {entities.length}
+        {open ? "▾" : "▸"} entities; {entities.length}
       </button>
       {open && (
         <div className="entityList">
@@ -187,7 +187,7 @@ function EntitiesSection({
                 </select>
                 <span className="docMeta">
                   {e.mentions > 0
-                    ? `${e.mentions} mentions · ${e.documents} docs · ${e.memories} memories`
+                    ? `${e.mentions} mentions; ${e.documents} docs; ${e.memories} memories`
                     : "unused"}
                 </span>
                 <button
@@ -321,7 +321,7 @@ export function SchemaView({ onChanged }: { onChanged: () => void }) {
 
         {schema && schema.proposals.length > 0 && (
           <div className="card">
-            <div className="cardLabel">proposed by the indexer · {schema.proposals.length}</div>
+            <div className="cardLabel">proposed by the indexer; {schema.proposals.length}</div>
             <p className="schemaHint">
               The extraction model wants these new entity types and predicates. Each shows what it
               found; approving adds the name to the vocabulary and links those finds into the graph

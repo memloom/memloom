@@ -418,6 +418,17 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     c.json({ versions: await memloom.history(c.req.param("id")) }),
   );
 
+  // Deletes the whole belief: every version, its edges, and pending conflicts naming it.
+  app.delete("/memory/:id", async (c) => {
+    try {
+      await memloom.deleteMemory(c.req.param("id"));
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no memory/.test(message) ? 404 : 400);
+    }
+  });
+
   // The full text of one recall hit (memory or context chunk): the fetch-the-rest path
   // behind truncated recall passages (MCP read_passage, assistant read_source).
   app.get("/memory/passage/:id", async (c) => {

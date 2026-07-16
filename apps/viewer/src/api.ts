@@ -333,6 +333,7 @@ export const api = {
     post<UpdateResult>(`/memory/${id}/update`, input),
   history: (id: string) =>
     json<{ versions: Memory[] }>(`/memory/${id}/history`).then((r) => r.versions),
+  deleteMemory: (id: string) => json<{ ok: boolean }>(`/memory/${id}`, { method: "DELETE" }),
   index: () => post<{ indexed: number; chunksIndexed: number }>("/memory/index"),
   // The Console's auto-index toggle; `available` is false in offline mode.
   autoIndex: () => json<{ enabled: boolean; available: boolean }>("/memory/auto-index"),

@@ -968,6 +968,50 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
+   * Delete a belief outright: every version in its chain, the edges it participates in, and
+   * any pending conflict that references it. Unlike update(), this is not reversible; the
+   * version history goes with it. Entities the belief mentioned stay in the graph (other
+   * sources may mention them), and resolved conflicts stay as the audit log (they carry
+   * their own content copies).
+   */
+  async deleteMemory(memoryId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    await this.#storage.tx(async (tx) => {
+      const [row] = await tx.query<{ root_id: string }>(
+        "SELECT root_id FROM memory_objects WHERE id = $1 AND owner_id = $2",
+        [memoryId, ownerId],
+      );
+      if (!row) throw new Error(`memloom: no memory ${memoryId}`);
+      // Edges the chain appears in (mention, replaces, distinct) and relationships it
+      // stated (source_id) go with it. Runs before the row delete: the subselects need
+      // the chain to still exist.
+      await tx.query(
+        `DELETE FROM memory_edges
+         WHERE owner_id = $2 AND (
+           from_id IN (SELECT id FROM memory_objects WHERE owner_id = $2 AND root_id = $1)
+           OR to_id IN (SELECT id FROM memory_objects WHERE owner_id = $2 AND root_id = $1)
+           OR source_id IN (SELECT id FROM memory_objects WHERE owner_id = $2 AND root_id = $1))`,
+        [row.root_id, ownerId],
+      );
+      // A pending conflict pointing at a deleted memory would render as a ghost the owner
+      // can no longer act on; drop it whether the memory is the incoming or a candidate side.
+      await tx.query(
+        `DELETE FROM memory_dedup_decisions
+         WHERE owner_id = $2 AND action = 'conflict' AND resolution_action IS NULL
+           AND (incoming_id IN (SELECT id FROM memory_objects WHERE owner_id = $2 AND root_id = $1)
+             OR EXISTS (
+               SELECT 1 FROM jsonb_array_elements(candidates) AS cand
+               JOIN memory_objects mo ON mo.id = (cand.value->>'id')::uuid
+               WHERE mo.owner_id = $2 AND mo.root_id = $1))`,
+        [row.root_id, ownerId],
+      );
+      await tx.query("DELETE FROM memory_objects WHERE owner_id = $1 AND root_id = $2", [
+        ownerId,
+        row.root_id,
+      ]);
+    });
+  }
+
+  /**
    * Recall active memories, ranked by hybrid retrieval: vector (meaning) and keyword (exact)
    * arms fused with reciprocal-rank fusion. `similarity` is the cosine signal alone;
    * `rrfScore` is the fused rank a result should be ordered by. Results arrive fused-order.

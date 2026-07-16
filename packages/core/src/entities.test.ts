@@ -81,6 +81,20 @@ describe("entities + indexer", () => {
     expect(mentions).toHaveLength(2);
   });
 
+  it("deleteMemory takes the memory's mention edges with it; entity nodes stay", async () => {
+    const m = await fresh();
+    const a = await m.save({ content: "the staging database runs on Postgres" });
+    await m.save({ content: "we cache queries in Redis" });
+    await m.index();
+
+    await m.deleteMemory(a.id);
+    const graph = await m.graph();
+    expect(graph.memories).toHaveLength(1);
+    expect(graph.edges.filter((e) => e.relation === "mention")).toHaveLength(1);
+    // Entities survive a memory delete: other sources may mention them.
+    expect(graph.entities.map((e) => e.name).sort()).toEqual(["Postgres", "Redis"]);
+  });
+
   it("index is idempotent", async () => {
     const m = await fresh();
     await m.save({ content: "deployed to Fly" });

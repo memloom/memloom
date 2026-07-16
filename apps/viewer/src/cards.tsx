@@ -134,11 +134,11 @@ export function RecallCard({ only }: { only?: "memory" | "context" }) {
           <div className="recallTitle">{m.canonical ?? m.content}</div>
           {m.canonical && <div className="recallContent">{m.content}</div>}
           <div className="recallMeta">
-            similarity {(m.similarity ?? 0).toFixed(2)} · saved{" "}
+            similarity {(m.similarity ?? 0).toFixed(2)}; saved{" "}
             {new Date(m.createdAt).toLocaleString()}
             {m.source && (
               <>
-                {" · from "}
+                {"; from "}
                 {m.source.title}
                 {m.source.headingPath ? ` › ${m.source.headingPath}` : ""}
                 {m.source.page != null ? ` (p. ${m.source.page})` : ""}
@@ -199,16 +199,16 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
       setNotice(
         r.documents !== undefined
           ? `ingested ${r.documents} ${r.documents === 1 ? "file" : "files"}` +
-              `${r.unchanged ? ` (${r.unchanged} unchanged)` : ""} · ${r.chunks} chunks. ` +
+              `${r.unchanged ? ` (${r.unchanged} unchanged)` : ""}; ${r.chunks} chunks. ` +
               indexHint +
               absorbedNote
           : r.outcome === "converted"
             ? r.rechunked
-              ? `linked "${r.title}"; replaced the uploaded snapshot and re-chunked · ${r.chunks} chunks. ${indexHint}${absorbedNote}`
+              ? `linked "${r.title}"; replaced the uploaded snapshot and re-chunked; ${r.chunks} chunks. ${indexHint}${absorbedNote}`
               : `linked "${r.title}"; replaced the uploaded snapshot, chunks and entities kept.${absorbedNote}`
             : r.outcome === "unchanged"
               ? `"${r.title}" is unchanged, nothing to do.${absorbedNote}`
-              : `${r.outcome} "${r.title}" · ${r.chunks} chunks. ${indexHint}${absorbedNote}`,
+              : `${r.outcome} "${r.title}"; ${r.chunks} chunks. ${indexHint}${absorbedNote}`,
       );
       setPath("");
       onAdded();
@@ -239,7 +239,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
     }
     setNotice(
       `linked ${files} ${files === 1 ? "file" : "files"}` +
-        `${unchanged ? ` (${unchanged} unchanged)` : ""} · ${chunks} chunks. ` +
+        `${unchanged ? ` (${unchanged} unchanged)` : ""}; ${chunks} chunks. ` +
         indexHint,
     );
     if (failures.length > 0) setError(failures.join("; "));
@@ -307,7 +307,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
         ? existsNote
         : `uploaded ${added} ${added === 1 ? "file" : "files"}` +
             `${unchanged ? ` (${unchanged} already here)` : ""}` +
-            `${skipped ? ` (${skipped} unsupported skipped)` : ""} · ${chunks} chunks. ` +
+            `${skipped ? ` (${skipped} unsupported skipped)` : ""}; ${chunks} chunks. ` +
             indexHint,
     );
     if (failures.length > 0) setError(failures.join("; "));

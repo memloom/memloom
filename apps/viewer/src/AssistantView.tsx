@@ -113,7 +113,7 @@ function SourcesPanel({
   if (sources.length === 0) return null;
   return (
     <details className="sourcesPanel">
-      <summary>sources · {sources.length}</summary>
+      <summary>sources; {sources.length}</summary>
       {sources.map((s) => {
         const isOpen = openN === s.n;
         return (
@@ -280,7 +280,7 @@ function ModelPicker({
                       </span>
                       <span className="modelRowMeta">
                         {fmtPrice(m.promptPer1M)}/{fmtPrice(m.completionPer1M)} per 1M
-                        {m.contextLength ? ` · ${fmtContext(m.contextLength)} ctx` : ""}
+                        {m.contextLength ? `; ${fmtContext(m.contextLength)} ctx` : ""}
                       </span>
                       {m.description && <span className="modelRowDesc">{m.description}</span>}
                     </button>

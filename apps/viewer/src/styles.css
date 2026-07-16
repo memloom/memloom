@@ -1004,7 +1004,7 @@ textarea {
   gap: 8px;
 }
 
-/* inline text actions in the meta row (edit · history) */
+/* inline text actions in the meta row (edit; history; remove) */
 .metaAction {
   font-family: var(--mono);
   font-size: 11px;

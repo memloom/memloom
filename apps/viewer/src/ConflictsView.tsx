@@ -52,7 +52,7 @@ export function ConflictsView({
     <div className="panel">
       <div className="panelInner">
         <h2 className="sectionTitle">
-          Conflicts {conflicts.length > 0 ? `· ${conflicts.length} pending` : ""}
+          Conflicts{conflicts.length > 0 ? `; ${conflicts.length} pending` : ""}
         </h2>
 
         {error && <div className="notice noticeError">{error}</div>}

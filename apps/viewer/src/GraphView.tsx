@@ -1039,7 +1039,7 @@ export function GraphView({
               }
               return (
                 <div className="sideChunkList">
-                  <div className="cardLabel">chunks · {dc.chunks.length}</div>
+                  <div className="cardLabel">chunks; {dc.chunks.length}</div>
                   {dc.chunks.map((c) => (
                     <button
                       type="button"
@@ -1048,7 +1048,7 @@ export function GraphView({
                       onClick={() => selectChunk(c)}
                     >
                       {c.headingPath ?? `#${c.chunkIndex + 1}`}
-                      {c.page != null ? ` · p. ${c.page}` : ""}
+                      {c.page != null ? `; p. ${c.page}` : ""}
                     </button>
                   ))}
                 </div>

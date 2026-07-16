@@ -4,7 +4,8 @@ import { RecallCard, SaveMemoryCard } from "./cards";
 
 // Browse every active memory, newest first. The reading counterpart to the Console's
 // query-driven recall. Each memory can be edited (a manual, human action that appends a new
-// version) and its version history expanded.
+// version), its version history expanded, or removed outright (two-step confirm; deletes
+// the whole version chain).
 
 const TYPES: MemoryType[] = ["fact", "preference", "episode", "procedure"];
 
@@ -15,6 +16,7 @@ function MemoryCard({ m, onChanged }: { m: Memory; onChanged: () => void }) {
   const [err, setErr] = useState<string | null>(null);
   const [history, setHistory] = useState<Memory[] | null>(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [arming, setArming] = useState(false);
 
   async function saveEdit() {
     const next = draft.trim();
@@ -27,6 +29,23 @@ function MemoryCard({ m, onChanged }: { m: Memory; onChanged: () => void }) {
     try {
       await api.update(m.id, { content: next });
       setEditing(false);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function remove() {
+    if (!arming) {
+      setArming(true);
+      return;
+    }
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.deleteMemory(m.id);
       onChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -87,7 +106,7 @@ function MemoryCard({ m, onChanged }: { m: Memory; onChanged: () => void }) {
         </div>
       ) : (
         <div className="recallMeta">
-          saved {new Date(m.createdAt).toLocaleString()} · id {m.id.slice(0, 8)}
+          saved {new Date(m.createdAt).toLocaleString()}; id {m.id.slice(0, 8)}
           <button
             type="button"
             className="metaAction"
@@ -100,9 +119,18 @@ function MemoryCard({ m, onChanged }: { m: Memory; onChanged: () => void }) {
           </button>
           {m.version > 1 && (
             <button type="button" className="metaAction" onClick={toggleHistory}>
-              {showHistory ? "hide history" : `history · ${m.version} versions`}
+              {showHistory ? "hide history" : `history; ${m.version} versions`}
             </button>
           )}
+          <button
+            type="button"
+            className="metaAction metaActionDanger"
+            disabled={busy}
+            onClick={remove}
+            onBlur={() => setArming(false)}
+          >
+            {arming ? "confirm remove" : "remove"}
+          </button>
         </div>
       )}
 
@@ -117,7 +145,7 @@ function MemoryCard({ m, onChanged }: { m: Memory; onChanged: () => void }) {
             >
               <div className="historyMeta">
                 <span className="versionTag">v{v.version}</span>
-                {v.status === "active" ? "current" : "superseded"} ·{" "}
+                {v.status === "active" ? "current" : "superseded"};{" "}
                 {new Date(v.assertedAt).toLocaleString()}
               </div>
               <div className="historyContent">{v.content}</div>
@@ -158,7 +186,7 @@ export function MemoriesView() {
         <h2 className="sectionTitle">Recall</h2>
         <RecallCard only="memory" />
 
-        <h2 className="sectionTitle">Memories {memories ? `· ${memories.length} active` : ""}</h2>
+        <h2 className="sectionTitle">Memories{memories ? `; ${memories.length} active` : ""}</h2>
 
         {error && <div className="notice noticeError">{error}</div>}
         {!memories && !error && <div className="spin">loading…</div>}

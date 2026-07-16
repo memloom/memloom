@@ -89,6 +89,10 @@ export class HttpMemloomClient implements MemoryEngine {
     return versions;
   }
 
+  async deleteMemory(memoryId: string): Promise<void> {
+    await this.#json(`/memory/${memoryId}`, { method: "DELETE" });
+  }
+
   async passage(id: string): Promise<string | null> {
     const res = await this.#fetch(`${this.#baseUrl}/memory/passage/${id}`);
     if (res.status === 404) return null;
