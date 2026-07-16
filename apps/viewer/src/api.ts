@@ -191,7 +191,7 @@ export interface IndexRunEvent {
   createdAt: string;
 }
 
-// assistant chat (docs/design/assistant-tab.md)
+// assistant chat
 
 export interface AssistantSource {
   n: number;

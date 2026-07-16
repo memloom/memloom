@@ -1364,7 +1364,7 @@ export class Memloom implements MemoryEngine {
     await this.#storage.query("DELETE FROM memory_index_runs WHERE owner_id = $1", [ownerId]);
   }
 
-  // assistant chat (docs/design/assistant-tab.md)
+  // assistant chat
 
   static readonly #ASSISTANT_HISTORY_LIMIT = 12;
 

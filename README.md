@@ -85,17 +85,29 @@ One daemon (`memloom serve`) owns the store; everything else is a client:
 
 ## Extending: add a file format
 
-Extraction is pluggable: an extractor is one object (`kind`, `extensions`, `extract()`), and
-formats added by the community land in the same registry the built-ins use. See
-[CONTRIBUTING.md](./CONTRIBUTING.md#write-an-extractor) for a worked example; wanted next:
-CSV/JSON, DOCX, URLs.
+Extraction is pluggable: an extractor is one object (`kind`, `extensions`, `extract()`)
+registered into the same registry the built-ins use. See the
+[extractor guide](./docs/guides/extractors.mdx) for a worked example and the ground rules;
+wanted next: CSV/JSON, DOCX, URLs.
+
+## Development
+
+Node >= 22 and pnpm 10. No Docker, no database to install: tests spin up PGLite
+(Postgres compiled to WebAssembly) in-process, run the migrations, and exercise the
+engine against a real database.
+
+```bash
+pnpm install
+pnpm typecheck   # tsc --noEmit across packages
+pnpm lint        # biome check
+pnpm test        # vitest
+pnpm build       # tsup across packages
+```
 
 ## Learn more
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md): the design, and the two rules that are hard to reverse
-- [CONTRIBUTING.md](./CONTRIBUTING.md): dev setup (tests run against real Postgres via PGLite,
-  no Docker), the extractor guide, releasing
-- [docs/](./docs): the full HTTP API (Mintlify)
+- [docs/](./docs): concepts, guides, and the full CLI, MCP, and HTTP API reference (Mintlify)
 
 ## License & trademark
 

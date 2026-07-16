@@ -86,6 +86,17 @@ registerExtractor({
 Registrations are keyed by extension (last one wins), so you can also *override* a built-in:
 for example, replace the PDF extractor with an OCR-backed one.
 
+Ground rules that keep memloom's install light:
+
+- **Lazy-import your parser** (`await import(...)` inside `extract`) and keep it pure JS. No
+  native binaries, no cloud calls.
+- **Preserve locality**: emit one unit per page/sheet/section when the format has them;
+  citations depend on the `page` field of the unit.
+- **Bump `version`** whenever extraction output changes (see below).
+- **Test end to end**: register, ingest through `contextAdd`, recall, assert the citation.
+  See the extractor registry test in `packages/core/src/extract.test.ts`; it runs against
+  real Postgres (PGLite) with no setup.
+
 ## Pipeline versioning
 
 Each extractor declares a `version`. Bump it when the format's extract/chunk logic changes:

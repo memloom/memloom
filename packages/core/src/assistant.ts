@@ -5,7 +5,7 @@ import type { AssistantSource, Memory } from "./types.js";
 // whether to retrieve (native tool calling, the policy lives in the system prompt).
 // Two-stage shape proven in a production chat assistant: non-streaming gather rounds with
 // tools, then one streaming final call with tools off. Pure logic: storage, sessions,
-// and transport live in memloom.ts / the server. See docs/design/assistant-tab.md.
+// and transport live in memloom.ts / the server.
 
 // 4 rounds so recall + a read_source follow-up + one re-query still fit in one turn.
 export const MAX_TOOL_ROUNDS = 4;

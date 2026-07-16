@@ -31,7 +31,6 @@ import {
 // The assistant tab: chat grounded in the local memory store. The harness lives in the
 // engine; this view renders sessions (star/rename/search/delete), streams one turn over
 // SSE with a typewriter status line while tools run, and shows per-answer sources.
-// See docs/design/assistant-tab.md.
 
 const THINKING_LINES = [
   "thinking...",

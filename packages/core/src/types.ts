@@ -265,7 +265,7 @@ export interface ReembedResult {
   counts: { memories: number; entities: number; chunks: number; messages: number };
 }
 
-// ---- Assistant chat (the viewer's assistant tab; docs/design/assistant-tab.md) ----
+// ---- Assistant chat (the viewer's assistant tab) ----
 
 /** One recall hit the assistant grounded an answer in. `n` matches the [n] markers. */
 export interface AssistantSource {

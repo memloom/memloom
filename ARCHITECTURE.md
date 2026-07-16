@@ -58,8 +58,7 @@ Because it's one real Postgres dialect everywhere, moving up a tier is a config 
 - **Memory** = engine-owned atomic beliefs. Deduped, contradiction-checked, active/stale, with
   human-in-the-loop conflict resolution. A belief is **versioned**: restating or editing a fact
   appends a new version (sharing a `root_id`, prior version staled but kept), so `history()` shows
-  how it changed. Recall always returns only the current version. See
-  `docs/design/node-versioning.md`.
+  how it changed. Recall always returns only the current version.
 - **Context** = source-owned documents the engine mirrors. Re-adding an unchanged file is a
   no-op (content hash), a changed file replaces its chunks in one transaction; no conflict
   machinery. If context changes, you edit the source file.
@@ -83,8 +82,10 @@ primitives, one recall call (`memloom_fuse` unions memories and chunks in each r
   Postgres`) **prepended into the embedded text**, so both the vector and keyword arms see the
   heading context (the contextual-retrieval lever), and the same breadcrumb powers citations
   (`from notes.pdf › TITLE > 2. (p. 1)`).
-- **Size-split** with the recursive character splitter (~1,600-char target, 2,048 cap, ~200
-  overlap) only when a section exceeds the cap.
+- **Size-split** only when a section is oversized. Markdown keeps a heading section whole up
+  to 16,000 chars; past that it splits at paragraph boundaries toward an 8,000-char target
+  with zero overlap. Outline sections (plain text, PDF) use the recursive character splitter
+  (~1,600-char target, 2,048 cap, ~200 overlap).
 - **Mirror-write**: the extractor `version` is salted into the content hash (`#p{n}`), so when
   an extraction pipeline improves, unchanged files re-ingest on the next `context add` instead
   of no-op'ing on stale chunks.

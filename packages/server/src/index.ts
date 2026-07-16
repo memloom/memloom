@@ -89,8 +89,7 @@ async function nativePick(mode: "file" | "folder"): Promise<string[] | null> {
     // so the owner must be a real, shown, ON-SCREEN window: centered, 1x1, near-invisible
     // (1% opacity), TopMost. An offscreen owner (-32000) sends the dialog to a clamped
     // corner with no taskbar button and no activation: invisible in practice. Verified on
-    // Windows 11 through the detached-daemon chain; see docs/design/assistant-tab.md repo
-    // history for the full investigation.
+    // Windows 11 through the detached-daemon chain.
     const owner =
       "$owner = New-Object System.Windows.Forms.Form; $owner.TopMost = $true; " +
       "$owner.ShowInTaskbar = $false; $owner.FormBorderStyle = 'None'; " +
