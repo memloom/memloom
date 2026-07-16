@@ -16,7 +16,7 @@ import {
 // reach for each tool and how memloom behaves (dedup + human-in-the-loop conflicts).
 
 export function buildServer(memloom: MemoryEngine): McpServer {
-  const server = new McpServer({ name: "memloom", version: "0.0.0" });
+  const server = new McpServer({ name: "memloom", version: "0.1.0" });
 
   server.tool(
     "save_memory",

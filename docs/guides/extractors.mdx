@@ -55,10 +55,14 @@ chunk, so a chunk is exactly one definition, theorem, or clause, with a breadcru
 `LIMITS OF FUNCTIONS > 2. DEFINITION`. Text with no such structure degrades gracefully to
 plain size-based splitting.
 
-Within a section, chunks target ~1,600 characters (≈400 tokens) with a 2,048 hard cap and
-~200 characters of overlap carried across boundaries. These are research-consensus defaults,
-sized in characters on purpose: a tokenizer dependency buys nothing when the embedding model
-has ~20× context headroom.
+The two strategies size chunks differently. **Markdown keeps a heading section whole**: one
+section is one chunk up to 16,000 characters, and only a section past that cap splits, at
+paragraph boundaries toward an 8,000-character target with zero overlap. Heading boundaries
+are exact semantic boundaries, so nothing is cut mid-thought and nothing is duplicated
+across chunks. **Outline chunks** (plain text and PDF) target ~1,600 characters with a
+2,048 hard cap and ~200 characters of overlap carried across boundaries. Both are sized in
+characters on purpose: a tokenizer dependency buys nothing when the embedding model has
+that much context headroom.
 
 ## Adding a format
 

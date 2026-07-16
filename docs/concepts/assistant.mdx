@@ -19,16 +19,19 @@ answers directly, with no retrieval.
 
 One user message runs an agentic loop:
 
-1. The model sees your message, the chat history, and one tool: `recall_memory`.
-   It decides whether to search at all. Small talk, arithmetic, and general knowledge
-   get a direct answer with no retrieval.
+1. The model sees your message, the chat history, and two tools: `recall_memory` and
+   `read_source` (the full text of a passage an earlier recall truncated). It decides
+   whether to search at all. Small talk, arithmetic, and general knowledge get a direct
+   answer with no retrieval.
 2. If it searches, the query goes through the same
    [hybrid retrieval](/concepts/retrieval) as `memloom recall`: vector, keyword, and
    entity arms fused into one ranking over memories **and** context chunks. Day-specific
    questions ("today", "yesterday", an exact date) add a calendar filter.
-3. Results come back as numbered passages. The model may reformulate and search again
-   when the first results look off, capped at three calls, and it cannot repeat a query
-   it already made.
+3. Results come back as numbered passages, each injected up to 8,000 characters. A longer
+   passage (a markdown chunk is a whole heading section, up to 16k) is cut with a marker,
+   and the model calls `read_source(n)` when the answer may live in the cut part. It may
+   also reformulate and search again when the first results look off, capped at three
+   calls, and it cannot repeat a query it already made.
 4. The final answer streams in with `[n]` markers after sentences that used passage `n`.
    Markers pointing at passages that don't exist are stripped server-side, so every
    clickable citation points at a real passage.

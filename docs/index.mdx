@@ -16,14 +16,23 @@ surfaces, see the [CLI Reference](/cli/overview) and the [MCP Reference](/mcp/se
 ## Quickstart
 
 ```bash
-memloom init      # creates ~/.memloom (store + config.env), starts the daemon
+npm install -g memloom   # or run every command through npx: npx memloom <command>
+memloom init             # creates ~/.memloom (store + config.env), starts the daemon
 memloom save "the staging database runs on Postgres"
 memloom recall "staging database"
 ```
 
-`init` prints the path to `config.env`. Set `OPENROUTER_API_KEY` there and restart the daemon
-(`memloom stop`, then `memloom serve`) to switch from offline mode to real embeddings, semantic
-dedup, and contradiction detection.
+`init` prints the path to `config.env`. To switch from offline mode to real embeddings,
+semantic dedup, and contradiction detection: set `OPENROUTER_API_KEY` there, then
+
+```bash
+memloom stop      # the store must be closed for the next step
+memloom reembed   # recompute existing vectors with the new provider
+memloom serve     # start again in cloud mode
+```
+
+The `reembed` step matters: offline and cloud vectors live in different spaces, and the daemon
+refuses to start on a store whose vectors do not match its config (see the note below).
 
 ## Memory types
 
@@ -113,8 +122,7 @@ until the store matches the config.
 
 ## Testing the API by hand
 
-With the daemon running, use the interactive playground on any endpoint page in the
-[API Reference](/api-reference); requests go straight to `http://127.0.0.1:4319`. Or curl:
+With the daemon running, curl any endpoint from your own machine:
 
 ```bash
 curl -s http://127.0.0.1:4319/memory/query \
@@ -125,3 +133,7 @@ curl -s http://127.0.0.1:4319/memory/query \
 The `serve` terminal logs every request twice: `→` on arrival and `←` with status + duration on
 completion. A locked store answers 503 within ~1.5s (see the warning above); a stalled provider
 call times out after 60s with the provider's error in the response.
+
+Every endpoint is documented in the API Reference tab. The daemon only accepts browser
+requests from localhost origins by design, so test against it with curl or your own local
+tools rather than from a hosted page.

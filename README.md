@@ -24,7 +24,8 @@ charge of:
 ## Quickstart: two minutes, no Docker, no signup
 
 ```bash
-npx memloom init                      # creates ~/.memloom, starts the daemon
+npm install -g memloom                # one binary, no Docker
+memloom init                          # creates ~/.memloom, starts the daemon
 memloom save "the staging database runs on Postgres"
 memloom recall "staging db"
 memloom context add ./docs            # your files join the same recall, with citations
@@ -78,7 +79,7 @@ One daemon (`memloom serve`) owns the store; everything else is a client:
 | --- | --- |
 | CLI | `memloom save / recall / context / conflicts / ui` |
 | MCP | `@memloom/mcp`: Claude Desktop, Claude Code, Cursor, any MCP client |
-| HTTP API | `http://127.0.0.1:4319`: [API reference](./docs) with an interactive playground |
+| HTTP API | `http://127.0.0.1:4319`: full [API reference](./docs), localhost-only by design |
 | Viewer | `memloom ui`: memory/entity graph, conflict review, console |
 | Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres`: psql, Drizzle Studio, TablePlus |
 
