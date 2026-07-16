@@ -123,8 +123,11 @@
         "groups": [
           {
             "group": "CLI",
+            "pages": ["cli/overview"]
+          },
+          {
+            "group": "Commands",
             "pages": [
-              "cli/overview",
               "cli/daemon",
               "cli/memories",
               "cli/graph",
