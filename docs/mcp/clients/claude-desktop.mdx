@@ -1,0 +1,25 @@
+---
+title: "Claude Desktop"
+description: "Connect Claude Desktop to memloom"
+---
+
+Open Settings, then Developer, then Edit Config. That opens `claude_desktop_config.json`:
+
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
+
+Add memloom under `mcpServers`:
+
+```json
+{
+  "mcpServers": {
+    "memloom": {
+      "command": "npx",
+      "args": ["-y", "@memloom/mcp"]
+    }
+  }
+}
+```
+
+Restart Claude Desktop. The tools icon in the chat input should list memloom's tools. Then
+follow [Verify it works](/mcp/setup#verify-it-works).

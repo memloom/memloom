@@ -1,0 +1,22 @@
+---
+title: "Windsurf"
+description: "Connect Windsurf to memloom"
+---
+
+Open Windsurf Settings, then Cascade, then MCP servers, and view the raw config. That opens
+`~/.codeium/windsurf/mcp_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "memloom": {
+      "command": "npx",
+      "args": ["-y", "@memloom/mcp"]
+    }
+  }
+}
+```
+
+Press the refresh button in the MCP panel (or restart Windsurf) to pick up the change.
+Cascade then has memloom's tools; follow
+[Verify it works](/mcp/setup#verify-it-works).

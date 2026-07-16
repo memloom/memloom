@@ -1,0 +1,24 @@
+---
+title: "opencode"
+description: "Connect opencode to memloom"
+---
+
+Add memloom to `opencode.json` in your project (or `~/.config/opencode/opencode.json` for
+all projects). Note opencode's shape: `type` is `"local"` and `command` is an array
+containing the command and its args together:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "memloom": {
+      "type": "local",
+      "command": ["npx", "-y", "@memloom/mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Restart opencode; the tools appear in the session. Then follow
+[Verify it works](/mcp/setup#verify-it-works).

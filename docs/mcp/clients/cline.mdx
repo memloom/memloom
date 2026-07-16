@@ -1,0 +1,21 @@
+---
+title: "Cline"
+description: "Connect Cline (VS Code extension) to memloom"
+---
+
+Click the MCP Servers icon in Cline's top bar, open the Installed tab, and press
+Configure MCP Servers. That opens `cline_mcp_settings.json`:
+
+```json
+{
+  "mcpServers": {
+    "memloom": {
+      "command": "npx",
+      "args": ["-y", "@memloom/mcp"]
+    }
+  }
+}
+```
+
+Save the file; Cline reloads servers automatically and shows memloom with a green indicator
+in the Installed tab. Then follow [Verify it works](/mcp/setup#verify-it-works).

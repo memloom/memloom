@@ -1,0 +1,25 @@
+---
+title: "VS Code"
+description: "Connect VS Code (Copilot agent mode) to memloom"
+---
+
+Create or edit `.vscode/mcp.json` in your workspace, or run **MCP: Open User Configuration**
+from the command palette for a global setup. Note the key is `servers`, not `mcpServers`:
+
+```json
+{
+  "servers": {
+    "memloom": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@memloom/mcp"]
+    }
+  }
+}
+```
+
+Or use the guided flow: command palette, **MCP: Add Server**, pick stdio, and enter
+`npx -y @memloom/mcp`.
+
+MCP tools are used by Copilot's agent mode; open the Chat view and switch to Agent. Then
+follow [Verify it works](/mcp/setup#verify-it-works).

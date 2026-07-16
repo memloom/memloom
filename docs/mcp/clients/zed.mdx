@@ -1,0 +1,24 @@
+---
+title: "Zed"
+description: "Connect Zed to memloom"
+---
+
+Add memloom to your `settings.json` (command palette: `zed: open settings`) under
+`context_servers`. The `"source": "custom"` field is required; without it Zed skips the
+entry:
+
+```json
+{
+  "context_servers": {
+    "memloom": {
+      "source": "custom",
+      "command": "npx",
+      "args": ["-y", "@memloom/mcp"],
+      "env": {}
+    }
+  }
+}
+```
+
+Check the Agent Panel's settings view: the indicator dot next to memloom turns green when
+the server is active. Then follow [Verify it works](/mcp/setup#verify-it-works).

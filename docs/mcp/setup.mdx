@@ -1,65 +1,39 @@
 ---
-title: "MCP setup"
-description: "Connect Claude Code, Claude Desktop, or Cursor to your memloom store"
+title: "Setup"
+description: "Connect any MCP client to your memloom store"
 ---
 
 memloom ships an MCP server over stdio: the `@memloom/mcp` package. It routes through the
 `memloom serve` daemon (auto-starting it if needed) rather than opening the store itself, so
 MCP clients, the CLI, and the viewer all share one store with no lock conflicts. You can run
-several MCP clients at once against the same daemon.
+several MCP clients at once against the same daemon, and a memory saved from one is
+instantly recallable from the others.
 
-No separate install is needed: the configs below run the package with `npx`. If you prefer a
-global install, `npm install -g @memloom/mcp` puts the `memloom-mcp` command on your PATH,
-and you can use that as the `command` with no args.
-
-## Claude Code
+Every client boils down to the same command:
 
 ```bash
-claude mcp add memloom -- npx -y @memloom/mcp
+npx -y @memloom/mcp
 ```
 
-Or in `.mcp.json` (project scope) / `~/.claude.json` (user scope):
+No separate install is needed: `npx` fetches the package on first launch. If you prefer a
+global install, `npm install -g @memloom/mcp` puts the `memloom-mcp` command on your PATH,
+and you can use that as the command with no args.
 
-```json
-{
-  "mcpServers": {
-    "memloom": {
-      "command": "npx",
-      "args": ["-y", "@memloom/mcp"]
-    }
-  }
-}
-```
+## Client instructions
 
-## Claude Desktop
+<CardGroup cols={3}>
+  <Card title="Claude Code" href="/mcp/clients/claude-code" />
+  <Card title="Claude Desktop" href="/mcp/clients/claude-desktop" />
+  <Card title="Cursor" href="/mcp/clients/cursor" />
+  <Card title="VS Code" href="/mcp/clients/vs-code" />
+  <Card title="Windsurf" href="/mcp/clients/windsurf" />
+  <Card title="Cline" href="/mcp/clients/cline" />
+  <Card title="Zed" href="/mcp/clients/zed" />
+  <Card title="Codex" href="/mcp/clients/codex" />
+  <Card title="opencode" href="/mcp/clients/opencode" />
+</CardGroup>
 
-In `claude_desktop_config.json` (Settings, Developer, Edit Config):
-
-```json
-{
-  "mcpServers": {
-    "memloom": {
-      "command": "npx",
-      "args": ["-y", "@memloom/mcp"]
-    }
-  }
-}
-```
-
-## Cursor
-
-In `.cursor/mcp.json` (project) or `~/.cursor/mcp.json` (global):
-
-```json
-{
-  "mcpServers": {
-    "memloom": {
-      "command": "npx",
-      "args": ["-y", "@memloom/mcp"]
-    }
-  }
-}
-```
+Any other MCP client works too: point it at `npx -y @memloom/mcp` as a stdio server.
 
 ## Where the API key goes
 

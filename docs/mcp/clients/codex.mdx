@@ -1,0 +1,21 @@
+---
+title: "Codex"
+description: "Connect the Codex CLI to memloom"
+---
+
+One command:
+
+```bash
+codex mcp add memloom -- npx -y @memloom/mcp
+```
+
+Or edit `~/.codex/config.toml` directly:
+
+```toml
+[mcp_servers.memloom]
+command = "npx"
+args = ["-y", "@memloom/mcp"]
+```
+
+`codex mcp list` shows the registered servers. Then follow
+[Verify it works](/mcp/setup#verify-it-works).

@@ -1,0 +1,30 @@
+---
+title: "Claude Code"
+description: "Connect Claude Code to memloom"
+---
+
+One command:
+
+```bash
+claude mcp add memloom -- npx -y @memloom/mcp
+```
+
+By default this adds memloom for the current project. Add `--scope user` to make it
+available in every project.
+
+Or edit the config directly, in `.mcp.json` at the project root (shared with your team) or
+`~/.claude.json` (just you):
+
+```json
+{
+  "mcpServers": {
+    "memloom": {
+      "command": "npx",
+      "args": ["-y", "@memloom/mcp"]
+    }
+  }
+}
+```
+
+Check the connection with `/mcp` inside Claude Code: memloom should show as connected, with
+its tools listed. Then follow [Verify it works](/mcp/setup#verify-it-works).

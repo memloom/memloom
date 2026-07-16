@@ -1,0 +1,24 @@
+---
+title: "Cursor"
+description: "Connect Cursor to memloom"
+---
+
+Create or edit `.cursor/mcp.json` in your project (or `~/.cursor/mcp.json` to enable
+memloom in every project):
+
+```json
+{
+  "mcpServers": {
+    "memloom": {
+      "command": "npx",
+      "args": ["-y", "@memloom/mcp"]
+    }
+  }
+}
+```
+
+You can also add it from the UI: Cursor Settings, then MCP, then Add new MCP server.
+
+Cursor shows memloom under Settings, MCP, with a green dot when the server is running. The
+agent uses the tools automatically; then follow
+[Verify it works](/mcp/setup#verify-it-works).
