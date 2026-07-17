@@ -4,33 +4,30 @@ memloom is a Postgres-native, local-first memory engine you embed as a library, 
 server, or consume from the cloud, with **the same schema and the same SQL across all three**.
 
 ```
-                 ┌──────────────────────────────────────────────┐
-   agents/CLI ──▶│  @memloom/core  (the engine, the product)     │
-   viewer     ──▶│                                              │
-                 │   write path (dedup, conflicts, HITL, revert) │
-                 │   entity graph + closed predicate vocabulary  │
-                 │   hybrid retrieval (vector + keyword + graph) │
+                 ------------------------------------------------
+   agents/CLI -->|          @memloom/core (the engine)          │
+   viewer app -->|                                              │
+                 |  write path (dedup, conflicts, HITL, revert) │
+                 |  entity graph + closed predicate vocabulary  │
+                 │  hybrid retrieval (vector + keyword + graph) │
                  │                                              │
-                 │   StorageAdapter ── EmbeddingProvider ── LLMProvider
-                 └────────┬─────────────────┬──────────────┬─────┘
-                          │                 │              │
-                 ┌────────▼─────┐   ┌────────▼──────┐  (OpenRouter now,
-                 │ PgliteAdapter│   │   PgAdapter   │   Ollama later)
-                 │ (embedded)   │   │ (local/cloud) │
-                 └──────────────┘   └───────────────┘
+                 │ StorageAdapter;EmbeddingProvider;LLMProvider |
+                 ------------------------------------------------
+                          |                 |              |
+                          |                 │              │
+                    PgliteAdapter       PgAdapter      OpenRouter
+                    
 ```
 
 ## Two rules that are hard to reverse
 
-1. **The `StorageAdapter` boundary is the load-bearing abstraction.** Its contract is
-   driver-agnostic parameterized SQL (`query`, `tx`, `close`). Nothing above it knows which
-   driver it talks to, so the embedded (PGLite) and server/cloud (`pg`) tiers run identical
-   SQL with no dialect branching. Get this right and every lesser data-layer choice is
-   reversible.
-
-2. **Core never reads `process.env` or global config.** Connection and providers are *injected*
-   into the `Memloom` facade. This is what lets a host application hand core a pooled connection
-   and its own keys and consume `@memloom/core` directly.
+1. All data access goes through the `StorageAdapter` interface (`query`, `exec`, `tx`,
+   `close`). Code above it never knows which driver it talks to, so the embedded (PGLite)
+   and server (`pg`) tiers run the same SQL. One query that works on only one tier forks
+   the product, so no sql dialects, just postgres everywhere.
+2. `@memloom/core` never reads `process.env` or config files. Whatever process constructs
+   `Memloom` (the daemon, a test, a host app) builds the storage adapter and providers
+   itself and passes them in. Core uses what it is given and nothing else.
 
 ## The three tiers
 
@@ -40,13 +37,16 @@ server, or consume from the cloud, with **the same schema and the same SQL acros
 | Local server | `pg` → Docker/`supabase start` | a persistent daemon, multi-client |
 | Cloud | `pg` → managed Postgres | teams, scale |
 
-Because it's one real Postgres dialect everywhere, moving up a tier is a config swap.
+Because it's one real Postgres dialect everywhere, moving up a tier is a config swap:
+set `MEMLOOM_PG_URL` in `config.env` and restart the daemon.
 
 ## Schema notes
 
-- **Zero plpgsql.** The hybrid retrieval RPC is `language sql`; denormalized counts are
-  maintained in TypeScript in the write path. The schema is DDL + `language sql` only, so it
-  runs identically on PGLite. (PGLite's plpgsql support is unreliable at runtime.)
+- **Zero plpgsql.** The schema is DDL + `language sql` only, so it runs identically on
+  PGLite and real Postgres. This is a choice, not a PGLite limitation: logic stays in
+  TypeScript, where it is greppable, debuggable, and unit-tested. Denormalized counts are
+  maintained in the write path instead of triggers, and migrations stay plain declarations
+  you can review.
 - **Single-owner connection (embedded tier).** PGLite is single-process; two openers corrupt
   the WAL. memloom ships a data-dir advisory lock, and when a local server holds the store the
   CLI/MCP route through it rather than opening the directory a second time.
@@ -64,11 +64,11 @@ Because it's one real Postgres dialect everywhere, moving up a tier is a config 
   machinery. If context changes, you edit the source file.
 
 Both feed the same entity graph and the same hybrid retrieval: one engine, two ingestion
-primitives, one recall call (`memloom_fuse` unions memories and chunks in each retrieval arm).
+sources, one recall call (`memloom_fuse` unions memories and chunks in each retrieval arm).
 
 ### The extraction pipeline
 
-`context add` runs: **extract → section → size-split → embed → mirror-write**.
+`context add` runs: **extract -> section -> size-split -> embed -> mirror-write**.
 
 - **Extract** goes through a pluggable registry (`packages/core/src/extract.ts`). An
   `Extractor` declares its `kind`, `extensions`, a `version`, a `chunker` strategy, and an
@@ -77,7 +77,7 @@ primitives, one recall call (`memloom_fuse` unions memories and chunks in each r
   *geometry* (baseline line grouping, column-gutter detection, 2-up duplicate collapse) because
   content-stream order is scrambled for equation-heavy documents.
 - **Section** by the extractor's declared strategy: `"markdown"` splits at headings;
-  `"outline"` splits at ALL-CAPS title lines and numbered points (`2. DEFINICJA 2. …`), so a
+  `"outline"` splits at ALL-CAPS title lines and numbered points (`2. DEFINITION 3. …`), so a
   chunk never starts mid-definition. Each chunk gets its breadcrumb (`Guide > Setup >
   Postgres`) **prepended into the embedded text**, so both the vector and keyword arms see the
   heading context (the contextual-retrieval lever), and the same breadcrumb powers citations
@@ -92,7 +92,8 @@ primitives, one recall call (`memloom_fuse` unions memories and chunks in each r
 
 ## Build status
 
-The engine is extracted and functional end-to-end: save → dedup/conflict funnel → hybrid
+The engine is extracted and functional end-to-end: save -> dedup/conflict funnel -> hybrid
 recall (vector + keyword + entity RRF), the single-owner daemon (HTTP API, Postgres wire,
-embedded viewer), MCP server, and the context connector with the extractor registry. See
-[CHANGELOG.md](./CHANGELOG.md) for what each release contains.
+embedded viewer), MCP server, and the context connector with the extractor registry.
+
+See [CHANGELOG.md](./CHANGELOG.md) for what each release contains.

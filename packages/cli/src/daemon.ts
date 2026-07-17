@@ -4,10 +4,12 @@ import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite/vector";
 import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { serve as nodeServe } from "@hono/node-server";
+import type { StorageAdapter } from "@memloom/core";
 import {
   acquireDataDirLock,
   EmbeddingFingerprintError,
   Memloom,
+  PgAdapter,
   PgliteAdapter,
 } from "@memloom/core";
 import { createServer } from "@memloom/server";
@@ -22,6 +24,11 @@ export const PG_PORT = 54329;
 // and exposes it two ways from one process: the HTTP API (CLI + MCP route here) and the
 // Postgres wire protocol (Drizzle Studio / TablePlus / psql). Everything else is a client, so
 // there are no more "store already open" conflicts.
+// Mask the password when echoing a connection URL to the console.
+function maskPgUrl(url: string): string {
+  return url.replace(/\/\/([^:@/]+):[^@]+@/, "//$1:***@");
+}
+
 async function alreadyServing(httpPort: number): Promise<boolean> {
   try {
     const res = await fetch(`http://127.0.0.1:${httpPort}/health`, {
@@ -45,15 +52,36 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   ensureConfig();
   loadConfigEnv();
 
-  const dir = dataDir();
-  // waitMs rides out the stale window of a force-killed daemon's leftover lock (15s), so
-  // "kill then serve" works instead of erroring on a lock that's about to expire.
-  const release = await acquireDataDirLock(dir, { waitMs: 20_000 });
-  const db = await PGlite.create({ dataDir: dir, extensions: { vector } });
-  const storage = PgliteAdapter.fromInstance(db);
-
   const deps = buildEngineDeps();
-  const { apiKey, embedModel, embedDims, embedProvider, llmModel, chatModel, autoIndex } = deps;
+  const { apiKey, embedModel, embedDims, embedProvider, llmModel, chatModel, autoIndex, pgUrl } =
+    deps;
+
+  // Storage tier switch (MEMLOOM_PG_URL): an external Postgres gets the pooled adapter and
+  // needs neither the data-dir lock nor the wire socket (inspect the server directly).
+  // Default: the embedded PGLite dir, single-owner, guarded by the advisory lock.
+  const dir = dataDir();
+  let db: PGlite | undefined;
+  let release: (() => Promise<void>) | undefined;
+  let storage: StorageAdapter;
+  if (pgUrl) {
+    try {
+      storage = await PgAdapter.connect(pgUrl);
+    } catch (err) {
+      console.error(
+        `memloom: cannot reach Postgres at MEMLOOM_PG_URL: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      console.error(`  url:    ${maskPgUrl(pgUrl)}`);
+      console.error(`  config: ${configPath()}`);
+      process.exitCode = 1;
+      return;
+    }
+  } else {
+    // waitMs rides out the stale window of a force-killed daemon's leftover lock (15s), so
+    // "kill then serve" works instead of erroring on a lock that's about to expire.
+    release = await acquireDataDirLock(dir, { waitMs: 20_000 });
+    db = await PGlite.create({ dataDir: dir, extensions: { vector } });
+    storage = PgliteAdapter.fromInstance(db);
+  }
 
   const memloom = apiKey
     ? new Memloom({ storage, embedding: deps.embedding, llm: deps.llm, autoIndex })
@@ -63,25 +91,27 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   } catch (err) {
     // Most likely the embedding-fingerprint guard (store embedded under a different config).
     // Release everything so the next attempt isn't blocked by our lock.
-    await db.close();
-    await release();
+    if (db) await db.close();
+    else await storage.close();
+    await release?.();
     console.error(`memloom: ${err instanceof Error ? err.message : String(err)}`);
     if (err instanceof EmbeddingFingerprintError) {
       console.error(
         "  hint: run `memloom reembed` (with the daemon stopped) to migrate the store to the new embedding config.",
       );
     }
-    console.error(`  data dir: ${dir}`);
+    console.error(pgUrl ? `  storage:  ${maskPgUrl(pgUrl)}` : `  data dir: ${dir}`);
     console.error(`  config:   ${configPath()}`);
     process.exitCode = 1;
     return;
   }
 
   const shutdown = async () => {
-    await pgServer.stop();
+    await pgServer?.stop();
     httpServer.close();
-    await db.close();
-    await release();
+    if (db) await db.close();
+    else await storage.close();
+    await release?.();
     process.exit(0);
   };
 
@@ -101,33 +131,44 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
     port: httpPort,
     hostname: "127.0.0.1",
   });
-  const pgServer = new PGLiteSocketServer({ db, port: pgPort, host: "127.0.0.1" });
-  // PGLite is single-connection: while a wire client (Drizzle Studio, psql) is attached it holds
-  // an exclusive lock, and every HTTP API call silently queues behind it. Warn loudly, because
-  // from the outside this looks like memloom hanging.
-  const warnedClients = new Set<string>();
-  pgServer.addEventListener("connection", (event) => {
-    const info = (event as CustomEvent<{ clientAddress: string; clientPort: number }>).detail;
-    // pglite-socket dispatches the connection event twice on the direct-attach path; warn once.
-    const key = `${info.clientAddress}:${info.clientPort}`;
-    if (warnedClients.has(key)) return;
-    warnedClients.add(key);
-    console.log(
-      `${new Date().toISOString()}  ⚠ Postgres client connected (${key}). ` +
-        "The HTTP API (Claude/MCP/CLI saves + recalls) is PAUSED until it disconnects; close Drizzle Studio/psql when done inspecting.",
-    );
-  });
-  await pgServer.start();
+  // The wire socket is a PGLite-only concern: it exists so DB tools can inspect the embedded
+  // store. On an external Postgres, tools connect to the server directly.
+  let pgServer: PGLiteSocketServer | undefined;
+  if (db) {
+    pgServer = new PGLiteSocketServer({ db, port: pgPort, host: "127.0.0.1" });
+    // PGLite is single-connection: while a wire client (Drizzle Studio, psql) is attached it holds
+    // an exclusive lock, and every HTTP API call silently queues behind it. Warn loudly, because
+    // from the outside this looks like memloom hanging.
+    const warnedClients = new Set<string>();
+    pgServer.addEventListener("connection", (event) => {
+      const info = (event as CustomEvent<{ clientAddress: string; clientPort: number }>).detail;
+      // pglite-socket dispatches the connection event twice on the direct-attach path; warn once.
+      const key = `${info.clientAddress}:${info.clientPort}`;
+      if (warnedClients.has(key)) return;
+      warnedClients.add(key);
+      console.log(
+        `${new Date().toISOString()}  ⚠ Postgres client connected (${key}). ` +
+          "The HTTP API (Claude/MCP/CLI saves + recalls) is PAUSED until it disconnects; close Drizzle Studio/psql when done inspecting.",
+      );
+    });
+    await pgServer.start();
+  }
 
   console.log("memloom serving:");
   console.log(`  HTTP API   http://127.0.0.1:${httpPort}          (CLI + MCP route here)`);
   if (staticDir) {
     console.log(`  Viewer     http://127.0.0.1:${httpPort}          (\`memloom ui\` opens it)`);
   }
-  console.log(
-    `  Postgres   postgresql://postgres@127.0.0.1:${pgPort}/postgres   (Drizzle Studio, psql)`,
-  );
-  console.log(`  data       ${dir}`);
+  if (db) {
+    console.log(
+      `  Postgres   postgresql://postgres@127.0.0.1:${pgPort}/postgres   (Drizzle Studio, psql)`,
+    );
+    console.log(`  data       ${dir}`);
+  } else {
+    console.log(
+      `  storage    ${maskPgUrl(pgUrl ?? "")}   (external Postgres; inspect the server directly)`,
+    );
+  }
   console.log(`  config     ${configPath()}`);
   if (apiKey) {
     console.log(

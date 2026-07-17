@@ -6,15 +6,18 @@ import {
   OpenRouterLLM,
 } from "@memloom/core";
 
-// The ONE place provider selection happens, shared by the daemon and `memloom reembed` so a
-// maintenance command can never disagree with the daemon about which vector space the store
-// should be in. Reads process.env (populate it with loadConfigEnv() first): presence of
-// OPENROUTER_API_KEY is the cloud/offline switch.
+// The ONE place provider and storage selection happens, shared by the daemon and
+// `memloom reembed` so a maintenance command can never disagree with the daemon about which
+// vector space or which store it operates on. Reads process.env (populate it with
+// loadConfigEnv() first): presence of OPENROUTER_API_KEY is the cloud/offline switch, and
+// presence of MEMLOOM_PG_URL is the storage-tier switch (external Postgres instead of the
+// embedded PGLite data dir).
 
 export interface EngineDeps {
   embedding: EmbeddingProvider;
   llm: LLMProvider;
   apiKey: string | undefined;
+  pgUrl: string | undefined;
   embedModel: string | undefined;
   embedDims: number | undefined;
   embedProvider: string | undefined;
@@ -25,6 +28,7 @@ export interface EngineDeps {
 
 export function buildEngineDeps(): EngineDeps {
   const apiKey = process.env.OPENROUTER_API_KEY;
+  const pgUrl = process.env.MEMLOOM_PG_URL || undefined;
   const embedModel = process.env.OPENROUTER_EMBED_MODEL;
   const embedDims = process.env.OPENROUTER_EMBED_DIMS
     ? Number(process.env.OPENROUTER_EMBED_DIMS)
@@ -65,6 +69,7 @@ export function buildEngineDeps(): EngineDeps {
     embedding,
     llm,
     apiKey,
+    pgUrl,
     embedModel,
     embedDims,
     embedProvider,

@@ -38,6 +38,11 @@ const CONFIG_TEMPLATE = `# memloom configuration. The daemon (\`memloom serve\`)
 # New memories and files are entity-indexed automatically in the background (one LLM call
 # per item, debounced). Set to off to index only via \`memloom index\` / the Console:
 # MEMLOOM_AUTO_INDEX=on
+
+# Storage tier. Default is the embedded PGLite store in ~/.memloom/data (zero setup). To run
+# on a real Postgres server instead (local Docker or managed cloud; pgvector must be
+# available), point memloom at it and restart:
+# MEMLOOM_PG_URL=postgres://user:password@localhost:5432/memloom
 `;
 
 /** Create the home + a commented config template if missing. Returns the config path. */

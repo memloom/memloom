@@ -1,5 +1,6 @@
 import {
   Memloom,
+  PgAdapter,
   PgliteAdapter,
   type ReembedProgressEvent,
   storedEmbeddingDims,
@@ -38,7 +39,11 @@ export async function runReembed(opts: { force: boolean }): Promise<void> {
   }
 
   const deps = buildEngineDeps();
-  const storage = await PgliteAdapter.open({ dataDir: dataDir() });
+  // Same storage selection as the daemon (engine-config): reembed must migrate the store the
+  // daemon actually serves, embedded dir or external Postgres.
+  const storage = deps.pgUrl
+    ? await PgAdapter.connect(deps.pgUrl)
+    : await PgliteAdapter.open({ dataDir: dataDir() });
   // Set AFTER close(): PGLite's WASM teardown resets process.exitCode, so setting it inside
   // the try/catch silently reports success on failure.
   let failed = false;
