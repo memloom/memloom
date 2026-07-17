@@ -28,8 +28,8 @@ npm install -g memloom                # one binary, no Docker
 memloom init                          # creates ~/.memloom, starts the daemon
 memloom save "the staging database runs on Postgres"
 memloom recall "staging db"
-memloom context add ./docs            # your files join the same recall, with citations
-memloom ui                            # graph + conflicts + console in your browser
+memloom context add ./notes           # your .md/.txt/.pdf files join the recall, with citations
+memloom ui                            # the viewer: graph, assistant, conflicts, and more
 ```
 
 That works fully offline. For real semantic embeddings, contradiction detection, and entity

@@ -269,7 +269,9 @@ export async function run(argv: readonly string[]): Promise<void> {
       const config = ensureConfig(); // create ~/.memloom + config.env template first
       await connect(); // starts the daemon if needed
       console.log(`memloom is running. data: ${dataDir()}`);
-      console.log(`config: ${config}  (set OPENROUTER_API_KEY there, then restart the daemon)`);
+      console.log(
+        `config: ${config}  (set OPENROUTER_API_KEY there, then: memloom stop && memloom reembed && memloom serve)`,
+      );
       console.log("HTTP api http://127.0.0.1:4319");
       console.log("Postgres postgresql://postgres@127.0.0.1:54329/postgres");
       return;
