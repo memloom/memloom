@@ -52,12 +52,15 @@ with flags, examples, and the behavior behind them.
 
 ## Inspecting the store directly
 
-The daemon also speaks the Postgres wire protocol. Point Drizzle Studio, psql, or any DB
-client at:
+On the embedded tier, the daemon also speaks the Postgres wire protocol. Point Drizzle
+Studio, psql, or any DB client at:
 
 ```
 postgresql://postgres@127.0.0.1:54329/postgres
 ```
+
+With `MEMLOOM_PG_URL` set there is no bridge; connect those tools to your Postgres server
+directly.
 
 <Warning>
 PGLite is a single-connection database: while a DB client is connected on 54329, the HTTP

@@ -5,9 +5,11 @@ description: "One daemon owns the store; everything else is a client"
 
 ## The single-owner model
 
-memloom's store is PGLite: real Postgres compiled to WASM, embedded in the daemon process,
-with data in a plain folder. PGLite allows exactly **one** connection, so **`memloom serve`
-is the single owner of the store, and every other surface is a client of the daemon.**
+memloom's default store is PGLite: real Postgres compiled to WASM, embedded in the daemon
+process, with data in a plain folder. PGLite allows exactly **one** connection, so
+**`memloom serve` is the single owner of the store, and every other surface is a client of
+the daemon.** (The same daemon runs on an external Postgres via `MEMLOOM_PG_URL`; the
+single-owner API model stays, only the storage moves out of the process.)
 
 ```mermaid
 flowchart LR
@@ -18,15 +20,16 @@ flowchart LR
     subgraph daemon ["memloom serve (one process)"]
         HTTP["HTTP API :4319"] --> Engine
         Wire["Postgres wire :54329"] --> Store
-        Engine["@memloom/core engine"] --> Store["PGLite · ~/.memloom/data"]
+        Engine["@memloom/core engine"] --> Store["PGLite, ~/.memloom/data"]
     end
     Engine -.-> Providers["embeddings + LLM (OpenRouter, or offline)"]
 ```
 
 The daemon exposes the store two ways from one process: the HTTP API on `127.0.0.1:4319`
-(which also serves the viewer bundle at `/`), and the raw Postgres wire protocol on
-`127.0.0.1:54329` for database tools. Any CLI command auto-starts the daemon if it isn't
-running; `memloom stop` shuts it down gracefully and releases the data-dir lock.
+(which also serves the viewer bundle at `/`), and, on the embedded tier, the raw Postgres
+wire protocol on `127.0.0.1:54329` for database tools (with `MEMLOOM_PG_URL` set there is
+no bridge; point your tools at the server). Any CLI command auto-starts the daemon if it
+isn't running; `memloom stop` shuts it down gracefully and releases the data-dir lock.
 
 <Warning>
 Because PGLite is single-connection, a connected wire client (Drizzle Studio, psql, an IDE
@@ -73,7 +76,7 @@ Storage is an adapter interface (`query`, `exec`, `tx`), with two implementation
 
 - **`PgliteAdapter`**: the embedded tier. What the daemon uses. Zero setup, data in a folder.
 - **`PgAdapter`**: a real Postgres server over the wire (Docker, Supabase, any managed
-  Postgres with pgvector). Available programmatically today; see
+  Postgres with pgvector), pooled. Selected with `MEMLOOM_PG_URL` in `config.env`; see
   [Self-hosting](/guides/self-hosting).
 
 The schema is identical in both: memloom's migrations are plain SQL and its one stored

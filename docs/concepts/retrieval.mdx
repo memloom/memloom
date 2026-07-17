@@ -23,7 +23,7 @@ memories" and "search my files" are the same operation.
 | **Entity** | Query-to-entity similarity, then mention edges | Things: everything that *mentions* an entity the query names, however it's worded |
 
 The entity arm has an **abstention gate**: it only fires when the query is clearly about a
-known entity (query ↔ entity cosine ≥ 0.45). A vague query anchors to nothing and the arm
+known entity (query ↔ entity cosine ≥ 0.60). A vague query anchors to nothing and the arm
 contributes nothing, so it never drags in unrelated results. The keyword arm abstains
 the same way: no lexical match, no votes.
 
@@ -36,9 +36,11 @@ ranks aren't comparable):
 score(result) = Σ over arms:  weight_arm / (60 + rank_in_arm)
 ```
 
-Default weights: vector **1.0**, keyword **2.0**, entity **1.0**. Keyword is up-weighted
-because it abstains when it has nothing, so its votes are cheap and precise (eval-tuned).
-A result that two arms agree on beats a result that tops one arm alone.
+Default weights: vector **1.0**, keyword **2.0**, entity **0.5**. Keyword is up-weighted
+because it abstains when it has nothing, so its votes are cheap and precise; the entity arm
+is half-weighted so it works as a tiebreaker between arms rather than a winner on its own
+(both eval-tuned on a real corpus). A result that two arms agree on beats a result that tops
+one arm alone.
 
 Each recall result carries both numbers:
 

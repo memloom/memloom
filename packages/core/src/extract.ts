@@ -35,7 +35,11 @@ export interface Extractor {
   /**
    * Bump when this format's extract/chunk pipeline changes: the version is salted into the
    * content hash (`#p{n}` when > 1), so `context add` re-ingests files whose bytes didn't
-   * change instead of no-op'ing on stale chunks.
+   * change instead of no-op'ing on stale chunks. Only inequality matters: the value is an
+   * opaque cache-buster, never ordered or displayed, so plain integers and the count never
+   * costs anything. Bump once per shipped pipeline change, not per experiment (every bump
+   * re-embeds users' existing files), and remember shared chunker changes affect every
+   * extractor using that chunker.
    */
   version: number;
   /** How chunks are sectioned: markdown headings, or outline (ALL-CAPS titles + numbered points). */

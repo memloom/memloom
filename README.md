@@ -33,11 +33,21 @@ memloom ui                            # graph + conflicts + console in your brow
 ```
 
 That works fully offline. For real semantic embeddings, contradiction detection, and entity
-extraction, add one key to `~/.memloom/config.env` and restart the daemon:
+extraction, add one key to `~/.memloom/config.env`:
 
 ```bash
 OPENROUTER_API_KEY=sk-or-...
 ```
+
+then migrate what you saved offline into the new embedding space:
+
+```bash
+memloom stop && memloom reembed && memloom serve
+```
+
+(The store is stamped with its embedding config; the daemon refuses to mix vector spaces,
+and `reembed` is the sanctioned way across. On a fresh store with the key set from the
+start, this step never comes up.)
 
 ### Connect your AI tools (MCP)
 
@@ -52,8 +62,9 @@ Cursor, add:
 }
 ```
 
-Your agent gets `save_memory`, `recall_memory` (memories *and* your ingested files, with
-sources), and conflict listing/resolution.
+Your agent gets eight tools: `save_memory`, `recall_memory` (memories *and* your ingested
+files, with sources), full-passage reading, version history, conflict listing/resolution,
+and schema management, so the agent uses the memory and you keep control of the vocabulary.
 
 ## How it compares
 
@@ -80,12 +91,13 @@ One daemon (`memloom serve`) owns the store; everything else is a client:
 | CLI | `memloom save / recall / context / conflicts / ui` |
 | MCP | `@memloom/mcp`: Claude Desktop, Claude Code, Cursor, any MCP client |
 | HTTP API | `http://127.0.0.1:4319`: full [API reference](./docs), localhost-only by design |
-| Viewer | `memloom ui`: memory/entity graph, conflict review, console |
-| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres`: psql, Drizzle Studio, TablePlus |
+| Viewer | `memloom ui`: memory graph, assistant chat, memories, documents, schema review, conflicts, indexing console |
+| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres`: psql, Drizzle Studio, TablePlus (embedded tier; with `MEMLOOM_PG_URL` set, inspect your Postgres directly) |
 
 ## Extending: add a file format
 
-Extraction is pluggable: an extractor is one object (`kind`, `extensions`, `extract()`)
+Extraction is pluggable: an extractor is one object (`kind`, `extensions`, `version`,
+`chunker`, `extract()`)
 registered into the same registry the built-ins use. See the
 [extractor guide](./docs/guides/extractors.mdx) for a worked example and the ground rules;
 wanted next: CSV/JSON, DOCX, URLs.

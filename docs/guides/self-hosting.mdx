@@ -98,8 +98,10 @@ psql -h 127.0.0.1 -p 5432 -U postgres -d postgres -f memloom-dump.sql
 Run the target's schema first (start `memloom serve` once with `MEMLOOM_PG_URL` pointed at
 the Docker database; it creates the schema), then load data-only. The wire server is a single-connection bridge into PGLite. If `pg_dump`
 trips over it, fall back to per-table `COPY ... TO STDOUT` via `psql`, in dependency order:
-`_memloom_meta`, `memory_objects`, `memory_entities`, `memory_edges`,
-`memory_dedup_decisions`, `context_documents`, `context_chunks`.
+`_memloom_meta`, `memory_objects`, `memory_schema`, `memory_entities`, `memory_edges`,
+`memory_dedup_decisions`, `context_documents`, `context_chunks`, `memory_index_runs`,
+`memory_index_events`, `assistant_sessions`, `assistant_messages`. Skipping the later ones
+silently drops your schema vocabulary, indexing history, and assistant chats.
 
 <Warning>
 The embedding fingerprint travels with the data (it's a row in `_memloom_meta`). The engine

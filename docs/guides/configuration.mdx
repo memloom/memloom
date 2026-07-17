@@ -30,6 +30,10 @@ OPENROUTER_EMBED_PROVIDER=nebius    # preferred OpenRouter host for embeddings
 OPENROUTER_LLM_MODEL=google/gemini-2.5-flash
 OPENROUTER_CHAT_MODEL=google/gemini-2.5-flash  # assistant chat; must support tool calling
 MEMLOOM_AUTO_INDEX=on               # background entity extraction after saves/ingests
+
+# Storage tier: unset = embedded PGLite in ~/.memloom/data. Set to run on a real
+# Postgres server with pgvector instead (see the self-hosting guide):
+MEMLOOM_PG_URL=postgres://user:password@localhost:5432/memloom
 ```
 
 <Note>
@@ -79,7 +83,7 @@ contrast, can be changed freely; it doesn't touch the vector space.
 | What | Where | Change |
 | --- | --- | --- |
 | HTTP API + viewer | `http://127.0.0.1:4319` | fixed (localhost-only by design) |
-| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres` | fixed; distinctive port so it never collides with a local Postgres on 5432 |
+| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres` | fixed; distinctive port so it never collides with a local Postgres on 5432. Embedded tier only: with `MEMLOOM_PG_URL` set there is no bridge, inspect your server directly |
 
 Both bind to `127.0.0.1` only, and the API's CORS policy allows only localhost origins, so a
 public web page can't drive your daemon.

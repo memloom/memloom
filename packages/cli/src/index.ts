@@ -90,9 +90,11 @@ Data: ${dataDir()}`;
 const COMMAND_HELP: Record<string, string> = {
   serve: `memloom serve
 
-Run the store daemon in the foreground: HTTP API on 4319, the viewer, and the
-Postgres wire on 54329. The daemon is the single owner of the store; every other
-command talks to it over HTTP (and auto-starts it when needed). Ctrl+C to stop.
+Run the store daemon in the foreground: HTTP API on 4319, the viewer, and (on the
+embedded tier) the Postgres wire on 54329. With MEMLOOM_PG_URL set, the daemon runs
+on your Postgres server instead and starts no wire bridge. The daemon is the single
+owner of the store; every other command talks to it over HTTP (and auto-starts it
+when needed). Ctrl+C to stop.
 
 Reads ${configPath()} at startup; real environment variables win over the file.`,
 

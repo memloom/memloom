@@ -9,9 +9,11 @@ description: "serve, stop, ui, init: running and managing the store's single own
 memloom serve
 ```
 
-Run the store daemon in the foreground: the HTTP API on 4319, the viewer, and the Postgres
-wire on 54329. The daemon is the single owner of the store; every other command talks to it
-over HTTP (and auto-starts it when needed). Ctrl+C to stop.
+Run the store daemon in the foreground: the HTTP API on 4319, the viewer, and (on the
+embedded tier) the Postgres wire on 54329. With `MEMLOOM_PG_URL` set, the daemon connects
+to your Postgres instead and skips the wire bridge. The daemon is the single owner of the
+store; every other command talks to it over HTTP (and auto-starts it when needed). Ctrl+C
+to stop.
 
 Reads `~/.memloom/config.env` at startup; real environment variables win over the file. After
 editing the config, restart the daemon to pick up changes.

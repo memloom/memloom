@@ -77,9 +77,9 @@ both, merge) is reversible. See [Conflicts](/concepts/conflicts).
 | --- | --- |
 | **CLI** (`memloom save/recall/...`) | You, in a terminal |
 | **MCP** | Claude Desktop, Claude Code, Cursor: agents that save and recall as they work |
-| **Viewer** (`memloom ui`) | Browsing: graph, documents, memories, conflicts, console |
+| **Viewer** (`memloom ui`) | Browsing: graph, assistant, memories, documents, schema, conflicts, console |
 | **HTTP API** (`127.0.0.1:4319`) | Anything else: scripts, editors, your own tools |
-| **Postgres wire** (`127.0.0.1:54329`) | Inspecting the raw data with Drizzle Studio or psql |
+| **Postgres wire** (`127.0.0.1:54329`) | Inspecting the raw data with Drizzle Studio or psql (embedded tier; on `MEMLOOM_PG_URL` inspect your server directly) |
 
 All of them talk to one daemon that owns one store, so an agent's save is instantly visible
 in the viewer and your CLI recall sees what the agent ingested. See
