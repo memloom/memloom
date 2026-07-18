@@ -310,6 +310,18 @@ async function parseBody<S extends z.ZodTypeAny>(
   return { ok: true, data: parsed.data };
 }
 
+// A local browser Origin: the viewer served from the daemon, or a dev viewer on another
+// localhost port. Anything else is a cross-site caller.
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
+// True when the Host header names the loopback interface. Accepts an optional port and
+// bracketed IPv6 (`[::1]:4319`). The daemon only binds 127.0.0.1, so a real same-machine
+// client always sends one of these; a DNS-rebound page sends its attacker hostname instead.
+function isLoopbackHost(host: string): boolean {
+  const hostname = host.startsWith("[") ? host.slice(1, host.indexOf("]")) : host.split(":")[0];
+  return hostname === "127.0.0.1" || hostname === "localhost" || hostname === "::1";
+}
+
 export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   const app = new Hono();
 
@@ -318,10 +330,31 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.use(
     "*",
     cors({
-      origin: (origin) =>
-        /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ? origin : null,
+      origin: (origin) => (LOCAL_ORIGIN.test(origin) ? origin : null),
     }),
   );
+
+  // Access-control gate. cors() only sets response headers; it never blocks the request, so
+  // without this a cross-site page could still fire a handler's side effects (e.g. a
+  // no-preflight POST /admin/shutdown that kills the daemon, its response merely unreadable).
+  // Two independent checks close two attacks:
+  //  - Host allowlist: a browser cannot forge the Host header, so requiring a loopback Host
+  //    defeats DNS rebinding, where a rebound page reaches 127.0.0.1 but still sends its own
+  //    hostname as Host.
+  //  - Origin check: a genuine cross-site request carries a non-local Origin. Same-origin
+  //    viewer requests and non-browser clients (CLI, MCP, curl) send no Origin (or a local
+  //    one), so they pass untouched.
+  app.use("*", async (c, next) => {
+    const host = c.req.header("host");
+    if (host && !isLoopbackHost(host)) {
+      return c.json({ error: "forbidden: requests must target the loopback interface" }, 403);
+    }
+    const origin = c.req.header("origin");
+    if (origin && !LOCAL_ORIGIN.test(origin)) {
+      return c.json({ error: "forbidden: cross-origin request rejected" }, 403);
+    }
+    await next();
+  });
 
   if (opts.log) {
     app.use("*", async (c, next) => {

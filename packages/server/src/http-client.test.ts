@@ -75,3 +75,66 @@ describe("HttpMemloomClient", () => {
     expect(await c.conflicts()).toHaveLength(0);
   });
 });
+
+// The daemon binds 127.0.0.1, but cors() alone does not block a cross-site request: it only
+// withholds response headers, so a handler's side effects still fire. These guard against a
+// drive-by POST /admin/shutdown from any visited page and against DNS rebinding.
+describe("access-control gate", () => {
+  const cleanups: Array<() => Promise<void>> = [];
+  afterEach(async () => {
+    while (cleanups.length) await cleanups.pop()?.();
+  });
+
+  async function app() {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: contradictory,
+    });
+    await memloom.init();
+    let stopped = false;
+    const server = createServer(memloom, {
+      onShutdown: async () => {
+        stopped = true;
+      },
+    });
+    return { server, wasStopped: () => stopped };
+  }
+
+  it("rejects a cross-site Origin and does not run the handler", async () => {
+    const { server, wasStopped } = await app();
+    const res = await server.request("http://127.0.0.1:4319/admin/shutdown", {
+      method: "POST",
+      headers: { origin: "http://evil.example.com" },
+    });
+    expect(res.status).toBe(403);
+    // The shutdown side effect must NOT have fired.
+    expect(wasStopped()).toBe(false);
+  });
+
+  it("rejects a non-loopback Host (DNS rebinding)", async () => {
+    const { server } = await app();
+    const res = await server.request("http://127.0.0.1:4319/memory/list", {
+      headers: { host: "evil.example.com" },
+    });
+    expect(res.status).toBe(403);
+  });
+
+  it("allows a same-origin viewer request", async () => {
+    const { server } = await app();
+    const res = await server.request("http://127.0.0.1:4319/memory/list", {
+      headers: { origin: "http://127.0.0.1:4319", host: "127.0.0.1:4319" },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it("allows a non-browser client that sends no Origin", async () => {
+    const { server } = await app();
+    const res = await server.request("http://127.0.0.1:4319/memory/list", {
+      headers: { host: "127.0.0.1:4319" },
+    });
+    expect(res.status).toBe(200);
+  });
+});
