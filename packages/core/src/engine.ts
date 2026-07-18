@@ -20,7 +20,7 @@ import type {
 
 // The engine contract the surfaces (CLI, MCP, viewer) depend on. Both the local Memloom and
 // the HttpMemloomClient implement it, so a surface can talk to an in-process engine or a
-// running `memloom serve` interchangeably (the single-owner model, D1).
+// running `memloom serve` interchangeably (the single-owner model).
 export interface MemoryEngine {
   save(input: SaveInput): Promise<SaveResult>;
   recall(query: string, opts?: RecallOptions): Promise<Memory[]>;

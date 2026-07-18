@@ -1,7 +1,7 @@
 import { mkdirSync } from "node:fs";
 import lockfile from "proper-lockfile";
 
-// D1: PGLite is single-process; two openers of the same data dir corrupt the WAL. The
+// PGLite is single-process; two openers of the same data dir corrupt the WAL. The
 // embedded tier must guard the directory itself (PGLite 0.4.6 does not). We take an advisory
 // lock on the data dir; a second opener fails with a clear error instead of corrupting.
 //
