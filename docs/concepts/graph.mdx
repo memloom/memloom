@@ -25,7 +25,7 @@ The two granularities:
 | **Memory** | Active saved memories | Circle, colored by memory type |
 | **Entity** | `memloom index` extraction | Purple circle |
 | **Document** | `memloom context add` | Emerald diamond |
-| **Chunk** | Expanding a document node | Square (drill-down only) |
+| **Chunk** | Expanding a document node | Square |
 
 | Edge | Meaning |
 | --- | --- |
@@ -35,9 +35,9 @@ The two granularities:
 
 Only **active** memories and edges appear; stale versions and reverted resolutions drop out.
 
-## How edges get made: `memloom index`
+## How indexing works
 
-Indexing runs automatically: a few seconds after you save a memory or add a file, the
+By default, indexing runs automatically: a few seconds after you save a memory or add a file, the
 daemon extracts entities in the background (debounced, so a folder ingest becomes one
 run), and the runs show up in the Console like any other. Saves and ingests stay fast
 because the LLM work never blocks them. Turn it off with `memloom auto-index off` (or
@@ -78,6 +78,8 @@ If an older, noisier pipeline already polluted your graph, rebuild it from scrat
 memloom index --rebuild   # wipes all extracted entities/edges, then re-runs indexing
 ```
 
+Keep in mind that indexing with LLMs is **not deterministic**: the same input can give different extractions every time.
+
 Belief edges (`replaces`, `distinct`) are never touched by a rebuild. Note that rebuilding
 needs the LLM: run it offline and the wipe still happens. The store stays consistent
 (everything is unindexed), but nothing is re-extracted until a key is configured.
@@ -86,7 +88,7 @@ Indexed entities also feed retrieval: the entity arm of hybrid recall anchors a 
 entities and pulls in whatever mentions them, including document sections whose wording
 shares nothing with your query. See [Retrieval](/concepts/retrieval).
 
-## The schema is yours
+## The schema
 
 The vocabularies live in a registry (the viewer's **schema** tab, `GET /memory/schema`,
 `memloom schema` in the CLI). There is no code to fork:

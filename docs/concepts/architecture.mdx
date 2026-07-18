@@ -18,9 +18,9 @@ flowchart LR
     Viewer[Viewer / browser] --> HTTP
     Studio[Drizzle Studio / psql] --> Wire
     subgraph daemon ["memloom serve (one process)"]
-        HTTP["HTTP API :4319"] --> Engine
-        Wire["Postgres wire :54329"] --> Store
-        Engine["@memloom/core engine"] --> Store["PGLite, ~/.memloom/data"]
+        HTTP["HTTP API"] --> Engine
+        Wire["Postgres wire"] --> Store
+        Engine["@memloom/core"] --> Store["PGLite, ~/.memloom/data"]
     end
     Engine -.-> Providers["embeddings + LLM (OpenRouter, or offline)"]
 ```

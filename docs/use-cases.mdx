@@ -1,59 +1,34 @@
 ---
 title: "Use cases"
-description: "What people actually do with a local memory engine"
+description: "What you can do with a local memory engine"
 ---
 
 ## Persistent memory for coding agents
 
-This is the use case memloom was built for. Register memloom as an MCP server in Claude Code, Claude Desktop, or
+This is one of the best use cases memloom was built for. Register memloom as an MCP server in Claude Code, Claude Desktop, or
 Cursor ([setup](/mcp/setup)), and the agent gets `save_memory` / `recall_memory` tools backed by *your* store:
 
 - The agent saves what it learns, like *"deploys go through `scripts/release.sh`, never manual"*
-  (`procedure`) or *"user prefers colocated tests"* (`preference`), and recalls it in later
+  (`procedure`) or *"user prefers using vue over next.js for frontend development"* (`preference`), and recalls it in later
   sessions.
 - Because every agent talks to the **same daemon**, memory saved in Claude Code is there when
-  you switch to Cursor. The memory belongs to you. It is not tied to a vendor's session.
+  you switch to Cursor, Codex, or any other MCP-compatible agent/IDE. The memory belongs to you, so you're not locked into any vendor.
 - Dedup means agents can save enthusiastically without flooding the store, and contradiction
-  detection means a confused agent can't silently overwrite a fact; it opens a
-  [conflict](/concepts/conflicts) you'll see.
+  detection means a confused agent can't silently overwrite a valid fact.
 
-## A searchable second brain over your files
+## Personal, unified second brain
 
-`memloom context add` on your notes, docs, and PDFs makes them recallable by meaning *and* by
-exact phrase, with citations back to the file, section, and page:
+Point memloom at your files and they become part of the same memory. If you know
+NotebookLM: this is that idea, but local, open source, and shared with every agent
+you connect.
 
-```
-memloom recall "definition of a limit"
-[sim 0.83]  LIMITS OF FUNCTIONS > 2. DEFINITION. Let f be a function defined on...
-            from lecture-notes.pdf › LIMITS OF FUNCTIONS > 2. DEFINITION (p. 1)
+```bash
+memloom context add ./notes
 ```
 
-The outline chunker was built for exactly this material: lecture notes and exercise sheets
-where structure is ALL-CAPS titles and numbered definitions rather than markdown. One definition =
-one chunk, so recall returns the definition itself rather than a page-sized blob around it.
-
-## Team and project knowledge that survives the chat
-
-Conventions, decisions, and tribal knowledge normally live in chat scrollback. Saved as typed
-memories, they become queryable:
-
-- `episode`: *decided on 2026-07-02 to keep PGLite as the default tier*, with
-  [version history](/concepts/memory-types#walking-history) when the decision changes.
-- `procedure`: runbooks the whole team's agents can recall mid-incident.
-- Ingested design docs connect to those memories [through the graph](/concepts/graph): the
-  entities a decision mentions link it to the documents that discuss them.
-
-## Seeing what your agents believe
-
-The viewer (`memloom ui`) is the audit surface: browse every memory by type, watch the graph
-of what connects to what, read a document chunk by chunk, and, most importantly, review the
-**conflicts queue**, where contradictory beliefs wait for a human decision instead of being
-silently resolved. When you disagree with what an agent saved, edit it (`memloom update`);
-the old belief stays in history, so the correction is itself auditable.
-
-## Debugging and poking at the data
-
-The daemon speaks the Postgres wire protocol (`postgresql://postgres@127.0.0.1:54329/postgres`),
-so Drizzle Studio, psql, or any DB tool can inspect the raw tables: the memories, the edges,
-the RRF inputs. Just disconnect when you're done: PGLite is single-connection, and the API
-503s while a DB tool holds the lock.
+- Your .md/.txt/.pdf files are recallable by meaning *and* by exact phrase, with citations
+  back to the file, section, and page.
+- The store is the one place your knowledge lives. Every agent and assistant you connect
+  reads from it, instead of each tool keeping its own partial copy.
+- Edit a file and re-run `context add`: changed files are re-ingested, unchanged files are
+  skipped (content-hash check), so the store stays in step with your folder.
