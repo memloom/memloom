@@ -135,9 +135,9 @@ describe("mcp tools", () => {
       status: "disabled",
     });
     expect(disabledPerson).toContain('Disabled entity_type "person"');
-    expect(
-      (await m.describeSchema()).entityTypes.find((t) => t.name === "person")?.status,
-    ).toBe("disabled");
+    expect((await m.describeSchema()).entityTypes.find((t) => t.name === "person")?.status).toBe(
+      "disabled",
+    );
 
     const already = await setSchemaEntryStatus(m, {
       kind: "entity_type",
