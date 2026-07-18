@@ -9,9 +9,13 @@ owner of the store, so the CLI, MCP clients, and the viewer all read and write t
 memories with no lock conflicts.
 
 ```bash
-npx memloom init           # creates ~/.memloom, starts the daemon
-                           # or: npm install -g memloom, then plain 'memloom'
+npm install -g memloom     # requires Node 20 or later
+memloom init               # creates ~/.memloom, starts the daemon
 ```
+
+To try it without installing anything, run every command through
+`npx memloom@latest <command>` instead. Pin `@latest` so npx does not reuse a stale
+cached copy.
 
 Configuration lives in `~/.memloom/config.env` (created by `init`). Set `OPENROUTER_API_KEY`
 there for real embeddings plus LLM dedup and entity extraction, then restart the daemon. See

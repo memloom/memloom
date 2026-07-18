@@ -1,6 +1,6 @@
 {
   "name": "memloom",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "A memory engine for AI agents that you can see and correct: one Postgres store shared by CLI, MCP, HTTP, and a viewer.",
   "license": "Apache-2.0",
@@ -21,7 +21,7 @@
     "directory": "packages/cli"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=20"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

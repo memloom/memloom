@@ -15,12 +15,20 @@ surfaces, see the [CLI Reference](/cli/overview) and the [MCP Reference](/mcp/se
 
 ## Quickstart
 
+Requires **Node 20 or later**. Check with `node -v`.
+
 ```bash
-npm install -g memloom   # or run every command through npx: npx memloom <command>
+npm install -g memloom   # or run every command through npx: npx memloom@latest <command>
 memloom init             # creates ~/.memloom (store + config.env), starts the daemon
 memloom save "the staging database runs on Postgres"
 memloom recall "staging database"
 ```
+
+<Note>
+If `memloom` is not found after installing, your Node is probably too old: npm skips a package
+whose `engines` it cannot satisfy, so nothing gets linked onto your PATH. Run `node -v`, upgrade
+to Node 20 or later, then install again.
+</Note>
 
 `init` prints the path to `config.env`. To switch from offline mode to real embeddings,
 semantic dedup, and contradiction detection: set `OPENROUTER_API_KEY` there, then

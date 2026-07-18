@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+- **Node 20 is now supported** (was Node 22 or later). The whole suite passes on Node 20,
+  including PGLite storage, the data-dir lock, and hybrid retrieval, so the higher floor was
+  never needed. CI now runs on Node 20, 22, and 24.
+- **Docs state the Node requirement.** They never did. If your Node was too old, npm skipped
+  the package instead of linking it, and `memloom` looked installed but was not on your PATH.
+
 ## 0.1.0 (first release)
 
 The engine, end to end:

@@ -1,6 +1,6 @@
 {
   "name": "@memloom/server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "memloom local HTTP server (Hono): wraps core, owns the single PGLite connection.",
   "license": "Apache-2.0",
@@ -24,7 +24,7 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=20"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

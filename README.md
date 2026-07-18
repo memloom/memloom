@@ -23,6 +23,8 @@ charge of:
 
 ## Quickstart: two minutes, no Docker, no signup
 
+Requires Node 20 or later.
+
 ```bash
 npm install -g memloom                # one binary, no Docker
 memloom init                          # creates ~/.memloom, starts the daemon
