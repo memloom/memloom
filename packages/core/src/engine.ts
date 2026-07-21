@@ -6,9 +6,11 @@ import type {
   ContextDocument,
   DocumentChunks,
   Graph,
+  ImportCaptureScope,
   ImportOptions,
   ImportResult,
   ImportSessionEvent,
+  ImportStatus,
   IndexProgressEvent,
   IndexResult,
   Memory,
@@ -49,6 +51,10 @@ export interface MemoryEngine {
     opts?: ImportOptions,
     onProgress?: (event: ImportSessionEvent) => void,
   ): Promise<ImportResult>;
+  /** Hook capture state for `memloom status`: scope, last notify, spend, ledger totals. */
+  importStatus(): Promise<ImportStatus>;
+  /** Set (connect) or clear (disconnect) the hook capture scope. */
+  setImportScope(scope: ImportCaptureScope): Promise<void>;
   /** Extract entities from unindexed rows. `onProgress` fires after each item completes. */
   index(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
   /** Wipe all extracted entities/edges and re-run indexing from scratch (recovery path). */

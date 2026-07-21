@@ -182,6 +182,33 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   }
   console.log("Ctrl+C to stop.");
 
+  // The startup sweep: catch sessions the hook missed (daemon down at session end, a crash,
+  // the fire-and-forget hook killed early). The ledger makes it cheap: up-to-date sessions
+  // cost zero LLM calls, and the unattended daily budget bounds the rest. Only runs when
+  // capture was configured via `memloom connect claude-code`.
+  const sweep = setTimeout(async () => {
+    try {
+      const scope = await memloom.importScope();
+      if (scope === null) return;
+      const result = await memloom.importClaudeCode({
+        unattended: true,
+        ...(scope === "all" ? {} : { projects: scope.projects }),
+      });
+      if (result.saved + result.versioned + result.conflicts > 0 || result.error) {
+        console.log(
+          `${new Date().toISOString()}  sweep: ${result.sessions} sessions, ` +
+            `${result.saved} saved, ${result.versioned} versioned, ${result.conflicts} conflicts` +
+            (result.error ? `  (stopped early: ${result.error})` : ""),
+        );
+      }
+    } catch (err) {
+      console.log(
+        `${new Date().toISOString()}  sweep failed: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
+  }, 3_000);
+  sweep.unref?.();
+
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }

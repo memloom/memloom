@@ -7,9 +7,11 @@ import type {
   ContextDocument,
   DocumentChunks,
   Graph,
+  ImportCaptureScope,
   ImportOptions,
   ImportResult,
   ImportSessionEvent,
+  ImportStatus,
   IndexProgressEvent,
   IndexResult,
   Memory,
@@ -122,6 +124,18 @@ export class HttpMemloomClient implements MemoryEngine {
       body,
       onProgress,
     );
+  }
+
+  importStatus(): Promise<ImportStatus> {
+    return this.#json<ImportStatus>("/import/claude-code/status");
+  }
+
+  async setImportScope(scope: ImportCaptureScope): Promise<void> {
+    await this.#json("/import/claude-code/scope", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope }),
+    });
   }
 
   index(_ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult> {

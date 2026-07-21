@@ -52,6 +52,35 @@ The run ends with a cost line: extraction calls (one per transcript chunk), dedu
 classifier calls (one per saved memory that had similar neighbors), and embedding calls
 (one batch per session). Nothing runs unattended; import spends only while you watch it.
 
+## Automatic capture
+
+```bash
+memloom connect claude-code --project myapp
+memloom status
+```
+
+`connect` makes capture continuous: a session-end hook is added to your Claude Code
+settings, and each finished session is distilled by the daemon in the background, using
+the exact same pipeline as `import`. The hook is a thin notifier that hands the daemon a
+path and exits in milliseconds; if the daemon is down when a session ends, the next daemon
+start sweeps the gap using the ledger, so nothing is lost.
+
+Capture scope is an allowlist and it is empty by default: nothing is captured until you
+name projects with `--project` (repeatable) or opt into `--all`. That is deliberate. The
+hook fires for every project on your machine, including client work and repositories whose
+code should never reach an LLM provider.
+
+Guarantees around the settings edit: it merges with your existing hooks (never replaces),
+a one-time backup is written next to the file before the first edit, running `connect`
+twice changes nothing, and `memloom disconnect claude-code` removes only memloom's entry.
+A settings file that does not parse is refused untouched.
+
+Unattended capture runs against a daily distillation budget so it can never silently burn
+credits: when the budget is spent, capture pauses and `memloom status` says so loudly.
+`status` also shows whether the hook is installed, when it last fired, and whether the
+last capture failed (a provider outage, a missing API key), so a dead hook is always
+visible, never silent.
+
 ## Privacy notes
 
 Transcripts never leave your machine except as redacted chunks sent to the LLM provider

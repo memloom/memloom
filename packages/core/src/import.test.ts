@@ -288,6 +288,98 @@ describe("importClaudeCode", () => {
     ]);
   });
 
+  it("paths mode imports one just-ended session, skipping bounds and quiet check", async () => {
+    const { memloom } = await fresh();
+    const root = makeRoot();
+    // Freshly written (mtime now): discovery would skip it as active; the hook path must not.
+    const id = randomUUID();
+    const dir = join(root, "proj");
+    mkdirSync(dir, { recursive: true });
+    const path = join(dir, `${id}.jsonl`);
+    writeFileSync(
+      path,
+      `${JSON.stringify({
+        type: "user",
+        sessionId: id,
+        message: { role: "user", content: [{ type: "text", text: "remember: hook capture works" }] },
+      })}\n`,
+    );
+
+    const result = await memloom.importClaudeCode({ paths: [path] });
+    expect(result.sessions).toBe(1);
+    expect(result.saved).toBe(1);
+  });
+
+  it("handleSessionNotify enforces the capture scope and records status", async () => {
+    const { memloom } = await fresh();
+    const root = makeRoot();
+    const path = writeSession(root, "D--proj-alpha", ["remember: scoped capture"]);
+
+    // Unconfigured: refused with a hint, nothing imported.
+    const off = await memloom.handleSessionNotify(path);
+    expect(off.accepted).toBe(false);
+    expect(off.reason).toContain("connect");
+
+    // Out of scope: quietly ignored, that is the allowlist working.
+    await memloom.setImportScope({ projects: ["beta"] });
+    const outside = await memloom.handleSessionNotify(path);
+    expect(outside.accepted).toBe(false);
+    expect(outside.reason).toContain("outside the capture scope");
+    expect(await memloom.memories()).toHaveLength(0);
+
+    // In scope: imported, status reflects the notify.
+    await memloom.setImportScope({ projects: ["alpha"] });
+    const accepted = await memloom.handleSessionNotify(path);
+    expect(accepted.accepted).toBe(true);
+    expect((await memloom.memories()).map((m) => m.content)).toEqual(["scoped capture"]);
+
+    const status = await memloom.importStatus();
+    expect(status.scope).toEqual({ projects: ["alpha"] });
+    expect(status.lastNotifyAt).toBeTruthy();
+    expect(status.lastNotifyError).toBeNull();
+    expect(status.sessionsImported).toBe(1);
+    expect(status.memoriesSaved).toBe(1);
+    expect(status.todayUnattendedCalls).toBeGreaterThan(0);
+  });
+
+  it("handleSessionNotify records a failing provider in status", async () => {
+    const llm = new ScriptedLLMProvider((prompt) => {
+      if (prompt.startsWith("You compare")) return "[]";
+      throw new Error("OpenRouter completion failed: 402 requires more credits");
+    });
+    const { memloom } = await fresh(Object.assign(llm, { distillCalls: { count: 0 } }));
+    await memloom.setImportScope("all");
+    const root = makeRoot();
+    const path = writeSession(root, "proj", ["remember: doomed"]);
+
+    await memloom.handleSessionNotify(path);
+    const status = await memloom.importStatus();
+    expect(status.lastNotifyError).toContain("402");
+  });
+
+  it("the unattended daily budget pauses capture loudly; attended runs are uncapped", async () => {
+    const { memloom, storage } = await fresh();
+    const root = makeRoot();
+    writeSession(root, "proj", ["remember: capped"]);
+    // Spend the whole day's budget up front. The key uses the JS local day, the same
+    // expression the engine uses, so this test cannot drift across the midnight window.
+    const key = `import_unattended_calls_${new Date().toLocaleDateString("en-CA")}`;
+    await storage.query(
+      `INSERT INTO _memloom_meta (key, value) VALUES ($1, '200')
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`,
+      [key],
+    );
+
+    const unattended = await memloom.importClaudeCode({ root, unattended: true });
+    expect(unattended.error).toContain("budget");
+    expect(unattended.calls.extraction).toBe(0);
+    expect(await memloom.memories()).toHaveLength(0);
+
+    const attended = await memloom.importClaudeCode({ root });
+    expect(attended.error).toBeUndefined();
+    expect(attended.saved).toBe(1);
+  });
+
   it("refuses without an LLM", async () => {
     const storage = await PgliteFactory.open();
     cleanups.push(() => storage.close());

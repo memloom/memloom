@@ -1,5 +1,5 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type ChatProvider,
@@ -45,6 +45,52 @@ describe("server", () => {
     const res = await (await app()).request("/health");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
+  });
+
+  it("import notify confines paths to the Claude Code sessions directory", async () => {
+    const server = await app();
+    // An arbitrary local file must never become LLM input via the notify endpoint.
+    const outside = await server.request("/import/claude-code/notify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: "C:\\Windows\\system32\\drivers\\etc\\hosts" }),
+    });
+    expect(outside.status).toBe(400);
+    // Traversal out of the root is caught after normalization.
+    const traversal = await server.request("/import/claude-code/notify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: join(homedir(), ".claude", "projects", "..", "..", "secret.jsonl") }),
+    });
+    expect(traversal.status).toBe(400);
+    // Inside the root but not a transcript: refused.
+    const notJsonl = await server.request("/import/claude-code/notify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: join(homedir(), ".claude", "projects", "p", "notes.txt") }),
+    });
+    expect(notJsonl.status).toBe(400);
+    // A well-formed transcript path is accepted for async processing.
+    const ok = await server.request("/import/claude-code/notify", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        path: join(homedir(), ".claude", "projects", "p", "00000000-0000-0000-0000-000000000000.jsonl"),
+      }),
+    });
+    expect(ok.status).toBe(202);
+  });
+
+  it("import scope round-trips through the HTTP surface", async () => {
+    const server = await app();
+    const put = await server.request("/import/claude-code/scope", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope: { projects: ["memloom"] } }),
+    });
+    expect(put.status).toBe(200);
+    const status = await server.request("/import/claude-code/status");
+    expect(((await status.json()) as { scope: unknown }).scope).toEqual({ projects: ["memloom"] });
   });
 
   it("import/claude-code/stream validates the body", async () => {

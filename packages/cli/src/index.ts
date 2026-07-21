@@ -3,6 +3,7 @@ import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
   detectKind,
+  type ImportStatus,
   MEMORY_TYPES,
   type Memory,
   type MemoryType,
@@ -11,6 +12,14 @@ import {
 import { configPath, dataDir, ensureConfig, memloomHome } from "./config.js";
 import { connect } from "./connect.js";
 import { startDaemon } from "./daemon.js";
+import {
+  claudeSettingsPath,
+  hookInstalled,
+  installHook,
+  notifyDaemon,
+  readNotifyPayload,
+  removeHook,
+} from "./hooks.js";
 import { runImport } from "./import.js";
 import { runReembed } from "./reembed.js";
 
@@ -65,6 +74,9 @@ Usage: memloom <command> [args]
   auto-index [on|off]  show or set background entity extraction after saves/ingests
   conflicts            list pending conflicts
   import claude-code   distill recent Claude Code sessions into memories (--dry-run first)
+  connect claude-code  capture future sessions automatically as they end (--project X | --all)
+  disconnect claude-code  stop capturing; removes only memloom's hook
+  status               daemon, capture scope, last hook activity, today's spend
   context add <path>   ingest files (or a directory) as context: ${supportedExtensions().join(" ")}
   context list         list ingested context documents
   context remove <id>  remove a context document and its chunks
@@ -202,6 +214,38 @@ processed. Needs an API key; offline mode cannot distill.
   --days N     widen the day window (default 14)
   --sessions N raise the session cap (default 20)
   --project X  only sessions whose project folder name contains X`,
+
+  connect: `memloom connect claude-code (--project <name> ... | --all)
+
+Capture sessions automatically: a session-end hook is added to your Claude Code
+settings, and each finished session is distilled into memories by the daemon in
+the background. The hook is a thin notifier; if the daemon is down when a
+session ends, the next daemon start sweeps the gap, so nothing is lost.
+
+Capture scope is an allowlist and it is EMPTY by default: nothing is captured
+until you name it. That is deliberate. The hook fires for every project on this
+machine, including ones whose code should never reach an LLM provider.
+
+  memloom connect claude-code --project memloom --project my-app
+  memloom connect claude-code --all
+
+The edit to your Claude Code settings merges with your existing hooks and a
+one-time backup is written next to the file first. Unattended distillation
+runs against a daily call budget; when it is spent, capture pauses loudly in
+memloom status and resumes the next day.`,
+
+  disconnect: `memloom disconnect claude-code
+
+Stop capturing sessions: removes memloom's entry from your Claude Code settings
+(only memloom's; your own hooks are untouched) and clears the capture scope.
+Already-imported memories stay.`,
+
+  status: `memloom status
+
+The capture dashboard: whether the daemon is up, whether the session-end hook
+is installed, the capture scope, when the hook last fired and whether it
+failed, today's unattended distillation spend against the daily budget, and
+how much the ledger has imported in total.`,
 
   conflicts: `memloom conflicts
 
@@ -427,6 +471,108 @@ export async function run(argv: readonly string[]): Promise<void> {
       }
       const engine = await connect();
       await runImport(engine, args);
+      return;
+    }
+
+    case "connect": {
+      const [source, ...args] = rest;
+      if (source !== "claude-code") {
+        throw new Error("usage: memloom connect claude-code (--project <name> ... | --all)");
+      }
+      const projects: string[] = [];
+      let all = false;
+      const words = [...args];
+      while (words.length > 0) {
+        const word = words.shift() as string;
+        if (word === "--all") all = true;
+        else if (word === "--project" || word.startsWith("--project=")) {
+          const value = word.includes("=") ? word.slice(word.indexOf("=") + 1) : words.shift();
+          if (!value) throw new Error("--project needs a value");
+          projects.push(value);
+        } else throw new Error(`unknown flag ${word}. usage: memloom connect claude-code (--project <name> ... | --all)`);
+      }
+      // The allowlist is empty by default on purpose: naming the scope is the consent step.
+      if (!all && projects.length === 0) {
+        throw new Error(
+          "name what to capture: --project <name> (repeatable) or --all for every project. " +
+            "Nothing is captured until you choose.",
+        );
+      }
+      const engine = await connect();
+      await engine.setImportScope(all ? "all" : { projects });
+      const edit = installHook();
+      if (edit.backupPath) console.log(`backed up your Claude Code settings to ${edit.backupPath}`);
+      console.log(
+        edit.changed
+          ? `hook installed in ${claudeSettingsPath()}`
+          : "hook was already installed; capture scope updated",
+      );
+      console.log(
+        all
+          ? "capturing: every project, as sessions end"
+          : `capturing: ${projects.join(", ")} (sessions elsewhere are ignored)`,
+      );
+      console.log("check on it anytime with: memloom status");
+      return;
+    }
+
+    case "disconnect": {
+      const [source] = rest;
+      if (source !== "claude-code") throw new Error("usage: memloom disconnect claude-code");
+      const edit = removeHook();
+      const engine = await connect();
+      await engine.setImportScope(null);
+      console.log(edit.changed ? "hook removed; your other hooks are untouched." : "no memloom hook was installed.");
+      console.log("capture scope cleared. Imported memories stay.");
+      return;
+    }
+
+    case "status": {
+      let daemonUp = true;
+      let status: ImportStatus | null = null;
+      try {
+        const res = await fetch("http://127.0.0.1:4319/health", { signal: AbortSignal.timeout(600) });
+        daemonUp = res.ok;
+      } catch {
+        daemonUp = false;
+      }
+      console.log(`daemon      ${daemonUp ? "running on http://127.0.0.1:4319" : "not running"}`);
+      console.log(`hook        ${hookInstalled() ? `installed (${claudeSettingsPath()})` : "not installed"}`);
+      if (daemonUp) {
+        const engine = await connect();
+        status = await engine.importStatus();
+      }
+      if (!status) {
+        console.log("capture     unknown (start the daemon for scope, spend, and totals: memloom serve)");
+        return;
+      }
+      const scope =
+        status.scope === null
+          ? "off (memloom connect claude-code to enable)"
+          : status.scope === "all"
+            ? "all projects"
+            : status.scope.projects.join(", ");
+      console.log(`capture     ${scope}`);
+      console.log(
+        `last hook   ${status.lastNotifyAt ?? "never fired"}${status.lastNotifyError ? `  FAILED: ${status.lastNotifyError}` : ""}`,
+      );
+      console.log(
+        `today       ${status.todayUnattendedCalls}/${status.unattendedDailyCap} unattended distillation calls${
+          status.todayUnattendedCalls >= status.unattendedDailyCap ? "  (PAUSED at cap)" : ""
+        }`,
+      );
+      console.log(`imported    ${status.sessionsImported} sessions, ${status.memoriesSaved} memories all-time`);
+      return;
+    }
+
+    // The hook's entry point: read the session-end payload, poke the daemon, exit 0 always.
+    // Never auto-starts the daemon (a session ending must not spawn one) and never prints:
+    // hook output would surface inside Claude Code as noise.
+    case "notify": {
+      const [source] = rest;
+      if (source !== "claude-code") return;
+      const path = await readNotifyPayload(process.stdin);
+      if (path) await notifyDaemon(path);
       return;
     }
 

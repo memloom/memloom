@@ -49,6 +49,8 @@ export interface DiscoveryOptions {
   maxSessions?: number;
   /** Case-insensitive substring match on the project directory name. */
   project?: string;
+  /** Allowlist form: a project directory matches when ANY entry matches. */
+  projects?: string[];
   /** Injectable clock (tests). */
   now?: number;
 }
@@ -66,7 +68,9 @@ export async function discoverSessions(opts: DiscoveryOptions = {}): Promise<Dis
   const maxSessions = opts.maxSessions ?? 20;
   const now = opts.now ?? Date.now();
   const cutoff = now - days * 24 * 60 * 60 * 1000;
-  const filter = opts.project?.toLowerCase();
+  const filters = [opts.project, ...(opts.projects ?? [])]
+    .filter((f): f is string => Boolean(f))
+    .map((f) => f.toLowerCase());
 
   const skipped: DiscoverySkips = { sidecars: 0, active: 0, outsideWindow: 0, overCap: 0 };
   const inWindow: DiscoveredSession[] = [];
@@ -74,7 +78,7 @@ export async function discoverSessions(opts: DiscoveryOptions = {}): Promise<Dis
   const projectDirs = await readdir(root, { withFileTypes: true }).catch(() => []);
   for (const dir of projectDirs) {
     if (!dir.isDirectory()) continue;
-    if (filter && !dir.name.toLowerCase().includes(filter)) continue;
+    if (filters.length > 0 && !filters.some((f) => dir.name.toLowerCase().includes(f))) continue;
     const dirPath = join(root, dir.name);
     const files = await readdir(dirPath, { withFileTypes: true }).catch(() => []);
     for (const file of files) {

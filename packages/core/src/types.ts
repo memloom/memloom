@@ -392,6 +392,18 @@ export interface ImportOptions {
   maxSessions?: number;
   /** Case-insensitive substring match on the encoded project directory name. */
   project?: string;
+  /** Allowlist form of `project`: a session matches when ANY entry matches. Hook and sweep. */
+  projects?: string[];
+  /**
+   * Explicit session files instead of discovery (the hook's just-ended transcript). Bypasses
+   * the day window, the cap, and the quiet check: a session-end signal is definitive.
+   */
+  paths?: string[];
+  /**
+   * An unattended run (hook, sweep): enforce the per-day distillation call budget so capture
+   * can never silently burn credits. Attended CLI runs are uncapped; the user is watching.
+   */
+  unattended?: boolean;
   /** Discover, parse, chunk, and count only: zero LLM calls, zero writes, ledger untouched. */
   dryRun?: boolean;
   /** Ignore ledger watermarks and reprocess every discovered session from line zero. */
@@ -399,6 +411,24 @@ export interface ImportOptions {
   /** Override ~/.claude/projects (tests). */
   root?: string;
   ownerId?: string;
+}
+
+/** The hook capture scope: named project-dir substrings, everything, or not configured. */
+export type ImportCaptureScope = { projects: string[] } | "all" | null;
+
+/** What `memloom status` renders: capture config, last hook activity, and today's spend. */
+export interface ImportStatus {
+  scope: ImportCaptureScope;
+  /** ISO time the daemon last received a session-end notify; null = never. */
+  lastNotifyAt: string | null;
+  /** The last notify's failure ("no LLM provider configured", a 402, ...); null = clean. */
+  lastNotifyError: string | null;
+  /** Unattended distillation calls spent today, against the cap. */
+  todayUnattendedCalls: number;
+  unattendedDailyCap: number;
+  /** Ledger totals: sessions ever imported and memories they saved. */
+  sessionsImported: number;
+  memoriesSaved: number;
 }
 
 /** One session finished during an import run: the per-session progress line. */

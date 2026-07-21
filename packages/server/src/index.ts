@@ -253,6 +253,18 @@ const importSchema = z.object({
   force: z.boolean().optional(),
 });
 
+const importNotifySchema = z.object({
+  path: z.string().min(1, "path must be a non-empty string").max(4096),
+});
+
+const importScopeSchema = z.object({
+  scope: z.union([
+    z.literal("all"),
+    z.object({ projects: z.array(z.string().min(1).max(300)).min(1).max(200) }),
+    z.null(),
+  ]),
+});
+
 const assistantChatSchema = z.object({
   sessionId: z.string().uuid().optional(),
   message: z.string().min(1, "message must be a non-empty string"),
@@ -509,6 +521,37 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   };
 
   app.post("/memory/index/stream", (c) => streamRun(c, (p) => memloom.index(undefined, p)));
+
+  // Hook capture surface. The notify endpoint takes only a transcript path and must confine
+  // it: any local process can reach the daemon, and without this check one could make the
+  // daemon read an arbitrary file, ship it to the LLM provider, and write derived content
+  // into the store. The path must resolve inside ~/.claude/projects, on top of the global
+  // Host + Origin gate above.
+  const sessionsRoot = resolve(join(homedir(), ".claude", "projects"));
+  app.post("/import/claude-code/notify", async (c) => {
+    const body = await parseBody(c, importNotifySchema);
+    if (!body.ok) return body.res;
+    const target = resolve(normalize(body.data.path));
+    if (target !== sessionsRoot && !target.startsWith(sessionsRoot + sep)) {
+      return c.json({ error: "forbidden: path is outside the Claude Code sessions directory" }, 400);
+    }
+    if (!target.endsWith(".jsonl")) {
+      return c.json({ error: "path must be a .jsonl session transcript" }, 400);
+    }
+    // Fire and forget: the hook must never wait on distillation. handleSessionNotify records
+    // every failure in status, so nothing here is silently lost.
+    void memloom.handleSessionNotify(target).catch(() => {});
+    return c.json({ accepted: true }, 202);
+  });
+
+  app.get("/import/claude-code/status", async (c) => c.json(await memloom.importStatus()));
+
+  app.put("/import/claude-code/scope", async (c) => {
+    const body = await parseBody(c, importScopeSchema);
+    if (!body.ok) return body.res;
+    await memloom.setImportScope(body.data.scope);
+    return c.json({ ok: true });
+  });
 
   // Session import runs daemon-side (the single store writer owns the ledger) and streams
   // NDJSON progress: one {type:"item"} per session, {type:"done"} with the totals and the

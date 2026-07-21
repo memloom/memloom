@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **`memloom connect claude-code`**: continuous capture. A session-end hook (a thin
+  notifier) tells the daemon when a Claude Code session finishes, and the daemon distills
+  it in the background through the same pipeline as `import`. Capture scope is an allowlist
+  and empty by default: name projects with `--project` or opt into `--all`; sessions outside
+  the scope never leave your machine. The settings edit merges with your existing hooks,
+  backs the file up once before the first edit, is idempotent, and refuses an unparseable
+  file untouched; `disconnect` removes only memloom's entry. Unattended distillation runs
+  against a daily call budget and pauses loudly when it is spent. A sweep on daemon start
+  catches sessions that ended while the daemon was down. `memloom status` shows the scope,
+  the last hook activity and failure, today's spend, and all-time totals.
 - **`memloom import claude-code`**: distill your Claude Code session transcripts into typed,
   searchable memories. Bounded by default (last 14 days, newest 20 sessions; widen with
   `--days` / `--sessions` / `--project`), `--dry-run` previews with zero LLM calls, and a

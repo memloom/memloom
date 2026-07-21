@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { basename, dirname } from "node:path";
 import { type AssistantEvent, runAssistantTurn } from "./assistant.js";
 import { chunkMarkdown, chunkOutline } from "./chunker.js";
 import {
@@ -58,9 +59,11 @@ import type {
   GraphDocument,
   GraphEdge,
   GraphMemory,
+  ImportCaptureScope,
   ImportOptions,
   ImportResult,
   ImportSessionEvent,
+  ImportStatus,
   IndexProgressEvent,
   IndexResult,
   IndexRun,
@@ -101,6 +104,18 @@ function hostTimeZone(): string {
     return "UTC";
   }
 }
+
+// Unattended capture (the session-end hook, the startup sweep) spends provider credits with
+// nobody watching, so it runs against a per-day distillation call budget. Hitting the cap
+// pauses capture loudly in `memloom status`; attended `memloom import` runs are never capped.
+const UNATTENDED_DAILY_CALL_CAP = 200;
+
+// _memloom_meta keys for hook capture state. The scope is what `connect` configured
+// (project allowlist or "all"); the notify keys are what `memloom status` renders.
+const IMPORT_SCOPE_KEY = "import_capture_scope";
+const IMPORT_NOTIFY_AT_KEY = "import_last_notify_at";
+const IMPORT_NOTIFY_ERROR_KEY = "import_last_notify_error";
+const importCallsKey = () => `import_unattended_calls_${new Date().toLocaleDateString("en-CA")}`;
 
 // _memloom_meta key set while a reembed() is underway; its presence means the store's vectors
 // are partially NULL and must not be served until the migration finishes.
@@ -869,12 +884,24 @@ export class Memloom implements MemoryEngine {
       );
     }
     const owner = opts.ownerId ?? SENTINEL_OWNER;
-    const discovery = await discoverSessions({
-      ...(opts.root ? { root: opts.root } : {}),
-      ...(opts.days !== undefined ? { days: opts.days } : {}),
-      ...(opts.maxSessions !== undefined ? { maxSessions: opts.maxSessions } : {}),
-      ...(opts.project ? { project: opts.project } : {}),
-    });
+    // Explicit paths (the hook's just-ended transcript) skip discovery entirely: no window,
+    // no cap, no quiet check. A session-end signal is definitive.
+    const discovery = opts.paths?.length
+      ? {
+          sessions: opts.paths.map((path) => ({
+            path,
+            project: basename(dirname(path)),
+            mtimeMs: 0,
+          })),
+          skipped: { sidecars: 0, active: 0, outsideWindow: 0, overCap: 0 },
+        }
+      : await discoverSessions({
+          ...(opts.root ? { root: opts.root } : {}),
+          ...(opts.days !== undefined ? { days: opts.days } : {}),
+          ...(opts.maxSessions !== undefined ? { maxSessions: opts.maxSessions } : {}),
+          ...(opts.project ? { project: opts.project } : {}),
+          ...(opts.projects ? { projects: opts.projects } : {}),
+        });
 
     const result: ImportResult = {
       sessions: 0,
@@ -976,7 +1003,14 @@ export class Memloom implements MemoryEngine {
       let sessionError: string | undefined;
       for (const chunk of chunked.chunks) {
         try {
+          if (opts.unattended && (await this.#unattendedCallsToday()) >= UNATTENDED_DAILY_CALL_CAP) {
+            sessionError =
+              `paused: the daily unattended distillation budget (${UNATTENDED_DAILY_CALL_CAP} calls) is spent. ` +
+              "Capture resumes tomorrow; run `memloom import claude-code` yourself to continue now.";
+            break;
+          }
           result.calls.extraction++;
+          if (opts.unattended) await this.#bumpUnattendedCalls();
           const output = await distillChunk(this.#llm, chunk);
           event.dropped += output.dropped;
           let vectors: number[][] = [];
@@ -1056,6 +1090,102 @@ export class Memloom implements MemoryEngine {
     result.calls.classifier = this.#classifyCalls - classifyBefore;
     if (!opts.dryRun && result.sessions > 0) this.#scheduleAutoIndex(owner);
     return result;
+  }
+
+  // ---- Hook capture state (scope, status, notify) ----------------------------------------
+
+  async #metaGet(key: string): Promise<string | null> {
+    const [row] = await this.#storage.query<{ value: string }>(
+      "SELECT value FROM _memloom_meta WHERE key = $1",
+      [key],
+    );
+    return row?.value ?? null;
+  }
+
+  async #metaSet(key: string, value: string): Promise<void> {
+    await this.#storage.query(
+      `INSERT INTO _memloom_meta (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [key, value],
+    );
+  }
+
+  async #unattendedCallsToday(): Promise<number> {
+    return Number((await this.#metaGet(importCallsKey())) ?? 0);
+  }
+
+  async #bumpUnattendedCalls(): Promise<void> {
+    await this.#metaSet(importCallsKey(), String((await this.#unattendedCallsToday()) + 1));
+  }
+
+  /** The hook capture scope `connect` configured; null = capture off. */
+  async importScope(): Promise<ImportCaptureScope> {
+    const raw = await this.#metaGet(IMPORT_SCOPE_KEY);
+    if (raw === null) return null;
+    if (raw === "all") return "all";
+    try {
+      const parsed = JSON.parse(raw) as { projects?: string[] };
+      return Array.isArray(parsed.projects) ? { projects: parsed.projects.map(String) } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Set (connect) or clear (disconnect) the hook capture scope. */
+  async setImportScope(scope: ImportCaptureScope): Promise<void> {
+    if (scope === null) {
+      await this.#storage.query("DELETE FROM _memloom_meta WHERE key = $1", [IMPORT_SCOPE_KEY]);
+      return;
+    }
+    await this.#metaSet(IMPORT_SCOPE_KEY, scope === "all" ? "all" : JSON.stringify(scope));
+  }
+
+  async importStatus(ownerId: string = SENTINEL_OWNER): Promise<ImportStatus> {
+    const [totals] = await this.#storage.query<{ sessions: string; saved: string }>(
+      `SELECT count(*) AS sessions, COALESCE(sum(memories_saved), 0) AS saved
+       FROM import_ledger WHERE owner_id = $1`,
+      [ownerId],
+    );
+    return {
+      scope: await this.importScope(),
+      lastNotifyAt: await this.#metaGet(IMPORT_NOTIFY_AT_KEY),
+      lastNotifyError: await this.#metaGet(IMPORT_NOTIFY_ERROR_KEY),
+      todayUnattendedCalls: await this.#unattendedCallsToday(),
+      unattendedDailyCap: UNATTENDED_DAILY_CALL_CAP,
+      sessionsImported: Number(totals?.sessions ?? 0),
+      memoriesSaved: Number(totals?.saved ?? 0),
+    };
+  }
+
+  /**
+   * One session-end notify from the hook: scope check, unattended import of exactly that
+   * transcript, and status bookkeeping. Every failure is recorded, never thrown away: a
+   * provider outage, the spend cap, or a missing LLM must all be visible in `memloom status`
+   * (a silently dead hook is the one failure mode this feature is not allowed to have).
+   */
+  async handleSessionNotify(
+    path: string,
+  ): Promise<{ accepted: boolean; reason?: string; result?: ImportResult }> {
+    const scope = await this.importScope();
+    if (scope === null) {
+      return { accepted: false, reason: "capture is not configured; run memloom connect claude-code" };
+    }
+    const project = basename(dirname(path)).toLowerCase();
+    if (scope !== "all" && !scope.projects.some((p) => project.includes(p.toLowerCase()))) {
+      // Out-of-scope sessions are the allowlist working as designed: not an error state.
+      return { accepted: false, reason: "project is outside the capture scope" };
+    }
+    await this.#metaSet(IMPORT_NOTIFY_AT_KEY, new Date().toISOString());
+    try {
+      const result = await this.importClaudeCode({ paths: [path], unattended: true });
+      if (result.error) await this.#metaSet(IMPORT_NOTIFY_ERROR_KEY, result.error);
+      else await this.#storage.query("DELETE FROM _memloom_meta WHERE key = $1", [IMPORT_NOTIFY_ERROR_KEY]);
+      return { accepted: true, result };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.#metaSet(IMPORT_NOTIFY_ERROR_KEY, message);
+      return { accepted: false, reason: message };
+    }
   }
 
   // The stored excerpt is what keeps provenance alive after the user cleans up transcripts;
