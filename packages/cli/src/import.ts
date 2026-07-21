@@ -62,6 +62,9 @@ export function parseImportFlags(args: readonly string[]): ImportFlags {
 function sessionLine(e: ImportSessionEvent): string {
   const name = `${e.project}/${e.sessionId.slice(0, 8)}`;
   if (e.outcome === "up-to-date") return `[${e.index}/${e.total}] ${name}  up to date`;
+  if (e.outcome === "partial") {
+    return `[${e.index}/${e.total}] ${name}  stopped mid-session (${e.saved} saved before the failure)`;
+  }
   if (e.outcome === "dry-run") {
     return `[${e.index}/${e.total}] ${name}  would distill ${e.chunks} chunk${e.chunks === 1 ? "" : "s"} (${e.redactions} redactions)`;
   }
@@ -120,4 +123,10 @@ export async function runImport(engine: MemoryEngine, args: readonly string[]): 
   }
   const skips = skipLine(result);
   if (skips) console.log(skips);
+  if (result.error) {
+    console.log(`stopped early: ${result.error}`);
+    console.log(
+      "everything distilled before the failure is saved and watermarked; running the same command again resumes where it stopped.",
+    );
+  }
 }

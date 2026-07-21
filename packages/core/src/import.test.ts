@@ -237,6 +237,57 @@ describe("importClaudeCode", () => {
     expect(provenance[0]?.excerpt).not.toContain("sk-or-v1");
   });
 
+  it("a provider failure mid-session keeps the saved chunks and resumes on re-run", async () => {
+    // Two chunks: two big units that cannot share the chunk budget. The provider dies on the
+    // second distill call (the real-world 402 out-of-credits case): chunk one's memory must
+    // survive, the ledger must watermark past chunk one, the run must end with a summary
+    // carrying the error, and a re-run with a healed provider must pick up the rest.
+    const padding = "x".repeat(23_000);
+    let healed = false;
+    let distillCalls = 0;
+    const llm = new ScriptedLLMProvider((prompt) => {
+      if (prompt.startsWith("You compare")) return "[]";
+      distillCalls++;
+      if (!healed && distillCalls === 2) {
+        throw new Error("OpenRouter completion failed: 402 requires more credits");
+      }
+      const memories = [...prompt.matchAll(/remember: ([^\n"]+)/g)].map((m) => ({
+        type: "fact",
+        content: m[1],
+        lines: [1, 1],
+      }));
+      return JSON.stringify(memories);
+    });
+    const { memloom, storage } = await fresh(Object.assign(llm, { distillCalls: { count: 0 } }));
+    const root = makeRoot();
+    writeSession(root, "proj", [
+      `remember: the alpha fact\n${padding}`,
+      `remember: the beta fact\n${padding}`,
+    ]);
+
+    const events: string[] = [];
+    const first = await memloom.importClaudeCode({ root }, (e) => events.push(e.outcome));
+
+    expect(first.error).toContain("402");
+    expect(events).toEqual(["partial"]);
+    expect(first.saved).toBe(1);
+    expect((await memloom.memories()).map((m) => m.content)).toEqual(["the alpha fact"]);
+    const [ledger] = await storage.query<{ line_offset: number }>(
+      "SELECT line_offset FROM import_ledger",
+    );
+    expect(Number(ledger?.line_offset)).toBe(1);
+
+    healed = true;
+    const second = await memloom.importClaudeCode({ root });
+    expect(second.error).toBeUndefined();
+    expect(second.saved).toBe(1);
+    expect(second.merged).toBe(1);
+    expect((await memloom.memories()).map((m) => m.content).sort()).toEqual([
+      "the alpha fact",
+      "the beta fact",
+    ]);
+  });
+
   it("refuses without an LLM", async () => {
     const storage = await PgliteFactory.open();
     cleanups.push(() => storage.close());

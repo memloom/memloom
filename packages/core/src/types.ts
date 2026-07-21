@@ -409,7 +409,10 @@ export interface ImportSessionEvent {
   /** 1-based position in this run. */
   index: number;
   total: number;
-  outcome: "imported" | "up-to-date" | "dry-run";
+  /** "partial": a provider failure stopped this session mid-way; processed chunks are saved. */
+  outcome: "imported" | "up-to-date" | "dry-run" | "partial";
+  /** Set on "partial": the provider error that stopped the session (and the run). */
+  error?: string;
   chunks: number;
   saved: number;
   merged: number;
@@ -444,6 +447,11 @@ export interface ImportResult {
   /** The cost line: what this run actually spent. All zero on a dry run. */
   calls: { extraction: number; embedding: number; classifier: number };
   dryRun: boolean;
+  /**
+   * Set when a provider failure stopped the run early. Everything distilled and saved before
+   * the failure is kept and watermarked, so a re-run resumes instead of re-spending.
+   */
+  error?: string;
 }
 
 // The four human-in-the-loop resolution actions. All reversible.

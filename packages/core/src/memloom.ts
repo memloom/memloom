@@ -93,6 +93,15 @@ const CANDIDATE_LIMIT = 5;
 const IMPORT_OVERLAP_LINES = 40;
 const PROVENANCE_EXCERPT_CHARS = 500;
 
+/** The daemon host's IANA timezone: the user's calendar day for date-scoped recall. */
+function hostTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
 // _memloom_meta key set while a reembed() is underway; its presence means the store's vectors
 // are partially NULL and must not be served until the migration finishes.
 const REEMBED_MARKER_KEY = "embedding_migration_target";
@@ -956,67 +965,91 @@ export class Memloom implements MemoryEngine {
         continue;
       }
 
-      const distilled: { memory: DistilledMemory; chunk: SessionChunk }[] = [];
+      // Each chunk is processed end-to-end (distill, batch-embed its memories, save) and the
+      // in-memory watermark advances only past chunks whose memories are fully saved. A
+      // provider failure (out of credits, rate limit) then loses at most one chunk's calls:
+      // everything before it is already in the store, the ledger records how far we got, and
+      // a re-run resumes from there instead of re-spending. Batching is per chunk rather than
+      // per session for exactly this isolation; a chunk still batches all its memories into
+      // one embed call.
+      let watermark = 0;
+      let sessionError: string | undefined;
       for (const chunk of chunked.chunks) {
-        result.calls.extraction++;
-        const output = await distillChunk(this.#llm, chunk);
-        event.dropped += output.dropped;
-        for (const memory of output.memories) distilled.push({ memory, chunk });
-      }
-      result.dropped += event.dropped;
-
-      // Batch-embed pre-pass: one provider call per session, then each memory runs the
-      // identical belief pipeline with its precomputed vector.
-      let vectors: number[][] = [];
-      if (distilled.length > 0) {
-        result.calls.embedding++;
-        vectors = await this.#embedding.embed(distilled.map((d) => d.memory.content));
-      }
-      for (const [j, { memory, chunk }] of distilled.entries()) {
-        const saveResult = await this.#save(
-          {
-            content: memory.content,
-            ...(memory.canonical ? { canonical: memory.canonical } : {}),
-            memoryType: memory.memoryType,
-            ownerId: owner,
-          },
-          vectors[j],
-        );
-        if (saveResult.outcome === "merged") {
-          event.merged++;
-        } else {
-          if (saveResult.outcome === "versioned") event.versioned++;
-          else if (saveResult.outcome === "conflict") event.conflicts++;
-          else event.saved++;
-          await this.#insertProvenance(owner, saveResult.id, parsed.sessionId, session.path, memory, chunk);
+        try {
+          result.calls.extraction++;
+          const output = await distillChunk(this.#llm, chunk);
+          event.dropped += output.dropped;
+          let vectors: number[][] = [];
+          if (output.memories.length > 0) {
+            result.calls.embedding++;
+            vectors = await this.#embedding.embed(output.memories.map((m) => m.content));
+          }
+          for (const [j, memory] of output.memories.entries()) {
+            const saveResult = await this.#save(
+              {
+                content: memory.content,
+                ...(memory.canonical ? { canonical: memory.canonical } : {}),
+                memoryType: memory.memoryType,
+                ownerId: owner,
+              },
+              vectors[j],
+            );
+            if (saveResult.outcome === "merged") {
+              event.merged++;
+            } else {
+              if (saveResult.outcome === "versioned") event.versioned++;
+              else if (saveResult.outcome === "conflict") event.conflicts++;
+              else event.saved++;
+              await this.#insertProvenance(owner, saveResult.id, parsed.sessionId, session.path, memory, chunk);
+            }
+          }
+          watermark = chunk.endLine;
+        } catch (err) {
+          sessionError = err instanceof Error ? err.message : String(err);
+          break;
         }
       }
+      result.dropped += event.dropped;
       result.saved += event.saved;
       result.merged += event.merged;
       result.versioned += event.versioned;
       result.conflicts += event.conflicts;
 
-      await this.#storage.query(
-        `INSERT INTO import_ledger (owner_id, source, session_id, file_path, line_offset, prefix_hash, memories_saved)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
-         ON CONFLICT (owner_id, source, session_id) DO UPDATE SET
-           file_path = EXCLUDED.file_path,
-           line_offset = EXCLUDED.line_offset,
-           prefix_hash = EXCLUDED.prefix_hash,
-           memories_saved = import_ledger.memories_saved + EXCLUDED.memories_saved,
-           updated_at = now()`,
-        [
-          owner,
-          "claude-code",
-          parsed.sessionId,
-          session.path,
-          parsed.lineCount,
-          parsed.prefixHash,
-          event.saved + event.versioned + event.conflicts,
-        ],
-      );
+      // Clean finish covers the whole file (trailing non-text lines included); a stopped
+      // session is watermarked at its last fully saved chunk. No progress, no write: the
+      // prior ledger row (if any) stays authoritative.
+      const finished = sessionError === undefined;
+      const offset = finished ? parsed.lineCount : watermark;
+      if (finished || watermark > fromLine) {
+        await this.#storage.query(
+          `INSERT INTO import_ledger (owner_id, source, session_id, file_path, line_offset, prefix_hash, memories_saved)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (owner_id, source, session_id) DO UPDATE SET
+             file_path = EXCLUDED.file_path,
+             line_offset = EXCLUDED.line_offset,
+             prefix_hash = EXCLUDED.prefix_hash,
+             memories_saved = import_ledger.memories_saved + EXCLUDED.memories_saved,
+             updated_at = now()`,
+          [
+            owner,
+            "claude-code",
+            parsed.sessionId,
+            session.path,
+            offset,
+            finished ? parsed.prefixHash : await hashPrefix(session.path, offset),
+            event.saved + event.versioned + event.conflicts,
+          ],
+        );
+      }
 
       result.sessions++;
+      if (sessionError !== undefined) {
+        event.outcome = "partial";
+        event.error = sessionError;
+        result.error = sessionError;
+        onProgress?.(event);
+        break;
+      }
       onProgress?.(event);
     }
 
@@ -1263,14 +1296,20 @@ export class Memloom implements MemoryEngine {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.assertedOn)) {
         throw new Error(`memloom: assertedOn must be YYYY-MM-DD, got "${opts.assertedOn}"`);
       }
+      // Callers pass the USER's calendar day (the assistant's "today", MCP on_date), but a
+      // bare timestamptz::date cast folds in the DB session's timezone, UTC on PGLite. Those
+      // days disagree for a few hours around midnight, so "plans for today" would silently
+      // miss right after midnight. The daemon runs on the user's machine, so the host
+      // timezone is the user's day; convert before taking the date.
       const rows = await this.#storage.query<MemoryRow>(
         `SELECT id, owner_id, status, memory_type, canonical, content, summary, root_id,
                 version, asserted_at, created_at,
                 1 - (embedding <=> $1::vector) AS similarity
          FROM memory_objects
-         WHERE owner_id = $2 AND status = 'active' AND asserted_at::date = $3::date
-         ORDER BY similarity DESC LIMIT $4`,
-        [qvec, owner, opts.assertedOn, limit],
+         WHERE owner_id = $2 AND status = 'active'
+           AND (asserted_at AT TIME ZONE $3)::date = $4::date
+         ORDER BY similarity DESC LIMIT $5`,
+        [qvec, owner, hostTimeZone(), opts.assertedOn, limit],
       );
       return rows.map((row) => ({ ...mapRow(row), kind: "memory" as const }));
     }
