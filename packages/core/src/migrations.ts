@@ -864,5 +864,39 @@ export function buildMigrations(dims: number): Migration[] {
       ALTER TABLE memory_schema ADD COLUMN examples jsonb NOT NULL DEFAULT '[]'::jsonb;
     `,
     },
+    {
+      // Session import bookkeeping. The ledger makes imports idempotent: one row per source
+      // session, keyed by the session's OWN id (not the file path, so forks and renames don't
+      // re-import). line_offset is the watermark; prefix_hash is sha256 of the processed
+      // lines, because Claude Code rewrites transcripts (compaction, resume) and a resumed
+      // read past a rewrite would silently distill the wrong lines. Provenance keeps every
+      // session-derived memory traceable to its source passage even after the user cleans up
+      // old transcripts (the excerpt is stored redacted).
+      id: "0017_import_ledger",
+      sql: /* sql */ `
+      CREATE TABLE import_ledger (
+        owner_id       uuid NOT NULL,
+        source         text NOT NULL,
+        session_id     text NOT NULL,
+        file_path      text NOT NULL,
+        line_offset    int  NOT NULL,
+        prefix_hash    text NOT NULL,
+        memories_saved int  NOT NULL DEFAULT 0,
+        updated_at     timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (owner_id, source, session_id)
+      );
+      CREATE TABLE import_provenance (
+        memory_id  uuid PRIMARY KEY REFERENCES memory_objects (id) ON DELETE CASCADE,
+        owner_id   uuid NOT NULL,
+        source     text NOT NULL,
+        session_id text NOT NULL,
+        file_path  text NOT NULL,
+        start_line int  NOT NULL,
+        end_line   int  NOT NULL,
+        excerpt    text NOT NULL,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+    `,
+    },
   ];
 }

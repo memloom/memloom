@@ -1,3 +1,4 @@
+import { extractJsonArray } from "./llm-json.js";
 import type { LLMProvider } from "./providers.js";
 
 // The dedup classifier. Given an incoming memory and the existing memories most similar to it,
@@ -42,18 +43,6 @@ export function buildDedupPrompt(
     "Return ONLY a JSON array, one object per existing memory:",
     '[{"candidate": <number>, "relation": "identical|complementary|contradictory", "reason": "<short>"}]',
   ].join("\n");
-}
-
-function extractJsonArray(raw: string): unknown[] {
-  const start = raw.indexOf("[");
-  const end = raw.lastIndexOf("]");
-  if (start === -1 || end === -1 || end < start) return [];
-  try {
-    const parsed = JSON.parse(raw.slice(start, end + 1));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
 }
 
 function normalizeRelation(value: unknown): Relation {

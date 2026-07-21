@@ -6,6 +6,9 @@ import type {
   ContextDocument,
   DocumentChunks,
   Graph,
+  ImportOptions,
+  ImportResult,
+  ImportSessionEvent,
   IndexProgressEvent,
   IndexResult,
   Memory,
@@ -37,6 +40,15 @@ export interface MemoryEngine {
    * fetch-the-rest path when a recall surface truncated the passage (PASSAGE_CHARS).
    */
   passage(id: string, ownerId?: string): Promise<string | null>;
+  /**
+   * Import Claude Code sessions as distilled, provenance-carrying memories through the belief
+   * pipeline. Bounded by default; idempotent via the per-session ledger. `onProgress` fires
+   * after each session completes.
+   */
+  importClaudeCode(
+    opts?: ImportOptions,
+    onProgress?: (event: ImportSessionEvent) => void,
+  ): Promise<ImportResult>;
   /** Extract entities from unindexed rows. `onProgress` fires after each item completes. */
   index(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
   /** Wipe all extracted entities/edges and re-run indexing from scratch (recovery path). */

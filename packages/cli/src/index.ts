@@ -11,6 +11,7 @@ import {
 import { configPath, dataDir, ensureConfig, memloomHome } from "./config.js";
 import { connect } from "./connect.js";
 import { startDaemon } from "./daemon.js";
+import { runImport } from "./import.js";
 import { runReembed } from "./reembed.js";
 
 /** "from setup.md › Guide > Postgres (p. 3)" for context-chunk recall results. */
@@ -63,6 +64,7 @@ Usage: memloom <command> [args]
                        provider (run after switching providers; daemon must be stopped)
   auto-index [on|off]  show or set background entity extraction after saves/ingests
   conflicts            list pending conflicts
+  import claude-code   distill recent Claude Code sessions into memories (--dry-run first)
   context add <path>   ingest files (or a directory) as context: ${supportedExtensions().join(" ")}
   context list         list ingested context documents
   context remove <id>  remove a context document and its chunks
@@ -177,6 +179,29 @@ Costs one embedding API call per 64 items.
 
   --force   re-embed even when the store already matches the configured
             provider and nothing is missing`,
+
+  import: `memloom import claude-code [--dry-run] [--force] [--days N] [--sessions N] [--project <name>]
+
+Distill your Claude Code session transcripts (~/.claude/projects) into typed,
+searchable memories. Each session is redacted (best-effort secret scrubbing),
+distilled by your configured LLM, and saved through the belief pipeline, so
+duplicates merge and contradictions become reviewable conflicts. Every imported
+memory keeps provenance: which session and lines it came from.
+
+Bounded by default: sessions modified in the last 14 days, newest first, at most
+20. Skipped sessions are announced; widen with the flags. Re-running is cheap:
+a ledger tracks what was already distilled and only new session content is
+processed. Needs an API key; offline mode cannot distill.
+
+  memloom import claude-code --dry-run     what would be processed, zero LLM calls
+  memloom import claude-code               the real run, with a cost summary
+  memloom import claude-code --project myapp --days 60
+
+  --dry-run    list sessions and chunk counts; makes no LLM calls, writes nothing
+  --force      reprocess from scratch, ignoring the ledger
+  --days N     widen the day window (default 14)
+  --sessions N raise the session cap (default 20)
+  --project X  only sessions whose project folder name contains X`,
 
   conflicts: `memloom conflicts
 
@@ -393,6 +418,16 @@ export async function run(argv: readonly string[]): Promise<void> {
       }
 
       throw new Error("usage: memloom context <add|list|remove>");
+    }
+
+    case "import": {
+      const [source, ...args] = rest;
+      if (source !== "claude-code") {
+        throw new Error("usage: memloom import claude-code [--dry-run] [--force] [--days N] [--sessions N] [--project <name>]");
+      }
+      const engine = await connect();
+      await runImport(engine, args);
+      return;
     }
 
     case "index": {

@@ -7,6 +7,9 @@ import type {
   ContextDocument,
   DocumentChunks,
   Graph,
+  ImportOptions,
+  ImportResult,
+  ImportSessionEvent,
   IndexProgressEvent,
   IndexResult,
   Memory,
@@ -102,9 +105,32 @@ export class HttpMemloomClient implements MemoryEngine {
     return content;
   }
 
+  importClaudeCode(
+    opts: ImportOptions = {},
+    onProgress?: (event: ImportSessionEvent) => void,
+  ): Promise<ImportResult> {
+    // root/ownerId are daemon-side concerns; only the user-facing knobs cross the wire.
+    const body = {
+      days: opts.days,
+      maxSessions: opts.maxSessions,
+      project: opts.project,
+      dryRun: opts.dryRun,
+      force: opts.force,
+    };
+    return this.#streamNdjson<ImportSessionEvent, ImportResult>(
+      "/import/claude-code/stream",
+      body,
+      onProgress,
+    );
+  }
+
   index(_ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult> {
     if (!onProgress) return this.#post<IndexResult>("/memory/index", {});
-    return this.#streamRun("/memory/index/stream", onProgress);
+    return this.#streamNdjson<IndexProgressEvent, IndexResult>(
+      "/memory/index/stream",
+      {},
+      onProgress,
+    );
   }
 
   reindex(
@@ -112,32 +138,38 @@ export class HttpMemloomClient implements MemoryEngine {
     onProgress?: (event: IndexProgressEvent) => void,
   ): Promise<IndexResult> {
     if (!onProgress) return this.#post<IndexResult>("/memory/reindex", {});
-    return this.#streamRun("/memory/reindex/stream", onProgress);
+    return this.#streamNdjson<IndexProgressEvent, IndexResult>(
+      "/memory/reindex/stream",
+      {},
+      onProgress,
+    );
   }
 
-  // Consume an NDJSON progress stream, forwarding item events as they land.
-  async #streamRun(
+  // Consume an NDJSON progress stream ({type:"item"} per unit of work, one {type:"done"}
+  // carrying the result, in-band {type:"error"}), forwarding item events as they land.
+  async #streamNdjson<TItem, TDone>(
     path: string,
-    onProgress: (event: IndexProgressEvent) => void,
-  ): Promise<IndexResult> {
+    body: unknown,
+    onItem?: (event: TItem) => void,
+  ): Promise<TDone> {
     const res = await this.#fetch(`${this.#baseUrl}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: "{}",
+      body: JSON.stringify(body ?? {}),
     });
     if (!res.ok) throw new Error(`memloom server ${res.status}: ${await res.text()}`);
 
-    let result: IndexResult | null = null;
+    let result: TDone | null = null;
     const handleLine = (line: string) => {
       if (!line.trim()) return;
-      const event = JSON.parse(line) as
-        | ({ type: "item" } & IndexProgressEvent)
-        | ({ type: "done" } & IndexResult)
-        | { type: "error"; error: string };
-      if (event.type === "item") onProgress(event);
-      else if (event.type === "done")
-        result = { indexed: event.indexed, chunksIndexed: event.chunksIndexed };
-      else throw new Error(event.error);
+      const event = JSON.parse(line) as { type: "item" | "done" | "error"; error?: string };
+      if (event.type === "item") {
+        const { type: _type, ...item } = event;
+        onItem?.(item as TItem);
+      } else if (event.type === "done") {
+        const { type: _type, ...done } = event;
+        result = done as TDone;
+      } else throw new Error(event.error ?? "memloom: stream error");
     };
 
     const reader = res.body?.getReader();
@@ -161,7 +193,7 @@ export class HttpMemloomClient implements MemoryEngine {
       for (const line of (await res.text()).split("\n")) handleLine(line);
     }
 
-    if (!result) throw new Error("memloom: index stream ended without a done event");
+    if (!result) throw new Error(`memloom: stream ${path} ended without a done event`);
     return result;
   }
 

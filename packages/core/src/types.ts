@@ -383,6 +383,69 @@ export interface DocumentChunks {
   edges: GraphEdge[];
 }
 
+// ---- Session import (`memloom import claude-code`) ----
+
+export interface ImportOptions {
+  /** Sessions modified in the last N days. Default 14. */
+  days?: number;
+  /** Newest-first cap after the day window. Default 20. */
+  maxSessions?: number;
+  /** Case-insensitive substring match on the encoded project directory name. */
+  project?: string;
+  /** Discover, parse, chunk, and count only: zero LLM calls, zero writes, ledger untouched. */
+  dryRun?: boolean;
+  /** Ignore ledger watermarks and reprocess every discovered session from line zero. */
+  force?: boolean;
+  /** Override ~/.claude/projects (tests). */
+  root?: string;
+  ownerId?: string;
+}
+
+/** One session finished during an import run: the per-session progress line. */
+export interface ImportSessionEvent {
+  path: string;
+  project: string;
+  sessionId: string;
+  /** 1-based position in this run. */
+  index: number;
+  total: number;
+  outcome: "imported" | "up-to-date" | "dry-run";
+  chunks: number;
+  saved: number;
+  merged: number;
+  versioned: number;
+  conflicts: number;
+  /** Distillation reply items dropped as untypeable. */
+  dropped: number;
+  truncated: number;
+  redactions: number;
+  malformed: number;
+}
+
+export interface ImportResult {
+  /** Sessions processed (or planned, on a dry run). */
+  sessions: number;
+  skipped: {
+    sidecars: number;
+    active: number;
+    outsideWindow: number;
+    overCap: number;
+    /** Already fully processed per the ledger (watermark at end of file, prefix intact). */
+    upToDate: number;
+  };
+  saved: number;
+  merged: number;
+  versioned: number;
+  conflicts: number;
+  dropped: number;
+  truncated: number;
+  redactions: number;
+  malformed: number;
+  /** The cost line: what this run actually spent. All zero on a dry run. */
+  calls: { extraction: number; embedding: number; classifier: number };
+  dryRun: boolean;
+}
+
 // The four human-in-the-loop resolution actions. All reversible.
 export type ResolveDecision =
   | { action: "keep_new" } // supersede: the new memory wins, existing ones go stale

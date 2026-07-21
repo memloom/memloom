@@ -245,6 +245,14 @@ const autoIndexSchema = z.object({
   enabled: z.boolean(),
 });
 
+const importSchema = z.object({
+  days: z.number().int().positive().max(3650).optional(),
+  maxSessions: z.number().int().positive().max(1000).optional(),
+  project: z.string().min(1).max(300).optional(),
+  dryRun: z.boolean().optional(),
+  force: z.boolean().optional(),
+});
+
 const assistantChatSchema = z.object({
   sessionId: z.string().uuid().optional(),
   message: z.string().min(1, "message must be a non-empty string"),
@@ -366,6 +374,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         c.req.path.startsWith("/memory") ||
         c.req.path.startsWith("/context") ||
         c.req.path.startsWith("/assistant") ||
+        c.req.path.startsWith("/import") ||
         c.req.path.startsWith("/admin");
       if (isApi) {
         console.log(`${new Date().toISOString()}  → ${c.req.method} ${c.req.path}`);
@@ -408,6 +417,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.use("/memory/*", probeStore);
   app.use("/context/*", probeStore);
   app.use("/assistant/*", probeStore);
+  app.use("/import/*", probeStore);
 
   if (opts.onShutdown) {
     const shutdown = opts.onShutdown;
@@ -499,6 +509,33 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   };
 
   app.post("/memory/index/stream", (c) => streamRun(c, (p) => memloom.index(undefined, p)));
+
+  // Session import runs daemon-side (the single store writer owns the ledger) and streams
+  // NDJSON progress: one {type:"item"} per session, {type:"done"} with the totals and the
+  // cost line. Discovery is fixed to ~/.claude/projects; the client never supplies a path.
+  app.post("/import/claude-code/stream", async (c) => {
+    const body = await parseBody(c, importSchema);
+    if (!body.ok) return body.res;
+    const opts = body.data;
+    c.header("content-type", "application/x-ndjson");
+    return stream(c, async (s) => {
+      let chain = Promise.resolve();
+      const write = (payload: unknown) => {
+        chain = chain.then(async () => {
+          await s.write(`${JSON.stringify(payload)}\n`);
+        });
+      };
+      try {
+        const result = await memloom.importClaudeCode(opts, (event) =>
+          write({ type: "item", ...event }),
+        );
+        write({ type: "done", ...result });
+      } catch (err) {
+        write({ type: "error", error: err instanceof Error ? err.message : String(err) });
+      }
+      await chain;
+    });
+  });
 
   // Index sessions: the persistent, session-grouped log the Console tab renders. Runs are
   // listed newest-first; a run's per-item events load on expand. History is user-managed:

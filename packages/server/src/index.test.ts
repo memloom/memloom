@@ -47,6 +47,32 @@ describe("server", () => {
     expect(await res.json()).toEqual({ ok: true });
   });
 
+  it("import/claude-code/stream validates the body", async () => {
+    const res = await (await app()).request("/import/claude-code/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ days: -3 }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it("import/claude-code/stream streams a done event on a dry run", async () => {
+    // dryRun never touches an LLM or the store; on a machine without transcripts the run
+    // legitimately reports zero sessions, so only the stream contract is asserted here
+    // (the import behavior itself is covered in core's import.test.ts).
+    const res = await (await app()).request("/import/claude-code/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ dryRun: true, project: "no-such-project-name-anywhere" }),
+    });
+    expect(res.status).toBe(200);
+    const lines = (await res.text())
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.at(-1)).toMatchObject({ type: "done", dryRun: true });
+  });
+
   it("reindex/stream wipes entities and streams NDJSON item + done events", async () => {
     const server = await app();
     await server.request("/memory/save", {

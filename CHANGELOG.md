@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **`memloom import claude-code`**: distill your Claude Code session transcripts into typed,
+  searchable memories. Bounded by default (last 14 days, newest 20 sessions; widen with
+  `--days` / `--sessions` / `--project`), `--dry-run` previews with zero LLM calls, and a
+  ledger makes re-runs idempotent: unchanged sessions skip, grown sessions distill only
+  their new part, rewritten transcripts (compaction, resume) are detected and redone.
+  Transcripts are scrubbed of secret-shaped strings before any chunk reaches the LLM
+  provider or the store, subagent sidecars and compaction summaries are excluded, and every
+  imported memory keeps provenance (session file, line range, excerpt). Distilled memories
+  go through the ordinary belief pipeline, batch-embedded per session, so duplicates merge
+  and contradictions land in the conflict queue. The run ends with a cost line: extraction,
+  dedup, and embedding calls actually spent.
+
 ## 0.1.1
 
 - **Node 20 is now supported** (was Node 22 or later). The whole suite passes on Node 20,

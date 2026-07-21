@@ -1,12 +1,23 @@
 import { createHash, randomUUID } from "node:crypto";
 import { type AssistantEvent, runAssistantTurn } from "./assistant.js";
 import { chunkMarkdown, chunkOutline } from "./chunker.js";
+import {
+  chunkUnits,
+  discoverSessions,
+  hashPrefix,
+  parseSession,
+  type SessionChunk,
+  type SessionUnit,
+} from "./claude-sessions.js";
 import { type Candidate, classify } from "./dedup.js";
+import { type DistilledMemory, distillChunk } from "./distill.js";
 import type { MemoryEngine } from "./engine.js";
 import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from "./entities.js";
 import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
+import { NullLLMProvider } from "./hashing-provider.js";
 import { migrate } from "./migrate.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
+import { redact } from "./redact.js";
 import {
   addEdge,
   addEdgeIfAbsent,
@@ -47,6 +58,9 @@ import type {
   GraphDocument,
   GraphEdge,
   GraphMemory,
+  ImportOptions,
+  ImportResult,
+  ImportSessionEvent,
   IndexProgressEvent,
   IndexResult,
   IndexRun,
@@ -73,6 +87,11 @@ export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
 // Dedup only considers existing memories at least this similar to the incoming one.
 const CANDIDATE_THRESHOLD = 0.5;
 const CANDIDATE_LIMIT = 5;
+
+// Session import: how many lines before a ledger watermark a tail run re-reads (context for
+// decisions cut mid-thought), and how much source text one provenance excerpt keeps.
+const IMPORT_OVERLAP_LINES = 40;
+const PROVENANCE_EXCERPT_CHARS = 500;
 
 // _memloom_meta key set while a reembed() is underway; its presence means the store's vectors
 // are partially NULL and must not be served until the migration finishes.
@@ -213,6 +232,9 @@ export class Memloom implements MemoryEngine {
   readonly #embedding: EmbeddingProvider;
   readonly #llm: LLMProvider;
   readonly #dedup: boolean;
+  // Dedup classifier calls made since construction; the import path reads the delta so its
+  // cost line reports classifier spend exactly, not an estimate.
+  #classifyCalls = 0;
   #autoIndex: boolean;
   // Toggling only makes sense where the host declared a stance (the daemon passes the
   // flag whenever an LLM is configured). Hosts that never mention autoIndex (library
@@ -820,9 +842,218 @@ export class Memloom implements MemoryEngine {
     return result;
   }
 
-  async #save(input: SaveInput): Promise<SaveResult> {
+  /**
+   * Import Claude Code sessions as distilled memories. Discovery is bounded (recent sessions,
+   * capped, main-session files only), transcripts are redacted before any chunk reaches the
+   * LLM provider, distilled memories go through the ordinary belief pipeline (batch-embedded
+   * first), and a per-session ledger watermark makes re-runs idempotent. Runs inside the
+   * daemon: the store's single writer, so import and future hook capture can never race.
+   */
+  async importClaudeCode(
+    opts: ImportOptions = {},
+    onProgress?: (event: ImportSessionEvent) => void,
+  ): Promise<ImportResult> {
+    if (this.#llm instanceof NullLLMProvider) {
+      throw new Error(
+        "memloom: session import distills transcripts with an LLM and none is configured. " +
+          "Set OPENROUTER_API_KEY in your memloom config and restart the daemon.",
+      );
+    }
+    const owner = opts.ownerId ?? SENTINEL_OWNER;
+    const discovery = await discoverSessions({
+      ...(opts.root ? { root: opts.root } : {}),
+      ...(opts.days !== undefined ? { days: opts.days } : {}),
+      ...(opts.maxSessions !== undefined ? { maxSessions: opts.maxSessions } : {}),
+      ...(opts.project ? { project: opts.project } : {}),
+    });
+
+    const result: ImportResult = {
+      sessions: 0,
+      skipped: { ...discovery.skipped, upToDate: 0 },
+      saved: 0,
+      merged: 0,
+      versioned: 0,
+      conflicts: 0,
+      dropped: 0,
+      truncated: 0,
+      redactions: 0,
+      malformed: 0,
+      calls: { extraction: 0, embedding: 0, classifier: 0 },
+      dryRun: opts.dryRun ?? false,
+    };
+    const classifyBefore = this.#classifyCalls;
+    const total = discovery.sessions.length;
+
+    for (const [i, session] of discovery.sessions.entries()) {
+      const event: ImportSessionEvent = {
+        path: session.path,
+        project: session.project,
+        sessionId: "",
+        index: i + 1,
+        total,
+        outcome: opts.dryRun ? "dry-run" : "imported",
+        chunks: 0,
+        saved: 0,
+        merged: 0,
+        versioned: 0,
+        conflicts: 0,
+        dropped: 0,
+        truncated: 0,
+        redactions: 0,
+        malformed: 0,
+      };
+
+      // Full read regardless of watermark: the session id lives inside the file, and the
+      // prefix hash for the NEW watermark must cover everything read this run.
+      const parsed = await parseSession(session.path);
+      event.sessionId = parsed.sessionId;
+      event.malformed = parsed.malformed;
+      result.malformed += parsed.malformed;
+
+      // Ledger check: skip what a prior run (or the future hook) already distilled. A hash
+      // mismatch means the file was rewritten above the watermark (compaction, resume), so
+      // the resume offset points at different content: reprocess from zero.
+      let fromLine = 0;
+      if (!opts.force) {
+        const [row] = await this.#storage.query<{ line_offset: number; prefix_hash: string }>(
+          "SELECT line_offset, prefix_hash FROM import_ledger WHERE owner_id = $1 AND source = $2 AND session_id = $3",
+          [owner, "claude-code", parsed.sessionId],
+        );
+        if (row) {
+          const offset = Number(row.line_offset);
+          if (offset >= parsed.lineCount && row.prefix_hash === parsed.prefixHash) {
+            event.outcome = "up-to-date";
+            result.skipped.upToDate++;
+            onProgress?.(event);
+            continue;
+          }
+          if (offset < parsed.lineCount) {
+            const prefix = await hashPrefix(session.path, offset);
+            if (prefix === row.prefix_hash) fromLine = offset;
+          }
+        }
+      }
+
+      // Tail runs keep a bounded overlap window before the watermark so a decision whose
+      // rationale sits just above the cut keeps its context; the pipeline dedupes the overlap.
+      const overlapFrom = fromLine > 0 ? Math.max(0, fromLine - IMPORT_OVERLAP_LINES) : 0;
+      const units = parsed.units.filter((unit) => unit.line > overlapFrom);
+      const redacted: SessionUnit[] = units.map((unit) => {
+        const scrub = redact(unit.text);
+        event.redactions += scrub.hits;
+        return scrub.hits > 0 ? { ...unit, text: scrub.text } : unit;
+      });
+      result.redactions += event.redactions;
+
+      const chunked = chunkUnits(redacted);
+      event.chunks = chunked.chunks.length;
+      event.truncated = chunked.truncated;
+      result.truncated += chunked.truncated;
+
+      if (opts.dryRun) {
+        result.sessions++;
+        onProgress?.(event);
+        continue;
+      }
+
+      const distilled: { memory: DistilledMemory; chunk: SessionChunk }[] = [];
+      for (const chunk of chunked.chunks) {
+        result.calls.extraction++;
+        const output = await distillChunk(this.#llm, chunk);
+        event.dropped += output.dropped;
+        for (const memory of output.memories) distilled.push({ memory, chunk });
+      }
+      result.dropped += event.dropped;
+
+      // Batch-embed pre-pass: one provider call per session, then each memory runs the
+      // identical belief pipeline with its precomputed vector.
+      let vectors: number[][] = [];
+      if (distilled.length > 0) {
+        result.calls.embedding++;
+        vectors = await this.#embedding.embed(distilled.map((d) => d.memory.content));
+      }
+      for (const [j, { memory, chunk }] of distilled.entries()) {
+        const saveResult = await this.#save(
+          {
+            content: memory.content,
+            ...(memory.canonical ? { canonical: memory.canonical } : {}),
+            memoryType: memory.memoryType,
+            ownerId: owner,
+          },
+          vectors[j],
+        );
+        if (saveResult.outcome === "merged") {
+          event.merged++;
+        } else {
+          if (saveResult.outcome === "versioned") event.versioned++;
+          else if (saveResult.outcome === "conflict") event.conflicts++;
+          else event.saved++;
+          await this.#insertProvenance(owner, saveResult.id, parsed.sessionId, session.path, memory, chunk);
+        }
+      }
+      result.saved += event.saved;
+      result.merged += event.merged;
+      result.versioned += event.versioned;
+      result.conflicts += event.conflicts;
+
+      await this.#storage.query(
+        `INSERT INTO import_ledger (owner_id, source, session_id, file_path, line_offset, prefix_hash, memories_saved)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (owner_id, source, session_id) DO UPDATE SET
+           file_path = EXCLUDED.file_path,
+           line_offset = EXCLUDED.line_offset,
+           prefix_hash = EXCLUDED.prefix_hash,
+           memories_saved = import_ledger.memories_saved + EXCLUDED.memories_saved,
+           updated_at = now()`,
+        [
+          owner,
+          "claude-code",
+          parsed.sessionId,
+          session.path,
+          parsed.lineCount,
+          parsed.prefixHash,
+          event.saved + event.versioned + event.conflicts,
+        ],
+      );
+
+      result.sessions++;
+      onProgress?.(event);
+    }
+
+    result.calls.classifier = this.#classifyCalls - classifyBefore;
+    if (!opts.dryRun && result.sessions > 0) this.#scheduleAutoIndex(owner);
+    return result;
+  }
+
+  // The stored excerpt is what keeps provenance alive after the user cleans up transcripts;
+  // it is built from the already-redacted units, so no matched secret is ever persisted.
+  async #insertProvenance(
+    owner: string,
+    memoryId: string,
+    sessionId: string,
+    filePath: string,
+    memory: DistilledMemory,
+    chunk: SessionChunk,
+  ): Promise<void> {
+    const excerpt = chunk.units
+      .filter((unit) => unit.line >= memory.startLine && unit.line <= memory.endLine)
+      .map((unit) => unit.text)
+      .join("\n")
+      .slice(0, PROVENANCE_EXCERPT_CHARS);
+    await this.#storage.query(
+      `INSERT INTO import_provenance (memory_id, owner_id, source, session_id, file_path, start_line, end_line, excerpt)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (memory_id) DO NOTHING`,
+      [memoryId, owner, "claude-code", sessionId, filePath, memory.startLine, memory.endLine, excerpt],
+    );
+  }
+
+  // Precomputed vectors come from the import path's batch-embed pre-pass: one provider call
+  // for a whole session's memories instead of one per save. Everything after the embedding
+  // is the identical pipeline; there is no bypass lane.
+  async #save(input: SaveInput, precomputed?: number[]): Promise<SaveResult> {
     const owner = input.ownerId ?? SENTINEL_OWNER;
-    const [embedding] = await this.#embedding.embed([input.content]);
+    const embedding = precomputed ?? (await this.#embedding.embed([input.content]))[0];
     if (!embedding) throw new Error("memloom: embedding provider returned no vector");
     const hash = createHash("sha256").update(input.content).digest("hex");
 
@@ -844,6 +1075,7 @@ export class Memloom implements MemoryEngine {
       return { id, outcome: "added" };
     }
 
+    this.#classifyCalls++;
     const classifications = await classify(
       this.#llm,
       { canonical: input.canonical, content: input.content },

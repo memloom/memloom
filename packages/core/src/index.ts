@@ -14,6 +14,28 @@ export { runBenchmark } from "./benchmark.js";
 // Context connector building blocks
 export type { Chunk, ChunkOptions } from "./chunker.js";
 export { chunkMarkdown, chunkOutline, chunkText } from "./chunker.js";
+// Claude Code session import building blocks
+export type {
+  ChunkResult,
+  DiscoveredSession,
+  DiscoveryOptions,
+  DiscoveryResult,
+  DiscoverySkips,
+  ParsedSession,
+  SessionChunk,
+  SessionUnit,
+} from "./claude-sessions.js";
+export {
+  CHUNK_BUDGET_CHARS,
+  chunkUnits,
+  claudeProjectsDir,
+  discoverSessions,
+  hashPrefix,
+  parseSession,
+  QUIET_MS,
+} from "./claude-sessions.js";
+export type { DistilledMemory, DistillOutput } from "./distill.js";
+export { buildDistillPrompt, distillChunk, parseDistillation } from "./distill.js";
 export type { MemoryEngine } from "./engine.js";
 export type { ContextKind, ExtractedFile, ExtractedUnit, Extractor } from "./extract.js";
 export {
@@ -49,6 +71,8 @@ export type {
 export { OpenRouterEmbeddings, OpenRouterLLM } from "./openrouter-provider.js";
 export type { PdfTextItem } from "./pdf-layout.js";
 export { assemblePageText } from "./pdf-layout.js";
+export type { RedactResult } from "./redact.js";
+export { redact } from "./redact.js";
 export { PgAdapter } from "./pg-adapter.js";
 // Storage adapters
 export { PgliteAdapter } from "./pglite-adapter.js";
@@ -112,6 +136,9 @@ export type {
   GraphDocument,
   GraphEdge,
   GraphMemory,
+  ImportOptions,
+  ImportResult,
+  ImportSessionEvent,
   IndexEventLevel,
   IndexProgressEvent,
   IndexResult,
