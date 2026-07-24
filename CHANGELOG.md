@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0
 
 - Added `memloom import sessions`: distill your agent's sessions into typed, searchable
   memories, with secrets redacted before anything reaches a provider and a ledger that
