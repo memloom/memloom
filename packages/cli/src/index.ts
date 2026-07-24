@@ -249,9 +249,9 @@ how much the ledger has imported in total.`,
 
   conflicts: `memloom conflicts [auto]
 
-List pending contradictions: the new memory and the existing ones it clashes
-with. Resolve them in the viewer (Conflicts tab) or over MCP; every resolution
-is reversible.
+List pending contradictions (first 5): the new memory and the existing ones it
+clashes with. Resolve them in the viewer (Conflicts tab) or over MCP; every
+resolution is reversible.
 
   auto   re-judge every pending conflict with an LLM that also sees when each
          memory was recorded and the transcript excerpt it came from. Decisive
@@ -652,10 +652,19 @@ export async function run(argv: readonly string[]): Promise<void> {
       }
       const conflicts = await engine.conflicts();
       if (conflicts.length === 0) console.log("no pending conflicts");
-      for (const c of conflicts) {
+      // A big queue would scroll the terminal into uselessness; show a page and point at
+      // the tools that handle bulk.
+      const shown = conflicts.slice(0, 5);
+      for (const c of shown) {
         console.log(`\nconflict ${c.id}`);
         console.log(`  NEW:      ${c.incoming.content}`);
         for (const cand of c.candidates) console.log(`  EXISTING: ${cand.content}`);
+      }
+      if (conflicts.length > shown.length) {
+        console.log(
+          `\n...and ${conflicts.length - shown.length} more pending. ` +
+            "Browse them all in the viewer (memloom ui), or let the LLM take a pass: memloom conflicts auto",
+        );
       }
       return;
     }
