@@ -11,6 +11,9 @@
   `memloom conflicts auto` and the viewer's "Resolve the obvious ones" button run the same
   judgment over the queue. Every automatic resolution lands in the same revertable history
   as a human one, and anything the model is unsure about stays in the queue.
+- **Big conflict queues stay navigable.** The CLI lists the first 5 pending conflicts and
+  points at the viewer and `conflicts auto` for the rest; the viewer's pending and resolved
+  lists scroll in a fixed-height pane with a filter input, like the schema tab's entities.
 - **Small credit balances work again.** OpenRouter preauthorizes every completion call for
   its max_tokens, and we never sent one, so it assumed the model's full output ceiling
   (about 16 cents per call for gemini-2.5-flash). Once a balance dropped below that, every
