@@ -194,7 +194,11 @@ export async function parseSession(path: string, fromLine = 0): Promise<ParsedSe
     if (parsed.isSidechain || parsed.isMeta || !parsed.message) continue;
     const role = parsed.message.role === "assistant" ? "assistant" : "user";
     const text = unitText(parsed.message);
-    if (text) units.push({ line, role, text });
+    // Slash-command noise (<command-name>, <local-command-stdout>, ...) arrives as ordinary
+    // user text without a meta flag; zero distillation value, so it never becomes a unit.
+    if (text && !text.startsWith("<command-") && !text.startsWith("<local-command-")) {
+      units.push({ line, role, text });
+    }
   }
 
   return {

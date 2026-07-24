@@ -166,6 +166,17 @@ describe("parseSession", () => {
     expect(parsed.units.map((u) => u.text)).toEqual(["ran the build", "plain string"]);
   });
 
+  it("skips slash-command noise units", async () => {
+    const root = makeRoot();
+    const path = writeSession(root, "p", [
+      userLine("<command-name>/model</command-name>"),
+      userLine("<local-command-stdout>Set model to Fable 5</local-command-stdout>"),
+      userLine("real question"),
+    ]);
+    const parsed = await parseSession(path);
+    expect(parsed.units.map((u) => u.text)).toEqual(["real question"]);
+  });
+
   it("resumes after a watermark and hashes consistently", async () => {
     const root = makeRoot();
     const path = writeSession(root, "p", [userLine("one"), userLine("two"), userLine("three")]);
