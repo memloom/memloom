@@ -115,6 +115,135 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Memory"
+  /memory/{id}/update:
+    post:
+      summary: Edit a memory into a new version
+      description: |
+        An explicit edit: unlike a `save` that happens to resemble an existing memory, this
+        always creates a new version, no dedup classifier involved. The target must be an
+        active belief; the edited version goes stale and stays visible in `history`.
+      operationId: updateMemory
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: Any version's id in the belief's lineage works.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [content]
+              properties:
+                content:
+                  type: string
+                  example: the staging database runs on Postgres 18
+                canonical:
+                  type: string
+                  description: Optional short canonical form used for exact-duplicate detection.
+      responses:
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "200":
+          description: The new version.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: Id of the new current version (a fresh row; the edited one is now stale).
+                  rootId:
+                    type: string
+                    description: The belief's stable lineage id, unchanged across versions.
+                  version:
+                    type: integer
+                    example: 2
+  /memory/{id}/history:
+    get:
+      summary: A memory's full version chain
+      description: |
+        Every version of the belief, newest first, including stale ones. History is the one
+        place a stale version is still visible; recall never returns them. Any version's id
+        in the chain works as `id`.
+      operationId: getMemoryHistory
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The version chain, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  versions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/Memory"
+  /memory/{id}:
+    delete:
+      summary: Delete a memory's whole belief
+      description: |
+        Deletes every version in the lineage, its edges, and any pending conflict that names
+        it. Unlike a resolution's `stale`, this is permanent; there is no revert.
+      operationId: deleteMemory
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "400":
+          description: Delete failed for a reason other than "not found".
+        "404":
+          description: No memory with that id.
+        "200":
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
+  /memory/passage/{id}:
+    get:
+      summary: The full text behind a truncated recall result
+      description: |
+        A recall hit's content can be truncated for display; this returns the complete text
+        of one memory or context chunk by id. What the MCP `read_passage` tool and the
+        assistant's citation links call to fetch the rest.
+      operationId: getPassage
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: A memory id or a context-chunk id, as returned in a recall result.
+      responses:
+        "404":
+          description: No memory or chunk with that id.
+        "200":
+          description: The full text.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  content:
+                    type: string
   /memory/index:
     post:
       summary: Index memories and context chunks (extract entities)
@@ -300,6 +429,160 @@ paths:
       responses:
         "200":
           description: Deleted.
+  /import/claude-code/stream:
+    post:
+      summary: Distill Claude Code sessions into memories
+      description: |
+        What `memloom import claude-code` calls. Discovers local Claude Code transcripts
+        (fixed to `~/.claude/projects`; the client cannot pass an arbitrary path), then for
+        each session checks the ledger, redacts secret-shaped strings, chunks, distills with
+        the configured LLM into typed memories, embeds, and saves through the belief
+        pipeline. The response streams NDJSON: one `{"type":"item"}` event per session, then
+        a final `{"type":"done"}` event with the run totals and the cost line (extraction,
+        embedding, and classifier calls spent). A dry run makes zero LLM calls and writes
+        nothing.
+      operationId: importClaudeCodeStream
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                days:
+                  type: integer
+                  description: Widen the day window (default 14).
+                  example: 60
+                maxSessions:
+                  type: integer
+                  description: Raise the session cap (default 20).
+                  example: 100
+                project:
+                  type: string
+                  description: Only sessions whose project folder name contains this substring.
+                  example: myapp
+                dryRun:
+                  type: boolean
+                  description: List what would be processed; no LLM calls, no writes.
+                force:
+                  type: boolean
+                  description: Ignore the ledger and reprocess every discovered session from the start.
+      responses:
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "200":
+          description: NDJSON progress stream ending with a done (or error) event.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                example: |
+                  {"type":"item","path":"/home/me/.claude/projects/-home-me-app/3f2a....jsonl","project":"app","sessionId":"3f2a...","index":1,"total":3,"outcome":"imported","chunks":2,"saved":4,"merged":0,"versioned":1,"conflicts":0,"autoResolved":0,"dropped":0,"truncated":0,"redactions":1,"malformed":0}
+                  {"type":"done","sessions":3,"skipped":{"sidecars":0,"active":0,"outsideWindow":2,"overCap":0,"upToDate":1},"saved":4,"merged":0,"versioned":1,"conflicts":0,"autoResolved":0,"dropped":0,"truncated":0,"redactions":1,"malformed":0,"calls":{"extraction":2,"embedding":2,"classifier":1},"dryRun":false}
+  /import/claude-code/notify:
+    post:
+      summary: Notify the daemon a Claude Code session ended
+      description: |
+        What the Claude Code session-end hook installed by `memloom connect claude-code`
+        calls. Distills exactly the one session at `path` in the background: the hook gets a
+        202 immediately and never waits on distillation, so a slow LLM call can't hang the
+        editor. `path` must resolve inside `~/.claude/projects` and end in `.jsonl`; anything
+        else is rejected before it reaches the filesystem. Subject to the daily unattended
+        call budget reported at `/import/claude-code/status`.
+      operationId: notifyClaudeCodeSession
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  description: Absolute path to the session's .jsonl transcript.
+                  example: /home/me/.claude/projects/-home-me-app/3f2a1c9e-....jsonl
+      responses:
+        "400":
+          description: Path is outside the Claude Code sessions directory, or not a .jsonl file.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+        "202":
+          description: Accepted; distillation runs in the background.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: boolean
+                    example: true
+  /import/claude-code/status:
+    get:
+      summary: Continuous capture status
+      description: |
+        What `memloom status` renders for `connect claude-code`: the configured capture
+        scope, when the hook last fired and whether it failed, today's unattended
+        distillation spend against the daily cap, and ledger totals across every import so
+        far (sessions and memories, regardless of trigger).
+      operationId: importClaudeCodeStatus
+      responses:
+        "200":
+          description: Capture status.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ImportStatus"
+  /import/claude-code/scope:
+    put:
+      summary: Set the continuous-capture allowlist
+      description: |
+        What `memloom connect claude-code --project X` and `--all` set. `null` (the default)
+        captures nothing: naming a scope is the consent step, since the hook fires for every
+        Claude Code session on the machine, including client work and repos whose code
+        should never reach an LLM provider. `{"projects":[...]}` captures only sessions whose
+        project folder name contains one of the given substrings; `"all"` captures every
+        project.
+      operationId: setImportScope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope]
+              properties:
+                scope:
+                  oneOf:
+                    - type: string
+                      enum: [all]
+                    - type: object
+                      required: [projects]
+                      properties:
+                        projects:
+                          type: array
+                          items:
+                            type: string
+                          example: [myapp]
+                    - type: "null"
+      responses:
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "200":
+          description: Scope updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    example: true
   /memory/schema:
     get:
       summary: The graph schema registry with live counts
@@ -772,6 +1055,35 @@ paths:
                   ok:
                     type: boolean
                     example: true
+  /memory/conflicts/resolve-auto/stream:
+    post:
+      summary: Auto-resolve pending conflicts with an LLM judge (NDJSON stream)
+      description: |
+        What `memloom conflicts auto` calls. Re-judges every pending conflict with context
+        the dedup classifier never had: when each side was recorded and, for memories
+        distilled from a Claude Code import, the transcript excerpt behind it. Only a
+        decisive verdict resolves anything (`keep_new`, `keep_existing`, or `keep_both`,
+        applied through the same `resolveConflict` path as the manual endpoint above, so it's
+        just as revertable); `unsure` leaves the conflict pending. Streams NDJSON: one
+        `{"type":"item"}` event per examined conflict, then a final `{"type":"done"}` event
+        with the totals. Needs the LLM; unavailable in offline mode.
+      operationId: autoResolveConflictsStream
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          description: NDJSON progress stream ending with a done (or error) event.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                example: |
+                  {"type":"item","conflictId":"...","index":1,"total":3,"verdict":"keep_new","reason":"the newer session shows the change","content":"the deploy target is railway"}
+                  {"type":"done","examined":3,"resolved":2,"keepNew":1,"keepExisting":0,"keepBoth":1,"unsure":1}
   /context/add:
     post:
       summary: Ingest a file as context
@@ -821,6 +1133,84 @@ paths:
                   chunks:
                     type: integer
                     example: 12
+  /context/pick:
+    post:
+      summary: Open the OS-native file/folder picker
+      description: |
+        What the viewer's Browse buttons call first. Opens the platform's native file or
+        folder dialog on the daemon's machine and returns the chosen absolute paths. Returns
+        501 on a system with no native picker (headless Linux without zenity); the viewer
+        falls back to /context/browse in that case.
+      operationId: pickContextPaths
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                mode:
+                  type: string
+                  enum: [file, folder]
+                  default: file
+      responses:
+        "501":
+          description: No native file picker available on this system.
+        "200":
+          description: The chosen paths (empty if the dialog was cancelled).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  paths:
+                    type: array
+                    items:
+                      type: string
+  /context/browse:
+    get:
+      summary: Server-side directory listing
+      description: |
+        Lists one directory on the daemon's machine: subdirectories, plus files whose
+        extension has a registered extractor. The viewer's fallback file/folder picker for
+        systems with no native dialog; the browser never sees absolute paths from its own
+        file inputs, only what this endpoint returns.
+      operationId: browseContext
+      parameters:
+        - name: path
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Directory to list. Defaults to the home directory.
+      responses:
+        "400":
+          description: Cannot read that directory.
+        "200":
+          description: The directory listing.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  path:
+                    type: string
+                  parent:
+                    type: string
+                    nullable: true
+                    description: The parent directory, or null at the root.
+                  entries:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                        path:
+                          type: string
+                        kind:
+                          type: string
+                          enum: [dir, file]
   /context/documents:
     get:
       summary: List context documents
@@ -1598,6 +1988,45 @@ components:
                 type: integer
                 description: On document -> entity edges, how many of the document's chunks mention the entity.
                 example: 3
+    ImportStatus:
+      type: object
+      description: Continuous-capture status, what `memloom status` renders for `connect claude-code`.
+      properties:
+        scope:
+          description: The capture allowlist. `null` means nothing is captured yet.
+          oneOf:
+            - type: string
+              enum: [all]
+            - type: object
+              properties:
+                projects:
+                  type: array
+                  items:
+                    type: string
+              example: { projects: ["myapp"] }
+            - type: "null"
+        lastNotifyAt:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the daemon last received a session-end notify; null if never.
+        lastNotifyError:
+          type: string
+          nullable: true
+          description: The last notify's failure (a provider outage, a missing API key); null if clean.
+        todayUnattendedCalls:
+          type: integer
+          description: Unattended distillation calls spent today.
+          example: 4
+        unattendedDailyCap:
+          type: integer
+          example: 200
+        sessionsImported:
+          type: integer
+          description: Ledger total, across import and connect, ever.
+        memoriesSaved:
+          type: integer
+          description: Ledger total memories saved from Claude Code sessions, ever.
     SchemaEntry:
       type: object
       description: One row of the vocabulary registry.
