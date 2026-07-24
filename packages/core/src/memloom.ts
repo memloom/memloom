@@ -1906,7 +1906,7 @@ export class Memloom implements MemoryEngine {
     // exactly what the model should see again.
     const historyRows = await this.#storage.query<{ role: "user" | "assistant"; content: string }>(
       `SELECT role, content FROM assistant_messages
-       WHERE owner_id = $1 AND session_id = $2 ORDER BY created_at DESC LIMIT $3`,
+       WHERE owner_id = $1 AND session_id = $2 ORDER BY created_at DESC, seq DESC LIMIT $3`,
       [owner, sessionId, Memloom.#ASSISTANT_HISTORY_LIMIT],
     );
     const history = historyRows.reverse();
@@ -1980,7 +1980,7 @@ export class Memloom implements MemoryEngine {
       created_at: string;
     }>(
       `SELECT id, role, content, sources, created_at FROM assistant_messages
-       WHERE owner_id = $1 AND session_id = $2 ORDER BY created_at, id`,
+       WHERE owner_id = $1 AND session_id = $2 ORDER BY created_at, seq`,
       [ownerId, sessionId],
     );
     return rows.map((r) => ({

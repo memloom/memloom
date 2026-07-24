@@ -369,6 +369,32 @@ describe("assistant engine", () => {
     expect(messages.map((x) => x.role)).toEqual(["user", "assistant", "user", "assistant"]);
   });
 
+  it("messages tied on created_at keep insertion order (seq breaks the tie)", async () => {
+    // created_at has millisecond precision, so a turn's user and assistant rows can tie
+    // (they did under machine load, with the random uuid deciding the order). Force the tie
+    // explicitly and assert seq keeps insertion order.
+    const m = await fresh();
+    const first = await m.assistantChat({ message: "tie base" });
+    const [row] = await m.deps.storage.query<{ owner_id: string }>(
+      "SELECT owner_id FROM assistant_messages LIMIT 1",
+    );
+    const at = "2026-01-01T00:00:00.000Z";
+    for (const content of ["tied one", "tied two", "tied three"]) {
+      await m.deps.storage.query(
+        `INSERT INTO assistant_messages (owner_id, session_id, role, content, created_at)
+         VALUES ($1, $2, 'user', $3, $4)`,
+        [row?.owner_id, first.sessionId, content, at],
+      );
+    }
+    const messages = await m.assistantMessages(first.sessionId);
+    // The tied rows predate the real turn, so they sort first, in insertion order.
+    expect(messages.slice(0, 3).map((x) => x.content)).toEqual([
+      "tied one",
+      "tied two",
+      "tied three",
+    ]);
+  });
+
   it("rename, star ordering, delete cascade", async () => {
     const m = await fresh();
     const a = await m.assistantChat({ message: "first chat" });
