@@ -87,6 +87,49 @@ export function mixColors(from: string, to: string, mix: number) {
   return `rgba(${blendChannel(fromColor.red, toColor.red)}, ${blendChannel(fromColor.green, toColor.green)}, ${blendChannel(fromColor.blue, toColor.blue)}, ${alpha.toFixed(3)})`;
 }
 
+// ---- Viewport culling ---------------------------------------------------------------
+
+/** A world-space rectangle: what the canvas currently shows (plus padding). */
+export interface ViewRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+export function padViewRect(rect: ViewRect, pad: number): ViewRect {
+  return {
+    left: rect.left - pad,
+    top: rect.top - pad,
+    right: rect.right + pad,
+    bottom: rect.bottom + pad,
+  };
+}
+
+export function rectContainsPoint(rect: ViewRect, x: number, y: number): boolean {
+  return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+}
+
+/**
+ * Conservative segment visibility: true when the segment's bounding box overlaps the rect.
+ * Endpoint-only testing would drop links that cross the viewport with both ends off-screen,
+ * which is the normal case when zoomed into a dense cluster.
+ */
+export function segmentBBoxIntersectsRect(
+  rect: ViewRect,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+): boolean {
+  return (
+    Math.max(x1, x2) >= rect.left &&
+    Math.min(x1, x2) <= rect.right &&
+    Math.max(y1, y2) >= rect.top &&
+    Math.min(y1, y2) <= rect.bottom
+  );
+}
+
 // Pick the side to draw a node's label on: away from its neighbors and outward from
 // the graph center, so labels collide as little as possible.
 export function pickLabelAnchor<T extends PositionedNode>(

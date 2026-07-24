@@ -5,6 +5,7 @@ import { ConflictsView } from "./ConflictsView";
 import { ConsoleView } from "./ConsoleView";
 import { DocumentsView } from "./DocumentsView";
 import { GraphView } from "./GraphView";
+import { graphsEqual } from "./graphEquality";
 import { MemoriesView } from "./MemoriesView";
 import { SchemaView } from "./SchemaView";
 import { ThemeToggle } from "./ThemeToggle";
@@ -16,6 +17,9 @@ export function App() {
   // A node the graph should select/center on next time it opens (set from an assistant source).
   const [graphFocus, setGraphFocus] = useState<string | null>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
+  // Once visited, the graph stays mounted (hidden) across tab switches so the canvas,
+  // layout, zoom, and selection survive instead of rebuilding on every return.
+  const [graphMounted, setGraphMounted] = useState(false);
   const [conflicts, setConflicts] = useState<Conflict[]>([]);
   const [proposalCount, setProposalCount] = useState(0);
   const [daemonDown, setDaemonDown] = useState(false);
@@ -23,7 +27,9 @@ export function App() {
   const refresh = useCallback(async () => {
     try {
       const [g, c, s] = await Promise.all([api.graph(), api.conflicts(), api.schema()]);
-      setGraph(g);
+      // Keep the previous reference when the poll brought identical data: GraphView's
+      // rebuild memo and the force engine key off object identity.
+      setGraph((prev) => (prev && graphsEqual(prev, g) ? prev : g));
       setConflicts(c);
       setProposalCount(s.proposals.length);
       setDaemonDown(false);
@@ -37,6 +43,10 @@ export function App() {
     const interval = setInterval(() => void refresh(), 15_000);
     return () => clearInterval(interval);
   }, [refresh]);
+
+  useEffect(() => {
+    if (tab === "graph") setGraphMounted(true);
+  }, [tab]);
 
   return (
     <div className="app">
@@ -95,17 +105,22 @@ export function App() {
         <ThemeToggle />
       </header>
       <main className="main">
-        {tab === "graph" &&
+        {(graphMounted || tab === "graph") &&
           (graph ? (
-            <GraphView
-              graph={graph}
-              focus={graphFocus}
-              onFocusConsumed={() => setGraphFocus(null)}
-              onChanged={refresh}
-            />
-          ) : (
+            // display:contents keeps GraphView's children as direct flex items of .main
+            // when visible; display:none removes them without unmounting.
+            <div style={{ display: tab === "graph" ? "contents" : "none" }}>
+              <GraphView
+                graph={graph}
+                active={tab === "graph"}
+                focus={graphFocus}
+                onFocusConsumed={() => setGraphFocus(null)}
+                onChanged={refresh}
+              />
+            </div>
+          ) : tab === "graph" ? (
             <div className="emptyState">loading…</div>
-          ))}
+          ) : null)}
         {tab === "assistant" && (
           <AssistantView
             onOpenInGraph={(nodeId) => {

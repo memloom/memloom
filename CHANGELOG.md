@@ -11,6 +11,13 @@
   `memloom conflicts auto` and the viewer's "Resolve the obvious ones" button run the same
   judgment over the queue. Every automatic resolution lands in the same revertable history
   as a human one, and anything the model is unsure about stays in the queue.
+- **The graph stays put and stays fast at thousands of nodes.** Three fixes for a graph
+  that reached ~3,800 nodes and 8,300 edges: the view stays mounted (and paused) across tab
+  switches instead of rebuilding and reheating on every return, the 15-second poll keeps
+  the previous data object when nothing changed so no-op refreshes cause zero rebuilds, and
+  every frame now culls to the viewport: off-screen nodes, links, labels, and arrowheads
+  are skipped entirely, and label placement is cached once the layout settles. Zooming into
+  a dense cluster no longer freezes, and labels render only where you are looking.
 - **Big conflict queues stay navigable.** The CLI lists the first 5 pending conflicts and
   points at the viewer and `conflicts auto` for the rest; the viewer's pending and resolved
   lists scroll in a fixed-height pane with a filter input, like the schema tab's entities.

@@ -16,10 +16,14 @@ import {
 import {
   clamp01,
   getLinkEndpointId,
+  type LabelAnchor,
   mixColors,
   pickLabelAnchor,
+  rectContainsPoint,
   scaleColorAlpha,
+  segmentBBoxIntersectsRect,
   stable01,
+  type ViewRect,
 } from "./graphRender";
 import { useTheme } from "./useTheme";
 
@@ -114,6 +118,8 @@ interface Node {
   vy?: number;
   fx?: number;
   fy?: number;
+  /** Cached label side; recomputed while the simulation moves nodes, frozen when settled. */
+  labelAnchor?: LabelAnchor;
 }
 
 interface Link {
@@ -377,11 +383,14 @@ type HoverState = {
 
 export function GraphView({
   graph,
+  active,
   focus,
   onFocusConsumed,
   onChanged,
 }: {
   graph: Graph;
+  /** False while another tab is shown: the view stays mounted but its animation pauses. */
+  active: boolean;
   /** A node id to select and center on when the tab opens (e.g. from an assistant source). */
   focus?: string | null;
   onFocusConsumed?: () => void;
@@ -486,10 +495,10 @@ export function GraphView({
     nodeMapRef.current = nodeMap;
   });
 
-  // External focus: an assistant source asks to see itself in the graph. This view unmounts
-  // on tab switch, so the target arrives as a prop from App (its own `selected` state is gone
-  // on remount). Highlight the node immediately, recenter after the mount zoomToFit settles,
-  // then consume the request so App's background refresh does not re-center every tick.
+  // External focus: an assistant source asks to see itself in the graph. The target arrives
+  // as a prop from App (which also switches the tab, so the view is visible and resumed when
+  // the recenter fires). Highlight the node immediately, recenter shortly after, then
+  // consume the request so App's background refresh does not re-center every tick.
   // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on the focus prop only
   useEffect(() => {
     if (!focus) return;
@@ -545,7 +554,14 @@ export function GraphView({
     if (!wrapRef.current) return;
     const observer = new ResizeObserver((entries) => {
       const rect = entries[0]?.contentRect;
-      if (rect) setSize({ width: Math.max(320, rect.width), height: Math.max(320, rect.height) });
+      // A hidden tab (display:none) reports 0x0; keep the last real size so the library
+      // never sees a size change while hidden (it pans the view on every resize).
+      if (!rect || rect.width === 0 || rect.height === 0) return;
+      setSize((prev) => {
+        const width = Math.max(320, rect.width);
+        const height = Math.max(320, rect.height);
+        return prev.width === width && prev.height === height ? prev : { width, height };
+      });
     });
     observer.observe(wrapRef.current);
     return () => observer.disconnect();
@@ -663,6 +679,21 @@ export function GraphView({
     [neighborMap, ensureHoverAnimation],
   );
 
+  // Hidden tab: stop the render loop entirely (canvas, hover picking, tweens). Clearing
+  // hover first lets the fade loop terminate so no stale highlight waits on return.
+  // remountKey is a dep because a fresh inner instance auto-starts its loop and must be
+  // re-paused if it appears while hidden.
+  useEffect(() => {
+    const fg = fgRef.current;
+    if (!fg) return;
+    if (active) {
+      fg.resumeAnimation?.();
+    } else {
+      handleHover(null);
+      fg.pauseAnimation?.();
+    }
+  }, [active, remountKey, handleHover]);
+
   const handleClick = useCallback(
     (node: Node) => {
       hasUserInteractedRef.current = true;
@@ -713,6 +744,52 @@ export function GraphView({
     [nodeMap],
   );
 
+  // Viewport culling: the visible world rect is computed once per frame (before paint) and
+  // read by the stable visibility accessors below, so off-screen nodes, links, labels,
+  // arrowheads, and pointer-pick painting are all skipped. At 3,800 nodes this is the
+  // difference between a smooth deep zoom and a frozen one.
+  const cullRectRef = useRef<ViewRect | null>(null);
+  // True while the d3 engine is ticking (layout moving): label anchors recompute then.
+  const simActiveRef = useRef(true);
+
+  const handleRenderFramePre = useCallback(
+    (_ctx: CanvasRenderingContext2D, globalScale: number) => {
+      const fg = fgRef.current;
+      if (!fg?.screen2GraphCoords) {
+        cullRectRef.current = null;
+        return;
+      }
+      const tl = fg.screen2GraphCoords(0, 0);
+      const br = fg.screen2GraphCoords(size.width, size.height);
+      // Pad by the node glyph overhang, plus label text overhang (screen px -> world units)
+      // whenever zoom is inside the label band, so labels never pop at the edges.
+      const labelThreshold = LABEL_BASE_THRESHOLD * config.display.labelFadeThreshold;
+      const labelsPossible = globalScale > labelThreshold * 0.7;
+      const pad = 40 + (labelsPossible ? 320 / globalScale : 0);
+      cullRectRef.current = {
+        left: tl.x - pad,
+        top: tl.y - pad,
+        right: br.x + pad,
+        bottom: br.y + pad,
+      };
+    },
+    [size, config.display.labelFadeThreshold],
+  );
+
+  const nodeVisibility = useCallback((node: Node) => {
+    const rect = cullRectRef.current;
+    return !rect || rectContainsPoint(rect, node.x ?? 0, node.y ?? 0);
+  }, []);
+
+  const linkVisibility = useCallback((link: Link) => {
+    const rect = cullRectRef.current;
+    if (!rect) return true;
+    const s = link.source;
+    const t = link.target;
+    if (typeof s === "string" || typeof t === "string") return true; // pre-init tick
+    return segmentBBoxIntersectsRect(rect, s.x ?? 0, s.y ?? 0, t.x ?? 0, t.y ?? 0);
+  }, []);
+
   const nodeCanvasObject = useCallback(
     (node: Node, ctx: CanvasRenderingContext2D, globalScale: number) => {
       const p = palRef.current;
@@ -755,7 +832,14 @@ export function GraphView({
       const fadeRange = labelThreshold * 0.3;
       const labelZoomAlpha = clamp01((globalScale - (labelThreshold - fadeRange)) / fadeRange);
       if (isFocused || isSelected || labelZoomAlpha > 0.01) {
-        const anchor = pickLabelAnchor(node, neighborMap, nodeMap);
+        // The anchor iterates the node's neighbors; while the layout is settled that work
+        // is identical every frame, so it is cached on the node (fresh Node objects on
+        // every rebuild make staleness impossible).
+        let anchor = node.labelAnchor;
+        if (anchor === undefined || simActiveRef.current) {
+          anchor = pickLabelAnchor(node, neighborMap, nodeMap);
+          node.labelAnchor = anchor;
+        }
         const fontSize = Math.max(
           10 / globalScale,
           isSelected || isFocused ? 13.2 / globalScale : 11.5 / globalScale,
@@ -873,6 +957,15 @@ export function GraphView({
           graphData={graphData}
           backgroundColor="transparent"
           cooldownTicks={config.forces.cooldownTicks}
+          onRenderFramePre={handleRenderFramePre}
+          nodeVisibility={nodeVisibility}
+          linkVisibility={linkVisibility}
+          onEngineTick={() => {
+            simActiveRef.current = true;
+          }}
+          onEngineStop={() => {
+            simActiveRef.current = false;
+          }}
           nodeCanvasObject={nodeCanvasObject}
           nodePointerAreaPaint={(node: Node, color, ctx) => {
             const half = Math.max(node.size * 1.6, 9);
@@ -897,6 +990,10 @@ export function GraphView({
           onNodeClick={handleClick}
           onNodeDragEnd={handleNodeDragEnd}
           onBackgroundClick={() => setSelected(null)}
+          // Continuous redraw stays on: the hover fade and label zoom fade mutate refs
+          // without marking the library's needsRedraw, so idle-pause would freeze them
+          // mid-fade. With the pause-when-hidden effect and viewport culling, the cost is
+          // zero while hidden and viewport-proportional while visible.
           autoPauseRedraw={false}
         />
         <div className="zoomRail">
