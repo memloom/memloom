@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, type Conflict, type ResolveDecision, type ResolvedConflict } from "./api";
+import {
+  api,
+  type Conflict,
+  type ConflictAutoEvent,
+  type ResolveDecision,
+  type ResolvedConflict,
+} from "./api";
 
 // The human-in-the-loop queue: contradictions the belief pipeline flagged. Every resolution
 // is non-destructive and reversible, so resolved conflicts stay listed below the queue with
@@ -25,6 +31,21 @@ export function ConflictsView({
   const [error, setError] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState<string | null>(null);
   const [mergeText, setMergeText] = useState("");
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoProgress, setAutoProgress] = useState<ConflictAutoEvent | null>(null);
+  const [autoSummary, setAutoSummary] = useState<string | null>(null);
+  const [pendingFilter, setPendingFilter] = useState("");
+  const [resolvedFilter, setResolvedFilter] = useState("");
+
+  const matches = (filter: string) => {
+    const needle = filter.trim().toLowerCase();
+    return (c: Conflict) =>
+      !needle ||
+      c.incoming.content.toLowerCase().includes(needle) ||
+      c.candidates.some((cand) => cand.content.toLowerCase().includes(needle));
+  };
+  const visibleConflicts = conflicts.filter(matches(pendingFilter));
+  const visibleResolved = (resolved ?? []).filter(matches(resolvedFilter));
 
   // The pending list arrives via props; reloading it (onChanged) gives it a new identity,
   // so this effect also refreshes the resolved history after every resolve/revert.
@@ -50,6 +71,26 @@ export function ConflictsView({
     }
   }
 
+  async function autoResolve() {
+    setAutoRunning(true);
+    setAutoSummary(null);
+    setError(null);
+    try {
+      const result = await api.autoResolveConflicts(setAutoProgress);
+      setAutoSummary(
+        `resolved ${result.resolved} of ${result.examined} ` +
+          `(${result.keepNew} kept new, ${result.keepExisting} kept existing, ` +
+          `${result.keepBoth} kept both); ${result.unsure} left for you`,
+      );
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAutoRunning(false);
+      setAutoProgress(null);
+    }
+  }
+
   async function revert(conflictId: string) {
     setBusy(conflictId);
     setError(null);
@@ -72,6 +113,33 @@ export function ConflictsView({
 
         {error && <div className="notice noticeError">{error}</div>}
 
+        {conflicts.length > 0 && (
+          <div className="actions" style={{ marginBottom: 12 }}>
+            <button
+              type="button"
+              className="btn btnPrimary"
+              disabled={autoRunning}
+              onClick={autoResolve}
+              title="An LLM re-judges each conflict with its provenance context. Decisive verdicts are applied (revertable below); unclear ones stay here for you."
+            >
+              {autoRunning
+                ? autoProgress
+                  ? `Resolving ${autoProgress.index}/${autoProgress.total}...`
+                  : "Resolving..."
+                : "Resolve the obvious ones"}
+            </button>
+            {autoRunning && autoProgress && (
+              <span style={{ color: "var(--text-faint)", alignSelf: "center" }}>
+                {autoProgress.verdict === "unsure"
+                  ? "left for you"
+                  : autoProgress.verdict.replace("_", " ")}
+                : {autoProgress.content}
+              </span>
+            )}
+          </div>
+        )}
+        {autoSummary && <div className="notice">{autoSummary}</div>}
+
         {conflicts.length === 0 && (
           <p style={{ color: "var(--text-faint)" }}>
             No conflicts to review. When a new memory contradicts an existing one, both are kept and
@@ -79,111 +147,133 @@ export function ConflictsView({
           </p>
         )}
 
-        {conflicts.map((conflict) => {
-          const single = conflict.candidates.length === 1 ? conflict.candidates[0] : undefined;
-          return (
-            <div key={conflict.id} className="card">
-              <div className="cardLabel">new</div>
-              <div className="statement statementNew">{conflict.incoming.content}</div>
-              {conflict.candidates.map((candidate) => (
-                <div key={candidate.id}>
-                  <div className="cardLabel">existing</div>
-                  <div className="statement statementExisting">{candidate.content}</div>
-                  {candidate.reason && <div className="reason">{candidate.reason}</div>}
-                </div>
-              ))}
-              <div className="actions">
-                <button
-                  type="button"
-                  className="btn btnPrimary"
-                  disabled={busy === conflict.id}
-                  onClick={() => resolve(conflict, { action: "keep_new" })}
-                >
-                  Keep new
-                </button>
-                {single && (
-                  <button
-                    type="button"
-                    className="btn"
-                    disabled={busy === conflict.id}
-                    onClick={() =>
-                      resolve(conflict, { action: "keep_existing", candidateId: single.id })
-                    }
-                  >
-                    Keep existing
-                  </button>
-                )}
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={busy === conflict.id}
-                  onClick={() => resolve(conflict, { action: "keep_both" })}
-                >
-                  Keep both
-                </button>
-                <button
-                  type="button"
-                  className="btn"
-                  disabled={busy === conflict.id}
-                  onClick={() => {
-                    setMergeOpen(mergeOpen === conflict.id ? null : conflict.id);
-                    setMergeText(conflict.incoming.content);
-                  }}
-                >
-                  Merge…
-                </button>
-              </div>
-              {mergeOpen === conflict.id && (
-                <>
-                  <textarea
-                    value={mergeText}
-                    onChange={(e) => setMergeText(e.target.value)}
-                    placeholder="The reconciled statement that replaces both"
-                  />
-                  <div className="actions">
-                    <button
-                      type="button"
-                      className="btn btnPrimary"
-                      disabled={busy === conflict.id || mergeText.trim().length === 0}
-                      onClick={() =>
-                        resolve(conflict, { action: "merge", content: mergeText.trim() })
-                      }
-                    >
-                      Save merged memory
-                    </button>
-                  </div>
-                </>
-              )}
-            </div>
-          );
-        })}
-
-        {resolved && resolved.length > 0 && (
-          <>
-            <h2 className="sectionTitle">Resolved; {resolved.length}</h2>
-            {resolved.map((r) => (
-              <div key={r.id} className="card">
-                <div className="cardLabel">
-                  {RESOLUTION_LABEL[r.resolution]}; {new Date(r.resolvedAt).toLocaleString()}
-                </div>
-                <div className="statement statementNew">{r.incoming.content}</div>
-                {r.candidates.map((candidate) => (
-                  <div key={candidate.id} className="statement statementExisting">
-                    {candidate.content}
+        {conflicts.length > 3 && (
+          <input
+            type="text"
+            className="entityFilter"
+            placeholder="Filter pending conflicts..."
+            value={pendingFilter}
+            onChange={(e) => setPendingFilter(e.target.value)}
+          />
+        )}
+        <div className="conflictList">
+          {visibleConflicts.map((conflict) => {
+            const single = conflict.candidates.length === 1 ? conflict.candidates[0] : undefined;
+            return (
+              <div key={conflict.id} className="card">
+                <div className="cardLabel">new</div>
+                <div className="statement statementNew">{conflict.incoming.content}</div>
+                {conflict.candidates.map((candidate) => (
+                  <div key={candidate.id}>
+                    <div className="cardLabel">existing</div>
+                    <div className="statement statementExisting">{candidate.content}</div>
+                    {candidate.reason && <div className="reason">{candidate.reason}</div>}
                   </div>
                 ))}
                 <div className="actions">
                   <button
                     type="button"
-                    className="btn"
-                    disabled={busy === r.id}
-                    onClick={() => revert(r.id)}
+                    className="btn btnPrimary"
+                    disabled={busy === conflict.id}
+                    onClick={() => resolve(conflict, { action: "keep_new" })}
                   >
-                    Revert
+                    Keep new
+                  </button>
+                  {single && (
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy === conflict.id}
+                      onClick={() =>
+                        resolve(conflict, { action: "keep_existing", candidateId: single.id })
+                      }
+                    >
+                      Keep existing
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy === conflict.id}
+                    onClick={() => resolve(conflict, { action: "keep_both" })}
+                  >
+                    Keep both
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy === conflict.id}
+                    onClick={() => {
+                      setMergeOpen(mergeOpen === conflict.id ? null : conflict.id);
+                      setMergeText(conflict.incoming.content);
+                    }}
+                  >
+                    Merge…
                   </button>
                 </div>
+                {mergeOpen === conflict.id && (
+                  <>
+                    <textarea
+                      value={mergeText}
+                      onChange={(e) => setMergeText(e.target.value)}
+                      placeholder="The reconciled statement that replaces both"
+                    />
+                    <div className="actions">
+                      <button
+                        type="button"
+                        className="btn btnPrimary"
+                        disabled={busy === conflict.id || mergeText.trim().length === 0}
+                        onClick={() =>
+                          resolve(conflict, { action: "merge", content: mergeText.trim() })
+                        }
+                      >
+                        Save merged memory
+                      </button>
+                    </div>
+                  </>
+                )}
               </div>
-            ))}
+            );
+          })}
+        </div>
+
+        {resolved && resolved.length > 0 && (
+          <>
+            <h2 className="sectionTitle">Resolved; {resolved.length}</h2>
+            {resolved.length > 3 && (
+              <input
+                type="text"
+                className="entityFilter"
+                placeholder="Filter resolved conflicts..."
+                value={resolvedFilter}
+                onChange={(e) => setResolvedFilter(e.target.value)}
+              />
+            )}
+            <div className="conflictList">
+              {visibleResolved.map((r) => (
+                <div key={r.id} className="card">
+                  <div className="cardLabel">
+                    {RESOLUTION_LABEL[r.resolution]}; {new Date(r.resolvedAt).toLocaleString()}
+                  </div>
+                  <div className="statement statementNew">{r.incoming.content}</div>
+                  {r.candidates.map((candidate) => (
+                    <div key={candidate.id} className="statement statementExisting">
+                      {candidate.content}
+                    </div>
+                  ))}
+                  <div className="actions">
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy === r.id}
+                      onClick={() => revert(r.id)}
+                    >
+                      Revert
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
           </>
         )}
       </div>

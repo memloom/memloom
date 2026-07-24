@@ -73,6 +73,16 @@ describe("OpenRouterLLM per-request model override", () => {
     }));
   }
 
+  it("complete() caps max_tokens: without one OpenRouter preauthorizes the model's full output ceiling and 402s small balances", async () => {
+    const fetch = mockChatFetch();
+    vi.stubGlobal("fetch", fetch);
+
+    await new OpenRouterLLM({ apiKey: "k" }).complete("hi");
+
+    const body = JSON.parse((fetch.mock.calls[0]?.[1] as { body: string }).body);
+    expect(body.max_tokens).toBe(8192);
+  });
+
   it("chat() sends opts.model when given, the configured chatModel otherwise", async () => {
     const fetch = mockChatFetch();
     vi.stubGlobal("fetch", fetch);

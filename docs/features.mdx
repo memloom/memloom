@@ -71,6 +71,15 @@ When two memories can't both be true, memloom keeps both and asks *you*: in the 
 CLI, or through an agent using the MCP tools. Every resolution (keep new, keep existing, keep
 both, merge) is reversible. See [Conflicts](/concepts/conflicts).
 
+## Import your Claude Code history into that same store
+
+`memloom import sessions` reads your local Claude Code sessions, redacts secret-shaped strings, and distills each session into typed
+memories through the exact belief pipeline described above. Every imported memory keeps provenance back to the
+session file and line range it came from. `memloom connect claude-code` makes capture continuous: a session-end hook distills each
+session as it finishes, bounded by a daily budget so nothing runs unattended. Imported or hand-saved, it's the same store: a recall
+doesn't care whether a memory came from typing `memloom save` or from a session you closed
+months ago. See [Session distillation](/concepts/distillation) and [Import](/cli/import).
+
 ## Every client, one store
 
 | Surface | What it's for |

@@ -16,6 +16,11 @@ const EMBED_BATCH = 64;
 // Without a deadline, a stalled provider call hangs a save/recall forever (and the daemon's
 // request never completes, so nothing surfaces in the log). Fail loudly instead.
 const REQUEST_TIMEOUT_MS = 60_000;
+// OpenRouter preauthorizes every completion for its max_tokens; without one it assumes the
+// model's full output ceiling (65,535 tokens for gemini-2.5-flash, ~16 cents), so a small
+// credit balance 402s on every call even though real outputs are a few hundred tokens.
+// Pipeline replies (distillation arrays, dedup verdicts, entity JSON) fit comfortably here.
+const MAX_COMPLETION_TOKENS = 8_192;
 
 async function postJson(url: string, apiKey: string, body: unknown, what: string) {
   let res: { ok: boolean; status: number; text(): Promise<string>; json(): Promise<unknown> };
@@ -158,7 +163,11 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
     const json = (await postJson(
       `${this.#baseUrl}/chat/completions`,
       this.#apiKey,
-      { model: this.#model, messages: [{ role: "user", content: prompt }] },
+      {
+        model: this.#model,
+        messages: [{ role: "user", content: prompt }],
+        max_tokens: MAX_COMPLETION_TOKENS,
+      },
       "completion",
     )) as { choices: { message: { content: string } }[] };
     return json.choices[0]?.message.content ?? "";

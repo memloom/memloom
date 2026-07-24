@@ -2,11 +2,18 @@ import type { MemoryEngine } from "./engine.js";
 import type { SchemaInfo } from "./schema.js";
 import type {
   Conflict,
+  ConflictAutoEvent,
+  ConflictAutoResult,
   ContextAddInput,
   ContextAddResult,
   ContextDocument,
   DocumentChunks,
   Graph,
+  ImportCaptureScope,
+  ImportOptions,
+  ImportResult,
+  ImportSessionEvent,
+  ImportStatus,
   IndexProgressEvent,
   IndexResult,
   Memory,
@@ -102,9 +109,45 @@ export class HttpMemloomClient implements MemoryEngine {
     return content;
   }
 
+  importSessions(
+    opts: ImportOptions = {},
+    onProgress?: (event: ImportSessionEvent) => void,
+  ): Promise<ImportResult> {
+    // root/ownerId are daemon-side concerns; only the user-facing knobs cross the wire.
+    const body = {
+      agent: opts.agent,
+      days: opts.days,
+      maxSessions: opts.maxSessions,
+      project: opts.project,
+      dryRun: opts.dryRun,
+      force: opts.force,
+    };
+    return this.#streamNdjson<ImportSessionEvent, ImportResult>(
+      "/import/sessions/stream",
+      body,
+      onProgress,
+    );
+  }
+
+  importStatus(): Promise<ImportStatus> {
+    return this.#json<ImportStatus>("/import/claude-code/status");
+  }
+
+  async setImportScope(scope: ImportCaptureScope): Promise<void> {
+    await this.#json("/import/claude-code/scope", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope }),
+    });
+  }
+
   index(_ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult> {
     if (!onProgress) return this.#post<IndexResult>("/memory/index", {});
-    return this.#streamRun("/memory/index/stream", onProgress);
+    return this.#streamNdjson<IndexProgressEvent, IndexResult>(
+      "/memory/index/stream",
+      {},
+      onProgress,
+    );
   }
 
   reindex(
@@ -112,40 +155,63 @@ export class HttpMemloomClient implements MemoryEngine {
     onProgress?: (event: IndexProgressEvent) => void,
   ): Promise<IndexResult> {
     if (!onProgress) return this.#post<IndexResult>("/memory/reindex", {});
-    return this.#streamRun("/memory/reindex/stream", onProgress);
+    return this.#streamNdjson<IndexProgressEvent, IndexResult>(
+      "/memory/reindex/stream",
+      {},
+      onProgress,
+    );
   }
 
-  // Consume an NDJSON progress stream, forwarding item events as they land.
-  async #streamRun(
+  // Consume an NDJSON progress stream ({type:"item"} per unit of work, one {type:"done"}
+  // carrying the result, in-band {type:"error"}), forwarding item events as they land.
+  async #streamNdjson<TItem, TDone>(
     path: string,
-    onProgress: (event: IndexProgressEvent) => void,
-  ): Promise<IndexResult> {
+    body: unknown,
+    onItem?: (event: TItem) => void,
+  ): Promise<TDone> {
     const res = await this.#fetch(`${this.#baseUrl}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: "{}",
+      body: JSON.stringify(body ?? {}),
     });
     if (!res.ok) throw new Error(`memloom server ${res.status}: ${await res.text()}`);
 
-    let result: IndexResult | null = null;
+    let result: TDone | null = null;
     const handleLine = (line: string) => {
       if (!line.trim()) return;
-      const event = JSON.parse(line) as
-        | ({ type: "item" } & IndexProgressEvent)
-        | ({ type: "done" } & IndexResult)
-        | { type: "error"; error: string };
-      if (event.type === "item") onProgress(event);
-      else if (event.type === "done")
-        result = { indexed: event.indexed, chunksIndexed: event.chunksIndexed };
-      else throw new Error(event.error);
+      const event = JSON.parse(line) as { type: string; error?: string };
+      if (event.type === "item") {
+        const { type: _type, ...item } = event;
+        onItem?.(item as TItem);
+      } else if (event.type === "done") {
+        const { type: _type, ...done } = event;
+        result = done as TDone;
+      } else if (event.type === "error") {
+        throw new Error(event.error ?? "memloom: stream error");
+      }
+      // Anything else (heartbeat pings, event kinds from a newer daemon) is skipped.
     };
+
+    // The daemon finishes the run even when this stream dies underneath us (idle timeout,
+    // network hiccup): say that instead of surfacing a bare "terminated".
+    const streamLost = (err: unknown) =>
+      new Error(
+        `memloom: lost the daemon's progress stream (${err instanceof Error ? err.message : String(err)}). ` +
+          "The run continues inside the daemon; check `memloom status` or the viewer for the result.",
+      );
 
     const reader = res.body?.getReader();
     if (reader) {
       const decoder = new TextDecoder();
       let buffer = "";
       for (;;) {
-        const { done, value } = await reader.read();
+        let step: { done: boolean; value?: Uint8Array };
+        try {
+          step = await reader.read();
+        } catch (err) {
+          throw streamLost(err);
+        }
+        const { done, value } = step;
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         let newline = buffer.indexOf("\n");
@@ -161,7 +227,7 @@ export class HttpMemloomClient implements MemoryEngine {
       for (const line of (await res.text()).split("\n")) handleLine(line);
     }
 
-    if (!result) throw new Error("memloom: index stream ended without a done event");
+    if (!result) throw new Error(`memloom: stream ${path} ended without a done event`);
     return result;
   }
 
@@ -183,6 +249,17 @@ export class HttpMemloomClient implements MemoryEngine {
 
   async resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void> {
     await this.#post(`/memory/conflicts/${conflictId}/resolve`, decision);
+  }
+
+  autoResolveConflicts(
+    _ownerId?: string,
+    onProgress?: (event: ConflictAutoEvent) => void,
+  ): Promise<ConflictAutoResult> {
+    return this.#streamNdjson<ConflictAutoEvent, ConflictAutoResult>(
+      "/memory/conflicts/resolve-auto/stream",
+      {},
+      onProgress,
+    );
   }
 
   async revertConflict(conflictId: string): Promise<void> {

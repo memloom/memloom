@@ -54,6 +54,12 @@ export interface SaveInput {
   memoryType?: MemoryType;
   /** Defaults to the fixed sentinel owner in the embedded (single-user) tier. */
   ownerId?: string;
+  /**
+   * Transcript context, set by the session import: lets a flagged contradiction be judged
+   * at save time with evidence the dedup classifier alone lacks. Absent on manual saves,
+   * where a human is present and a pending conflict is the right outcome.
+   */
+  context?: { excerpt: string };
 }
 
 // "versioned": the save restated an existing belief, so a new version was appended to its
@@ -66,6 +72,11 @@ export interface SaveResult {
   outcome: SaveOutcome;
   /** Set when outcome is "conflict": the id of the pending decision to resolve. */
   conflictId?: string;
+  /**
+   * Set on "conflict" when transcript context let the resolver settle it at save time.
+   * The resolution is applied and revertable; the conflict never waits in the queue.
+   */
+  autoResolution?: "keep_new" | "keep_existing" | "keep_both";
   /** Set when outcome is "versioned": the new version number (>= 2). */
   version?: number;
 }
@@ -383,7 +394,147 @@ export interface DocumentChunks {
   edges: GraphEdge[];
 }
 
+// ---- Session import (`memloom import sessions`) ----
+
+export interface ImportOptions {
+  /**
+   * Which agent's sessions to import. Claude Code is the only supported agent today and
+   * the default; the option exists so `import sessions --agent codex` can slot in without
+   * a rename.
+   */
+  agent?: "claude-code";
+  /** Sessions modified in the last N days. Default 14. */
+  days?: number;
+  /** Newest-first cap after the day window. Default 20. */
+  maxSessions?: number;
+  /** Case-insensitive substring match on the encoded project directory name. */
+  project?: string;
+  /** Allowlist form of `project`: a session matches when ANY entry matches. Hook and sweep. */
+  projects?: string[];
+  /**
+   * Explicit session files instead of discovery (the hook's just-ended transcript). Bypasses
+   * the day window, the cap, and the quiet check: a session-end signal is definitive.
+   */
+  paths?: string[];
+  /**
+   * An unattended run (hook, sweep): enforce the per-day distillation call budget so capture
+   * can never silently burn credits. Attended CLI runs are uncapped; the user is watching.
+   */
+  unattended?: boolean;
+  /** Discover, parse, chunk, and count only: zero LLM calls, zero writes, ledger untouched. */
+  dryRun?: boolean;
+  /** Ignore ledger watermarks and reprocess every discovered session from line zero. */
+  force?: boolean;
+  /** Override ~/.claude/projects (tests). */
+  root?: string;
+  ownerId?: string;
+}
+
+/** The hook capture scope: named project-dir substrings, everything, or not configured. */
+export type ImportCaptureScope = { projects: string[] } | "all" | null;
+
+/** What `memloom status` renders: capture config, last hook activity, and today's spend. */
+export interface ImportStatus {
+  scope: ImportCaptureScope;
+  /** ISO time the daemon last received a session-end notify; null = never. */
+  lastNotifyAt: string | null;
+  /** The last notify's failure ("no LLM provider configured", a 402, ...); null = clean. */
+  lastNotifyError: string | null;
+  /** Unattended distillation calls spent today, against the cap. */
+  todayUnattendedCalls: number;
+  unattendedDailyCap: number;
+  /** Ledger totals: sessions ever imported and memories they saved. */
+  sessionsImported: number;
+  memoriesSaved: number;
+}
+
+/** One session finished during an import run: the per-session progress line. */
+export interface ImportSessionEvent {
+  path: string;
+  project: string;
+  sessionId: string;
+  /** 1-based position in this run. */
+  index: number;
+  total: number;
+  /**
+   * "distilling": the session's chunks are about to be processed (emitted before the LLM
+   * work so long sessions show progress instead of silence). "partial": a provider failure
+   * stopped this session mid-way; processed chunks are saved.
+   */
+  outcome: "imported" | "up-to-date" | "dry-run" | "partial" | "distilling";
+  /** Set on "partial": the provider error that stopped the session (and the run). */
+  error?: string;
+  /** Set on "distilling": the 1-based chunk now being processed (of `chunks`). */
+  chunk?: number;
+  chunks: number;
+  saved: number;
+  merged: number;
+  versioned: number;
+  conflicts: number;
+  /** Contradictions the resolver settled at save time using transcript context (revertable). */
+  autoResolved: number;
+  /** Distillation reply items dropped as untypeable. */
+  dropped: number;
+  truncated: number;
+  redactions: number;
+  malformed: number;
+}
+
+export interface ImportResult {
+  /** Sessions processed (or planned, on a dry run). */
+  sessions: number;
+  skipped: {
+    sidecars: number;
+    active: number;
+    outsideWindow: number;
+    overCap: number;
+    /** Already fully processed per the ledger (watermark at end of file, prefix intact). */
+    upToDate: number;
+  };
+  saved: number;
+  merged: number;
+  versioned: number;
+  conflicts: number;
+  /** Contradictions the resolver settled at save time using transcript context (revertable). */
+  autoResolved: number;
+  dropped: number;
+  truncated: number;
+  redactions: number;
+  malformed: number;
+  /** The cost line: what this run actually spent. All zero on a dry run. */
+  calls: { extraction: number; embedding: number; classifier: number };
+  dryRun: boolean;
+  /**
+   * Set when a provider failure stopped the run early. Everything distilled and saved before
+   * the failure is kept and watermarked, so a re-run resumes instead of re-spending.
+   */
+  error?: string;
+}
+
 // The four human-in-the-loop resolution actions. All reversible.
+/** Progress from the conflict auto-resolver: one event per examined conflict. */
+export interface ConflictAutoEvent {
+  conflictId: string;
+  /** 1-based position in this pass. */
+  index: number;
+  total: number;
+  verdict: "keep_new" | "keep_existing" | "keep_both" | "unsure";
+  reason: string;
+  /** Leading snippet of the incoming memory, for display. */
+  content: string;
+}
+
+export interface ConflictAutoResult {
+  examined: number;
+  /** Conflicts a decisive verdict resolved (sum of the three buckets below). */
+  resolved: number;
+  keepNew: number;
+  keepExisting: number;
+  keepBoth: number;
+  /** Left pending for a human. */
+  unsure: number;
+}
+
 export type ResolveDecision =
   | { action: "keep_new" } // supersede: the new memory wins, existing ones go stale
   | { action: "keep_existing"; candidateId: string } // an existing memory wins, the new one goes stale

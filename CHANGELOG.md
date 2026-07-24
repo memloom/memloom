@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- Added `memloom import sessions`: distill your agent's sessions into typed, searchable
+  memories, with secrets redacted before anything reaches a provider and a ledger that
+  makes re-runs free. Claude Code is the first supported agent (`--agent claude-code`,
+  the default) ([docs](https://docs.memloom.dev/cli/import),
+  [how distillation works](https://docs.memloom.dev/concepts/distillation))
+- Added `memloom connect claude-code`: continuous capture through a session-end hook,
+  scoped to an allowlist of projects and bounded by a daily unattended budget
+  ([docs](https://docs.memloom.dev/cli/import))
+- Added automatic conflict resolution: a contradiction with decisive evidence (recording
+  times, transcript excerpts) resolves itself at import time, and `memloom conflicts auto`
+  or the viewer's "Resolve the obvious ones" button re-judges the pending queue; every
+  auto-resolution is revertable ([docs](https://docs.memloom.dev/cli/conflicts))
+- Added per-chunk progress ("distilling chunk 12/47") so long imports are never silent
+- Fixed the CLI dying with a bare "terminated" on long runs while the daemon kept
+  importing: progress streams now carry heartbeats, and a lost stream says where to check
+- Fixed small OpenRouter balances failing every call with 402: completions now cap
+  max_tokens instead of preauthorizing the model's full output ceiling
+- Fixed the graph rebuilding on every tab return, jolting on no-op background refreshes,
+  and freezing on deep zooms: the view stays mounted across tabs, unchanged polls are
+  ignored, and drawing culls to the viewport
+- Fixed big conflict queues overwhelming the CLI and viewer: the CLI lists the first 5,
+  and the viewer's lists scroll in a fixed pane with a filter
+- Fixed the dedup classifier flagging unrelated memories as contradictions
+
 ## 0.1.1
 
 - **Node 20 is now supported** (was Node 22 or later). The whole suite passes on Node 20,

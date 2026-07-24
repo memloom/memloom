@@ -1112,6 +1112,13 @@ textarea {
   margin-top: 4px;
 }
 
+/* Conflict cards are tall; the queue scrolls in place like the entity list does. */
+.conflictList {
+  max-height: 480px;
+  overflow-y: auto;
+  margin-top: 4px;
+}
+
 .entityFilter {
   width: 100%;
   margin: 6px 0 8px;

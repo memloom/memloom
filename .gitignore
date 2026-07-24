@@ -9,3 +9,9 @@ dist/
 packages/cli/viewer/
 .gstack/
 docs-review/
+
+# locally-installed agent skills (fetched via `npx skills add`), vendored
+# per-machine, not part of the project source
+.agents/
+.claude/skills/
+skills-lock.json

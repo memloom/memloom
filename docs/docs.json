@@ -36,6 +36,7 @@
               "concepts/architecture",
               "concepts/memory-types",
               "concepts/conflicts",
+              "concepts/distillation",
               "concepts/graph",
               "concepts/retrieval",
               "concepts/assistant"
@@ -51,70 +52,119 @@
         "tab": "API Reference",
         "groups": [
           {
-            "group": "Memory",
-            "openapi": "openapi.yaml",
+            "group": "Endpoints",
             "pages": [
-              "POST /memory/save",
-              "POST /memory/query",
-              "POST /memory/index",
-              "POST /memory/reindex",
-              "GET /memory/graph"
+              {
+                "group": "Memory",
+                "openapi": "openapi.yaml",
+                "expanded": false,
+                "pages": [
+                  "POST /memory/save",
+                  "POST /memory/query",
+                  "GET /memory/list",
+                  "POST /memory/{id}/update",
+                  "GET /memory/{id}/history",
+                  "DELETE /memory/{id}",
+                  "GET /memory/passage/{id}"
+                ]
+              },
+              {
+                "group": "Indexing & graph",
+                "openapi": "openapi.yaml",
+                "expanded": false,
+                "pages": [
+                  "POST /memory/index",
+                  "POST /memory/index/stream",
+                  "POST /memory/reindex",
+                  "POST /memory/reindex/stream",
+                  "GET /memory/index/runs",
+                  "DELETE /memory/index/runs",
+                  "GET /memory/index/runs/{id}/events",
+                  "DELETE /memory/index/runs/{id}",
+                  "GET /memory/auto-index",
+                  "PATCH /memory/auto-index",
+                  "GET /memory/graph"
+                ]
+              },
+              {
+                "group": "Schema & entities",
+                "openapi": "openapi.yaml",
+                "expanded": false,
+                "pages": [
+                  "GET /memory/schema",
+                  "POST /memory/schema",
+                  "PATCH /memory/schema/{id}",
+                  "DELETE /memory/schema/{id}",
+                  "POST /memory/schema/{id}/approve",
+                  "POST /memory/schema/{id}/dismiss",
+                  "GET /memory/entities",
+                  "PATCH /memory/entities/{id}",
+                  "POST /memory/entities/{id}/merge",
+                  "DELETE /memory/entities/{id}"
+                ]
+              },
+              {
+                "group": "Assistant",
+                "openapi": "openapi.yaml",
+                "expanded": false,
+                "pages": [
+                  "POST /assistant/chat",
+                  "GET /assistant/models",
+                  "GET /assistant/sessions",
+                  "GET /assistant/sessions/search",
+                  "GET /assistant/sessions/{id}/messages",
+                  "PATCH /assistant/sessions/{id}",
+                  "DELETE /assistant/sessions/{id}",
+                  "DELETE /assistant/sessions",
+                  "POST /assistant/attachments",
+                  "GET /assistant/sessions/{id}/attachments"
+                ]
+              },
+              {
+                "group": "Context",
+                "openapi": "openapi.yaml",
+                "expanded": false,
+                "pages": [
+                  "POST /context/add",
+                  "POST /context/upload",
+                  "POST /context/pick",
+                  "GET /context/browse",
+                  "GET /context/documents",
+                  "GET /context/documents/{id}/chunks",
+                  "POST /context/documents/{id}/open",
+                  "DELETE /context/documents/{id}"
+                ]
+              },
+              {
+                "group": "Conflicts",
+                "openapi": "openapi.yaml",
+                "expanded": false,
+                "pages": [
+                  "GET /memory/conflicts",
+                  "GET /memory/conflicts/resolved",
+                  "POST /memory/conflicts/{id}/resolve",
+                  "POST /memory/conflicts/{id}/revert",
+                  "POST /memory/conflicts/resolve-auto/stream"
+                ]
+              },
+              {
+                "group": "Import",
+                "openapi": "openapi.yaml",
+                "expanded": false,
+                "pages": [
+                  "POST /import/sessions/stream",
+                  "POST /import/claude-code/notify",
+                  "GET /import/claude-code/status",
+                  "PUT /import/claude-code/scope"
+                ]
+              },
+              {
+                "group": "Daemon",
+                "openapi": "openapi.yaml",
+                "expanded": false,
+                "pages": ["GET /health", "POST /admin/shutdown"]
+              }
             ]
-          },
-          {
-            "group": "Schema & entities",
-            "openapi": "openapi.yaml",
-            "pages": [
-              "GET /memory/schema",
-              "POST /memory/schema",
-              "PATCH /memory/schema/{id}",
-              "DELETE /memory/schema/{id}",
-              "POST /memory/schema/{id}/approve",
-              "POST /memory/schema/{id}/dismiss",
-              "GET /memory/entities",
-              "PATCH /memory/entities/{id}",
-              "POST /memory/entities/{id}/merge",
-              "DELETE /memory/entities/{id}"
-            ]
-          },
-          {
-            "group": "Assistant",
-            "openapi": "openapi.yaml",
-            "pages": [
-              "POST /assistant/chat",
-              "GET /assistant/models",
-              "GET /assistant/sessions",
-              "GET /assistant/sessions/search",
-              "GET /assistant/sessions/{id}/messages",
-              "PATCH /assistant/sessions/{id}",
-              "DELETE /assistant/sessions/{id}",
-              "POST /assistant/attachments",
-              "GET /assistant/sessions/{id}/attachments"
-            ]
-          },
-          {
-            "group": "Context",
-            "openapi": "openapi.yaml",
-            "pages": [
-              "POST /context/add",
-              "POST /context/upload",
-              "GET /context/documents",
-              "DELETE /context/documents/{id}"
-            ]
-          },
-          {
-            "group": "Conflicts",
-            "openapi": "openapi.yaml",
-            "pages": [
-              "GET /memory/conflicts",
-              "POST /memory/conflicts/{id}/resolve",
-              "POST /memory/conflicts/{id}/revert"
-            ]
-          },
-          {
-            "group": "Daemon",
-            "openapi": "openapi.yaml",
-            "pages": ["GET /health", "POST /admin/shutdown"]
           }
         ]
       },
@@ -127,7 +177,14 @@
           },
           {
             "group": "Commands",
-            "pages": ["cli/daemon", "cli/memories", "cli/graph", "cli/context", "cli/conflicts"]
+            "pages": [
+              "cli/daemon",
+              "cli/memories",
+              "cli/import",
+              "cli/graph",
+              "cli/context",
+              "cli/conflicts"
+            ]
           }
         ]
       },

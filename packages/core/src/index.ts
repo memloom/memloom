@@ -14,6 +14,28 @@ export { runBenchmark } from "./benchmark.js";
 // Context connector building blocks
 export type { Chunk, ChunkOptions } from "./chunker.js";
 export { chunkMarkdown, chunkOutline, chunkText } from "./chunker.js";
+// Claude Code session import building blocks
+export type {
+  ChunkResult,
+  DiscoveredSession,
+  DiscoveryOptions,
+  DiscoveryResult,
+  DiscoverySkips,
+  ParsedSession,
+  SessionChunk,
+  SessionUnit,
+} from "./claude-sessions.js";
+export {
+  CHUNK_BUDGET_CHARS,
+  chunkUnits,
+  claudeProjectsDir,
+  discoverSessions,
+  hashPrefix,
+  parseSession,
+  QUIET_MS,
+} from "./claude-sessions.js";
+export type { DistilledMemory, DistillOutput } from "./distill.js";
+export { buildDistillPrompt, distillChunk, parseDistillation } from "./distill.js";
 export type { MemoryEngine } from "./engine.js";
 export type { ContextKind, ExtractedFile, ExtractedUnit, Extractor } from "./extract.js";
 export {
@@ -62,6 +84,8 @@ export type {
   LLMProvider,
 } from "./providers.js";
 export { isChatProvider } from "./providers.js";
+export type { RedactResult } from "./redact.js";
+export { redact } from "./redact.js";
 // The graph schema: the system-tier vocabulary constants (seeded into the memory_schema
 // registry) plus the registry model types.
 export type {
@@ -112,6 +136,11 @@ export type {
   GraphDocument,
   GraphEdge,
   GraphMemory,
+  ImportCaptureScope,
+  ImportOptions,
+  ImportResult,
+  ImportSessionEvent,
+  ImportStatus,
   IndexEventLevel,
   IndexProgressEvent,
   IndexResult,

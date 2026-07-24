@@ -131,6 +131,25 @@ export type ResolveDecision =
   | { action: "keep_both" }
   | { action: "merge"; content: string; canonical?: string };
 
+/** Progress from the conflict auto-resolver: one event per examined conflict. */
+export interface ConflictAutoEvent {
+  conflictId: string;
+  index: number;
+  total: number;
+  verdict: "keep_new" | "keep_existing" | "keep_both" | "unsure";
+  reason: string;
+  content: string;
+}
+
+export interface ConflictAutoResult {
+  examined: number;
+  resolved: number;
+  keepNew: number;
+  keepExisting: number;
+  keepBoth: number;
+  unsure: number;
+}
+
 /**
  * One saved occurrence behind a proposal: the entity (entity_type) or relationship endpoints
  * (predicate) the extractor held out. Approval links these into the graph directly.
@@ -466,4 +485,41 @@ export const api = {
   resolve: (id: string, decision: ResolveDecision) =>
     post<{ ok: boolean }>(`/memory/conflicts/${id}/resolve`, decision),
   revert: (id: string) => post<{ ok: boolean }>(`/memory/conflicts/${id}/revert`),
+  // NDJSON progress stream: {type:"item"} per conflict, {type:"done"} with the totals,
+  // heartbeat pings in between (skipped).
+  autoResolveConflicts: async (
+    onEvent: (e: ConflictAutoEvent) => void,
+  ): Promise<ConflictAutoResult> => {
+    const res = await fetch("/memory/conflicts/resolve-auto/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    if (!res.ok || !res.body) throw new Error(`${res.status} ${res.statusText}`);
+    let result: ConflictAutoResult | null = null;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const handleLine = (line: string) => {
+      if (!line.trim()) return;
+      const event = JSON.parse(line) as { type: string; error?: string };
+      if (event.type === "item") onEvent(event as unknown as ConflictAutoEvent);
+      else if (event.type === "done") result = event as unknown as ConflictAutoResult;
+      else if (event.type === "error") throw new Error(event.error ?? "stream error");
+    };
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      let newline = buffer.indexOf("\n");
+      while (newline >= 0) {
+        handleLine(buffer.slice(0, newline));
+        buffer = buffer.slice(newline + 1);
+        newline = buffer.indexOf("\n");
+      }
+    }
+    handleLine(buffer);
+    if (!result) throw new Error("auto-resolve stream ended without a result");
+    return result;
+  },
 };

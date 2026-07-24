@@ -1,11 +1,18 @@
 import type { SchemaInfo } from "./schema.js";
 import type {
   Conflict,
+  ConflictAutoEvent,
+  ConflictAutoResult,
   ContextAddInput,
   ContextAddResult,
   ContextDocument,
   DocumentChunks,
   Graph,
+  ImportCaptureScope,
+  ImportOptions,
+  ImportResult,
+  ImportSessionEvent,
+  ImportStatus,
   IndexProgressEvent,
   IndexResult,
   Memory,
@@ -37,6 +44,20 @@ export interface MemoryEngine {
    * fetch-the-rest path when a recall surface truncated the passage (PASSAGE_CHARS).
    */
   passage(id: string, ownerId?: string): Promise<string | null>;
+  /**
+   * Import Claude Code sessions as distilled, provenance-carrying memories through the belief
+   * pipeline. Bounded by default; idempotent via the per-session ledger. `onProgress` fires
+   * after each session completes.
+   */
+  /** Distill agent session transcripts into memories. Claude Code is the only agent today. */
+  importSessions(
+    opts?: ImportOptions,
+    onProgress?: (event: ImportSessionEvent) => void,
+  ): Promise<ImportResult>;
+  /** Hook capture state for `memloom status`: scope, last notify, spend, ledger totals. */
+  importStatus(): Promise<ImportStatus>;
+  /** Set (connect) or clear (disconnect) the hook capture scope. */
+  setImportScope(scope: ImportCaptureScope): Promise<void>;
   /** Extract entities from unindexed rows. `onProgress` fires after each item completes. */
   index(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
   /** Wipe all extracted entities/edges and re-run indexing from scratch (recovery path). */
@@ -47,6 +68,14 @@ export interface MemoryEngine {
   resolvedConflicts(ownerId?: string): Promise<ResolvedConflict[]>;
   resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void>;
   revertConflict(conflictId: string): Promise<void>;
+  /**
+   * LLM pass over pending conflicts with provenance context; decisive verdicts resolve
+   * (revertably), "unsure" stays pending for a human.
+   */
+  autoResolveConflicts(
+    ownerId?: string,
+    onProgress?: (event: ConflictAutoEvent) => void,
+  ): Promise<ConflictAutoResult>;
   /** Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors; re-add replaces. */
   contextAdd(input: ContextAddInput): Promise<ContextAddResult>;
   contextList(ownerId?: string): Promise<ContextDocument[]>;

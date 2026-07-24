@@ -1,3 +1,4 @@
+import { extractJsonArray } from "./llm-json.js";
 import type { LLMProvider } from "./providers.js";
 
 // The dedup classifier. Given an incoming memory and the existing memories most similar to it,
@@ -36,24 +37,16 @@ export function buildDedupPrompt(
     "",
     "For each existing memory choose exactly one relation:",
     '- "identical": the same fact restated',
-    '- "complementary": related, but both can be true at once',
-    '- "contradictory": they cannot both be true',
+    '- "complementary": both can be true at once, whether or not they are about the same',
+    "  topic (this includes memories that are simply unrelated to each other)",
+    '- "contradictory": they are about the same subject and cannot both be true',
+    "",
+    "If the two memories are about different topics entirely, that is NOT a contradiction:",
+    'choose "complementary".',
     "",
     "Return ONLY a JSON array, one object per existing memory:",
     '[{"candidate": <number>, "relation": "identical|complementary|contradictory", "reason": "<short>"}]',
   ].join("\n");
-}
-
-function extractJsonArray(raw: string): unknown[] {
-  const start = raw.indexOf("[");
-  const end = raw.lastIndexOf("]");
-  if (start === -1 || end === -1 || end < start) return [];
-  try {
-    const parsed = JSON.parse(raw.slice(start, end + 1));
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
 }
 
 function normalizeRelation(value: unknown): Relation {

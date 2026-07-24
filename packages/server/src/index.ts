@@ -245,6 +245,28 @@ const autoIndexSchema = z.object({
   enabled: z.boolean(),
 });
 
+const importSchema = z.object({
+  // The engine validates agent support; the wire only constrains the shape.
+  agent: z.string().min(1).max(100).optional(),
+  days: z.number().int().positive().max(3650).optional(),
+  maxSessions: z.number().int().positive().max(1000).optional(),
+  project: z.string().min(1).max(300).optional(),
+  dryRun: z.boolean().optional(),
+  force: z.boolean().optional(),
+});
+
+const importNotifySchema = z.object({
+  path: z.string().min(1, "path must be a non-empty string").max(4096),
+});
+
+const importScopeSchema = z.object({
+  scope: z.union([
+    z.literal("all"),
+    z.object({ projects: z.array(z.string().min(1).max(300)).min(1).max(200) }),
+    z.null(),
+  ]),
+});
+
 const assistantChatSchema = z.object({
   sessionId: z.string().uuid().optional(),
   message: z.string().min(1, "message must be a non-empty string"),
@@ -366,6 +388,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         c.req.path.startsWith("/memory") ||
         c.req.path.startsWith("/context") ||
         c.req.path.startsWith("/assistant") ||
+        c.req.path.startsWith("/import") ||
         c.req.path.startsWith("/admin");
       if (isApi) {
         console.log(`${new Date().toISOString()}  → ${c.req.method} ${c.req.path}`);
@@ -408,6 +431,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.use("/memory/*", probeStore);
   app.use("/context/*", probeStore);
   app.use("/assistant/*", probeStore);
+  app.use("/import/*", probeStore);
 
   if (opts.onShutdown) {
     const shutdown = opts.onShutdown;
@@ -474,10 +498,14 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // Indexing runs one LLM call per unindexed row (minutes for a big PDF). The stream
   // variants respond with NDJSON progress ({type:"item"} per row, {type:"done"} with the
   // totals) so clients can show what's happening in real time instead of a spinner.
-  type ProgressRun = (
-    onProgress: (event: IndexProgressEvent) => void,
-  ) => Promise<{ indexed: number; chunksIndexed: number }>;
-  const streamRun = (c: Context, run: ProgressRun) => {
+  // Node's fetch kills a response body that stays silent for ~300s (undici bodyTimeout),
+  // and one session or one big PDF can distill for longer than that without emitting an
+  // event. Pings keep the pipe alive; clients skip any event type they don't know.
+  const STREAM_HEARTBEAT_MS = 15_000;
+  const streamNdjson = <TEvent>(
+    c: Context,
+    run: (emit: (event: TEvent) => void) => Promise<object>,
+  ) => {
     c.header("content-type", "application/x-ndjson");
     return stream(c, async (s) => {
       // onProgress is sync; serialize writes through a promise chain so lines never interleave.
@@ -487,18 +515,69 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
           await s.write(`${JSON.stringify(payload)}\n`);
         });
       };
+      const heartbeat = setInterval(() => write({ type: "ping" }), STREAM_HEARTBEAT_MS);
       try {
         const result = await run((event) => write({ type: "item", ...event }));
         write({ type: "done", ...result });
       } catch (err) {
         // Mid-stream failures can't become an HTTP error status: surface them in-band.
         write({ type: "error", error: err instanceof Error ? err.message : String(err) });
+      } finally {
+        clearInterval(heartbeat);
       }
       await chain;
     });
   };
+  type ProgressRun = (
+    onProgress: (event: IndexProgressEvent) => void,
+  ) => Promise<{ indexed: number; chunksIndexed: number }>;
+  const streamRun = (c: Context, run: ProgressRun) => streamNdjson(c, run);
 
   app.post("/memory/index/stream", (c) => streamRun(c, (p) => memloom.index(undefined, p)));
+
+  // Hook capture surface. The notify endpoint takes only a transcript path and must confine
+  // it: any local process can reach the daemon, and without this check one could make the
+  // daemon read an arbitrary file, ship it to the LLM provider, and write derived content
+  // into the store. The path must resolve inside ~/.claude/projects, on top of the global
+  // Host + Origin gate above.
+  const sessionsRoot = resolve(join(homedir(), ".claude", "projects"));
+  app.post("/import/claude-code/notify", async (c) => {
+    const body = await parseBody(c, importNotifySchema);
+    if (!body.ok) return body.res;
+    const target = resolve(normalize(body.data.path));
+    if (target !== sessionsRoot && !target.startsWith(sessionsRoot + sep)) {
+      return c.json(
+        { error: "forbidden: path is outside the Claude Code sessions directory" },
+        400,
+      );
+    }
+    if (!target.endsWith(".jsonl")) {
+      return c.json({ error: "path must be a .jsonl session transcript" }, 400);
+    }
+    // Fire and forget: the hook must never wait on distillation. handleSessionNotify records
+    // every failure in status, so nothing here is silently lost.
+    void memloom.handleSessionNotify(target).catch(() => {});
+    return c.json({ accepted: true }, 202);
+  });
+
+  app.get("/import/claude-code/status", async (c) => c.json(await memloom.importStatus()));
+
+  app.put("/import/claude-code/scope", async (c) => {
+    const body = await parseBody(c, importScopeSchema);
+    if (!body.ok) return body.res;
+    await memloom.setImportScope(body.data.scope);
+    return c.json({ ok: true });
+  });
+
+  // Session import runs daemon-side (the single store writer owns the ledger) and streams
+  // NDJSON progress: one {type:"item"} per session, {type:"done"} with the totals and the
+  // cost line. Discovery is fixed to ~/.claude/projects; the client never supplies a path.
+  app.post("/import/sessions/stream", async (c) => {
+    const body = await parseBody(c, importSchema);
+    if (!body.ok) return body.res;
+    const opts = body.data as Parameters<typeof memloom.importSessions>[0];
+    return streamNdjson(c, (emit) => memloom.importSessions(opts, emit));
+  });
 
   // Index sessions: the persistent, session-grouped log the Console tab renders. Runs are
   // listed newest-first; a run's per-item events load on expand. History is user-managed:
@@ -636,6 +715,12 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     await memloom.revertConflict(c.req.param("id"));
     return c.json({ ok: true });
   });
+
+  // The auto-resolver: an LLM re-judges every pending conflict with provenance context and
+  // applies the decisive verdicts (revertably). Streams one item per conflict.
+  app.post("/memory/conflicts/resolve-auto/stream", (c) =>
+    streamNdjson(c, (emit) => memloom.autoResolveConflicts(undefined, emit)),
+  );
 
   // The assistant tab: one agentic turn streamed as SSE (tool activity + answer deltas +
   // a terminal done/error event). Offline mode (no chat-capable LLM) fails fast with a

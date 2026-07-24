@@ -1,12 +1,25 @@
 import { createHash, randomUUID } from "node:crypto";
+import { basename, dirname } from "node:path";
 import { type AssistantEvent, runAssistantTurn } from "./assistant.js";
 import { chunkMarkdown, chunkOutline } from "./chunker.js";
+import {
+  chunkUnits,
+  discoverSessions,
+  hashPrefix,
+  parseSession,
+  type SessionChunk,
+  type SessionUnit,
+} from "./claude-sessions.js";
+import { type ResolverSide, resolveConflictWithContext } from "./conflict-resolver.js";
 import { type Candidate, classify } from "./dedup.js";
+import { type DistilledMemory, distillChunk } from "./distill.js";
 import type { MemoryEngine } from "./engine.js";
 import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from "./entities.js";
 import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
+import { NullLLMProvider } from "./hashing-provider.js";
 import { migrate } from "./migrate.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
+import { redact } from "./redact.js";
 import {
   addEdge,
   addEdgeIfAbsent,
@@ -34,6 +47,8 @@ import type {
   AssistantSessionHit,
   AssistantSource,
   Conflict,
+  ConflictAutoEvent,
+  ConflictAutoResult,
   ConflictCandidate,
   ContextAddInput,
   ContextAddResult,
@@ -47,6 +62,11 @@ import type {
   GraphDocument,
   GraphEdge,
   GraphMemory,
+  ImportCaptureScope,
+  ImportOptions,
+  ImportResult,
+  ImportSessionEvent,
+  ImportStatus,
   IndexProgressEvent,
   IndexResult,
   IndexRun,
@@ -73,6 +93,42 @@ export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
 // Dedup only considers existing memories at least this similar to the incoming one.
 const CANDIDATE_THRESHOLD = 0.5;
 const CANDIDATE_LIMIT = 5;
+
+// Session import: how many lines before a ledger watermark a tail run re-reads (context for
+// decisions cut mid-thought), and how much source text one provenance excerpt keeps.
+const IMPORT_OVERLAP_LINES = 40;
+const PROVENANCE_EXCERPT_CHARS = 500;
+
+// The transcript lines a distilled memory came from: stored as provenance and handed to the
+// save-time conflict resolver as evidence.
+function excerptOf(memory: DistilledMemory, chunk: SessionChunk): string {
+  return chunk.units
+    .filter((unit) => unit.line >= memory.startLine && unit.line <= memory.endLine)
+    .map((unit) => unit.text)
+    .join("\n")
+    .slice(0, PROVENANCE_EXCERPT_CHARS);
+}
+
+/** The daemon host's IANA timezone: the user's calendar day for date-scoped recall. */
+function hostTimeZone(): string {
+  try {
+    return Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  } catch {
+    return "UTC";
+  }
+}
+
+// Unattended capture (the session-end hook, the startup sweep) spends provider credits with
+// nobody watching, so it runs against a per-day distillation call budget. Hitting the cap
+// pauses capture loudly in `memloom status`; attended `memloom import` runs are never capped.
+const UNATTENDED_DAILY_CALL_CAP = 200;
+
+// _memloom_meta keys for hook capture state. The scope is what `connect` configured
+// (project allowlist or "all"); the notify keys are what `memloom status` renders.
+const IMPORT_SCOPE_KEY = "import_capture_scope";
+const IMPORT_NOTIFY_AT_KEY = "import_last_notify_at";
+const IMPORT_NOTIFY_ERROR_KEY = "import_last_notify_error";
+const importCallsKey = () => `import_unattended_calls_${new Date().toLocaleDateString("en-CA")}`;
 
 // _memloom_meta key set while a reembed() is underway; its presence means the store's vectors
 // are partially NULL and must not be served until the migration finishes.
@@ -213,6 +269,9 @@ export class Memloom implements MemoryEngine {
   readonly #embedding: EmbeddingProvider;
   readonly #llm: LLMProvider;
   readonly #dedup: boolean;
+  // Dedup classifier calls made since construction; the import path reads the delta so its
+  // cost line reports classifier spend exactly, not an estimate.
+  #classifyCalls = 0;
   #autoIndex: boolean;
   // Toggling only makes sense where the host declared a stance (the daemon passes the
   // flag whenever an LLM is configured). Hosts that never mention autoIndex (library
@@ -820,9 +879,396 @@ export class Memloom implements MemoryEngine {
     return result;
   }
 
-  async #save(input: SaveInput): Promise<SaveResult> {
+  /**
+   * Import Claude Code sessions as distilled memories. Discovery is bounded (recent sessions,
+   * capped, main-session files only), transcripts are redacted before any chunk reaches the
+   * LLM provider, distilled memories go through the ordinary belief pipeline (batch-embedded
+   * first), and a per-session ledger watermark makes re-runs idempotent. Runs inside the
+   * daemon: the store's single writer, so import and future hook capture can never race.
+   */
+  async importSessions(
+    opts: ImportOptions = {},
+    onProgress?: (event: ImportSessionEvent) => void,
+  ): Promise<ImportResult> {
+    if (opts.agent !== undefined && opts.agent !== "claude-code") {
+      throw new Error(
+        `memloom: unknown agent "${opts.agent}". Claude Code is the only supported ` +
+          "session source today (--agent claude-code).",
+      );
+    }
+    if (this.#llm instanceof NullLLMProvider) {
+      throw new Error(
+        "memloom: session import distills transcripts with an LLM and none is configured. " +
+          "Set OPENROUTER_API_KEY in your memloom config and restart the daemon.",
+      );
+    }
+    const owner = opts.ownerId ?? SENTINEL_OWNER;
+    // Explicit paths (the hook's just-ended transcript) skip discovery entirely: no window,
+    // no cap, no quiet check. A session-end signal is definitive.
+    const discovery = opts.paths?.length
+      ? {
+          sessions: opts.paths.map((path) => ({
+            path,
+            project: basename(dirname(path)),
+            mtimeMs: 0,
+          })),
+          skipped: { sidecars: 0, active: 0, outsideWindow: 0, overCap: 0 },
+        }
+      : await discoverSessions({
+          ...(opts.root ? { root: opts.root } : {}),
+          ...(opts.days !== undefined ? { days: opts.days } : {}),
+          ...(opts.maxSessions !== undefined ? { maxSessions: opts.maxSessions } : {}),
+          ...(opts.project ? { project: opts.project } : {}),
+          ...(opts.projects ? { projects: opts.projects } : {}),
+        });
+
+    const result: ImportResult = {
+      sessions: 0,
+      skipped: { ...discovery.skipped, upToDate: 0 },
+      saved: 0,
+      merged: 0,
+      versioned: 0,
+      conflicts: 0,
+      autoResolved: 0,
+      dropped: 0,
+      truncated: 0,
+      redactions: 0,
+      malformed: 0,
+      calls: { extraction: 0, embedding: 0, classifier: 0 },
+      dryRun: opts.dryRun ?? false,
+    };
+    const classifyBefore = this.#classifyCalls;
+    const total = discovery.sessions.length;
+
+    for (const [i, session] of discovery.sessions.entries()) {
+      const event: ImportSessionEvent = {
+        path: session.path,
+        project: session.project,
+        sessionId: "",
+        index: i + 1,
+        total,
+        outcome: opts.dryRun ? "dry-run" : "imported",
+        chunks: 0,
+        saved: 0,
+        merged: 0,
+        versioned: 0,
+        conflicts: 0,
+        autoResolved: 0,
+        dropped: 0,
+        truncated: 0,
+        redactions: 0,
+        malformed: 0,
+      };
+
+      // Full read regardless of watermark: the session id lives inside the file, and the
+      // prefix hash for the NEW watermark must cover everything read this run.
+      const parsed = await parseSession(session.path);
+      event.sessionId = parsed.sessionId;
+      event.malformed = parsed.malformed;
+      result.malformed += parsed.malformed;
+
+      // Ledger check: skip what a prior run (or the future hook) already distilled. A hash
+      // mismatch means the file was rewritten above the watermark (compaction, resume), so
+      // the resume offset points at different content: reprocess from zero.
+      let fromLine = 0;
+      if (!opts.force) {
+        const [row] = await this.#storage.query<{ line_offset: number; prefix_hash: string }>(
+          "SELECT line_offset, prefix_hash FROM import_ledger WHERE owner_id = $1 AND source = $2 AND session_id = $3",
+          [owner, "claude-code", parsed.sessionId],
+        );
+        if (row) {
+          const offset = Number(row.line_offset);
+          if (offset >= parsed.lineCount && row.prefix_hash === parsed.prefixHash) {
+            event.outcome = "up-to-date";
+            result.skipped.upToDate++;
+            onProgress?.(event);
+            continue;
+          }
+          if (offset < parsed.lineCount) {
+            const prefix = await hashPrefix(session.path, offset);
+            if (prefix === row.prefix_hash) fromLine = offset;
+          }
+        }
+      }
+
+      // Tail runs keep a bounded overlap window before the watermark so a decision whose
+      // rationale sits just above the cut keeps its context; the pipeline dedupes the overlap.
+      const overlapFrom = fromLine > 0 ? Math.max(0, fromLine - IMPORT_OVERLAP_LINES) : 0;
+      const units = parsed.units.filter((unit) => unit.line > overlapFrom);
+      const redacted: SessionUnit[] = units.map((unit) => {
+        const scrub = redact(unit.text);
+        event.redactions += scrub.hits;
+        return scrub.hits > 0 ? { ...unit, text: scrub.text } : unit;
+      });
+      result.redactions += event.redactions;
+
+      const chunked = chunkUnits(redacted);
+      event.chunks = chunked.chunks.length;
+      event.truncated = chunked.truncated;
+      result.truncated += chunked.truncated;
+
+      if (opts.dryRun) {
+        result.sessions++;
+        onProgress?.(event);
+        continue;
+      }
+
+      // Each chunk is processed end-to-end (distill, batch-embed its memories, save) and the
+      // in-memory watermark advances only past chunks whose memories are fully saved. A
+      // provider failure (out of credits, rate limit) then loses at most one chunk's calls:
+      // everything before it is already in the store, the ledger records how far we got, and
+      // a re-run resumes from there instead of re-spending. Batching is per chunk rather than
+      // per session for exactly this isolation; a chunk still batches all its memories into
+      // one embed call.
+      let watermark = 0;
+      let sessionError: string | undefined;
+      for (const [chunkIndex, chunk] of chunked.chunks.entries()) {
+        // Announce each chunk before spending up to minutes on it: a chunk distills, embeds,
+        // and dedup-classifies serially, and without this the client sees nothing between
+        // the previous session's result and this one's.
+        onProgress?.({ ...event, outcome: "distilling", chunk: chunkIndex + 1 });
+        try {
+          if (
+            opts.unattended &&
+            (await this.#unattendedCallsToday()) >= UNATTENDED_DAILY_CALL_CAP
+          ) {
+            sessionError =
+              `paused: the daily unattended distillation budget (${UNATTENDED_DAILY_CALL_CAP} calls) is spent. ` +
+              "Capture resumes tomorrow; run `memloom import sessions` yourself to continue now.";
+            break;
+          }
+          result.calls.extraction++;
+          if (opts.unattended) await this.#bumpUnattendedCalls();
+          const output = await distillChunk(this.#llm, chunk);
+          event.dropped += output.dropped;
+          let vectors: number[][] = [];
+          if (output.memories.length > 0) {
+            result.calls.embedding++;
+            vectors = await this.#embedding.embed(output.memories.map((m) => m.content));
+          }
+          for (const [j, memory] of output.memories.entries()) {
+            const saveResult = await this.#save(
+              {
+                content: memory.content,
+                ...(memory.canonical ? { canonical: memory.canonical } : {}),
+                memoryType: memory.memoryType,
+                ownerId: owner,
+                // The excerpt lets a flagged contradiction be judged right now, with the
+                // transcript as evidence, instead of waiting in the conflict queue.
+                context: { excerpt: excerptOf(memory, chunk) },
+              },
+              vectors[j],
+            );
+            if (saveResult.outcome === "merged") {
+              event.merged++;
+            } else {
+              if (saveResult.outcome === "versioned") event.versioned++;
+              else if (saveResult.outcome === "conflict") {
+                if (saveResult.autoResolution) event.autoResolved++;
+                else event.conflicts++;
+              } else event.saved++;
+              await this.#insertProvenance(
+                owner,
+                saveResult.id,
+                parsed.sessionId,
+                session.path,
+                memory,
+                chunk,
+              );
+            }
+          }
+          watermark = chunk.endLine;
+        } catch (err) {
+          sessionError = err instanceof Error ? err.message : String(err);
+          break;
+        }
+      }
+      result.dropped += event.dropped;
+      result.saved += event.saved;
+      result.merged += event.merged;
+      result.versioned += event.versioned;
+      result.conflicts += event.conflicts;
+      result.autoResolved += event.autoResolved;
+
+      // Clean finish covers the whole file (trailing non-text lines included); a stopped
+      // session is watermarked at its last fully saved chunk. No progress, no write: the
+      // prior ledger row (if any) stays authoritative.
+      const finished = sessionError === undefined;
+      const offset = finished ? parsed.lineCount : watermark;
+      if (finished || watermark > fromLine) {
+        await this.#storage.query(
+          `INSERT INTO import_ledger (owner_id, source, session_id, file_path, line_offset, prefix_hash, memories_saved)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           ON CONFLICT (owner_id, source, session_id) DO UPDATE SET
+             file_path = EXCLUDED.file_path,
+             line_offset = EXCLUDED.line_offset,
+             prefix_hash = EXCLUDED.prefix_hash,
+             memories_saved = import_ledger.memories_saved + EXCLUDED.memories_saved,
+             updated_at = now()`,
+          [
+            owner,
+            "claude-code",
+            parsed.sessionId,
+            session.path,
+            offset,
+            finished ? parsed.prefixHash : await hashPrefix(session.path, offset),
+            event.saved + event.versioned + event.conflicts,
+          ],
+        );
+      }
+
+      result.sessions++;
+      if (sessionError !== undefined) {
+        event.outcome = "partial";
+        event.error = sessionError;
+        result.error = sessionError;
+        onProgress?.(event);
+        break;
+      }
+      onProgress?.(event);
+    }
+
+    result.calls.classifier = this.#classifyCalls - classifyBefore;
+    if (!opts.dryRun && result.sessions > 0) this.#scheduleAutoIndex(owner);
+    return result;
+  }
+
+  // ---- Hook capture state (scope, status, notify) ----------------------------------------
+
+  async #metaGet(key: string): Promise<string | null> {
+    const [row] = await this.#storage.query<{ value: string }>(
+      "SELECT value FROM _memloom_meta WHERE key = $1",
+      [key],
+    );
+    return row?.value ?? null;
+  }
+
+  async #metaSet(key: string, value: string): Promise<void> {
+    await this.#storage.query(
+      `INSERT INTO _memloom_meta (key, value) VALUES ($1, $2)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [key, value],
+    );
+  }
+
+  async #unattendedCallsToday(): Promise<number> {
+    return Number((await this.#metaGet(importCallsKey())) ?? 0);
+  }
+
+  async #bumpUnattendedCalls(): Promise<void> {
+    await this.#metaSet(importCallsKey(), String((await this.#unattendedCallsToday()) + 1));
+  }
+
+  /** The hook capture scope `connect` configured; null = capture off. */
+  async importScope(): Promise<ImportCaptureScope> {
+    const raw = await this.#metaGet(IMPORT_SCOPE_KEY);
+    if (raw === null) return null;
+    if (raw === "all") return "all";
+    try {
+      const parsed = JSON.parse(raw) as { projects?: string[] };
+      return Array.isArray(parsed.projects) ? { projects: parsed.projects.map(String) } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Set (connect) or clear (disconnect) the hook capture scope. */
+  async setImportScope(scope: ImportCaptureScope): Promise<void> {
+    if (scope === null) {
+      await this.#storage.query("DELETE FROM _memloom_meta WHERE key = $1", [IMPORT_SCOPE_KEY]);
+      return;
+    }
+    await this.#metaSet(IMPORT_SCOPE_KEY, scope === "all" ? "all" : JSON.stringify(scope));
+  }
+
+  async importStatus(ownerId: string = SENTINEL_OWNER): Promise<ImportStatus> {
+    const [totals] = await this.#storage.query<{ sessions: string; saved: string }>(
+      `SELECT count(*) AS sessions, COALESCE(sum(memories_saved), 0) AS saved
+       FROM import_ledger WHERE owner_id = $1`,
+      [ownerId],
+    );
+    return {
+      scope: await this.importScope(),
+      lastNotifyAt: await this.#metaGet(IMPORT_NOTIFY_AT_KEY),
+      lastNotifyError: await this.#metaGet(IMPORT_NOTIFY_ERROR_KEY),
+      todayUnattendedCalls: await this.#unattendedCallsToday(),
+      unattendedDailyCap: UNATTENDED_DAILY_CALL_CAP,
+      sessionsImported: Number(totals?.sessions ?? 0),
+      memoriesSaved: Number(totals?.saved ?? 0),
+    };
+  }
+
+  /**
+   * One session-end notify from the hook: scope check, unattended import of exactly that
+   * transcript, and status bookkeeping. Every failure is recorded, never thrown away: a
+   * provider outage, the spend cap, or a missing LLM must all be visible in `memloom status`
+   * (a silently dead hook is the one failure mode this feature is not allowed to have).
+   */
+  async handleSessionNotify(
+    path: string,
+  ): Promise<{ accepted: boolean; reason?: string; result?: ImportResult }> {
+    const scope = await this.importScope();
+    if (scope === null) {
+      return {
+        accepted: false,
+        reason: "capture is not configured; run memloom connect claude-code",
+      };
+    }
+    const project = basename(dirname(path)).toLowerCase();
+    if (scope !== "all" && !scope.projects.some((p) => project.includes(p.toLowerCase()))) {
+      // Out-of-scope sessions are the allowlist working as designed: not an error state.
+      return { accepted: false, reason: "project is outside the capture scope" };
+    }
+    await this.#metaSet(IMPORT_NOTIFY_AT_KEY, new Date().toISOString());
+    try {
+      const result = await this.importSessions({ paths: [path], unattended: true });
+      if (result.error) await this.#metaSet(IMPORT_NOTIFY_ERROR_KEY, result.error);
+      else
+        await this.#storage.query("DELETE FROM _memloom_meta WHERE key = $1", [
+          IMPORT_NOTIFY_ERROR_KEY,
+        ]);
+      return { accepted: true, result };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      await this.#metaSet(IMPORT_NOTIFY_ERROR_KEY, message);
+      return { accepted: false, reason: message };
+    }
+  }
+
+  // The stored excerpt is what keeps provenance alive after the user cleans up transcripts;
+  // it is built from the already-redacted units, so no matched secret is ever persisted.
+  async #insertProvenance(
+    owner: string,
+    memoryId: string,
+    sessionId: string,
+    filePath: string,
+    memory: DistilledMemory,
+    chunk: SessionChunk,
+  ): Promise<void> {
+    const excerpt = excerptOf(memory, chunk);
+    await this.#storage.query(
+      `INSERT INTO import_provenance (memory_id, owner_id, source, session_id, file_path, start_line, end_line, excerpt)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+       ON CONFLICT (memory_id) DO NOTHING`,
+      [
+        memoryId,
+        owner,
+        "claude-code",
+        sessionId,
+        filePath,
+        memory.startLine,
+        memory.endLine,
+        excerpt,
+      ],
+    );
+  }
+
+  // Precomputed vectors come from the import path's batch-embed pre-pass: one provider call
+  // for a whole session's memories instead of one per save. Everything after the embedding
+  // is the identical pipeline; there is no bypass lane.
+  async #save(input: SaveInput, precomputed?: number[]): Promise<SaveResult> {
     const owner = input.ownerId ?? SENTINEL_OWNER;
-    const [embedding] = await this.#embedding.embed([input.content]);
+    const embedding = precomputed ?? (await this.#embedding.embed([input.content]))[0];
     if (!embedding) throw new Error("memloom: embedding provider returned no vector");
     const hash = createHash("sha256").update(input.content).digest("hex");
 
@@ -844,6 +1290,7 @@ export class Memloom implements MemoryEngine {
       return { id, outcome: "added" };
     }
 
+    this.#classifyCalls++;
     const classifications = await classify(
       this.#llm,
       { canonical: input.canonical, content: input.content },
@@ -876,6 +1323,17 @@ export class Memloom implements MemoryEngine {
         };
       });
       const conflictId = await this.#recordConflict(owner, id, input, conflictCandidates);
+      // With transcript context in hand (session imports), give the resolver one shot at
+      // settling the contradiction now, with the recording times and excerpts the dedup
+      // classifier never saw. A decisive verdict goes through resolveConflict, so it lands
+      // in the same revertable history as a human decision; unsure stays pending.
+      if (input.context) {
+        const decision = await this.#judgeConflictNow(input, conflictCandidates);
+        if (decision) {
+          await this.resolveConflict(conflictId, decision.resolve);
+          return { id, outcome: "conflict", conflictId, autoResolution: decision.name };
+        }
+      }
       return { id, outcome: "conflict", conflictId };
     }
 
@@ -1031,14 +1489,20 @@ export class Memloom implements MemoryEngine {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.assertedOn)) {
         throw new Error(`memloom: assertedOn must be YYYY-MM-DD, got "${opts.assertedOn}"`);
       }
+      // Callers pass the USER's calendar day (the assistant's "today", MCP on_date), but a
+      // bare timestamptz::date cast folds in the DB session's timezone, UTC on PGLite. Those
+      // days disagree for a few hours around midnight, so "plans for today" would silently
+      // miss right after midnight. The daemon runs on the user's machine, so the host
+      // timezone is the user's day; convert before taking the date.
       const rows = await this.#storage.query<MemoryRow>(
         `SELECT id, owner_id, status, memory_type, canonical, content, summary, root_id,
                 version, asserted_at, created_at,
                 1 - (embedding <=> $1::vector) AS similarity
          FROM memory_objects
-         WHERE owner_id = $2 AND status = 'active' AND asserted_at::date = $3::date
-         ORDER BY similarity DESC LIMIT $4`,
-        [qvec, owner, opts.assertedOn, limit],
+         WHERE owner_id = $2 AND status = 'active'
+           AND (asserted_at AT TIME ZONE $3)::date = $4::date
+         ORDER BY similarity DESC LIMIT $5`,
+        [qvec, owner, hostTimeZone(), opts.assertedOn, limit],
       );
       return rows.map((row) => ({ ...mapRow(row), kind: "memory" as const }));
     }
@@ -2175,6 +2639,144 @@ export class Memloom implements MemoryEngine {
        WHERE id = $1`,
       [conflictId],
     );
+  }
+
+  /**
+   * Second-pass conflict resolution: re-judge every pending conflict WITH the context the
+   * dedup classifier never saw, the recording times and the transcript excerpts provenance
+   * kept. Decisive verdicts are applied through resolveConflict, so an auto-resolution lands
+   * in the same revertable history as a human one; "unsure" stays in the queue.
+   */
+  async autoResolveConflicts(
+    ownerId: string = SENTINEL_OWNER,
+    onProgress?: (event: ConflictAutoEvent) => void,
+  ): Promise<ConflictAutoResult> {
+    if (this.#llm instanceof NullLLMProvider) {
+      throw new Error(
+        "memloom: conflict auto-resolution judges with an LLM and none is configured. " +
+          "Set OPENROUTER_API_KEY in your memloom config and restart the daemon.",
+      );
+    }
+    const pending = await this.conflicts(ownerId);
+    const result: ConflictAutoResult = {
+      examined: 0,
+      resolved: 0,
+      keepNew: 0,
+      keepExisting: 0,
+      keepBoth: 0,
+      unsure: 0,
+    };
+    for (const [i, conflict] of pending.entries()) {
+      const ids = [conflict.incoming.id, ...conflict.candidates.map((c) => c.id)];
+      const { createdOf, excerptOf } = await this.#conflictContext(ids);
+      const sideOf = (id: string, content: string): ResolverSide => ({
+        content,
+        createdAt: createdOf.get(id) ?? null,
+        excerpt: excerptOf.get(id) ?? null,
+      });
+
+      const verdict = await resolveConflictWithContext(
+        this.#llm,
+        sideOf(conflict.incoming.id, conflict.incoming.content),
+        conflict.candidates.map((c) => ({ ...sideOf(c.id, c.content), relation: c })),
+      );
+      result.examined++;
+
+      if (verdict.verdict === "keep_new") {
+        await this.resolveConflict(conflict.id, { action: "keep_new" });
+        result.keepNew++;
+        result.resolved++;
+      } else if (verdict.verdict === "keep_existing") {
+        const winner = conflict.candidates[verdict.candidateIndex] ?? conflict.candidates[0];
+        if (winner) {
+          await this.resolveConflict(conflict.id, {
+            action: "keep_existing",
+            candidateId: winner.id,
+          });
+          result.keepExisting++;
+          result.resolved++;
+        } else {
+          result.unsure++;
+        }
+      } else if (verdict.verdict === "keep_both") {
+        await this.resolveConflict(conflict.id, { action: "keep_both" });
+        result.keepBoth++;
+        result.resolved++;
+      } else {
+        result.unsure++;
+      }
+
+      onProgress?.({
+        conflictId: conflict.id,
+        index: i + 1,
+        total: pending.length,
+        verdict: verdict.verdict,
+        reason: verdict.reason,
+        content: conflict.incoming.content.slice(0, 100),
+      });
+    }
+    return result;
+  }
+
+  /** Recording times and provenance excerpts for a set of memory ids: the resolver's evidence. */
+  async #conflictContext(
+    ids: string[],
+  ): Promise<{ createdOf: Map<string, string>; excerptOf: Map<string, string> }> {
+    const marks = ids.map((_, j) => `$${j + 1}`).join(", ");
+    const rows = await this.#storage.query<{ id: string; created_at: string }>(
+      `SELECT id, created_at FROM memory_objects WHERE id IN (${marks})`,
+      ids,
+    );
+    const prov = await this.#storage.query<{ memory_id: string; excerpt: string }>(
+      `SELECT memory_id, excerpt FROM import_provenance WHERE memory_id IN (${marks})`,
+      ids,
+    );
+    return {
+      createdOf: new Map(rows.map((r) => [r.id, String(r.created_at)])),
+      excerptOf: new Map(prov.map((p) => [p.memory_id, p.excerpt])),
+    };
+  }
+
+  // A save-time verdict on a just-recorded conflict, using the incoming excerpt the import
+  // provided and the stored context of the contradicted memories. Null = leave it pending.
+  async #judgeConflictNow(
+    input: SaveInput,
+    candidates: ConflictCandidate[],
+  ): Promise<{
+    resolve: ResolveDecision;
+    name: "keep_new" | "keep_existing" | "keep_both";
+  } | null> {
+    const { createdOf, excerptOf } = await this.#conflictContext(candidates.map((c) => c.id));
+    const verdict = await resolveConflictWithContext(
+      this.#llm,
+      {
+        content: input.content,
+        createdAt: new Date().toISOString(),
+        excerpt: input.context?.excerpt ?? null,
+      },
+      candidates.map((c) => ({
+        content: c.content,
+        createdAt: createdOf.get(c.id) ?? null,
+        excerpt: excerptOf.get(c.id) ?? null,
+        relation: c,
+      })),
+    );
+    if (verdict.verdict === "keep_new") {
+      return { resolve: { action: "keep_new" }, name: "keep_new" };
+    }
+    if (verdict.verdict === "keep_both") {
+      return { resolve: { action: "keep_both" }, name: "keep_both" };
+    }
+    if (verdict.verdict === "keep_existing") {
+      const winner = candidates[verdict.candidateIndex] ?? candidates[0];
+      if (winner) {
+        return {
+          resolve: { action: "keep_existing", candidateId: winner.id },
+          name: "keep_existing",
+        };
+      }
+    }
+    return null;
   }
 
   // --- internals ---

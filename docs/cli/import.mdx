@@ -1,0 +1,96 @@
+---
+title: "Import"
+description: "Distill your agent's sessions into memories"
+---
+
+## import sessions
+
+```bash
+memloom import sessions --dry-run
+memloom import sessions
+```
+
+Your Claude Code sessions hold months of decisions, preferences, and hard-won fixes. You
+could ask Claude Code to go dig one out: it can grep old transcripts as well as you can
+scroll them. But that means minutes of searching and real tokens spent hunting through a
+hundred sessions for one detail, instead of writing code, and it gets slower as your history
+grows. Import distills every session once into typed, searchable memories: each session is
+read locally from `~/.claude/projects`, scrubbed of secret-shaped strings, distilled by your
+configured LLM into facts, preferences, episodes, and procedures, and saved through the same
+belief pipeline as everything else. Duplicates merge, restatements version, and
+contradictions become reviewable conflicts. See [Session distillation](/concepts/distillation)
+for how that pipeline works end to end.
+
+Every imported memory keeps provenance: the session file, the line range, and a short
+excerpt, so a recall can always be traced back to the conversation it came from.
+
+Start with `--dry-run`. It lists what would be processed and makes zero LLM calls.
+
+## Bounds and idempotency
+
+Import is bounded by default: sessions modified in the last 14 days, newest first, at most
+20\. Anything skipped is announced, never silent. Widen with flags when you want more
+history:
+
+```bash
+memloom import sessions --days 60 --sessions 100
+memloom import sessions --project myapp
+```
+
+Re-running is cheap. A ledger tracks how far each session was processed, so an unchanged
+session is skipped outright and a session that grew since the last run only has its new
+part distilled. If Claude Code rewrote a transcript (compaction, resume), the ledger
+notices and reprocesses that session from the start.
+
+| Flag | What it does |
+| --- | --- |
+| `--agent X` | Which agent's sessions to import (default and only option today: `claude-code`) |
+| `--dry-run` | List sessions and chunk counts; no LLM calls, no writes |
+| `--force` | Reprocess everything from scratch, ignoring the ledger |
+| `--days N` | Widen the day window (default 14) |
+| `--sessions N` | Raise the session cap (default 20) |
+| `--project X` | Only sessions whose project folder name contains X |
+
+## What it costs
+
+The run ends with a cost line: extraction calls (one per transcript chunk), dedup
+classifier calls (one per saved memory that had similar neighbors), and embedding calls
+(one batch per session). Nothing runs unattended; import spends only while you watch it.
+
+## Automatic capture
+
+```bash
+memloom connect claude-code --project myapp
+memloom status
+```
+
+`connect` makes capture continuous: a session-end hook is added to your Claude Code
+settings, and each finished session is distilled by the daemon in the background, using
+the exact same pipeline as `import`. The hook is a thin notifier that hands the daemon a
+path and exits in milliseconds; if the daemon is down when a session ends, the next daemon
+start sweeps the gap using the ledger, so nothing is lost.
+
+Capture scope is an allowlist and it is empty by default: nothing is captured until you
+name projects with `--project` (repeatable) or opt into `--all`. That is deliberate. The
+hook fires for every project on your machine, including client work and repositories whose
+code should never reach an LLM provider.
+
+Guarantees around the settings edit: it merges with your existing hooks (never replaces),
+a one-time backup is written next to the file before the first edit, running `connect`
+twice changes nothing, and `memloom disconnect claude-code` removes only memloom's entry.
+A settings file that does not parse is refused untouched.
+
+Unattended capture runs against a daily distillation budget so it can never silently burn
+credits: when the budget is spent, capture pauses and `memloom status` says so loudly.
+`status` also shows whether the hook is installed, when it last fired, and whether the
+last capture failed (a provider outage, a missing API key), so a dead hook is always
+visible, never silent.
+
+## Privacy notes
+
+Transcripts never leave your machine except as redacted chunks sent to the LLM provider
+you configured. Redaction is pattern-based (API key shapes, bearer tokens, credentialed
+URLs) and best-effort by design; review with `--dry-run` and the viewer if your sessions
+handle sensitive material. Subagent transcripts and compaction summaries are excluded, and
+import refuses to run in offline mode rather than degrade silently: distillation needs an
+LLM, so `OPENROUTER_API_KEY` must be set.
