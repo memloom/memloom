@@ -20,7 +20,7 @@ import { Memloom } from "./memloom.js";
 import type { EmbeddingProvider } from "./providers.js";
 import { PgliteFactory } from "./testkit.js";
 
-// End-to-end importClaudeCode against the in-memory store: bounded discovery, distillation
+// End-to-end importSessions against the in-memory store: bounded discovery, distillation
 // through the belief pipeline, the ledger watermark, provenance rows, and the dry-run and
 // no-LLM contracts. The scripted model distills deterministically: every transcript line
 // containing "remember: X" becomes one fact X, and dedup classify prompts answer [].
@@ -94,7 +94,7 @@ async function fresh(llm = distillingLLM()) {
   return { memloom, embedding, llm, storage };
 }
 
-describe("importClaudeCode", () => {
+describe("importSessions", () => {
   it("distills sessions into memories with provenance and a ledger row", async () => {
     const { memloom, embedding, llm, storage } = await fresh();
     const root = makeRoot();
@@ -105,7 +105,7 @@ describe("importClaudeCode", () => {
     ]);
 
     const events: string[] = [];
-    const result = await memloom.importClaudeCode({ root }, (e) => events.push(e.outcome));
+    const result = await memloom.importSessions({ root }, (e) => events.push(e.outcome));
 
     expect(result.sessions).toBe(1);
     expect(result.saved).toBe(2);
@@ -139,7 +139,7 @@ describe("importClaudeCode", () => {
     const root = makeRoot();
     writeSession(root, "proj", ["remember: nothing should happen"]);
 
-    const result = await memloom.importClaudeCode({ root, dryRun: true });
+    const result = await memloom.importSessions({ root, dryRun: true });
 
     expect(result.dryRun).toBe(true);
     expect(result.sessions).toBe(1);
@@ -155,9 +155,9 @@ describe("importClaudeCode", () => {
     const root = makeRoot();
     writeSession(root, "proj", ["remember: idempotent imports"]);
 
-    await memloom.importClaudeCode({ root });
+    await memloom.importSessions({ root });
     const callsAfterFirst = llm.distillCalls.count;
-    const second = await memloom.importClaudeCode({ root });
+    const second = await memloom.importSessions({ root });
 
     expect(second.skipped.upToDate).toBe(1);
     expect(second.sessions).toBe(0);
@@ -171,7 +171,7 @@ describe("importClaudeCode", () => {
     const id = randomUUID();
     const path = writeSession(root, "proj", ["remember: the first fact"], id);
 
-    const first = await memloom.importClaudeCode({ root });
+    const first = await memloom.importSessions({ root });
     expect(first.saved).toBe(1);
 
     appendFileSync(
@@ -184,7 +184,7 @@ describe("importClaudeCode", () => {
     );
     backdate(path);
 
-    const second = await memloom.importClaudeCode({ root });
+    const second = await memloom.importSessions({ root });
     // The overlap window re-reads the small session in full: the old fact merges by exact
     // hash (no duplicate row), the new one is saved.
     expect(second.saved).toBe(1);
@@ -201,7 +201,7 @@ describe("importClaudeCode", () => {
     const id = randomUUID();
     const path = writeSession(root, "proj", ["remember: stable fact", "padding line"], id);
 
-    await memloom.importClaudeCode({ root });
+    await memloom.importSessions({ root });
 
     // Rewrite line 2 in place: same line count, different prefix. The watermark's offset now
     // points at different content, so the run must start over instead of resuming.
@@ -209,7 +209,7 @@ describe("importClaudeCode", () => {
     writeFileSync(path, rewritten);
     backdate(path);
 
-    const second = await memloom.importClaudeCode({ root });
+    const second = await memloom.importSessions({ root });
     expect(second.sessions).toBe(1);
     expect(second.merged).toBe(1);
     expect(await memloom.memories()).toHaveLength(1);
@@ -220,8 +220,8 @@ describe("importClaudeCode", () => {
     const root = makeRoot();
     writeSession(root, "proj", ["remember: forced"]);
 
-    await memloom.importClaudeCode({ root });
-    const forced = await memloom.importClaudeCode({ root, force: true });
+    await memloom.importSessions({ root });
+    const forced = await memloom.importSessions({ root, force: true });
     expect(forced.sessions).toBe(1);
     expect(forced.calls.extraction).toBe(1);
     expect(forced.merged).toBe(1);
@@ -241,7 +241,7 @@ describe("importClaudeCode", () => {
     const root = makeRoot();
     writeSession(root, "proj", ["set the key to sk-or-v1-0123456789abcdef0123456789abcdef"]);
 
-    const result = await memloom.importClaudeCode({ root });
+    const result = await memloom.importSessions({ root });
     expect(result.redactions).toBe(1);
     expect(prompts.join("\n")).not.toContain("sk-or-v1-0123456789abcdef");
     const provenance = await storage.query<{ excerpt: string }>(
@@ -280,7 +280,7 @@ describe("importClaudeCode", () => {
     ]);
 
     const events: string[] = [];
-    const first = await memloom.importClaudeCode({ root }, (e) => events.push(e.outcome));
+    const first = await memloom.importSessions({ root }, (e) => events.push(e.outcome));
 
     expect(first.error).toContain("402");
     expect(events).toEqual(["distilling", "distilling", "partial"]);
@@ -292,7 +292,7 @@ describe("importClaudeCode", () => {
     expect(Number(ledger?.line_offset)).toBe(1);
 
     healed = true;
-    const second = await memloom.importClaudeCode({ root });
+    const second = await memloom.importSessions({ root });
     expect(second.error).toBeUndefined();
     expect(second.saved).toBe(1);
     expect(second.merged).toBe(1);
@@ -322,7 +322,7 @@ describe("importClaudeCode", () => {
       })}\n`,
     );
 
-    const result = await memloom.importClaudeCode({ paths: [path] });
+    const result = await memloom.importSessions({ paths: [path] });
     expect(result.sessions).toBe(1);
     expect(result.saved).toBe(1);
   });
@@ -387,12 +387,12 @@ describe("importClaudeCode", () => {
       [key],
     );
 
-    const unattended = await memloom.importClaudeCode({ root, unattended: true });
+    const unattended = await memloom.importSessions({ root, unattended: true });
     expect(unattended.error).toContain("budget");
     expect(unattended.calls.extraction).toBe(0);
     expect(await memloom.memories()).toHaveLength(0);
 
-    const attended = await memloom.importClaudeCode({ root });
+    const attended = await memloom.importSessions({ root });
     expect(attended.error).toBeUndefined();
     expect(attended.saved).toBe(1);
   });
@@ -407,7 +407,7 @@ describe("importClaudeCode", () => {
       dedup: false,
     });
     await memloom.init();
-    await expect(memloom.importClaudeCode({ root: makeRoot() })).rejects.toThrow(
+    await expect(memloom.importSessions({ root: makeRoot() })).rejects.toThrow(
       /none is configured/,
     );
   });
@@ -431,7 +431,7 @@ describe("importClaudeCode", () => {
 
     const root = makeRoot();
     writeSession(root, "proj", ["remember: the deploy target is fly.io but bigger"]);
-    const result = await memloom.importClaudeCode({ root });
+    const result = await memloom.importSessions({ root });
 
     expect(result.conflicts + result.saved).toBeGreaterThan(0);
     if (result.conflicts > 0) {
@@ -462,7 +462,7 @@ describe("importClaudeCode", () => {
 
     const root = makeRoot();
     writeSession(root, "proj", ["remember: the deploy target is fly.io but bigger"]);
-    const result = await memloom.importClaudeCode({ root });
+    const result = await memloom.importSessions({ root });
 
     // The contradiction is settled at save time with the transcript as evidence: nothing
     // waits in the queue, and the resolution sits in the revertable history.

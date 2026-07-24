@@ -73,7 +73,7 @@ Usage: memloom <command> [args]
                        provider (run after switching providers; daemon must be stopped)
   auto-index [on|off]  show or set background entity extraction after saves/ingests
   conflicts [auto]     list pending conflicts; auto resolves the obvious ones with the LLM
-  import claude-code   distill recent Claude Code sessions into memories (--dry-run first)
+  import sessions      distill recent agent sessions into memories (--dry-run first)
   connect claude-code  capture future sessions automatically as they end (--project X | --all)
   disconnect claude-code  stop capturing; removes only memloom's hook
   status               daemon, capture scope, last hook activity, today's spend
@@ -192,23 +192,25 @@ Costs one embedding API call per 64 items.
   --force   re-embed even when the store already matches the configured
             provider and nothing is missing`,
 
-  import: `memloom import claude-code [--dry-run] [--force] [--days N] [--sessions N] [--project <name>]
+  import: `memloom import sessions [--agent claude-code] [--dry-run] [--force] [--days N] [--sessions N] [--project <name>]
 
-Distill your Claude Code session transcripts (~/.claude/projects) into typed,
-searchable memories. Each session is redacted (best-effort secret scrubbing),
-distilled by your configured LLM, and saved through the belief pipeline, so
-duplicates merge and contradictions become reviewable conflicts. Every imported
-memory keeps provenance: which session and lines it came from.
+Distill your agent's session transcripts into typed, searchable memories.
+Claude Code (~/.claude/projects) is the only supported agent today and the
+default. Each session is redacted (best-effort secret scrubbing), distilled by
+your configured LLM, and saved through the belief pipeline, so duplicates merge
+and contradictions become reviewable conflicts. Every imported memory keeps
+provenance: which session and lines it came from.
 
 Bounded by default: sessions modified in the last 14 days, newest first, at most
 20. Skipped sessions are announced; widen with the flags. Re-running is cheap:
 a ledger tracks what was already distilled and only new session content is
 processed. Needs an API key; offline mode cannot distill.
 
-  memloom import claude-code --dry-run     what would be processed, zero LLM calls
-  memloom import claude-code               the real run, with a cost summary
-  memloom import claude-code --project myapp --days 60
+  memloom import sessions --dry-run     what would be processed, zero LLM calls
+  memloom import sessions               the real run, with a cost summary
+  memloom import sessions --project myapp --days 60
 
+  --agent X    which agent's sessions (default and only option: claude-code)
   --dry-run    list sessions and chunk counts; makes no LLM calls, writes nothing
   --force      reprocess from scratch, ignoring the ledger
   --days N     widen the day window (default 14)
@@ -471,9 +473,10 @@ export async function run(argv: readonly string[]): Promise<void> {
 
     case "import": {
       const [source, ...args] = rest;
-      if (source !== "claude-code") {
+      // "claude-code" is a quiet alias from before the rename; not documented.
+      if (source !== "sessions" && source !== "claude-code") {
         throw new Error(
-          "usage: memloom import claude-code [--dry-run] [--force] [--days N] [--sessions N] [--project <name>]",
+          "usage: memloom import sessions [--agent claude-code] [--dry-run] [--force] [--days N] [--sessions N] [--project <name>]",
         );
       }
       const engine = await connect();

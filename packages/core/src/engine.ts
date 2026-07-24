@@ -49,7 +49,8 @@ export interface MemoryEngine {
    * pipeline. Bounded by default; idempotent via the per-session ledger. `onProgress` fires
    * after each session completes.
    */
-  importClaudeCode(
+  /** Distill agent session transcripts into memories. Claude Code is the only agent today. */
+  importSessions(
     opts?: ImportOptions,
     onProgress?: (event: ImportSessionEvent) => void,
   ): Promise<ImportResult>;

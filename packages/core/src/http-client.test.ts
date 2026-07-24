@@ -30,7 +30,7 @@ describe("HttpMemloomClient stream reader", () => {
     );
 
     const seen: string[] = [];
-    const result = await client.importClaudeCode({}, (e) => seen.push(e.outcome));
+    const result = await client.importSessions({}, (e) => seen.push(e.outcome));
 
     expect(seen).toEqual(["distilling", "imported"]);
     expect(result).toMatchObject({ sessions: 1, saved: 2 });
@@ -57,7 +57,7 @@ describe("HttpMemloomClient stream reader", () => {
       ),
     );
 
-    await expect(client.importClaudeCode({})).rejects.toThrow(
+    await expect(client.importSessions({})).rejects.toThrow(
       /lost the daemon's progress stream \(terminated\).*continues inside the daemon/s,
     );
   });

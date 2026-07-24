@@ -47,7 +47,7 @@ Pending conflicts show up in `memloom conflicts`, the viewer's Conflicts tab, th
 over the pending queue a second time, now with context the dedup classifier never had. The
 classifier only ever compares two pieces of text in isolation; the auto-resolver also sees
 when each side was recorded and, for memories that came from
-[`import claude-code`](/concepts/distillation), the transcript excerpt it was distilled
+[`import sessions`](/concepts/distillation), the transcript excerpt it was distilled
 from. Most import conflicts are a later session recording a state change ("we moved to
 railway") against an older fact ("the deploy target is fly.io"), and with time and context
 in view that resolution is mechanical.
@@ -68,7 +68,7 @@ decisive verdict calls `resolveConflict`, so an auto-resolution lands in the sam
 history as a manual one, and `revert` undoes it exactly the same way.
 
 <Note>
-This is the same one-shot judge that resolves some conflicts during `import claude-code`
+This is the same one-shot judge that resolves some conflicts during `import sessions`
 itself (see [Session distillation](/concepts/distillation#belief-pipeline-and-conflicts)).
 `conflicts auto` is how you run it again over whatever is left, on demand, for conflicts
 from any source, not just import.

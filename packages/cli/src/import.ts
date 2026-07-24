@@ -1,6 +1,6 @@
 import type { ImportResult, ImportSessionEvent, MemoryEngine } from "@memloom/core";
 
-// `memloom import claude-code`: the CLI face of the daemon-side session import. The daemon
+// `memloom import sessions`: the CLI face of the daemon-side session import. The daemon
 // does discovery, redaction, distillation, and the ledger (it is the store's single writer);
 // this module only parses flags, renders per-session progress lines, and prints the summary
 // with the cost line.
@@ -8,6 +8,7 @@ import type { ImportResult, ImportSessionEvent, MemoryEngine } from "@memloom/co
 export interface ImportFlags {
   dryRun: boolean;
   force: boolean;
+  agent?: string;
   days?: number;
   maxSessions?: number;
   project?: string;
@@ -51,9 +52,12 @@ export function parseImportFlags(args: readonly string[]): ImportFlags {
       case "--project":
         flags.project = value();
         break;
+      case "--agent":
+        flags.agent = value();
+        break;
       default:
         throw new Error(
-          `unknown flag ${flag}. usage: memloom import claude-code [--dry-run] [--force] [--days N] [--sessions N] [--project <name>]`,
+          `unknown flag ${flag}. usage: memloom import sessions [--agent claude-code] [--dry-run] [--force] [--days N] [--sessions N] [--project <name>]`,
         );
     }
   }
@@ -119,10 +123,12 @@ export async function runImport(engine: MemoryEngine, args: readonly string[]): 
     console.log(line);
   };
 
-  const result = await engine.importClaudeCode(
+  const result = await engine.importSessions(
     {
       dryRun: flags.dryRun,
       force: flags.force,
+      // The engine rejects agents it does not support; the CLI just passes the name on.
+      ...(flags.agent ? { agent: flags.agent as "claude-code" } : {}),
       ...(flags.days !== undefined ? { days: flags.days } : {}),
       ...(flags.maxSessions !== undefined ? { maxSessions: flags.maxSessions } : {}),
       ...(flags.project ? { project: flags.project } : {}),

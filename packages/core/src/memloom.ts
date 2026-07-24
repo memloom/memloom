@@ -886,10 +886,16 @@ export class Memloom implements MemoryEngine {
    * first), and a per-session ledger watermark makes re-runs idempotent. Runs inside the
    * daemon: the store's single writer, so import and future hook capture can never race.
    */
-  async importClaudeCode(
+  async importSessions(
     opts: ImportOptions = {},
     onProgress?: (event: ImportSessionEvent) => void,
   ): Promise<ImportResult> {
+    if (opts.agent !== undefined && opts.agent !== "claude-code") {
+      throw new Error(
+        `memloom: unknown agent "${opts.agent}". Claude Code is the only supported ` +
+          "session source today (--agent claude-code).",
+      );
+    }
     if (this.#llm instanceof NullLLMProvider) {
       throw new Error(
         "memloom: session import distills transcripts with an LLM and none is configured. " +
@@ -1028,7 +1034,7 @@ export class Memloom implements MemoryEngine {
           ) {
             sessionError =
               `paused: the daily unattended distillation budget (${UNATTENDED_DAILY_CALL_CAP} calls) is spent. ` +
-              "Capture resumes tomorrow; run `memloom import claude-code` yourself to continue now.";
+              "Capture resumes tomorrow; run `memloom import sessions` yourself to continue now.";
             break;
           }
           result.calls.extraction++;
@@ -1215,7 +1221,7 @@ export class Memloom implements MemoryEngine {
     }
     await this.#metaSet(IMPORT_NOTIFY_AT_KEY, new Date().toISOString());
     try {
-      const result = await this.importClaudeCode({ paths: [path], unattended: true });
+      const result = await this.importSessions({ paths: [path], unattended: true });
       if (result.error) await this.#metaSet(IMPORT_NOTIFY_ERROR_KEY, result.error);
       else
         await this.#storage.query("DELETE FROM _memloom_meta WHERE key = $1", [

@@ -246,6 +246,8 @@ const autoIndexSchema = z.object({
 });
 
 const importSchema = z.object({
+  // The engine validates agent support; the wire only constrains the shape.
+  agent: z.string().min(1).max(100).optional(),
   days: z.number().int().positive().max(3650).optional(),
   maxSessions: z.number().int().positive().max(1000).optional(),
   project: z.string().min(1).max(300).optional(),
@@ -570,11 +572,11 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // Session import runs daemon-side (the single store writer owns the ledger) and streams
   // NDJSON progress: one {type:"item"} per session, {type:"done"} with the totals and the
   // cost line. Discovery is fixed to ~/.claude/projects; the client never supplies a path.
-  app.post("/import/claude-code/stream", async (c) => {
+  app.post("/import/sessions/stream", async (c) => {
     const body = await parseBody(c, importSchema);
     if (!body.ok) return body.res;
-    const opts = body.data;
-    return streamNdjson(c, (emit) => memloom.importClaudeCode(opts, emit));
+    const opts = body.data as Parameters<typeof memloom.importSessions>[0];
+    return streamNdjson(c, (emit) => memloom.importSessions(opts, emit));
   });
 
   // Index sessions: the persistent, session-grouped log the Console tab renders. Runs are

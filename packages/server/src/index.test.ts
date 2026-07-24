@@ -101,8 +101,8 @@ describe("server", () => {
     expect(((await status.json()) as { scope: unknown }).scope).toEqual({ projects: ["memloom"] });
   });
 
-  it("import/claude-code/stream validates the body", async () => {
-    const res = await (await app()).request("/import/claude-code/stream", {
+  it("import/sessions/stream validates the body", async () => {
+    const res = await (await app()).request("/import/sessions/stream", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ days: -3 }),
@@ -110,11 +110,11 @@ describe("server", () => {
     expect(res.status).toBe(400);
   });
 
-  it("import/claude-code/stream streams a done event on a dry run", async () => {
+  it("import/sessions/stream streams a done event on a dry run", async () => {
     // dryRun never touches an LLM or the store; on a machine without transcripts the run
     // legitimately reports zero sessions, so only the stream contract is asserted here
     // (the import behavior itself is covered in core's import.test.ts).
-    const res = await (await app()).request("/import/claude-code/stream", {
+    const res = await (await app()).request("/import/sessions/stream", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ dryRun: true, project: "no-such-project-name-anywhere" }),

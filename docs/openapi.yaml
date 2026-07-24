@@ -429,19 +429,20 @@ paths:
       responses:
         "200":
           description: Deleted.
-  /import/claude-code/stream:
+  /import/sessions/stream:
     post:
-      summary: Distill Claude Code sessions into memories
+      summary: Distill agent sessions into memories
       description: |
-        What `memloom import claude-code` calls. Discovers local Claude Code transcripts
-        (fixed to `~/.claude/projects`; the client cannot pass an arbitrary path), then for
+        What `memloom import sessions` calls. Claude Code is the only supported agent today
+        and the default. Discovers local Claude Code transcripts (fixed to
+        `~/.claude/projects`; the client cannot pass an arbitrary path), then for
         each session checks the ledger, redacts secret-shaped strings, chunks, distills with
         the configured LLM into typed memories, embeds, and saves through the belief
         pipeline. The response streams NDJSON: one `{"type":"item"}` event per session, then
         a final `{"type":"done"}` event with the run totals and the cost line (extraction,
         embedding, and classifier calls spent). A dry run makes zero LLM calls and writes
         nothing.
-      operationId: importClaudeCodeStream
+      operationId: importSessionsStream
       requestBody:
         required: false
         content:
@@ -449,6 +450,10 @@ paths:
             schema:
               type: object
               properties:
+                agent:
+                  type: string
+                  description: Which agent's sessions to import. Default and only supported value today is claude-code.
+                  example: claude-code
                 days:
                   type: integer
                   description: Widen the day window (default 14).

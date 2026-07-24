@@ -6,7 +6,7 @@ description: "How a Claude Code session becomes memories"
 ## What distillation is
 
 Every Claude Code session on your machine is a JSONL session under
-`~/.claude/projects`. `memloom import claude-code` and `memloom connect claude-code` both
+`~/.claude/projects`. `memloom import sessions` and `memloom connect claude-code` both
 turn those sessions into memories through the same pipeline: read, redact, chunk, ask
 the LLM to extract what's worth keeping, dedup against what you already have, and save. The
 two commands differ only in trigger: `import` runs the pipeline on demand over a scope of
@@ -111,14 +111,14 @@ hash of everything read up to that point.
 | File grew | Resumes from the watermark, re-reading the last 40 lines first for context continuity, so the new chunk isn't distilled without the conversation that led into it |
 | Hash mismatch | The file was rewritten (Claude Code compaction, or a resumed session renumbering earlier content), so it's reprocessed from the start |
 
-This is what makes `import claude-code` cheap to re-run: an unchanged session costs one
+This is what makes `import sessions` cheap to re-run: an unchanged session costs one
 ledger lookup, not one LLM call.
 
 ## Continuous capture
 
 `memloom connect claude-code` runs the identical pipeline, triggered differently: a
 session-end hook hands the daemon a single file path the moment Claude Code exits, and
-`importClaudeCode` runs against just that path, skipping discovery. It's still bounded: a
+the import pipeline runs against just that path, skipping discovery. It's still bounded: a
 daily cap on unattended distillation calls means a runaway loop of sessions can't spend
 your LLM budget silently, and `memloom status` says so loudly when the cap is hit. See
 [Import](/cli/import) for the flags and setup.

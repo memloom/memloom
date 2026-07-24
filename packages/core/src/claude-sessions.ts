@@ -5,7 +5,7 @@ import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { createInterface } from "node:readline";
 
-// Claude Code session discovery + parsing for `memloom import claude-code`. Sessions live as
+// Claude Code session discovery + parsing for `memloom import sessions`. Sessions live as
 // JSONL transcripts under ~/.claude/projects/<encoded-project>/<session-uuid>.jsonl. Only
 // main-session files count: agent-*.jsonl sidecars are subagent transcripts whose content is
 // a near-copy of fragments of the parent session, so distilling them pays twice and floods

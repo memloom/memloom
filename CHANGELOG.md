@@ -2,9 +2,10 @@
 
 ## Unreleased
 
-- Added `memloom import claude-code`: distill your Claude Code sessions into typed,
-  searchable memories, with secrets redacted before anything reaches a provider and a
-  ledger that makes re-runs free ([docs](https://docs.memloom.dev/cli/import),
+- Added `memloom import sessions`: distill your agent's sessions into typed, searchable
+  memories, with secrets redacted before anything reaches a provider and a ledger that
+  makes re-runs free. Claude Code is the first supported agent (`--agent claude-code`,
+  the default) ([docs](https://docs.memloom.dev/cli/import),
   [how distillation works](https://docs.memloom.dev/concepts/distillation))
 - Added `memloom connect claude-code`: continuous capture through a session-end hook,
   scoped to an allowlist of projects and bounded by a daily unattended budget
@@ -24,7 +25,6 @@
 - Fixed big conflict queues overwhelming the CLI and viewer: the CLI lists the first 5,
   and the viewer's lists scroll in a fixed pane with a filter
 - Fixed the dedup classifier flagging unrelated memories as contradictions
-- Fixed slash-command noise from transcripts being distilled as session content
 
 ## 0.1.1
 

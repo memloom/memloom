@@ -190,7 +190,7 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
     try {
       const scope = await memloom.importScope();
       if (scope === null) return;
-      const result = await memloom.importClaudeCode({
+      const result = await memloom.importSessions({
         unattended: true,
         ...(scope === "all" ? {} : { projects: scope.projects }),
       });

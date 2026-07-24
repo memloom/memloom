@@ -1,13 +1,13 @@
 ---
 title: "Import"
-description: "Distill your Claude Code sessions into memories"
+description: "Distill your agent's sessions into memories"
 ---
 
-## import claude-code
+## import sessions
 
 ```bash
-memloom import claude-code --dry-run
-memloom import claude-code
+memloom import sessions --dry-run
+memloom import sessions
 ```
 
 Your Claude Code sessions hold months of decisions, preferences, and hard-won fixes. You
@@ -33,8 +33,8 @@ Import is bounded by default: sessions modified in the last 14 days, newest firs
 history:
 
 ```bash
-memloom import claude-code --days 60 --sessions 100
-memloom import claude-code --project myapp
+memloom import sessions --days 60 --sessions 100
+memloom import sessions --project myapp
 ```
 
 Re-running is cheap. A ledger tracks how far each session was processed, so an unchanged
@@ -44,6 +44,7 @@ notices and reprocesses that session from the start.
 
 | Flag | What it does |
 | --- | --- |
+| `--agent X` | Which agent's sessions to import (default and only option today: `claude-code`) |
 | `--dry-run` | List sessions and chunk counts; no LLM calls, no writes |
 | `--force` | Reprocess everything from scratch, ignoring the ledger |
 | `--days N` | Widen the day window (default 14) |

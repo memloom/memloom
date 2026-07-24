@@ -109,12 +109,13 @@ export class HttpMemloomClient implements MemoryEngine {
     return content;
   }
 
-  importClaudeCode(
+  importSessions(
     opts: ImportOptions = {},
     onProgress?: (event: ImportSessionEvent) => void,
   ): Promise<ImportResult> {
     // root/ownerId are daemon-side concerns; only the user-facing knobs cross the wire.
     const body = {
+      agent: opts.agent,
       days: opts.days,
       maxSessions: opts.maxSessions,
       project: opts.project,
@@ -122,7 +123,7 @@ export class HttpMemloomClient implements MemoryEngine {
       force: opts.force,
     };
     return this.#streamNdjson<ImportSessionEvent, ImportResult>(
-      "/import/claude-code/stream",
+      "/import/sessions/stream",
       body,
       onProgress,
     );

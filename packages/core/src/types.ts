@@ -394,9 +394,15 @@ export interface DocumentChunks {
   edges: GraphEdge[];
 }
 
-// ---- Session import (`memloom import claude-code`) ----
+// ---- Session import (`memloom import sessions`) ----
 
 export interface ImportOptions {
+  /**
+   * Which agent's sessions to import. Claude Code is the only supported agent today and
+   * the default; the option exists so `import sessions --agent codex` can slot in without
+   * a rename.
+   */
+  agent?: "claude-code";
   /** Sessions modified in the last N days. Default 14. */
   days?: number;
   /** Newest-first cap after the day window. Default 20. */
