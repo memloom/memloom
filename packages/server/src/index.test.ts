@@ -60,7 +60,9 @@ describe("server", () => {
     const traversal = await server.request("/import/claude-code/notify", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ path: join(homedir(), ".claude", "projects", "..", "..", "secret.jsonl") }),
+      body: JSON.stringify({
+        path: join(homedir(), ".claude", "projects", "..", "..", "secret.jsonl"),
+      }),
     });
     expect(traversal.status).toBe(400);
     // Inside the root but not a transcript: refused.
@@ -75,7 +77,13 @@ describe("server", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        path: join(homedir(), ".claude", "projects", "p", "00000000-0000-0000-0000-000000000000.jsonl"),
+        path: join(
+          homedir(),
+          ".claude",
+          "projects",
+          "p",
+          "00000000-0000-0000-0000-000000000000.jsonl",
+        ),
       }),
     });
     expect(ok.status).toBe(202);

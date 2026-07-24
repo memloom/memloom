@@ -71,8 +71,6 @@ export type {
 export { OpenRouterEmbeddings, OpenRouterLLM } from "./openrouter-provider.js";
 export type { PdfTextItem } from "./pdf-layout.js";
 export { assemblePageText } from "./pdf-layout.js";
-export type { RedactResult } from "./redact.js";
-export { redact } from "./redact.js";
 export { PgAdapter } from "./pg-adapter.js";
 // Storage adapters
 export { PgliteAdapter } from "./pglite-adapter.js";
@@ -86,6 +84,8 @@ export type {
   LLMProvider,
 } from "./providers.js";
 export { isChatProvider } from "./providers.js";
+export type { RedactResult } from "./redact.js";
+export { redact } from "./redact.js";
 // The graph schema: the system-tier vocabulary constants (seeded into the memory_schema
 // registry) plus the registry model types.
 export type {
