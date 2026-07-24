@@ -2,11 +2,18 @@
 
 ## Unreleased
 
+- **Small credit balances work again.** OpenRouter preauthorizes every completion call for
+  its max_tokens, and we never sent one, so it assumed the model's full output ceiling
+  (about 16 cents per call for gemini-2.5-flash). Once a balance dropped below that, every
+  pipeline call failed with 402 even though real replies cost a fraction of a cent.
+  Completions now cap max_tokens at 8192, which pipeline replies fit comfortably.
+- **The import shows chunk progress.** Long sessions print "distilling chunk 12/47" ticks
+  (overwritten in place on a terminal, one line per session when piped) instead of staying
+  silent for minutes per session.
 - **Progress streams survive long work.** A session being distilled (or a big document being
   indexed) can stay silent for many minutes, and Node's fetch kills a response body that
   idles past five; the CLI died with a bare "terminated" while the daemon kept importing,
-  which read as a hang. The daemon now sends heartbeats on every progress stream, the import
-  prints a "distilling N chunks" line before the slow work instead of after it, and if the
+  which read as a hang. The daemon now sends heartbeats on every progress stream, and if the
   stream still dies the CLI says the run continues in the daemon and where to check.
 - **`memloom connect claude-code`**: continuous capture. A session-end hook (a thin
   notifier) tells the daemon when a Claude Code session finishes, and the daemon distills

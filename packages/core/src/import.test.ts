@@ -1,9 +1,21 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { HashingEmbeddingProvider, NullLLMProvider, ScriptedLLMProvider } from "./hashing-provider.js";
+import {
+  HashingEmbeddingProvider,
+  NullLLMProvider,
+  ScriptedLLMProvider,
+} from "./hashing-provider.js";
 import { Memloom } from "./memloom.js";
 import type { EmbeddingProvider } from "./providers.js";
 import { PgliteFactory } from "./testkit.js";
@@ -221,7 +233,9 @@ describe("importClaudeCode", () => {
     const llm = new ScriptedLLMProvider((prompt) => {
       if (prompt.startsWith("You compare")) return "[]";
       prompts.push(prompt);
-      return JSON.stringify([{ type: "fact", content: "an api key was configured", lines: [1, 1] }]);
+      return JSON.stringify([
+        { type: "fact", content: "an api key was configured", lines: [1, 1] },
+      ]);
     });
     const { memloom, storage } = await fresh(Object.assign(llm, { distillCalls: { count: 0 } }));
     const root = makeRoot();
@@ -269,7 +283,7 @@ describe("importClaudeCode", () => {
     const first = await memloom.importClaudeCode({ root }, (e) => events.push(e.outcome));
 
     expect(first.error).toContain("402");
-    expect(events).toEqual(["distilling", "partial"]);
+    expect(events).toEqual(["distilling", "distilling", "partial"]);
     expect(first.saved).toBe(1);
     expect((await memloom.memories()).map((m) => m.content)).toEqual(["the alpha fact"]);
     const [ledger] = await storage.query<{ line_offset: number }>(
@@ -301,7 +315,10 @@ describe("importClaudeCode", () => {
       `${JSON.stringify({
         type: "user",
         sessionId: id,
-        message: { role: "user", content: [{ type: "text", text: "remember: hook capture works" }] },
+        message: {
+          role: "user",
+          content: [{ type: "text", text: "remember: hook capture works" }],
+        },
       })}\n`,
     );
 

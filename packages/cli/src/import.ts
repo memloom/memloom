@@ -35,7 +35,8 @@ export function parseImportFlags(args: readonly string[]): ImportFlags {
         break;
       case "--days": {
         const days = Number(value());
-        if (!Number.isInteger(days) || days <= 0) throw new Error("--days must be a positive integer");
+        if (!Number.isInteger(days) || days <= 0)
+          throw new Error("--days must be a positive integer");
         flags.days = days;
         break;
       }
@@ -63,7 +64,7 @@ function sessionLine(e: ImportSessionEvent): string {
   const name = `${e.project}/${e.sessionId.slice(0, 8)}`;
   if (e.outcome === "up-to-date") return `[${e.index}/${e.total}] ${name}  up to date`;
   if (e.outcome === "distilling") {
-    return `[${e.index}/${e.total}] ${name}  distilling ${e.chunks} chunk${e.chunks === 1 ? "" : "s"}...`;
+    return `[${e.index}/${e.total}] ${name}  distilling chunk ${e.chunk}/${e.chunks}...`;
   }
   if (e.outcome === "partial") {
     return `[${e.index}/${e.total}] ${name}  stopped mid-session (${e.saved} saved before the failure)`;
@@ -94,6 +95,29 @@ function skipLine(result: ImportResult): string | null {
 
 export async function runImport(engine: MemoryEngine, args: readonly string[]): Promise<void> {
   const flags = parseImportFlags(args);
+  // Chunk ticks are transient: on a TTY they overwrite in place, piped output gets only the
+  // first tick per session so logs still show what started without a line per chunk.
+  let onProgressLine = false;
+  const show = (event: ImportSessionEvent) => {
+    const line = sessionLine(event);
+    if (event.outcome === "distilling") {
+      if (process.stdout.isTTY) {
+        process.stdout.clearLine?.(0);
+        process.stdout.cursorTo?.(0);
+        process.stdout.write(line);
+        onProgressLine = true;
+      } else if (event.chunk === 1) {
+        console.log(line);
+      }
+      return;
+    }
+    if (onProgressLine) {
+      process.stdout.write("\n");
+      onProgressLine = false;
+    }
+    console.log(line);
+  };
+
   const result = await engine.importClaudeCode(
     {
       dryRun: flags.dryRun,
@@ -102,8 +126,9 @@ export async function runImport(engine: MemoryEngine, args: readonly string[]): 
       ...(flags.maxSessions !== undefined ? { maxSessions: flags.maxSessions } : {}),
       ...(flags.project ? { project: flags.project } : {}),
     },
-    (event) => console.log(sessionLine(event)),
+    show,
   );
+  if (onProgressLine) process.stdout.write("\n");
 
   if (result.dryRun) {
     console.log(

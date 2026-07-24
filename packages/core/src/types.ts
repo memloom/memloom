@@ -447,6 +447,8 @@ export interface ImportSessionEvent {
   outcome: "imported" | "up-to-date" | "dry-run" | "partial" | "distilling";
   /** Set on "partial": the provider error that stopped the session (and the run). */
   error?: string;
+  /** Set on "distilling": the 1-based chunk now being processed (of `chunks`). */
+  chunk?: number;
   chunks: number;
   saved: number;
   merged: number;

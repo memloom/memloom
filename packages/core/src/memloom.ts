@@ -992,11 +992,6 @@ export class Memloom implements MemoryEngine {
         continue;
       }
 
-      // Announce the work before spending minutes on it: a session's chunks distill
-      // serially with several LLM calls each, and without this line the client sees
-      // nothing between the previous session's result and this one's.
-      if (chunked.chunks.length > 0) onProgress?.({ ...event, outcome: "distilling" });
-
       // Each chunk is processed end-to-end (distill, batch-embed its memories, save) and the
       // in-memory watermark advances only past chunks whose memories are fully saved. A
       // provider failure (out of credits, rate limit) then loses at most one chunk's calls:
@@ -1006,9 +1001,16 @@ export class Memloom implements MemoryEngine {
       // one embed call.
       let watermark = 0;
       let sessionError: string | undefined;
-      for (const chunk of chunked.chunks) {
+      for (const [chunkIndex, chunk] of chunked.chunks.entries()) {
+        // Announce each chunk before spending up to minutes on it: a chunk distills, embeds,
+        // and dedup-classifies serially, and without this the client sees nothing between
+        // the previous session's result and this one's.
+        onProgress?.({ ...event, outcome: "distilling", chunk: chunkIndex + 1 });
         try {
-          if (opts.unattended && (await this.#unattendedCallsToday()) >= UNATTENDED_DAILY_CALL_CAP) {
+          if (
+            opts.unattended &&
+            (await this.#unattendedCallsToday()) >= UNATTENDED_DAILY_CALL_CAP
+          ) {
             sessionError =
               `paused: the daily unattended distillation budget (${UNATTENDED_DAILY_CALL_CAP} calls) is spent. ` +
               "Capture resumes tomorrow; run `memloom import claude-code` yourself to continue now.";
@@ -1039,7 +1041,14 @@ export class Memloom implements MemoryEngine {
               if (saveResult.outcome === "versioned") event.versioned++;
               else if (saveResult.outcome === "conflict") event.conflicts++;
               else event.saved++;
-              await this.#insertProvenance(owner, saveResult.id, parsed.sessionId, session.path, memory, chunk);
+              await this.#insertProvenance(
+                owner,
+                saveResult.id,
+                parsed.sessionId,
+                session.path,
+                memory,
+                chunk,
+              );
             }
           }
           watermark = chunk.endLine;
@@ -1173,7 +1182,10 @@ export class Memloom implements MemoryEngine {
   ): Promise<{ accepted: boolean; reason?: string; result?: ImportResult }> {
     const scope = await this.importScope();
     if (scope === null) {
-      return { accepted: false, reason: "capture is not configured; run memloom connect claude-code" };
+      return {
+        accepted: false,
+        reason: "capture is not configured; run memloom connect claude-code",
+      };
     }
     const project = basename(dirname(path)).toLowerCase();
     if (scope !== "all" && !scope.projects.some((p) => project.includes(p.toLowerCase()))) {
@@ -1184,7 +1196,10 @@ export class Memloom implements MemoryEngine {
     try {
       const result = await this.importClaudeCode({ paths: [path], unattended: true });
       if (result.error) await this.#metaSet(IMPORT_NOTIFY_ERROR_KEY, result.error);
-      else await this.#storage.query("DELETE FROM _memloom_meta WHERE key = $1", [IMPORT_NOTIFY_ERROR_KEY]);
+      else
+        await this.#storage.query("DELETE FROM _memloom_meta WHERE key = $1", [
+          IMPORT_NOTIFY_ERROR_KEY,
+        ]);
       return { accepted: true, result };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1212,7 +1227,16 @@ export class Memloom implements MemoryEngine {
       `INSERT INTO import_provenance (memory_id, owner_id, source, session_id, file_path, start_line, end_line, excerpt)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (memory_id) DO NOTHING`,
-      [memoryId, owner, "claude-code", sessionId, filePath, memory.startLine, memory.endLine, excerpt],
+      [
+        memoryId,
+        owner,
+        "claude-code",
+        sessionId,
+        filePath,
+        memory.startLine,
+        memory.endLine,
+        excerpt,
+      ],
     );
   }
 
