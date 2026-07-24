@@ -439,4 +439,40 @@ describe("importClaudeCode", () => {
       expect(conflicts.length).toBeGreaterThan(0);
     }
   });
+
+  it("save-time context auto-resolves an obvious contradiction instead of queueing it", async () => {
+    const llm = new ScriptedLLMProvider((prompt) => {
+      if (prompt.startsWith("You compare")) {
+        return JSON.stringify([
+          { candidate: 1, relation: "contradictory", reason: "cannot both be true" },
+        ]);
+      }
+      if (prompt.startsWith("Two memories")) {
+        return '[{"verdict":"keep_new","reason":"the transcript shows the change happening"}]';
+      }
+      const memories = [...prompt.matchAll(/remember: ([^\n"]+)/g)].map((m) => ({
+        type: "fact",
+        content: m[1],
+        lines: [1, 1],
+      }));
+      return JSON.stringify(memories);
+    });
+    const { memloom } = await fresh(Object.assign(llm, { distillCalls: { count: 0 } }));
+    await memloom.save({ content: "the deploy target is fly.io" });
+
+    const root = makeRoot();
+    writeSession(root, "proj", ["remember: the deploy target is fly.io but bigger"]);
+    const result = await memloom.importClaudeCode({ root });
+
+    // The contradiction is settled at save time with the transcript as evidence: nothing
+    // waits in the queue, and the resolution sits in the revertable history.
+    expect(result.autoResolved).toBe(1);
+    expect(result.conflicts).toBe(0);
+    expect(await memloom.conflicts()).toHaveLength(0);
+    const [resolved] = await memloom.resolvedConflicts();
+    expect(resolved?.resolution).toBe("keep_new");
+    expect((await memloom.memories()).map((m) => m.content)).toEqual([
+      "the deploy target is fly.io but bigger",
+    ]);
+  });
 });

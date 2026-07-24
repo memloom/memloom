@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { api, type Conflict, type ResolveDecision, type ResolvedConflict } from "./api";
+import {
+  api,
+  type Conflict,
+  type ConflictAutoEvent,
+  type ResolveDecision,
+  type ResolvedConflict,
+} from "./api";
 
 // The human-in-the-loop queue: contradictions the belief pipeline flagged. Every resolution
 // is non-destructive and reversible, so resolved conflicts stay listed below the queue with
@@ -25,6 +31,9 @@ export function ConflictsView({
   const [error, setError] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState<string | null>(null);
   const [mergeText, setMergeText] = useState("");
+  const [autoRunning, setAutoRunning] = useState(false);
+  const [autoProgress, setAutoProgress] = useState<ConflictAutoEvent | null>(null);
+  const [autoSummary, setAutoSummary] = useState<string | null>(null);
 
   // The pending list arrives via props; reloading it (onChanged) gives it a new identity,
   // so this effect also refreshes the resolved history after every resolve/revert.
@@ -50,6 +59,26 @@ export function ConflictsView({
     }
   }
 
+  async function autoResolve() {
+    setAutoRunning(true);
+    setAutoSummary(null);
+    setError(null);
+    try {
+      const result = await api.autoResolveConflicts(setAutoProgress);
+      setAutoSummary(
+        `resolved ${result.resolved} of ${result.examined} ` +
+          `(${result.keepNew} kept new, ${result.keepExisting} kept existing, ` +
+          `${result.keepBoth} kept both); ${result.unsure} left for you`,
+      );
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAutoRunning(false);
+      setAutoProgress(null);
+    }
+  }
+
   async function revert(conflictId: string) {
     setBusy(conflictId);
     setError(null);
@@ -71,6 +100,33 @@ export function ConflictsView({
         </h2>
 
         {error && <div className="notice noticeError">{error}</div>}
+
+        {conflicts.length > 0 && (
+          <div className="actions" style={{ marginBottom: 12 }}>
+            <button
+              type="button"
+              className="btn btnPrimary"
+              disabled={autoRunning}
+              onClick={autoResolve}
+              title="An LLM re-judges each conflict with its provenance context. Decisive verdicts are applied (revertable below); unclear ones stay here for you."
+            >
+              {autoRunning
+                ? autoProgress
+                  ? `Resolving ${autoProgress.index}/${autoProgress.total}...`
+                  : "Resolving..."
+                : "Resolve the obvious ones"}
+            </button>
+            {autoRunning && autoProgress && (
+              <span style={{ color: "var(--text-faint)", alignSelf: "center" }}>
+                {autoProgress.verdict === "unsure"
+                  ? "left for you"
+                  : autoProgress.verdict.replace("_", " ")}
+                : {autoProgress.content}
+              </span>
+            )}
+          </div>
+        )}
+        {autoSummary && <div className="notice">{autoSummary}</div>}
 
         {conflicts.length === 0 && (
           <p style={{ color: "var(--text-faint)" }}>

@@ -2,6 +2,8 @@ import type { MemoryEngine } from "./engine.js";
 import type { SchemaInfo } from "./schema.js";
 import type {
   Conflict,
+  ConflictAutoEvent,
+  ConflictAutoResult,
   ContextAddInput,
   ContextAddResult,
   ContextDocument,
@@ -246,6 +248,17 @@ export class HttpMemloomClient implements MemoryEngine {
 
   async resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void> {
     await this.#post(`/memory/conflicts/${conflictId}/resolve`, decision);
+  }
+
+  autoResolveConflicts(
+    _ownerId?: string,
+    onProgress?: (event: ConflictAutoEvent) => void,
+  ): Promise<ConflictAutoResult> {
+    return this.#streamNdjson<ConflictAutoEvent, ConflictAutoResult>(
+      "/memory/conflicts/resolve-auto/stream",
+      {},
+      onProgress,
+    );
   }
 
   async revertConflict(conflictId: string): Promise<void> {

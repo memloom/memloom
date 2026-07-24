@@ -1,6 +1,8 @@
 import type { SchemaInfo } from "./schema.js";
 import type {
   Conflict,
+  ConflictAutoEvent,
+  ConflictAutoResult,
   ContextAddInput,
   ContextAddResult,
   ContextDocument,
@@ -65,6 +67,14 @@ export interface MemoryEngine {
   resolvedConflicts(ownerId?: string): Promise<ResolvedConflict[]>;
   resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void>;
   revertConflict(conflictId: string): Promise<void>;
+  /**
+   * LLM pass over pending conflicts with provenance context; decisive verdicts resolve
+   * (revertably), "unsure" stays pending for a human.
+   */
+  autoResolveConflicts(
+    ownerId?: string,
+    onProgress?: (event: ConflictAutoEvent) => void,
+  ): Promise<ConflictAutoResult>;
   /** Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors; re-add replaces. */
   contextAdd(input: ContextAddInput): Promise<ContextAddResult>;
   contextList(ownerId?: string): Promise<ContextDocument[]>;

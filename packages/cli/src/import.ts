@@ -76,6 +76,7 @@ function sessionLine(e: ImportSessionEvent): string {
   if (e.versioned) parts.push(`versioned ${e.versioned}`);
   if (e.merged) parts.push(`merged ${e.merged}`);
   if (e.conflicts) parts.push(`conflicts ${e.conflicts}`);
+  if (e.autoResolved) parts.push(`auto-resolved ${e.autoResolved}`);
   if (e.dropped) parts.push(`dropped ${e.dropped}`);
   if (e.redactions) parts.push(`redacted ${e.redactions}`);
   return `[${e.index}/${e.total}] ${name}  ${parts.join(", ")}`;
@@ -137,10 +138,11 @@ export async function runImport(engine: MemoryEngine, args: readonly string[]): 
     );
   } else {
     const conflictNote = result.conflicts > 0 ? "  (resolve conflicts in the viewer)" : "";
+    const autoNote = result.autoResolved > 0 ? `, ${result.autoResolved} auto-resolved` : "";
     console.log(
       `imported ${result.sessions} session${result.sessions === 1 ? "" : "s"}: ` +
         `${result.saved} saved, ${result.versioned} versioned, ${result.merged} merged, ` +
-        `${result.conflicts} conflicts${conflictNote}`,
+        `${result.conflicts} conflicts${autoNote}${conflictNote}`,
     );
     console.log(
       `cost: ${result.calls.extraction} extraction, ${result.calls.classifier} dedup, ` +

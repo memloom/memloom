@@ -72,7 +72,7 @@ Usage: memloom <command> [args]
   reembed [--force]    re-embed the whole store with the currently configured embedding
                        provider (run after switching providers; daemon must be stopped)
   auto-index [on|off]  show or set background entity extraction after saves/ingests
-  conflicts            list pending conflicts
+  conflicts [auto]     list pending conflicts; auto resolves the obvious ones with the LLM
   import claude-code   distill recent Claude Code sessions into memories (--dry-run first)
   connect claude-code  capture future sessions automatically as they end (--project X | --all)
   disconnect claude-code  stop capturing; removes only memloom's hook
@@ -247,11 +247,16 @@ is installed, the capture scope, when the hook last fired and whether it
 failed, today's unattended distillation spend against the daily budget, and
 how much the ledger has imported in total.`,
 
-  conflicts: `memloom conflicts
+  conflicts: `memloom conflicts [auto]
 
 List pending contradictions: the new memory and the existing ones it clashes
 with. Resolve them in the viewer (Conflicts tab) or over MCP; every resolution
-is reversible.`,
+is reversible.
+
+  auto   re-judge every pending conflict with an LLM that also sees when each
+         memory was recorded and the transcript excerpt it came from. Decisive
+         verdicts are applied (one LLM call per conflict, all revertable);
+         anything the model is unsure about stays pending for you.`,
 
   context: `memloom context <add|list|remove>
 
@@ -630,6 +635,21 @@ export async function run(argv: readonly string[]): Promise<void> {
 
     case "conflicts": {
       const engine = await connect();
+      if (rest[0] === "auto") {
+        const result = await engine.autoResolveConflicts(undefined, (e) => {
+          const mark = e.verdict === "unsure" ? "left for you" : e.verdict.replace("_", " ");
+          console.log(`[${e.index}/${e.total}] ${mark}: ${e.content}  (${e.reason})`);
+        });
+        console.log(
+          `resolved ${result.resolved} of ${result.examined}: ` +
+            `${result.keepNew} keep new, ${result.keepExisting} keep existing, ` +
+            `${result.keepBoth} keep both; ${result.unsure} left for you`,
+        );
+        if (result.resolved > 0) {
+          console.log("every auto-resolution is revertable from the viewer's conflicts tab.");
+        }
+        return;
+      }
       const conflicts = await engine.conflicts();
       if (conflicts.length === 0) console.log("no pending conflicts");
       for (const c of conflicts) {

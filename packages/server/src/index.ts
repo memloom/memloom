@@ -714,6 +714,12 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     return c.json({ ok: true });
   });
 
+  // The auto-resolver: an LLM re-judges every pending conflict with provenance context and
+  // applies the decisive verdicts (revertably). Streams one item per conflict.
+  app.post("/memory/conflicts/resolve-auto/stream", (c) =>
+    streamNdjson(c, (emit) => memloom.autoResolveConflicts(undefined, emit)),
+  );
+
   // The assistant tab: one agentic turn streamed as SSE (tool activity + answer deltas +
   // a terminal done/error event). Offline mode (no chat-capable LLM) fails fast with a
   // setup hint BEFORE the stream starts, so the client gets a real 503.

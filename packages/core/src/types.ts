@@ -54,6 +54,12 @@ export interface SaveInput {
   memoryType?: MemoryType;
   /** Defaults to the fixed sentinel owner in the embedded (single-user) tier. */
   ownerId?: string;
+  /**
+   * Transcript context, set by the session import: lets a flagged contradiction be judged
+   * at save time with evidence the dedup classifier alone lacks. Absent on manual saves,
+   * where a human is present and a pending conflict is the right outcome.
+   */
+  context?: { excerpt: string };
 }
 
 // "versioned": the save restated an existing belief, so a new version was appended to its
@@ -66,6 +72,11 @@ export interface SaveResult {
   outcome: SaveOutcome;
   /** Set when outcome is "conflict": the id of the pending decision to resolve. */
   conflictId?: string;
+  /**
+   * Set on "conflict" when transcript context let the resolver settle it at save time.
+   * The resolution is applied and revertable; the conflict never waits in the queue.
+   */
+  autoResolution?: "keep_new" | "keep_existing" | "keep_both";
   /** Set when outcome is "versioned": the new version number (>= 2). */
   version?: number;
 }
@@ -454,6 +465,8 @@ export interface ImportSessionEvent {
   merged: number;
   versioned: number;
   conflicts: number;
+  /** Contradictions the resolver settled at save time using transcript context (revertable). */
+  autoResolved: number;
   /** Distillation reply items dropped as untypeable. */
   dropped: number;
   truncated: number;
@@ -476,6 +489,8 @@ export interface ImportResult {
   merged: number;
   versioned: number;
   conflicts: number;
+  /** Contradictions the resolver settled at save time using transcript context (revertable). */
+  autoResolved: number;
   dropped: number;
   truncated: number;
   redactions: number;
@@ -491,6 +506,29 @@ export interface ImportResult {
 }
 
 // The four human-in-the-loop resolution actions. All reversible.
+/** Progress from the conflict auto-resolver: one event per examined conflict. */
+export interface ConflictAutoEvent {
+  conflictId: string;
+  /** 1-based position in this pass. */
+  index: number;
+  total: number;
+  verdict: "keep_new" | "keep_existing" | "keep_both" | "unsure";
+  reason: string;
+  /** Leading snippet of the incoming memory, for display. */
+  content: string;
+}
+
+export interface ConflictAutoResult {
+  examined: number;
+  /** Conflicts a decisive verdict resolved (sum of the three buckets below). */
+  resolved: number;
+  keepNew: number;
+  keepExisting: number;
+  keepBoth: number;
+  /** Left pending for a human. */
+  unsure: number;
+}
+
 export type ResolveDecision =
   | { action: "keep_new" } // supersede: the new memory wins, existing ones go stale
   | { action: "keep_existing"; candidateId: string } // an existing memory wins, the new one goes stale

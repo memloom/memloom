@@ -10,6 +10,7 @@ import {
   type SessionChunk,
   type SessionUnit,
 } from "./claude-sessions.js";
+import { type ResolverSide, resolveConflictWithContext } from "./conflict-resolver.js";
 import { type Candidate, classify } from "./dedup.js";
 import { type DistilledMemory, distillChunk } from "./distill.js";
 import type { MemoryEngine } from "./engine.js";
@@ -46,6 +47,8 @@ import type {
   AssistantSessionHit,
   AssistantSource,
   Conflict,
+  ConflictAutoEvent,
+  ConflictAutoResult,
   ConflictCandidate,
   ContextAddInput,
   ContextAddResult,
@@ -95,6 +98,16 @@ const CANDIDATE_LIMIT = 5;
 // decisions cut mid-thought), and how much source text one provenance excerpt keeps.
 const IMPORT_OVERLAP_LINES = 40;
 const PROVENANCE_EXCERPT_CHARS = 500;
+
+// The transcript lines a distilled memory came from: stored as provenance and handed to the
+// save-time conflict resolver as evidence.
+function excerptOf(memory: DistilledMemory, chunk: SessionChunk): string {
+  return chunk.units
+    .filter((unit) => unit.line >= memory.startLine && unit.line <= memory.endLine)
+    .map((unit) => unit.text)
+    .join("\n")
+    .slice(0, PROVENANCE_EXCERPT_CHARS);
+}
 
 /** The daemon host's IANA timezone: the user's calendar day for date-scoped recall. */
 function hostTimeZone(): string {
@@ -910,6 +923,7 @@ export class Memloom implements MemoryEngine {
       merged: 0,
       versioned: 0,
       conflicts: 0,
+      autoResolved: 0,
       dropped: 0,
       truncated: 0,
       redactions: 0,
@@ -933,6 +947,7 @@ export class Memloom implements MemoryEngine {
         merged: 0,
         versioned: 0,
         conflicts: 0,
+        autoResolved: 0,
         dropped: 0,
         truncated: 0,
         redactions: 0,
@@ -1032,6 +1047,9 @@ export class Memloom implements MemoryEngine {
                 ...(memory.canonical ? { canonical: memory.canonical } : {}),
                 memoryType: memory.memoryType,
                 ownerId: owner,
+                // The excerpt lets a flagged contradiction be judged right now, with the
+                // transcript as evidence, instead of waiting in the conflict queue.
+                context: { excerpt: excerptOf(memory, chunk) },
               },
               vectors[j],
             );
@@ -1039,8 +1057,10 @@ export class Memloom implements MemoryEngine {
               event.merged++;
             } else {
               if (saveResult.outcome === "versioned") event.versioned++;
-              else if (saveResult.outcome === "conflict") event.conflicts++;
-              else event.saved++;
+              else if (saveResult.outcome === "conflict") {
+                if (saveResult.autoResolution) event.autoResolved++;
+                else event.conflicts++;
+              } else event.saved++;
               await this.#insertProvenance(
                 owner,
                 saveResult.id,
@@ -1062,6 +1082,7 @@ export class Memloom implements MemoryEngine {
       result.merged += event.merged;
       result.versioned += event.versioned;
       result.conflicts += event.conflicts;
+      result.autoResolved += event.autoResolved;
 
       // Clean finish covers the whole file (trailing non-text lines included); a stopped
       // session is watermarked at its last fully saved chunk. No progress, no write: the
@@ -1218,11 +1239,7 @@ export class Memloom implements MemoryEngine {
     memory: DistilledMemory,
     chunk: SessionChunk,
   ): Promise<void> {
-    const excerpt = chunk.units
-      .filter((unit) => unit.line >= memory.startLine && unit.line <= memory.endLine)
-      .map((unit) => unit.text)
-      .join("\n")
-      .slice(0, PROVENANCE_EXCERPT_CHARS);
+    const excerpt = excerptOf(memory, chunk);
     await this.#storage.query(
       `INSERT INTO import_provenance (memory_id, owner_id, source, session_id, file_path, start_line, end_line, excerpt)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -1300,6 +1317,17 @@ export class Memloom implements MemoryEngine {
         };
       });
       const conflictId = await this.#recordConflict(owner, id, input, conflictCandidates);
+      // With transcript context in hand (session imports), give the resolver one shot at
+      // settling the contradiction now, with the recording times and excerpts the dedup
+      // classifier never saw. A decisive verdict goes through resolveConflict, so it lands
+      // in the same revertable history as a human decision; unsure stays pending.
+      if (input.context) {
+        const decision = await this.#judgeConflictNow(input, conflictCandidates);
+        if (decision) {
+          await this.resolveConflict(conflictId, decision.resolve);
+          return { id, outcome: "conflict", conflictId, autoResolution: decision.name };
+        }
+      }
       return { id, outcome: "conflict", conflictId };
     }
 
@@ -2605,6 +2633,144 @@ export class Memloom implements MemoryEngine {
        WHERE id = $1`,
       [conflictId],
     );
+  }
+
+  /**
+   * Second-pass conflict resolution: re-judge every pending conflict WITH the context the
+   * dedup classifier never saw, the recording times and the transcript excerpts provenance
+   * kept. Decisive verdicts are applied through resolveConflict, so an auto-resolution lands
+   * in the same revertable history as a human one; "unsure" stays in the queue.
+   */
+  async autoResolveConflicts(
+    ownerId: string = SENTINEL_OWNER,
+    onProgress?: (event: ConflictAutoEvent) => void,
+  ): Promise<ConflictAutoResult> {
+    if (this.#llm instanceof NullLLMProvider) {
+      throw new Error(
+        "memloom: conflict auto-resolution judges with an LLM and none is configured. " +
+          "Set OPENROUTER_API_KEY in your memloom config and restart the daemon.",
+      );
+    }
+    const pending = await this.conflicts(ownerId);
+    const result: ConflictAutoResult = {
+      examined: 0,
+      resolved: 0,
+      keepNew: 0,
+      keepExisting: 0,
+      keepBoth: 0,
+      unsure: 0,
+    };
+    for (const [i, conflict] of pending.entries()) {
+      const ids = [conflict.incoming.id, ...conflict.candidates.map((c) => c.id)];
+      const { createdOf, excerptOf } = await this.#conflictContext(ids);
+      const sideOf = (id: string, content: string): ResolverSide => ({
+        content,
+        createdAt: createdOf.get(id) ?? null,
+        excerpt: excerptOf.get(id) ?? null,
+      });
+
+      const verdict = await resolveConflictWithContext(
+        this.#llm,
+        sideOf(conflict.incoming.id, conflict.incoming.content),
+        conflict.candidates.map((c) => ({ ...sideOf(c.id, c.content), relation: c })),
+      );
+      result.examined++;
+
+      if (verdict.verdict === "keep_new") {
+        await this.resolveConflict(conflict.id, { action: "keep_new" });
+        result.keepNew++;
+        result.resolved++;
+      } else if (verdict.verdict === "keep_existing") {
+        const winner = conflict.candidates[verdict.candidateIndex] ?? conflict.candidates[0];
+        if (winner) {
+          await this.resolveConflict(conflict.id, {
+            action: "keep_existing",
+            candidateId: winner.id,
+          });
+          result.keepExisting++;
+          result.resolved++;
+        } else {
+          result.unsure++;
+        }
+      } else if (verdict.verdict === "keep_both") {
+        await this.resolveConflict(conflict.id, { action: "keep_both" });
+        result.keepBoth++;
+        result.resolved++;
+      } else {
+        result.unsure++;
+      }
+
+      onProgress?.({
+        conflictId: conflict.id,
+        index: i + 1,
+        total: pending.length,
+        verdict: verdict.verdict,
+        reason: verdict.reason,
+        content: conflict.incoming.content.slice(0, 100),
+      });
+    }
+    return result;
+  }
+
+  /** Recording times and provenance excerpts for a set of memory ids: the resolver's evidence. */
+  async #conflictContext(
+    ids: string[],
+  ): Promise<{ createdOf: Map<string, string>; excerptOf: Map<string, string> }> {
+    const marks = ids.map((_, j) => `$${j + 1}`).join(", ");
+    const rows = await this.#storage.query<{ id: string; created_at: string }>(
+      `SELECT id, created_at FROM memory_objects WHERE id IN (${marks})`,
+      ids,
+    );
+    const prov = await this.#storage.query<{ memory_id: string; excerpt: string }>(
+      `SELECT memory_id, excerpt FROM import_provenance WHERE memory_id IN (${marks})`,
+      ids,
+    );
+    return {
+      createdOf: new Map(rows.map((r) => [r.id, String(r.created_at)])),
+      excerptOf: new Map(prov.map((p) => [p.memory_id, p.excerpt])),
+    };
+  }
+
+  // A save-time verdict on a just-recorded conflict, using the incoming excerpt the import
+  // provided and the stored context of the contradicted memories. Null = leave it pending.
+  async #judgeConflictNow(
+    input: SaveInput,
+    candidates: ConflictCandidate[],
+  ): Promise<{
+    resolve: ResolveDecision;
+    name: "keep_new" | "keep_existing" | "keep_both";
+  } | null> {
+    const { createdOf, excerptOf } = await this.#conflictContext(candidates.map((c) => c.id));
+    const verdict = await resolveConflictWithContext(
+      this.#llm,
+      {
+        content: input.content,
+        createdAt: new Date().toISOString(),
+        excerpt: input.context?.excerpt ?? null,
+      },
+      candidates.map((c) => ({
+        content: c.content,
+        createdAt: createdOf.get(c.id) ?? null,
+        excerpt: excerptOf.get(c.id) ?? null,
+        relation: c,
+      })),
+    );
+    if (verdict.verdict === "keep_new") {
+      return { resolve: { action: "keep_new" }, name: "keep_new" };
+    }
+    if (verdict.verdict === "keep_both") {
+      return { resolve: { action: "keep_both" }, name: "keep_both" };
+    }
+    if (verdict.verdict === "keep_existing") {
+      const winner = candidates[verdict.candidateIndex] ?? candidates[0];
+      if (winner) {
+        return {
+          resolve: { action: "keep_existing", candidateId: winner.id },
+          name: "keep_existing",
+        };
+      }
+    }
+    return null;
   }
 
   // --- internals ---

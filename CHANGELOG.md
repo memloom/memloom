@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- **Conflicts resolve themselves when the evidence is decisive.** The dedup classifier sees
+  two isolated texts, so a later session recording a state change ("we added X") against an
+  older fact ("X does not exist") used to land in the conflict queue for you to click
+  through. Two changes: during an import, a flagged contradiction is judged immediately with
+  the transcript excerpt and recording times as evidence, and a decisive verdict is applied
+  on the spot (the CLI reports these as auto-resolved); for conflicts already waiting,
+  `memloom conflicts auto` and the viewer's "Resolve the obvious ones" button run the same
+  judgment over the queue. Every automatic resolution lands in the same revertable history
+  as a human one, and anything the model is unsure about stays in the queue.
 - **Small credit balances work again.** OpenRouter preauthorizes every completion call for
   its max_tokens, and we never sent one, so it assumed the model's full output ceiling
   (about 16 cents per call for gemini-2.5-flash). Once a balance dropped below that, every
