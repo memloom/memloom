@@ -1,6 +1,6 @@
 ---
 title: "Import"
-description: "import claude-code: distill your Claude Code sessions into memories"
+description: "Distill your Claude Code sessions into memories"
 ---
 
 ## import claude-code
@@ -10,12 +10,16 @@ memloom import claude-code --dry-run
 memloom import claude-code
 ```
 
-Your Claude Code transcripts hold months of decisions, preferences, and hard-won fixes,
-and the only way back to them is scrolling old sessions. Import distills them into typed,
-searchable memories: each session is read locally from `~/.claude/projects`, scrubbed of
-secret-shaped strings, distilled by your configured LLM into facts, preferences, episodes,
-and procedures, and saved through the same belief pipeline as everything else. Duplicates
-merge, restatements version, and contradictions become reviewable conflicts.
+Your Claude Code sessions hold months of decisions, preferences, and hard-won fixes. You
+could ask Claude Code to go dig one out: it can grep old transcripts as well as you can
+scroll them. But that means minutes of searching and real tokens spent hunting through a
+hundred sessions for one detail, instead of writing code, and it gets slower as your history
+grows. Import distills every session once into typed, searchable memories: each session is
+read locally from `~/.claude/projects`, scrubbed of secret-shaped strings, distilled by your
+configured LLM into facts, preferences, episodes, and procedures, and saved through the same
+belief pipeline as everything else. Duplicates merge, restatements version, and
+contradictions become reviewable conflicts. See [Session distillation](/concepts/distillation)
+for how that pipeline works end to end.
 
 Every imported memory keeps provenance: the session file, the line range, and a short
 excerpt, so a recall can always be traced back to the conversation it came from.
