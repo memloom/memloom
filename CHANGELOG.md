@@ -2,59 +2,29 @@
 
 ## Unreleased
 
-- **Conflicts resolve themselves when the evidence is decisive.** The dedup classifier sees
-  two isolated texts, so a later session recording a state change ("we added X") against an
-  older fact ("X does not exist") used to land in the conflict queue for you to click
-  through. Two changes: during an import, a flagged contradiction is judged immediately with
-  the transcript excerpt and recording times as evidence, and a decisive verdict is applied
-  on the spot (the CLI reports these as auto-resolved); for conflicts already waiting,
-  `memloom conflicts auto` and the viewer's "Resolve the obvious ones" button run the same
-  judgment over the queue. Every automatic resolution lands in the same revertable history
-  as a human one, and anything the model is unsure about stays in the queue.
-- **The graph stays put and stays fast at thousands of nodes.** Three fixes for a graph
-  that reached ~3,800 nodes and 8,300 edges: the view stays mounted (and paused) across tab
-  switches instead of rebuilding and reheating on every return, the 15-second poll keeps
-  the previous data object when nothing changed so no-op refreshes cause zero rebuilds, and
-  every frame now culls to the viewport: off-screen nodes, links, labels, and arrowheads
-  are skipped entirely, and label placement is cached once the layout settles. Zooming into
-  a dense cluster no longer freezes, and labels render only where you are looking.
-- **Big conflict queues stay navigable.** The CLI lists the first 5 pending conflicts and
-  points at the viewer and `conflicts auto` for the rest; the viewer's pending and resolved
-  lists scroll in a fixed-height pane with a filter input, like the schema tab's entities.
-- **Small credit balances work again.** OpenRouter preauthorizes every completion call for
-  its max_tokens, and we never sent one, so it assumed the model's full output ceiling
-  (about 16 cents per call for gemini-2.5-flash). Once a balance dropped below that, every
-  pipeline call failed with 402 even though real replies cost a fraction of a cent.
-  Completions now cap max_tokens at 8192, which pipeline replies fit comfortably.
-- **The import shows chunk progress.** Long sessions print "distilling chunk 12/47" ticks
-  (overwritten in place on a terminal, one line per session when piped) instead of staying
-  silent for minutes per session.
-- **Progress streams survive long work.** A session being distilled (or a big document being
-  indexed) can stay silent for many minutes, and Node's fetch kills a response body that
-  idles past five; the CLI died with a bare "terminated" while the daemon kept importing,
-  which read as a hang. The daemon now sends heartbeats on every progress stream, and if the
-  stream still dies the CLI says the run continues in the daemon and where to check.
-- **`memloom connect claude-code`**: continuous capture. A session-end hook (a thin
-  notifier) tells the daemon when a Claude Code session finishes, and the daemon distills
-  it in the background through the same pipeline as `import`. Capture scope is an allowlist
-  and empty by default: name projects with `--project` or opt into `--all`; sessions outside
-  the scope never leave your machine. The settings edit merges with your existing hooks,
-  backs the file up once before the first edit, is idempotent, and refuses an unparseable
-  file untouched; `disconnect` removes only memloom's entry. Unattended distillation runs
-  against a daily call budget and pauses loudly when it is spent. A sweep on daemon start
-  catches sessions that ended while the daemon was down. `memloom status` shows the scope,
-  the last hook activity and failure, today's spend, and all-time totals.
-- **`memloom import claude-code`**: distill your Claude Code session transcripts into typed,
-  searchable memories. Bounded by default (last 14 days, newest 20 sessions; widen with
-  `--days` / `--sessions` / `--project`), `--dry-run` previews with zero LLM calls, and a
-  ledger makes re-runs idempotent: unchanged sessions skip, grown sessions distill only
-  their new part, rewritten transcripts (compaction, resume) are detected and redone.
-  Transcripts are scrubbed of secret-shaped strings before any chunk reaches the LLM
-  provider or the store, subagent sidecars and compaction summaries are excluded, and every
-  imported memory keeps provenance (session file, line range, excerpt). Distilled memories
-  go through the ordinary belief pipeline, batch-embedded per session, so duplicates merge
-  and contradictions land in the conflict queue. The run ends with a cost line: extraction,
-  dedup, and embedding calls actually spent.
+- Added `memloom import claude-code`: distill your Claude Code sessions into typed,
+  searchable memories, with secrets redacted before anything reaches a provider and a
+  ledger that makes re-runs free ([docs](https://docs.memloom.dev/cli/import),
+  [how distillation works](https://docs.memloom.dev/concepts/distillation))
+- Added `memloom connect claude-code`: continuous capture through a session-end hook,
+  scoped to an allowlist of projects and bounded by a daily unattended budget
+  ([docs](https://docs.memloom.dev/cli/import))
+- Added automatic conflict resolution: a contradiction with decisive evidence (recording
+  times, transcript excerpts) resolves itself at import time, and `memloom conflicts auto`
+  or the viewer's "Resolve the obvious ones" button re-judges the pending queue; every
+  auto-resolution is revertable ([docs](https://docs.memloom.dev/cli/conflicts))
+- Added per-chunk progress ("distilling chunk 12/47") so long imports are never silent
+- Fixed the CLI dying with a bare "terminated" on long runs while the daemon kept
+  importing: progress streams now carry heartbeats, and a lost stream says where to check
+- Fixed small OpenRouter balances failing every call with 402: completions now cap
+  max_tokens instead of preauthorizing the model's full output ceiling
+- Fixed the graph rebuilding on every tab return, jolting on no-op background refreshes,
+  and freezing on deep zooms: the view stays mounted across tabs, unchanged polls are
+  ignored, and drawing culls to the viewport
+- Fixed big conflict queues overwhelming the CLI and viewer: the CLI lists the first 5,
+  and the viewer's lists scroll in a fixed pane with a filter
+- Fixed the dedup classifier flagging unrelated memories as contradictions
+- Fixed slash-command noise from transcripts being distilled as session content
 
 ## 0.1.1
 
