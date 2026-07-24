@@ -176,22 +176,39 @@ export class HttpMemloomClient implements MemoryEngine {
     let result: TDone | null = null;
     const handleLine = (line: string) => {
       if (!line.trim()) return;
-      const event = JSON.parse(line) as { type: "item" | "done" | "error"; error?: string };
+      const event = JSON.parse(line) as { type: string; error?: string };
       if (event.type === "item") {
         const { type: _type, ...item } = event;
         onItem?.(item as TItem);
       } else if (event.type === "done") {
         const { type: _type, ...done } = event;
         result = done as TDone;
-      } else throw new Error(event.error ?? "memloom: stream error");
+      } else if (event.type === "error") {
+        throw new Error(event.error ?? "memloom: stream error");
+      }
+      // Anything else (heartbeat pings, event kinds from a newer daemon) is skipped.
     };
+
+    // The daemon finishes the run even when this stream dies underneath us (idle timeout,
+    // network hiccup): say that instead of surfacing a bare "terminated".
+    const streamLost = (err: unknown) =>
+      new Error(
+        `memloom: lost the daemon's progress stream (${err instanceof Error ? err.message : String(err)}). ` +
+          "The run continues inside the daemon; check `memloom status` or the viewer for the result.",
+      );
 
     const reader = res.body?.getReader();
     if (reader) {
       const decoder = new TextDecoder();
       let buffer = "";
       for (;;) {
-        const { done, value } = await reader.read();
+        let step: { done: boolean; value?: Uint8Array };
+        try {
+          step = await reader.read();
+        } catch (err) {
+          throw streamLost(err);
+        }
+        const { done, value } = step;
         if (done) break;
         buffer += decoder.decode(value, { stream: true });
         let newline = buffer.indexOf("\n");

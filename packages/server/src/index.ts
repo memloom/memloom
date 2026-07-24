@@ -496,10 +496,14 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // Indexing runs one LLM call per unindexed row (minutes for a big PDF). The stream
   // variants respond with NDJSON progress ({type:"item"} per row, {type:"done"} with the
   // totals) so clients can show what's happening in real time instead of a spinner.
-  type ProgressRun = (
-    onProgress: (event: IndexProgressEvent) => void,
-  ) => Promise<{ indexed: number; chunksIndexed: number }>;
-  const streamRun = (c: Context, run: ProgressRun) => {
+  // Node's fetch kills a response body that stays silent for ~300s (undici bodyTimeout),
+  // and one session or one big PDF can distill for longer than that without emitting an
+  // event. Pings keep the pipe alive; clients skip any event type they don't know.
+  const STREAM_HEARTBEAT_MS = 15_000;
+  const streamNdjson = <TEvent>(
+    c: Context,
+    run: (emit: (event: TEvent) => void) => Promise<object>,
+  ) => {
     c.header("content-type", "application/x-ndjson");
     return stream(c, async (s) => {
       // onProgress is sync; serialize writes through a promise chain so lines never interleave.
@@ -509,16 +513,23 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
           await s.write(`${JSON.stringify(payload)}\n`);
         });
       };
+      const heartbeat = setInterval(() => write({ type: "ping" }), STREAM_HEARTBEAT_MS);
       try {
         const result = await run((event) => write({ type: "item", ...event }));
         write({ type: "done", ...result });
       } catch (err) {
         // Mid-stream failures can't become an HTTP error status: surface them in-band.
         write({ type: "error", error: err instanceof Error ? err.message : String(err) });
+      } finally {
+        clearInterval(heartbeat);
       }
       await chain;
     });
   };
+  type ProgressRun = (
+    onProgress: (event: IndexProgressEvent) => void,
+  ) => Promise<{ indexed: number; chunksIndexed: number }>;
+  const streamRun = (c: Context, run: ProgressRun) => streamNdjson(c, run);
 
   app.post("/memory/index/stream", (c) => streamRun(c, (p) => memloom.index(undefined, p)));
 
@@ -533,7 +544,10 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     if (!body.ok) return body.res;
     const target = resolve(normalize(body.data.path));
     if (target !== sessionsRoot && !target.startsWith(sessionsRoot + sep)) {
-      return c.json({ error: "forbidden: path is outside the Claude Code sessions directory" }, 400);
+      return c.json(
+        { error: "forbidden: path is outside the Claude Code sessions directory" },
+        400,
+      );
     }
     if (!target.endsWith(".jsonl")) {
       return c.json({ error: "path must be a .jsonl session transcript" }, 400);
@@ -560,24 +574,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const body = await parseBody(c, importSchema);
     if (!body.ok) return body.res;
     const opts = body.data;
-    c.header("content-type", "application/x-ndjson");
-    return stream(c, async (s) => {
-      let chain = Promise.resolve();
-      const write = (payload: unknown) => {
-        chain = chain.then(async () => {
-          await s.write(`${JSON.stringify(payload)}\n`);
-        });
-      };
-      try {
-        const result = await memloom.importClaudeCode(opts, (event) =>
-          write({ type: "item", ...event }),
-        );
-        write({ type: "done", ...result });
-      } catch (err) {
-        write({ type: "error", error: err instanceof Error ? err.message : String(err) });
-      }
-      await chain;
-    });
+    return streamNdjson(c, (emit) => memloom.importClaudeCode(opts, emit));
   });
 
   // Index sessions: the persistent, session-grouped log the Console tab renders. Runs are

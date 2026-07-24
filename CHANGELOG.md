@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- **Progress streams survive long work.** A session being distilled (or a big document being
+  indexed) can stay silent for many minutes, and Node's fetch kills a response body that
+  idles past five; the CLI died with a bare "terminated" while the daemon kept importing,
+  which read as a hang. The daemon now sends heartbeats on every progress stream, the import
+  prints a "distilling N chunks" line before the slow work instead of after it, and if the
+  stream still dies the CLI says the run continues in the daemon and where to check.
 - **`memloom connect claude-code`**: continuous capture. A session-end hook (a thin
   notifier) tells the daemon when a Claude Code session finishes, and the daemon distills
   it in the background through the same pipeline as `import`. Capture scope is an allowlist

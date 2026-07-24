@@ -992,6 +992,11 @@ export class Memloom implements MemoryEngine {
         continue;
       }
 
+      // Announce the work before spending minutes on it: a session's chunks distill
+      // serially with several LLM calls each, and without this line the client sees
+      // nothing between the previous session's result and this one's.
+      if (chunked.chunks.length > 0) onProgress?.({ ...event, outcome: "distilling" });
+
       // Each chunk is processed end-to-end (distill, batch-embed its memories, save) and the
       // in-memory watermark advances only past chunks whose memories are fully saved. A
       // provider failure (out of credits, rate limit) then loses at most one chunk's calls:

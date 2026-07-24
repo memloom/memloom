@@ -101,7 +101,7 @@ describe("importClaudeCode", () => {
     expect(result.calls.embedding).toBe(1);
     expect(llm.distillCalls.count).toBe(1);
     expect(embedding.calls).toBeGreaterThan(0);
-    expect(events).toEqual(["imported"]);
+    expect(events).toEqual(["distilling", "imported"]);
 
     const memories = await memloom.memories();
     expect(memories.map((m) => m.content).sort()).toEqual([
@@ -269,7 +269,7 @@ describe("importClaudeCode", () => {
     const first = await memloom.importClaudeCode({ root }, (e) => events.push(e.outcome));
 
     expect(first.error).toContain("402");
-    expect(events).toEqual(["partial"]);
+    expect(events).toEqual(["distilling", "partial"]);
     expect(first.saved).toBe(1);
     expect((await memloom.memories()).map((m) => m.content)).toEqual(["the alpha fact"]);
     const [ledger] = await storage.query<{ line_offset: number }>(

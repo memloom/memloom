@@ -62,6 +62,9 @@ export function parseImportFlags(args: readonly string[]): ImportFlags {
 function sessionLine(e: ImportSessionEvent): string {
   const name = `${e.project}/${e.sessionId.slice(0, 8)}`;
   if (e.outcome === "up-to-date") return `[${e.index}/${e.total}] ${name}  up to date`;
+  if (e.outcome === "distilling") {
+    return `[${e.index}/${e.total}] ${name}  distilling ${e.chunks} chunk${e.chunks === 1 ? "" : "s"}...`;
+  }
   if (e.outcome === "partial") {
     return `[${e.index}/${e.total}] ${name}  stopped mid-session (${e.saved} saved before the failure)`;
   }

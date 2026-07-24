@@ -439,8 +439,12 @@ export interface ImportSessionEvent {
   /** 1-based position in this run. */
   index: number;
   total: number;
-  /** "partial": a provider failure stopped this session mid-way; processed chunks are saved. */
-  outcome: "imported" | "up-to-date" | "dry-run" | "partial";
+  /**
+   * "distilling": the session's chunks are about to be processed (emitted before the LLM
+   * work so long sessions show progress instead of silence). "partial": a provider failure
+   * stopped this session mid-way; processed chunks are saved.
+   */
+  outcome: "imported" | "up-to-date" | "dry-run" | "partial" | "distilling";
   /** Set on "partial": the provider error that stopped the session (and the run). */
   error?: string;
   chunks: number;
