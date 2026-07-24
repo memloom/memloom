@@ -467,7 +467,9 @@ export async function run(argv: readonly string[]): Promise<void> {
     case "import": {
       const [source, ...args] = rest;
       if (source !== "claude-code") {
-        throw new Error("usage: memloom import claude-code [--dry-run] [--force] [--days N] [--sessions N] [--project <name>]");
+        throw new Error(
+          "usage: memloom import claude-code [--dry-run] [--force] [--days N] [--sessions N] [--project <name>]",
+        );
       }
       const engine = await connect();
       await runImport(engine, args);
@@ -489,7 +491,10 @@ export async function run(argv: readonly string[]): Promise<void> {
           const value = word.includes("=") ? word.slice(word.indexOf("=") + 1) : words.shift();
           if (!value) throw new Error("--project needs a value");
           projects.push(value);
-        } else throw new Error(`unknown flag ${word}. usage: memloom connect claude-code (--project <name> ... | --all)`);
+        } else
+          throw new Error(
+            `unknown flag ${word}. usage: memloom connect claude-code (--project <name> ... | --all)`,
+          );
       }
       // The allowlist is empty by default on purpose: naming the scope is the consent step.
       if (!all && projects.length === 0) {
@@ -522,7 +527,11 @@ export async function run(argv: readonly string[]): Promise<void> {
       const edit = removeHook();
       const engine = await connect();
       await engine.setImportScope(null);
-      console.log(edit.changed ? "hook removed; your other hooks are untouched." : "no memloom hook was installed.");
+      console.log(
+        edit.changed
+          ? "hook removed; your other hooks are untouched."
+          : "no memloom hook was installed.",
+      );
       console.log("capture scope cleared. Imported memories stay.");
       return;
     }
@@ -531,19 +540,25 @@ export async function run(argv: readonly string[]): Promise<void> {
       let daemonUp = true;
       let status: ImportStatus | null = null;
       try {
-        const res = await fetch("http://127.0.0.1:4319/health", { signal: AbortSignal.timeout(600) });
+        const res = await fetch("http://127.0.0.1:4319/health", {
+          signal: AbortSignal.timeout(600),
+        });
         daemonUp = res.ok;
       } catch {
         daemonUp = false;
       }
       console.log(`daemon      ${daemonUp ? "running on http://127.0.0.1:4319" : "not running"}`);
-      console.log(`hook        ${hookInstalled() ? `installed (${claudeSettingsPath()})` : "not installed"}`);
+      console.log(
+        `hook        ${hookInstalled() ? `installed (${claudeSettingsPath()})` : "not installed"}`,
+      );
       if (daemonUp) {
         const engine = await connect();
         status = await engine.importStatus();
       }
       if (!status) {
-        console.log("capture     unknown (start the daemon for scope, spend, and totals: memloom serve)");
+        console.log(
+          "capture     unknown (start the daemon for scope, spend, and totals: memloom serve)",
+        );
         return;
       }
       const scope =
@@ -561,7 +576,9 @@ export async function run(argv: readonly string[]): Promise<void> {
           status.todayUnattendedCalls >= status.unattendedDailyCap ? "  (PAUSED at cap)" : ""
         }`,
       );
-      console.log(`imported    ${status.sessionsImported} sessions, ${status.memoriesSaved} memories all-time`);
+      console.log(
+        `imported    ${status.sessionsImported} sessions, ${status.memoriesSaved} memories all-time`,
+      );
       return;
     }
 

@@ -83,7 +83,8 @@ export function parseDistillation(raw: string, chunk: SessionChunk): DistillOutp
         : chunk.startLine;
     const startLine = clamp(lines[0] ?? chunk.startLine);
     const endLine = Math.max(startLine, clamp(lines[1] ?? startLine));
-    const canonical = typeof rec.canonical === "string" && rec.canonical.trim() ? rec.canonical.trim() : undefined;
+    const canonical =
+      typeof rec.canonical === "string" && rec.canonical.trim() ? rec.canonical.trim() : undefined;
     out.push({
       memoryType: memoryType as MemoryType,
       content,

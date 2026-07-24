@@ -43,9 +43,7 @@ describe("redact: secret shapes", () => {
   });
 
   it("counts multiple hits", () => {
-    const result = redact(
-      "first sk-or-0123456789abcdefgh then MY_SECRET=abcdefgh1234 done",
-    );
+    const result = redact("first sk-or-0123456789abcdefgh then MY_SECRET=abcdefgh1234 done");
     expect(result.hits).toBe(2);
   });
 });

@@ -8,7 +8,15 @@ describe("parseImportFlags", () => {
 
   it("parses every flag in both spellings", () => {
     expect(
-      parseImportFlags(["--dry-run", "--force", "--days", "60", "--sessions=50", "--project", "memloom"]),
+      parseImportFlags([
+        "--dry-run",
+        "--force",
+        "--days",
+        "60",
+        "--sessions=50",
+        "--project",
+        "memloom",
+      ]),
     ).toEqual({ dryRun: true, force: true, days: 60, maxSessions: 50, project: "memloom" });
   });
 
