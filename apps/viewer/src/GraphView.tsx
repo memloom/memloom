@@ -681,8 +681,7 @@ export function GraphView({
 
   // Hidden tab: stop the render loop entirely (canvas, hover picking, tweens). Clearing
   // hover first lets the fade loop terminate so no stale highlight waits on return.
-  // remountKey is a dep because a fresh inner instance auto-starts its loop and must be
-  // re-paused if it appears while hidden.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: remountKey is deliberate; a fresh inner instance auto-starts its loop and must be re-paused while hidden
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;

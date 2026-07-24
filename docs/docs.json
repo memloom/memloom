@@ -177,7 +177,14 @@
           },
           {
             "group": "Commands",
-            "pages": ["cli/daemon", "cli/memories", "cli/import", "cli/graph", "cli/context", "cli/conflicts"]
+            "pages": [
+              "cli/daemon",
+              "cli/memories",
+              "cli/import",
+              "cli/graph",
+              "cli/context",
+              "cli/conflicts"
+            ]
           }
         ]
       },
