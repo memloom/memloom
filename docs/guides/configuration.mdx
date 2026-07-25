@@ -30,6 +30,11 @@ OPENROUTER_EMBED_PROVIDER=nebius    # preferred OpenRouter host for embeddings
 OPENROUTER_LLM_MODEL=google/gemini-2.5-flash
 OPENROUTER_CHAT_MODEL=google/gemini-2.5-flash  # assistant chat; must support tool calling
 MEMLOOM_AUTO_INDEX=on               # background entity extraction after saves/ingests
+MEMLOOM_INDEX_CONCURRENCY=6         # entity-extraction worker pool size
+
+# Notion connector (see the Notion page in the CLI reference):
+NOTION_TOKEN=ntn_...                # internal integration token; pages shared with it sync
+NOTION_POLL_MS=300000               # how often the daemon checks for edits (min 60000)
 
 # Storage tier: unset = embedded PGLite in ~/.memloom/data. Set to run on a real
 # Postgres server with pgvector instead (see the self-hosting guide):

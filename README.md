@@ -60,6 +60,9 @@ memloom stop && memloom reembed && memloom serve
 and `reembed` is the sanctioned way across. On a fresh store with the key set from the
 start, this step never comes up.)
 
+`memloom init` writes a commented template to `~/.memloom/config.env`; uncomment and fill
+what you need. [config.env.example](./config.env.example) shows everything it supports.
+
 ### Connect your AI tools (MCP)
 
 Every MCP client shares the same store through the daemon. For Claude Desktop / Claude Code /
