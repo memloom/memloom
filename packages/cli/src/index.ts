@@ -83,7 +83,7 @@ Usage: memloom <command> [args]
   conflicts [auto]     list pending conflicts; auto resolves the obvious ones with the LLM
   import sessions      distill recent agent sessions into memories (--dry-run first)
   import agent-memory  bring in memories your agents already saved on disk (Claude Code
-                       memory folders, Copilot); no LLM needed
+                       memory folders, Copilot); no distillation step
   connect claude-code  capture future sessions automatically as they end (--project X | --all)
   disconnect claude-code  stop capturing; removes only memloom's hook
   status               daemon, capture scope, last hook activity, today's spend
@@ -236,10 +236,11 @@ memloom import agent-memory [--dry-run] [--force] [--agent <name>] [--project <n
 Bring in the memories your agents already saved on disk. Claude Code keeps one
 markdown file per memory under ~/.claude/projects/<project>/memory/; Copilot
 keeps topic files in VS Code's globalStorage whose ## sections are memories.
-Those files are distilled already, so no LLM is needed: each memory is redacted,
-embedded, and saved through the belief pipeline, and keeps provenance back to
-its file. Re-running is free for unchanged files (a content-hash ledger skips
-them). Read-only: memloom never writes into the agents' folders.
+Those files are distilled already, so there is no LLM extraction step: each
+memory is redacted, embedded, and saved through the belief pipeline (dedup
+classification and entity indexing still spend LLM calls), and keeps provenance
+back to its file. Re-running is free for unchanged files (a content-hash ledger
+skips them). Read-only: memloom never writes into the agents' folders.
 
   memloom import agent-memory --dry-run          what would be imported
   memloom import agent-memory                    the real run
