@@ -105,8 +105,25 @@ code should never reach an LLM provider.
 
 Guarantees around the settings edit: it merges with your existing hooks (never replaces),
 a one-time backup is written next to the file before the first edit, running `connect`
-twice changes nothing, and `memloom disconnect claude-code` removes only memloom's entry.
-A settings file that does not parse is refused untouched.
+twice changes nothing, and `memloom disconnect claude-code` removes only memloom's
+entries. A settings file that does not parse is refused untouched.
+
+## Prompt-time recall
+
+`connect` also installs a second hook: at every prompt you type in Claude Code, memloom
+recalls the memories relevant to that prompt and injects them as context, so Claude uses
+your memory without being told to search it. Recall only reads the store; the capture
+allowlist gates what gets imported, not what gets recalled.
+
+The hook is built to be invisible when it has nothing to add. It skips slash commands and
+shell passthrough, injects nothing when no memory matches, and treats a stopped daemon, a
+locked store, or a slow response as silence. It never blocks a prompt: a hard timeout caps
+the added latency, and any failure exits cleanly with no output.
+
+Skip it with `--no-recall` (which also removes the hook if a previous `connect` installed
+it), or remove both hooks with `memloom disconnect claude-code`. `memloom status` shows
+which hooks are installed. If you connected before 0.5.0, run `connect` again to add the
+recall hook.
 
 Unattended capture runs against a daily distillation budget so it can never silently burn
 credits: when the budget is spent, capture pauses and `memloom status` says so loudly.

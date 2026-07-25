@@ -14,12 +14,15 @@ import { configPath, dataDir, ensureConfig, memloomHome } from "./config.js";
 import { connect } from "./connect.js";
 import { startDaemon } from "./daemon.js";
 import {
+  ALL_HOOKS,
   claudeSettingsPath,
   hookInstalled,
-  installHook,
+  installHooks,
   notifyDaemon,
+  PROMPT_RECALL_HOOK,
   readNotifyPayload,
-  removeHook,
+  removeHooks,
+  SESSION_END_HOOK,
 } from "./hooks.js";
 import { runImport } from "./import.js";
 import {
@@ -29,6 +32,7 @@ import {
   runNotionStatus,
   runNotionSync,
 } from "./notion.js";
+import { promptRecall } from "./recall-hook.js";
 import { runReembed } from "./reembed.js";
 
 /** "from setup.md › Guide > Postgres (p. 3)" for context-chunk recall results. */
@@ -84,9 +88,10 @@ Usage: memloom <command> [args]
   import sessions      distill recent agent sessions into memories (--dry-run first)
   import agent-memory  bring in memories your agents already saved on disk (Claude Code
                        memory folders, Copilot); no distillation step
-  connect claude-code  capture future sessions automatically as they end (--project X | --all)
-  disconnect claude-code  stop capturing; removes only memloom's hook
-  status               daemon, capture scope, last hook activity, today's spend
+  connect claude-code  capture sessions as they end (--project X | --all) and recall
+                       memories into every Claude Code prompt (--no-recall to skip)
+  disconnect claude-code  stop capturing and recalling; removes only memloom's hooks
+  status               daemon, hooks, capture scope, last hook activity, today's spend
   notion connect       pick Notion pages to sync as context (needs NOTION_TOKEN)
   notion sync          sync the selected Notion pages now (--dry-run | --force)
   notion status        Notion token, selection, last sync, synced documents
@@ -251,19 +256,29 @@ skips them). Read-only: memloom never writes into the agents' folders.
   --agent X    only one agent: claude-code or copilot (repeatable)
   --project X  only Claude Code projects whose folder name contains X`,
 
-  connect: `memloom connect claude-code (--project <name> ... | --all)
+  connect: `memloom connect claude-code (--project <name> ... | --all) [--no-recall]
 
-Capture sessions automatically: a session-end hook is added to your Claude Code
-settings, and each finished session is distilled into memories by the daemon in
-the background. The hook is a thin notifier; if the daemon is down when a
-session ends, the next daemon start sweeps the gap, so nothing is lost.
+Two hooks are added to your Claude Code settings.
+
+Capture: a session-end hook notifies the daemon, and each finished session is
+distilled into memories in the background. The hook is a thin notifier; if the
+daemon is down when a session ends, the next daemon start sweeps the gap, so
+nothing is lost.
+
+Recall: a prompt-time hook injects the memories relevant to each prompt you
+type, so Claude uses your memory without being told to search it. It is silent
+when nothing relevant is found or the daemon is down, and it never blocks or
+slows a prompt beyond a short timeout. --no-recall skips this hook (and removes
+it if a previous connect installed it).
 
 Capture scope is an allowlist and it is EMPTY by default: nothing is captured
-until you name it. That is deliberate. The hook fires for every project on this
-machine, including ones whose code should never reach an LLM provider.
+until you name it. That is deliberate. The hooks fire for every project on this
+machine, including ones whose code should never reach an LLM provider; recall
+only reads your store, capture is what the allowlist gates.
 
   memloom connect claude-code --project memloom --project my-app
   memloom connect claude-code --all
+  memloom connect claude-code --all --no-recall
 
 The edit to your Claude Code settings merges with your existing hooks and a
 one-time backup is written next to the file first. Unattended distillation
@@ -272,16 +287,16 @@ memloom status and resumes the next day.`,
 
   disconnect: `memloom disconnect claude-code
 
-Stop capturing sessions: removes memloom's entry from your Claude Code settings
-(only memloom's; your own hooks are untouched) and clears the capture scope.
-Already-imported memories stay.`,
+Stop capturing and recalling: removes memloom's hook entries from your Claude
+Code settings (only memloom's; your own hooks are untouched) and clears the
+capture scope. Already-imported memories stay.`,
 
   status: `memloom status
 
-The capture dashboard: whether the daemon is up, whether the session-end hook
-is installed, the capture scope, when the hook last fired and whether it
-failed, today's unattended distillation spend against the daily budget, and
-how much the ledger has imported in total.`,
+The capture dashboard: whether the daemon is up, which hooks are installed
+(session-end capture, prompt-time recall), the capture scope, when the capture
+hook last fired and whether it failed, today's unattended distillation spend
+against the daily budget, and how much the ledger has imported in total.`,
 
   notion: `memloom notion <connect|sync|status|disconnect>
 
@@ -565,17 +580,19 @@ export async function run(argv: readonly string[]): Promise<void> {
       }
       const projects: string[] = [];
       let all = false;
+      let noRecall = false;
       const words = [...args];
       while (words.length > 0) {
         const word = words.shift() as string;
         if (word === "--all") all = true;
+        else if (word === "--no-recall") noRecall = true;
         else if (word === "--project" || word.startsWith("--project=")) {
           const value = word.includes("=") ? word.slice(word.indexOf("=") + 1) : words.shift();
           if (!value) throw new Error("--project needs a value");
           projects.push(value);
         } else
           throw new Error(
-            `unknown flag ${word}. usage: memloom connect claude-code (--project <name> ... | --all)`,
+            `unknown flag ${word}. usage: memloom connect claude-code (--project <name> ... | --all) [--no-recall]`,
           );
       }
       // The allowlist is empty by default on purpose: naming the scope is the consent step.
@@ -587,13 +604,21 @@ export async function run(argv: readonly string[]): Promise<void> {
       }
       const engine = await connect();
       await engine.setImportScope(all ? "all" : { projects });
-      const edit = installHook();
-      if (edit.backupPath) console.log(`backed up your Claude Code settings to ${edit.backupPath}`);
+      const edit = noRecall ? installHooks([SESSION_END_HOOK]) : installHooks(ALL_HOOKS);
+      // --no-recall converges: it also removes a recall hook a previous connect installed.
+      const removal = noRecall ? removeHooks([PROMPT_RECALL_HOOK]) : { changed: false, edited: [] };
+      const backupPath = edit.backupPath ?? removal.backupPath;
+      if (backupPath) console.log(`backed up your Claude Code settings to ${backupPath}`);
+      const names = {
+        "notify claude-code": "session-end capture",
+        "prompt-recall claude-code": "prompt-time recall",
+      };
       console.log(
         edit.changed
-          ? `hook installed in ${claudeSettingsPath()}`
-          : "hook was already installed; capture scope updated",
+          ? `hooks installed in ${claudeSettingsPath()}: ${edit.edited.map((i) => names[i as keyof typeof names]).join(", ")}`
+          : "hooks were already installed; capture scope updated",
       );
+      if (removal.changed) console.log("prompt-time recall hook removed (--no-recall)");
       console.log(
         all
           ? "capturing: every project, as sessions end"
@@ -606,13 +631,13 @@ export async function run(argv: readonly string[]): Promise<void> {
     case "disconnect": {
       const [source] = rest;
       if (source !== "claude-code") throw new Error("usage: memloom disconnect claude-code");
-      const edit = removeHook();
+      const edit = removeHooks(ALL_HOOKS);
       const engine = await connect();
       await engine.setImportScope(null);
       console.log(
         edit.changed
-          ? "hook removed; your other hooks are untouched."
-          : "no memloom hook was installed.",
+          ? "hooks removed; your other hooks are untouched."
+          : "no memloom hooks were installed.",
       );
       console.log("capture scope cleared. Imported memories stay.");
       return;
@@ -631,7 +656,10 @@ export async function run(argv: readonly string[]): Promise<void> {
       }
       console.log(`daemon      ${daemonUp ? "running on http://127.0.0.1:4319" : "not running"}`);
       console.log(
-        `hook        ${hookInstalled() ? `installed (${claudeSettingsPath()})` : "not installed"}`,
+        `hook        ${hookInstalled(SESSION_END_HOOK) ? `session-end capture installed (${claudeSettingsPath()})` : "session-end capture not installed"}`,
+      );
+      console.log(
+        `recall      ${hookInstalled(PROMPT_RECALL_HOOK) ? "prompt-time recall installed" : "not installed (memloom connect claude-code adds it)"}`,
       );
       if (daemonUp) {
         const engine = await connect();
@@ -672,6 +700,20 @@ export async function run(argv: readonly string[]): Promise<void> {
       if (source !== "claude-code") return;
       const path = await readNotifyPayload(process.stdin);
       if (path) await notifyDaemon(path);
+      return;
+    }
+
+    // The UserPromptSubmit hook's entry point: recall memories for the prompt and print
+    // them as context, or print nothing. Wrapped in its own catch: an error escaping to
+    // bin.ts means exit 1 and stderr surfacing as noise on every prompt the user types.
+    case "prompt-recall": {
+      if (rest[0] !== "claude-code") return;
+      try {
+        const block = await promptRecall(process.stdin);
+        if (block) console.log(block);
+      } catch {
+        // silence over blocking, always
+      }
       return;
     }
 
