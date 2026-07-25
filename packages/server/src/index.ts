@@ -278,6 +278,30 @@ const importScopeSchema = z.object({
   ]),
 });
 
+const notionScopeSchema = z.object({
+  scope: z.union([
+    z.object({
+      items: z
+        .array(
+          z.object({
+            id: z.string().min(1).max(100),
+            object: z.enum(["page", "data_source"]),
+            title: z.string().min(1).max(500),
+          }),
+        )
+        .min(1)
+        .max(500),
+    }),
+    z.null(),
+  ]),
+});
+
+const notionSyncSchema = z.object({
+  dryRun: z.boolean().optional(),
+  force: z.boolean().optional(),
+  wait: z.boolean().optional(),
+});
+
 const assistantChatSchema = z.object({
   sessionId: z.string().uuid().optional(),
   message: z.string().min(1, "message must be a non-empty string"),
@@ -400,6 +424,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         c.req.path.startsWith("/context") ||
         c.req.path.startsWith("/assistant") ||
         c.req.path.startsWith("/import") ||
+        c.req.path.startsWith("/notion") ||
         c.req.path.startsWith("/admin");
       if (isApi) {
         console.log(`${new Date().toISOString()}  → ${c.req.method} ${c.req.path}`);
@@ -443,6 +468,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.use("/context/*", probeStore);
   app.use("/assistant/*", probeStore);
   app.use("/import/*", probeStore);
+  app.use("/notion/*", probeStore);
 
   if (opts.onShutdown) {
     const shutdown = opts.onShutdown;
@@ -598,6 +624,27 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     if (!body.ok) return body.res;
     const opts = body.data;
     return streamNdjson(c, (emit) => memloom.importAgentMemories(opts, emit));
+  });
+
+  // The Notion connector. Sync runs daemon-side (the single store writer owns the
+  // watermarks) and streams NDJSON progress like import. The token never crosses this
+  // API: the daemon reads NOTION_TOKEN from its own environment.
+  app.get("/notion/pages", async (c) => c.json(await memloom.notionListPages()));
+
+  app.get("/notion/status", async (c) => c.json(await memloom.notionStatus()));
+
+  app.put("/notion/scope", async (c) => {
+    const body = await parseBody(c, notionScopeSchema);
+    if (!body.ok) return body.res;
+    await memloom.setNotionScope(body.data.scope);
+    return c.json({ ok: true });
+  });
+
+  app.post("/notion/sync/stream", async (c) => {
+    const body = await parseBody(c, notionSyncSchema);
+    if (!body.ok) return body.res;
+    const opts = body.data;
+    return streamNdjson(c, (emit) => memloom.notionSync(opts, emit));
   });
 
   // Index sessions: the persistent, session-grouped log the Console tab renders. Runs are

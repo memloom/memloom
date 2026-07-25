@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+- Added `memloom notion connect`: sync selected Notion pages and databases into memloom
+  as fresh context documents. The daemon polls and refetches only the sections whose
+  last_edited_time moved, so an idle workspace costs one search call per poll and sync
+  spends embeddings only, and only on changes. The picker shows the workspace as a tree
+  with database rows collapsed, in the CLI and in a new viewer connectors tab;
+  `notion sync [--dry-run|--force]`, `notion status`, and `notion disconnect` complete
+  the set
+- Changed document re-ingestion to keep unchanged chunks: same row, same embedding, same
+  indexed state, same entity links. Only new or edited chunks are embedded and re-indexed,
+  so one edited diary day costs one chunk instead of the whole page
+- Changed indexing to run on a worker pool (default 6, `MEMLOOM_INDEX_CONCURRENCY`) with
+  transient-failure retries and a circuit breaker, so large indexes take minutes and a
+  provider outage stops cleanly with a resume hint
+- Fixed index run counters over-counting: "+N entities" now reports entities and relations
+  actually created, which reconciles with the graph
+
 ## 0.3.0
 
 - Added `memloom import agent-memory`: bring in the memories your agents already saved on
@@ -34,6 +52,7 @@
 - Fixed big conflict queues overwhelming the CLI and viewer: the CLI lists the first 5,
   and the viewer's lists scroll in a fixed pane with a filter
 - Fixed the dedup classifier flagging unrelated memories as contradictions
+- Fixed slash-command noise from transcripts being distilled as session content
 
 ## 0.1.1
 

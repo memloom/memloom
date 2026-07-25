@@ -17,6 +17,12 @@ import type {
   ImportResult,
   ImportSessionEvent,
   ImportStatus,
+  NotionListedPage,
+  NotionScope,
+  NotionStatus,
+  NotionSyncEvent,
+  NotionSyncOptions,
+  NotionSyncResult,
   IndexProgressEvent,
   IndexResult,
   Memory,
@@ -160,6 +166,33 @@ export class HttpMemloomClient implements MemoryEngine {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ scope }),
     });
+  }
+
+  notionListPages(): Promise<NotionListedPage[]> {
+    return this.#json<NotionListedPage[]>("/notion/pages");
+  }
+
+  async setNotionScope(scope: NotionScope): Promise<void> {
+    await this.#json("/notion/scope", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope }),
+    });
+  }
+
+  notionSync(
+    opts: NotionSyncOptions = {},
+    onProgress?: (event: NotionSyncEvent) => void,
+  ): Promise<NotionSyncResult> {
+    return this.#streamNdjson<NotionSyncEvent, NotionSyncResult>(
+      "/notion/sync/stream",
+      { dryRun: opts.dryRun, force: opts.force, wait: opts.wait },
+      onProgress,
+    );
+  }
+
+  notionStatus(): Promise<NotionStatus> {
+    return this.#json<NotionStatus>("/notion/status");
   }
 
   index(_ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult> {

@@ -604,3 +604,105 @@ export type ResolveDecision =
   | { action: "keep_existing"; candidateId: string } // an existing memory wins, the new one goes stale
   | { action: "keep_both" } // mark them distinct; both stay active
   | { action: "merge"; content: string; canonical?: string }; // a reconciled memory supersedes both
+
+/** One Notion item the integration can see (a page or a database's data source). */
+export interface NotionItemRef {
+  id: string;
+  object: "page" | "data_source";
+  title: string;
+}
+
+/** The pages and data sources the user selected for sync; null = connector off. */
+export type NotionScope = { items: NotionItemRef[] } | null;
+
+/** One row of `notion connect`'s listing: visible item plus whether it is selected. */
+export interface NotionListedPage extends NotionItemRef {
+  lastEdited: string;
+  url: string | null;
+  selected: boolean;
+  /**
+   * The listed item this one lives under, when that item is also in the listing:
+   * a subpage's parent page, a database's containing page, a row-page's data source.
+   * null for top-level items and for parents the integration cannot see.
+   */
+  parentId: string | null;
+  /** What kind of listed item parentId points at; "data_source" marks a database row. */
+  parentType: "page" | "data_source" | null;
+}
+
+export interface NotionSyncOptions {
+  /** Refetch every selected item, ignoring last_edited_time watermarks. */
+  force?: boolean;
+  /** List what would sync without fetching content or writing anything. */
+  dryRun?: boolean;
+  /**
+   * If a sync is already running (usually the daemon's poll), wait for it and then run
+   * this one, instead of refusing. The CLI passes this; the poll never does.
+   */
+  wait?: boolean;
+  ownerId?: string;
+}
+
+/** Per-item progress during a sync run. */
+export interface NotionSyncEvent {
+  id: string;
+  title: string;
+  object: "page" | "data_source";
+  index: number;
+  total: number;
+  /**
+   * "waiting": another sync holds the lock; this run starts when it finishes (id and
+   * title are empty on this one event). "fetching": progress while a changed item's
+   * content downloads (Notion allows about 3 requests/second, so long pages emit
+   * several); `chunks` carries blocks so far. "fresh": last_edited_time unchanged,
+   * content not fetched. "unchanged": fetched but the content hash matched, chunks
+   * kept. "would-sync": dry run only.
+   */
+  outcome:
+    | "waiting"
+    | "fetching"
+    | "added"
+    | "updated"
+    | "unchanged"
+    | "fresh"
+    | "would-sync"
+    | "error";
+  chunks: number;
+  error?: string;
+  /** The page hit the per-page block cap: its newest blocks were NOT synced. */
+  truncated?: boolean;
+  /**
+   * Incremental fetch: only `refetched` of the page's `sections` top-level sections had
+   * edits and were re-downloaded; the rest came from the cached block tree. Absent on
+   * full fetches (first sync, --force, or the nothing-localized fallback).
+   */
+  sections?: number;
+  refetched?: number;
+}
+
+export interface NotionSyncResult {
+  items: number;
+  added: number;
+  updated: number;
+  unchanged: number;
+  fresh: number;
+  errors: number;
+  /** Items that hit the per-page block cap; their tail was not synced. */
+  truncated: number;
+  dryRun: boolean;
+  /** The last item error, when any item failed; the run continues past item failures. */
+  error?: string;
+}
+
+export interface NotionStatus {
+  /** Whether NOTION_TOKEN is set in the daemon's environment. */
+  tokenPresent: boolean;
+  /** A sync run (manual or the poll) is executing right now. */
+  syncing: boolean;
+  scope: NotionScope;
+  lastSyncAt: string | null;
+  lastSyncError: string | null;
+  /** Synced notion:// documents currently in the store, and their chunk total. */
+  documents: number;
+  chunks: number;
+}

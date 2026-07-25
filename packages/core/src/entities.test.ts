@@ -541,6 +541,13 @@ describe("entities + indexer", () => {
   });
 
   it("folds name variants and type forks into the first-seen entity", async () => {
+    // Pinned sequential: the canonical-spelling feedback (item 2's prompt carries item
+    // 1's entity) only holds between items that do not extract in the same parallel
+    // wave. With two items and default concurrency they WOULD share a wave.
+    process.env.MEMLOOM_INDEX_CONCURRENCY = "1";
+    cleanups.push(() => {
+      delete process.env.MEMLOOM_INDEX_CONCURRENCY;
+    });
     const prompts: string[] = [];
     const forker = new ScriptedLLMProvider((prompt) => {
       prompts.push(prompt);

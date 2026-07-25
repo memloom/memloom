@@ -52,7 +52,7 @@ describe("context connector", () => {
     await memloom.init();
     const dir = mkdtempSync(join(tmpdir(), "memloom-ctx-"));
     cleanups.push(() => rmSync(dir, { recursive: true, force: true }));
-    return { memloom, dir };
+    return { memloom, dir, storage };
   }
 
   it("ingests markdown with heading breadcrumbs and recalls it with a source", async () => {
@@ -101,6 +101,103 @@ describe("context connector", () => {
 
     const docs = await memloom.contextList();
     expect(docs).toHaveLength(1);
+  });
+
+  it("an edited file keeps unchanged chunks' rows: ids, indexed state, mention edges", async () => {
+    const { memloom, dir, storage } = await fresh();
+    const path = join(dir, "diary.md");
+    writeFileSync(
+      path,
+      "# Diary\n## July 21\nwalked in the park with my family\n## July 22\nshipped the notion connector\n",
+    );
+    const added = await memloom.contextAdd({ path });
+
+    const before = await storage.query<{ id: string; content: string }>(
+      "SELECT id, content FROM context_chunks WHERE document_id = $1 ORDER BY chunk_index",
+      [added.documentId],
+    );
+    expect(before.length).toBeGreaterThan(1);
+    // Simulate a completed index run plus one extracted mention edge on the first chunk.
+    await storage.query("UPDATE context_chunks SET indexed_at = now() WHERE document_id = $1", [
+      added.documentId,
+    ]);
+    const anchor = before[0] as { id: string };
+    const [entity] = await storage.query<{ id: string }>(
+      `INSERT INTO memory_entities (owner_id, name, entity_type, embedding)
+       SELECT owner_id, 'park', 'place', embedding FROM context_chunks WHERE id = $1 RETURNING id`,
+      [anchor.id],
+    );
+    await storage.query(
+      `INSERT INTO memory_edges (owner_id, from_id, to_id, relation)
+       SELECT owner_id, $1, $2, 'mention' FROM context_chunks WHERE id = $1`,
+      [anchor.id, entity?.id],
+    );
+
+    // Append a day: the two existing sections' content is untouched.
+    writeFileSync(
+      path,
+      "# Diary\n## July 21\nwalked in the park with my family\n## July 22\nshipped the notion connector\n## July 23\nfixed the reindex storm\n",
+    );
+    const updated = await memloom.contextAdd({ path });
+    expect(updated.outcome).toBe("updated");
+
+    const after = await storage.query<{ id: string; content: string; indexed_at: string | null }>(
+      "SELECT id, content, indexed_at FROM context_chunks WHERE document_id = $1 ORDER BY chunk_index",
+      [added.documentId],
+    );
+    // Every chunk whose content survived kept its exact row and stayed indexed.
+    const beforeByContent = new Map(before.map((c) => [c.content, c.id]));
+    let kept = 0;
+    for (const chunk of after) {
+      const priorId = beforeByContent.get(chunk.content);
+      if (priorId) {
+        expect(chunk.id).toBe(priorId);
+        expect(chunk.indexed_at).not.toBeNull();
+        kept++;
+      }
+    }
+    expect(kept).toBeGreaterThan(0);
+    // Only genuinely new content waits for the indexer.
+    const pending = after.filter((c) => c.indexed_at === null);
+    expect(pending.length).toBeGreaterThan(0);
+    expect(pending.length).toBe(after.length - kept);
+    expect(pending.map((c) => c.content).join(" ")).toContain("reindex storm");
+    // The kept chunk's mention edge survived the update.
+    const edges = await storage.query<{ id: string }>(
+      "SELECT id FROM memory_edges WHERE from_id = $1 AND relation = 'mention'",
+      [anchor.id],
+    );
+    expect(edges).toHaveLength(1);
+  });
+
+  it("reordered sections keep their rows and land at the new positions", async () => {
+    const { memloom, dir, storage } = await fresh();
+    const path = join(dir, "notes.md");
+    writeFileSync(path, "# Notes\n## Alpha\nfirst topic body text\n## Beta\nsecond topic body text\n");
+    const added = await memloom.contextAdd({ path });
+    const before = await storage.query<{ id: string; content: string }>(
+      "SELECT id, content FROM context_chunks WHERE document_id = $1 ORDER BY chunk_index",
+      [added.documentId],
+    );
+
+    writeFileSync(path, "# Notes\n## Beta\nsecond topic body text\n## Alpha\nfirst topic body text\n");
+    const updated = await memloom.contextAdd({ path });
+    expect(updated.outcome).toBe("updated");
+
+    const after = await storage.query<{ id: string; content: string; chunk_index: number }>(
+      "SELECT id, content, chunk_index FROM context_chunks WHERE document_id = $1 ORDER BY chunk_index",
+      [added.documentId],
+    );
+    // Same rows, new order: the UNIQUE (document_id, chunk_index) shuffle must not lose them.
+    const beforeByContent = new Map(before.map((c) => [c.content, c.id]));
+    for (const chunk of after) {
+      const priorId = beforeByContent.get(chunk.content);
+      if (priorId) expect(chunk.id).toBe(priorId);
+    }
+    const betaIndex = after.findIndex((c) => c.content.includes("second topic"));
+    const alphaIndex = after.findIndex((c) => c.content.includes("first topic"));
+    expect(betaIndex).toBeGreaterThanOrEqual(0);
+    expect(alphaIndex).toBeGreaterThan(betaIndex);
   });
 
   it("ingests a PDF and keeps the page number", async () => {

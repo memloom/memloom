@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { AssistantView } from "./AssistantView";
 import { api, type Conflict, type Graph } from "./api";
 import { ConflictsView } from "./ConflictsView";
+import { ConnectorsView } from "./ConnectorsView";
 import { ConsoleView } from "./ConsoleView";
 import { DocumentsView } from "./DocumentsView";
 import { GraphView } from "./GraphView";
@@ -10,7 +11,15 @@ import { MemoriesView } from "./MemoriesView";
 import { SchemaView } from "./SchemaView";
 import { ThemeToggle } from "./ThemeToggle";
 
-type Tab = "graph" | "assistant" | "memories" | "documents" | "schema" | "conflicts" | "console";
+type Tab =
+  | "graph"
+  | "assistant"
+  | "memories"
+  | "documents"
+  | "schema"
+  | "conflicts"
+  | "connectors"
+  | "console";
 
 export function App() {
   const [tab, setTab] = useState<Tab>("graph");
@@ -61,6 +70,7 @@ export function App() {
               "documents",
               "schema",
               "conflicts",
+              "connectors",
               "console",
             ] as const
           ).map((t) => (
@@ -133,6 +143,7 @@ export function App() {
         {tab === "documents" && <DocumentsView onChanged={refresh} />}
         {tab === "schema" && <SchemaView onChanged={refresh} />}
         {tab === "conflicts" && <ConflictsView conflicts={conflicts} onChanged={refresh} />}
+        {tab === "connectors" && <ConnectorsView onChanged={refresh} />}
         {tab === "console" && <ConsoleView onChanged={refresh} />}
       </main>
     </div>

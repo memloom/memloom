@@ -22,6 +22,13 @@ import {
   removeHook,
 } from "./hooks.js";
 import { runImport } from "./import.js";
+import {
+  NOTION_USAGE,
+  runNotionConnect,
+  runNotionDisconnect,
+  runNotionStatus,
+  runNotionSync,
+} from "./notion.js";
 import { runReembed } from "./reembed.js";
 
 /** "from setup.md › Guide > Postgres (p. 3)" for context-chunk recall results. */
@@ -80,6 +87,10 @@ Usage: memloom <command> [args]
   connect claude-code  capture future sessions automatically as they end (--project X | --all)
   disconnect claude-code  stop capturing; removes only memloom's hook
   status               daemon, capture scope, last hook activity, today's spend
+  notion connect       pick Notion pages to sync as context (needs NOTION_TOKEN)
+  notion sync          sync the selected Notion pages now (--dry-run | --force)
+  notion status        Notion token, selection, last sync, synced documents
+  notion disconnect    stop syncing Notion (synced documents stay)
   context add <path>   ingest files (or a directory) as context: ${supportedExtensions().join(" ")}
   context list         list ingested context documents
   context remove <id>  remove a context document and its chunks
@@ -270,6 +281,28 @@ The capture dashboard: whether the daemon is up, whether the session-end hook
 is installed, the capture scope, when the hook last fired and whether it
 failed, today's unattended distillation spend against the daily budget, and
 how much the ledger has imported in total.`,
+
+  notion: `memloom notion <connect|sync|status|disconnect>
+
+Sync selected Notion pages into memloom as context documents and keep them
+fresh. Pages become recallable alongside your memories and files: your diary,
+project notes, whatever you choose. No LLM extraction calls; sync costs only
+embeddings, and only for pages that changed.
+
+Setup once: create an internal integration at notion.so/profile/integrations,
+share your pages with it (page menu, Connections), and start the daemon with
+NOTION_TOKEN set. Then:
+
+  memloom notion connect                   list visible pages, pick interactively
+  memloom notion connect --page Diary      pick by title (or id); repeatable
+  memloom notion connect --all             sync everything the integration sees
+  memloom notion sync [--dry-run|--force]  sync now (the daemon also polls every
+                                           5 minutes; NOTION_POLL_MS to change)
+  memloom notion status                    token, selection, last sync, documents
+  memloom notion disconnect                stop syncing; synced documents stay
+
+Notion webhooks need a public HTTPS endpoint, so a local daemon polls instead.
+Edits land within one poll interval.`,
 
   conflicts: `memloom conflicts [auto]
 
@@ -491,6 +524,17 @@ export async function run(argv: readonly string[]): Promise<void> {
       }
 
       throw new Error("usage: memloom context <add|list|remove>");
+    }
+
+    case "notion": {
+      const [sub, ...args] = rest;
+      const engine = await connect();
+      if (sub === "connect") await runNotionConnect(engine, args);
+      else if (sub === "sync") await runNotionSync(engine, args);
+      else if (sub === "status") await runNotionStatus(engine);
+      else if (sub === "disconnect") await runNotionDisconnect(engine);
+      else throw new Error(NOTION_USAGE);
+      return;
     }
 
     case "import": {

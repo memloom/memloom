@@ -22,25 +22,72 @@ const REQUEST_TIMEOUT_MS = 60_000;
 // Pipeline replies (distillation arrays, dedup verdicts, entity JSON) fit comfortably here.
 const MAX_COMPLETION_TOKENS = 8_192;
 
+// Transient failures are retried before anything surfaces: a dead keep-alive socket, an
+// edge throttle, or a blip of packet loss must not fail a save or leave a chunk
+// unindexed. Undici reports all of those as a bare TypeError "fetch failed"; the real
+// cause (ECONNRESET, EAI_AGAIN, ...) hides in err.cause and is preserved in the message,
+// because "fetch failed" alone once cost an evening of debugging.
+const MAX_ATTEMPTS = 4;
+const RETRYABLE_STATUS = new Set([408, 429, 500, 502, 503, 504]);
+const BACKOFF_BASE_MS = 1_000;
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+function backoffMs(attempt: number, retryAfterSeconds?: number): number {
+  if (retryAfterSeconds && Number.isFinite(retryAfterSeconds)) {
+    return Math.min(retryAfterSeconds * 1000, 30_000);
+  }
+  return BACKOFF_BASE_MS * 2 ** (attempt - 1) + Math.random() * 250;
+}
+
+function describeNetworkError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const cause = (err as { cause?: { code?: string; message?: string } })?.cause;
+  const detail = cause?.code ?? cause?.message;
+  return detail ? `${message} (${detail})` : message;
+}
+
 async function postJson(url: string, apiKey: string, body: unknown, what: string) {
-  let res: { ok: boolean; status: number; text(): Promise<string>; json(): Promise<unknown> };
-  try {
-    res = await fetch(url, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
-  } catch (err) {
-    if (err instanceof Error && err.name === "TimeoutError") {
-      throw new Error(`OpenRouter ${what} timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+  for (let attempt = 1; ; attempt++) {
+    let res: {
+      ok: boolean;
+      status: number;
+      headers?: { get(name: string): string | null };
+      text(): Promise<string>;
+      json(): Promise<unknown>;
+    };
+    try {
+      res = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+    } catch (err) {
+      // A timeout already spent its 60s; retrying doubles the pain for a stall that is
+      // rarely transient. Fail it loudly and let the caller decide.
+      if (err instanceof Error && err.name === "TimeoutError") {
+        throw new Error(`OpenRouter ${what} timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+      }
+      if (attempt >= MAX_ATTEMPTS) {
+        throw new Error(
+          `OpenRouter ${what} failed after ${MAX_ATTEMPTS} attempts: ${describeNetworkError(err)}`,
+        );
+      }
+      await sleep(backoffMs(attempt));
+      continue;
     }
-    throw err;
+    if (!res.ok) {
+      if (RETRYABLE_STATUS.has(res.status) && attempt < MAX_ATTEMPTS) {
+        const retryAfter = Number(res.headers?.get("retry-after"));
+        await res.text().catch(() => ""); // drain the body so the socket can be reused
+        await sleep(backoffMs(attempt, retryAfter));
+        continue;
+      }
+      throw new Error(`OpenRouter ${what} failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
   }
-  if (!res.ok) {
-    throw new Error(`OpenRouter ${what} failed: ${res.status} ${await res.text()}`);
-  }
-  return res.json();
 }
 
 export interface OpenRouterEmbeddingsOptions {

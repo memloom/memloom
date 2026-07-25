@@ -484,6 +484,82 @@ paths:
                 example: |
                   {"type":"item","path":"/home/me/.claude/projects/-home-me-app/3f2a....jsonl","project":"app","sessionId":"3f2a...","index":1,"total":3,"outcome":"imported","chunks":2,"saved":4,"merged":0,"versioned":1,"conflicts":0,"autoResolved":0,"dropped":0,"truncated":0,"redactions":1,"malformed":0}
                   {"type":"done","sessions":3,"skipped":{"sidecars":0,"active":0,"outsideWindow":2,"overCap":0,"upToDate":1},"saved":4,"merged":0,"versioned":1,"conflicts":0,"autoResolved":0,"dropped":0,"truncated":0,"redactions":1,"malformed":0,"calls":{"extraction":2,"embedding":2,"classifier":1},"dryRun":false}
+  /notion/pages:
+    get:
+      summary: List Notion pages the integration can see
+      description: |
+        What the connect picker renders. Lists every page, database, and data source shared
+        with the configured Notion integration, with parent references so clients can show
+        the workspace as a tree (database row-pages collapse under their database). Requires
+        NOTION_TOKEN in the daemon's environment; the token never crosses this API.
+      operationId: notionListPages
+      responses:
+        "200":
+          description: The listing, with parent references.
+  /notion/status:
+    get:
+      summary: Notion connector status
+      description: |
+        Whether a token is configured, the current selection, the last sync time and error,
+        whether a sync is running, and how many notion:// documents exist.
+      operationId: notionStatus
+      responses:
+        "200":
+          description: The connector status.
+  /notion/scope:
+    put:
+      summary: Set which Notion items sync
+      description: |
+        Replaces the sync selection. Pass the items to sync, or null to disconnect (synced
+        documents stay). What `memloom notion connect` and the viewer's connectors tab call.
+      operationId: setNotionScope
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                scope:
+                  description: The items to sync, or null to disconnect.
+      responses:
+        "200":
+          description: Scope stored.
+        "400":
+          $ref: "#/components/responses/ValidationError"
+  /notion/sync/stream:
+    post:
+      summary: Sync the selected Notion items now
+      description: |
+        What `memloom notion sync` calls (the daemon also runs it on a poll timer). For each
+        selected item: asks Notion whether it changed, refetches only the sections whose
+        last_edited_time moved (cached block tree), renders to markdown, and re-ingests
+        chunk-stably so unchanged chunks keep their rows and embeddings. The response
+        streams NDJSON: one {"type":"item"} event per page plus fetch-progress events, then
+        {"type":"done"} with the totals. A dry run fetches no page content and writes
+        nothing.
+      operationId: notionSyncStream
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dryRun:
+                  type: boolean
+                  description: List what would sync; no content fetches, no writes.
+                force:
+                  type: boolean
+                  description: Ignore caches and refetch every selected item in full.
+                wait:
+                  type: boolean
+                  description: If a sync is already running, queue behind it instead of failing.
+      responses:
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "200":
+          description: NDJSON progress stream ending with a done (or error) event.
   /import/agent-memory/stream:
     post:
       summary: Import memories agents already saved on disk

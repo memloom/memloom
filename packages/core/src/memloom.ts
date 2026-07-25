@@ -25,6 +25,9 @@ import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from
 import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
 import { NullLLMProvider } from "./hashing-provider.js";
 import { migrate } from "./migrate.js";
+import { dataSourceTitle, expandsInline, NotionClient, pageTitle } from "./notion.js";
+import type { NotionBlockNode } from "./notion.js";
+import { blocksToMarkdown, rowsToMarkdown } from "./notion-markdown.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
 import { redact } from "./redact.js";
 import {
@@ -77,6 +80,12 @@ import type {
   ImportResult,
   ImportSessionEvent,
   ImportStatus,
+  NotionListedPage,
+  NotionScope,
+  NotionStatus,
+  NotionSyncEvent,
+  NotionSyncOptions,
+  NotionSyncResult,
   IndexProgressEvent,
   IndexResult,
   IndexRun,
@@ -157,6 +166,29 @@ const IMPORT_NOTIFY_AT_KEY = "import_last_notify_at";
 const IMPORT_NOTIFY_ERROR_KEY = "import_last_notify_error";
 const importCallsKey = () => `import_unattended_calls_${new Date().toLocaleDateString("en-CA")}`;
 
+// Notion connector state: the selection, the run bookkeeping, and one last_edited_time
+// watermark per selected item so unchanged pages cost one metadata request, zero fetches.
+const NOTION_SCOPE_KEY = "notion_scope";
+const NOTION_SYNC_AT_KEY = "notion_last_sync_at";
+const NOTION_SYNC_ERROR_KEY = "notion_last_sync_error";
+const notionEditedKey = (id: string) => `notion_edited_${id}`;
+// The block tree from the last successful sync, JSON. Lets the next sync list only the
+// page's top level and refetch just the sections whose last_edited_time moved, instead
+// of re-downloading thousands of blocks to pick up one day's diary entry.
+const notionTreeKey = (id: string) => `notion_tree_${id}`;
+const NOTION_TREE_CACHE_VERSION = 1;
+
+interface NotionTreeCache {
+  v: number;
+  truncated: boolean;
+  nodes: NotionBlockNode[];
+}
+
+// Salted into every synced document's content hash; bump when the block-to-markdown
+// pipeline changes so existing documents re-chunk instead of no-oping on stale content.
+// v2: signed Notion-hosted file URLs dropped; block cap raised and truncation reported.
+const NOTION_PIPELINE_VERSION = 2;
+
 // _memloom_meta key set while a reembed() is underway; its presence means the store's vectors
 // are partially NULL and must not be served until the migration finishes.
 const REEMBED_MARKER_KEY = "embedding_migration_target";
@@ -195,6 +227,8 @@ export interface MemloomConfig {
   llm: LLMProvider;
   /** Run the belief pipeline (dedup + conflict detection) on save. Default true. */
   dedup?: boolean;
+  /** Fetch used by the Notion connector; tests inject a fake. Default globalThis.fetch. */
+  notionFetch?: typeof globalThis.fetch;
   /**
    * Index new memories and chunks automatically, in the background, shortly after a
    * save/ingest, so the entity arm of recall works without an explicit `memloom index`.
@@ -296,6 +330,7 @@ export class Memloom implements MemoryEngine {
   readonly #embedding: EmbeddingProvider;
   readonly #llm: LLMProvider;
   readonly #dedup: boolean;
+  readonly #notionFetch: typeof globalThis.fetch;
   // Dedup classifier calls made since construction; the import path reads the delta so its
   // cost line reports classifier spend exactly, not an estimate.
   #classifyCalls = 0;
@@ -314,6 +349,7 @@ export class Memloom implements MemoryEngine {
     this.#embedding = config.embedding;
     this.#llm = config.llm;
     this.#dedup = config.dedup ?? true;
+    this.#notionFetch = config.notionFetch ?? globalThis.fetch;
     this.#autoIndex = config.autoIndex ?? false;
     this.#autoIndexCapable = config.autoIndex !== undefined;
     this.#autoIndexDelay = config.autoIndexDelayMs ?? 1500;
@@ -709,20 +745,83 @@ export class Memloom implements MemoryEngine {
     const chunks = file.units.flatMap((unit) =>
       sectionize(unit.text).map((c) => ({ ...c, page: unit.page })),
     );
+
+    // Chunk-stable replacement: a re-ingest keeps every chunk whose content is identical
+    // to a prior row (same id, embedding, indexed_at, and mention edges), and only the
+    // actually-changed chunks are embedded, inserted, and left for the indexer. Without
+    // this, one edited diary day re-embeds and re-extracts the whole page: a mirror
+    // update must cost what changed, not what exists.
+    const replaceId = prior?.id ?? convert?.id;
+    const keyOf = (content: string, headingPath: string | null, page: number | null) =>
+      `${content}\u0000${headingPath ?? ""}\u0000${page ?? ""}`;
+    // key -> reusable prior row ids, a multiset so repeated identical sections pair up.
+    const reusable = new Map<string, string[]>();
+    if (replaceId) {
+      const priorChunks = await this.#storage.query<{
+        id: string;
+        content: string;
+        heading_path: string | null;
+        page: number | null;
+      }>(
+        `SELECT id, content, heading_path, page FROM context_chunks
+         WHERE document_id = $1 AND owner_id = $2 ORDER BY chunk_index`,
+        [replaceId, owner],
+      );
+      for (const row of priorChunks) {
+        const key = keyOf(
+          row.content,
+          row.heading_path,
+          row.page === null ? null : Number(row.page),
+        );
+        const list = reusable.get(key);
+        if (list) list.push(row.id);
+        else reusable.set(key, [row.id]);
+      }
+    }
+    const plan = chunks.map((chunk) => {
+      const ids = reusable.get(keyOf(chunk.content, chunk.headingPath, chunk.page));
+      const keptId = ids?.shift() ?? null;
+      return { chunk, keptId };
+    });
+    const doomed = [...reusable.values()].flat();
+    const freshChunks = plan.filter((p) => p.keptId === null).map((p) => p.chunk);
     // Embed before the transaction: provider calls are slow and can fail; the store swap
-    // below stays a short, all-or-nothing write.
+    // below stays a short, all-or-nothing write. Only changed content is embedded.
     const embeddings =
-      chunks.length > 0 ? await this.#embedding.embed(chunks.map((c) => c.content)) : [];
+      freshChunks.length > 0
+        ? await this.#embedding.embed(freshChunks.map((c) => c.content))
+        : [];
+    if (embeddings.length !== freshChunks.length) {
+      throw new Error("memloom: embedding count mismatch during ingest");
+    }
 
     return await this.#storage.tx(async (tx) => {
       let documentId: string;
       // Replacement target: the same path re-added with new content, OR an upload snapshot
       // being converted to this link with the file's newer content (path moves too).
-      const replaceId = prior?.id ?? convert?.id;
       if (replaceId) {
-        // Replace the prior chunks (and their mention edges) before re-inserting: see
-        // #deleteDocumentChunks for why the edges can't ride a cascade.
-        await this.#deleteDocumentChunks(tx, replaceId, owner);
+        // Chunks that no longer exist take their mention edges and stated relationships
+        // with them (a document is a mirror; its claims leave with it). memory_edges has
+        // no FK to context_chunks, so the edges never ride a cascade.
+        for (const id of doomed) {
+          await tx.query(
+            "DELETE FROM memory_edges WHERE owner_id = $2 AND (source_id = $1 OR from_id = $1)",
+            [id, owner],
+          );
+          await tx.query("DELETE FROM context_chunks WHERE id = $1 AND owner_id = $2", [
+            id,
+            owner,
+          ]);
+        }
+        // Surviving rows move clear of the target range first: chunk_index is UNIQUE per
+        // document, and a section that shifted position would otherwise collide with a
+        // row still sitting at its old index.
+        if (plan.some((p) => p.keptId !== null)) {
+          await tx.query(
+            "UPDATE context_chunks SET chunk_index = chunk_index + 1000000 WHERE document_id = $1",
+            [replaceId],
+          );
+        }
         await tx.query(
           `UPDATE context_documents
            SET path = $2, title = $3, kind = $4, content_hash = $5, chunk_count = $6, updated_at = now()
@@ -741,10 +840,19 @@ export class Memloom implements MemoryEngine {
         documentId = row.id;
       }
 
-      for (let i = 0; i < chunks.length; i++) {
-        const chunk = chunks[i];
-        const emb = embeddings[i];
-        if (!chunk || !emb) throw new Error("memloom: embedding count mismatch during ingest");
+      let embIndex = 0;
+      for (let i = 0; i < plan.length; i++) {
+        const entry = plan[i];
+        if (!entry) throw new Error("memloom: chunk plan mismatch during ingest");
+        if (entry.keptId !== null) {
+          await tx.query("UPDATE context_chunks SET chunk_index = $2 WHERE id = $1", [
+            entry.keptId,
+            i,
+          ]);
+          continue;
+        }
+        const emb = embeddings[embIndex++];
+        if (!emb) throw new Error("memloom: embedding count mismatch during ingest");
         await tx.query(
           `INSERT INTO context_chunks (document_id, owner_id, chunk_index, content, heading_path, page, embedding, session_id)
            VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8)`,
@@ -752,9 +860,9 @@ export class Memloom implements MemoryEngine {
             documentId,
             owner,
             i,
-            chunk.content,
-            chunk.headingPath,
-            chunk.page,
+            entry.chunk.content,
+            entry.chunk.headingPath,
+            entry.chunk.page,
             toVectorLiteral(emb),
             sessionId,
           ],
@@ -1448,6 +1556,364 @@ export class Memloom implements MemoryEngine {
     }
   }
 
+  // One client per engine so its request spacing is global: a manual sync and the
+  // daemon's poll share the ~3 requests/second budget instead of tripping 429s together.
+  #notionClientInstance: NotionClient | null = null;
+  #notionSyncInFlight: Promise<NotionSyncResult> | null = null;
+
+  #notionClient(): NotionClient {
+    const token = process.env.NOTION_TOKEN;
+    if (!token) {
+      throw new Error(
+        "NOTION_TOKEN is not set. Create an internal integration at " +
+          "notion.so/profile/integrations, share your pages with it (page menu, " +
+          "Connections), and export the token as NOTION_TOKEN.",
+      );
+    }
+    this.#notionClientInstance ??= new NotionClient(token, this.#notionFetch);
+    return this.#notionClientInstance;
+  }
+
+  /** The pages and data sources selected for sync; null = connector off. */
+  async notionScope(): Promise<NotionScope> {
+    const raw = await this.#metaGet(NOTION_SCOPE_KEY);
+    if (raw === null) return null;
+    try {
+      const parsed = JSON.parse(raw) as { items?: unknown[] };
+      if (!Array.isArray(parsed.items)) return null;
+      return {
+        items: parsed.items
+          .filter((i): i is Record<string, unknown> => typeof i === "object" && i !== null)
+          .map((i) => ({
+            id: String(i.id),
+            object: i.object === "data_source" ? ("data_source" as const) : ("page" as const),
+            title: String(i.title ?? "Untitled"),
+          })),
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async setNotionScope(scope: NotionScope): Promise<void> {
+    if (scope === null || scope.items.length === 0) {
+      await this.#storage.query("DELETE FROM _memloom_meta WHERE key = $1", [NOTION_SCOPE_KEY]);
+      return;
+    }
+    await this.#metaSet(NOTION_SCOPE_KEY, JSON.stringify(scope));
+  }
+
+  /**
+   * Everything the integration can see, marked with what is already selected. Search is
+   * eventually consistent on Notion's side: a page shared moments ago can be missing, so
+   * callers tell the user to retry rather than conclude the share failed.
+   */
+  async notionListPages(): Promise<NotionListedPage[]> {
+    const items = await this.#notionClient().listShared();
+    const scope = await this.notionScope();
+    const selected = new Set(scope?.items.map((i) => i.id) ?? []);
+    return items.map((item) => ({ ...item, selected: selected.has(item.id) }));
+  }
+
+  /**
+   * Sync the selected Notion items into context documents. One metadata request per item
+   * decides whether it changed (last_edited_time watermark, minute granularity); changed
+   * pages fetch incrementally against the cached block tree (see #fetchPageNodes), get
+   * rendered to markdown, and go through the shared document pipeline, where the
+   * content-hash short-circuit makes redundant fetches harmless. Item failures are
+   * reported and skipped; the run continues.
+   */
+  async notionSync(
+    opts: NotionSyncOptions = {},
+    onProgress?: (event: NotionSyncEvent) => void,
+  ): Promise<NotionSyncResult> {
+    // Single-flight: a second sync (usually the daemon's poll racing a manual run)
+    // would only halve the shared rate budget and redo the same work. A manual run
+    // passes wait and QUEUES behind the in-flight one instead of being refused: the
+    // user reaching for `notion sync --force` must always end with their edit pulled,
+    // not with an error. The poll never waits; its next tick comes anyway.
+    if (this.#notionSyncInFlight && !opts.wait) {
+      throw new Error(
+        "a Notion sync is already running (the daemon also polls in the background); " +
+          "try again in a moment or watch memloom notion status",
+      );
+    }
+    if (this.#notionSyncInFlight) {
+      onProgress?.({
+        id: "",
+        title: "",
+        object: "page",
+        index: 0,
+        total: 0,
+        outcome: "waiting",
+        chunks: 0,
+      });
+      while (this.#notionSyncInFlight) {
+        await this.#notionSyncInFlight.catch(() => undefined);
+      }
+    }
+    const run = this.#notionSyncRun(opts, onProgress).finally(() => {
+      this.#notionSyncInFlight = null;
+    });
+    this.#notionSyncInFlight = run;
+    return run;
+  }
+
+  /**
+   * The page's full block tree, incrementally when possible. With a cached tree from the
+   * last sync, only the top level is listed (hundreds of day-sections cost a handful of
+   * requests) and only sections whose last_edited_time moved since the cache are
+   * re-downloaded. Notion bumps every ancestor's timestamp when a nested block changes
+   * (verified against real pages; a parent can trail its deepest child by a minute of
+   * rounding, but it always moves, and the diff compares each section against its own
+   * cached value, never parent against child). If the page reported an edit that no
+   * section accounts for, fall back to a full fetch: correctness over savings.
+   */
+  async #fetchPageNodes(
+    client: NotionClient,
+    pageId: string,
+    force: boolean,
+    onProgress: (blocksFetched: number) => void,
+  ): Promise<{
+    nodes: NotionBlockNode[];
+    truncated: boolean;
+    sections?: number;
+    refetched?: number;
+  }> {
+    let cache: NotionTreeCache | null = null;
+    if (!force) {
+      const raw = await this.#metaGet(notionTreeKey(pageId));
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw) as NotionTreeCache;
+          if (parsed.v === NOTION_TREE_CACHE_VERSION && Array.isArray(parsed.nodes)) {
+            cache = parsed;
+          }
+        } catch {
+          // unreadable cache: fall through to a full fetch, which rewrites it
+        }
+      }
+    }
+    if (!cache) return client.blockTree(pageId, onProgress);
+
+    const cachedById = new Map(cache.nodes.map((n) => [n.block.id, n]));
+    let fetched = 0;
+    const top = await client.blockChildrenList(pageId, (n) => {
+      fetched = n;
+      onProgress(n);
+    });
+    const changed = top.filter((block) => {
+      const prev = cachedById.get(block.id);
+      return (
+        !prev ||
+        String(prev.block.last_edited_time ?? "") !== String(block.last_edited_time ?? "")
+      );
+    });
+    if (changed.length === 0) return client.blockTree(pageId, onProgress);
+
+    const changedIds = new Set(changed.map((b) => b.id));
+    const nodes: NotionBlockNode[] = [];
+    let truncated = cache.truncated;
+    for (const block of top) {
+      const prev = cachedById.get(block.id);
+      if (!changedIds.has(block.id) && prev) {
+        // Unchanged section: fresh block payload (already in hand), cached subtree.
+        nodes.push({ block, children: prev.children });
+        continue;
+      }
+      let children: NotionBlockNode[] = [];
+      if (expandsInline(block)) {
+        const base = fetched;
+        let subFetched = 0;
+        const sub = await client.blockTree(block.id, (n) => {
+          subFetched = n;
+          onProgress(base + n);
+        });
+        fetched = base + subFetched;
+        children = sub.nodes;
+        truncated = truncated || sub.truncated;
+      }
+      nodes.push({ block, children });
+    }
+    return { nodes, truncated, sections: top.length, refetched: changed.length };
+  }
+
+  async #notionSyncRun(
+    opts: NotionSyncOptions,
+    onProgress?: (event: NotionSyncEvent) => void,
+  ): Promise<NotionSyncResult> {
+    const owner = opts.ownerId ?? SENTINEL_OWNER;
+    const scope = await this.notionScope();
+    if (!scope || scope.items.length === 0) {
+      throw new Error("no Notion pages selected: run memloom notion connect first");
+    }
+    const client = this.#notionClient();
+
+    const result: NotionSyncResult = {
+      items: scope.items.length,
+      added: 0,
+      updated: 0,
+      unchanged: 0,
+      fresh: 0,
+      errors: 0,
+      truncated: 0,
+      dryRun: opts.dryRun === true,
+    };
+    let anyChange = false;
+
+    for (const [index, item] of scope.items.entries()) {
+      // Change detection asks the ITEM endpoint, never search: Notion's search index is
+      // eventually consistent and its last_edited_time can lag an edit by minutes, which
+      // once made a just-edited diary look fresh. GET /pages/{id} is authoritative and
+      // costs one request per selected item per pass.
+      let title = item.title;
+      let lastEdited = "";
+      let metaError: string | null = null;
+      try {
+        const meta =
+          item.object === "page" ? await client.page(item.id) : await client.dataSource(item.id);
+        lastEdited = String(meta.last_edited_time ?? "");
+        title = item.object === "page" ? pageTitle(meta) : dataSourceTitle(meta);
+      } catch (err) {
+        metaError = err instanceof Error ? err.message : String(err);
+      }
+      const emit = (
+        outcome: NotionSyncEvent["outcome"],
+        chunks = 0,
+        error?: string,
+        truncated?: boolean,
+        incremental?: { sections: number; refetched: number },
+      ) => {
+        onProgress?.({
+          id: item.id,
+          title,
+          object: item.object,
+          index: index + 1,
+          total: scope.items.length,
+          outcome,
+          chunks,
+          ...(error ? { error } : {}),
+          ...(truncated ? { truncated: true } : {}),
+          ...(incremental ?? {}),
+        });
+      };
+      try {
+        if (metaError !== null) throw new Error(metaError);
+        const stored = await this.#metaGet(notionEditedKey(item.id));
+        // Exact-string comparison: any edit bumps last_edited_time (rounded down to the
+        // minute, so an edit in the same minute as the previous sync can wait one poll).
+        if (!opts.force && lastEdited && stored === lastEdited) {
+          result.fresh++;
+          emit("fresh");
+          continue;
+        }
+        if (opts.dryRun) {
+          emit("would-sync");
+          continue;
+        }
+
+        // Life signs while content downloads: rate-limited fetches of a long page take
+        // minutes, and they also keep the NDJSON stream from idling out.
+        emit("fetching");
+        let lastReported = 0;
+        const fetchProgress = (blocksFetched: number) => {
+          if (blocksFetched - lastReported >= 100) {
+            lastReported = blocksFetched;
+            emit("fetching", blocksFetched);
+          }
+        };
+        let markdown: string;
+        let truncated = false;
+        let pageNodes: NotionBlockNode[] | null = null;
+        let incremental: { sections: number; refetched: number } | undefined;
+        if (item.object === "page") {
+          const tree = await this.#fetchPageNodes(
+            client,
+            item.id,
+            opts.force === true,
+            fetchProgress,
+          );
+          truncated = tree.truncated;
+          pageNodes = tree.nodes;
+          if (tree.sections !== undefined && tree.refetched !== undefined) {
+            incremental = { sections: tree.sections, refetched: tree.refetched };
+          }
+          markdown = blocksToMarkdown(title, tree.nodes);
+        } else {
+          markdown = rowsToMarkdown(title, await client.dataSourceRows(item.id));
+        }
+        if (truncated) result.truncated++;
+        const file: ExtractedFile = {
+          kind: "notion",
+          title,
+          contentHash: `${createHash("sha256").update(markdown).digest("hex")}#n${NOTION_PIPELINE_VERSION}`,
+          chunker: "markdown",
+          units: [{ text: markdown, page: null }],
+        };
+        const ingest = await this.#ingestDocument(owner, `notion://${item.id}`, file, null);
+        // Cache before the watermark: if the cache write dies, the stale watermark makes
+        // the next sync refetch; the other order could pair a new watermark with an old
+        // tree and quietly serve stale sections.
+        if (pageNodes) {
+          const treeCache: NotionTreeCache = {
+            v: NOTION_TREE_CACHE_VERSION,
+            truncated,
+            nodes: pageNodes,
+          };
+          await this.#metaSet(notionTreeKey(item.id), JSON.stringify(treeCache));
+        }
+        if (lastEdited) await this.#metaSet(notionEditedKey(item.id), lastEdited);
+
+        if (ingest.outcome === "unchanged") {
+          result.unchanged++;
+          emit("unchanged", ingest.chunks, undefined, truncated, incremental);
+        } else if (ingest.outcome === "added") {
+          result.added++;
+          anyChange = true;
+          emit("added", ingest.chunks, undefined, truncated, incremental);
+        } else {
+          result.updated++;
+          anyChange = true;
+          emit("updated", ingest.chunks, undefined, truncated, incremental);
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        result.errors++;
+        result.error = message;
+        emit("error", 0, message);
+      }
+    }
+
+    if (anyChange) this.#scheduleAutoIndex(owner);
+    if (!opts.dryRun) {
+      await this.#metaSet(NOTION_SYNC_AT_KEY, new Date().toISOString());
+      if (result.error) await this.#metaSet(NOTION_SYNC_ERROR_KEY, result.error);
+      else {
+        await this.#storage.query("DELETE FROM _memloom_meta WHERE key = $1", [
+          NOTION_SYNC_ERROR_KEY,
+        ]);
+      }
+    }
+    return result;
+  }
+
+  async notionStatus(ownerId: string = SENTINEL_OWNER): Promise<NotionStatus> {
+    const [row] = await this.#storage.query<{ documents: string; chunks: string }>(
+      `SELECT count(*) AS documents, COALESCE(sum(chunk_count), 0) AS chunks
+       FROM context_documents WHERE owner_id = $1 AND path LIKE 'notion://%'`,
+      [ownerId],
+    );
+    return {
+      tokenPresent: Boolean(process.env.NOTION_TOKEN),
+      syncing: this.#notionSyncInFlight !== null,
+      scope: await this.notionScope(),
+      lastSyncAt: await this.#metaGet(NOTION_SYNC_AT_KEY),
+      lastSyncError: await this.#metaGet(NOTION_SYNC_ERROR_KEY),
+      documents: Number(row?.documents ?? 0),
+      chunks: Number(row?.chunks ?? 0),
+    };
+  }
+
   // The stored excerpt is what keeps provenance alive after the user cleans up transcripts;
   // it is built from the already-redacted units, so no matched secret is ever persisted.
   async #insertProvenance(
@@ -1821,11 +2287,13 @@ export class Memloom implements MemoryEngine {
     const runId = run.id;
     this.#activeRuns.add(runId);
 
+    // entities/relations count rows and edges that did not exist before this run, never
+    // resolves of existing ones: the console's "+N entities" must reconcile with the table.
     const totals = { memories: 0, chunks: 0, failed: 0, entities: 0, relations: 0 };
     const logEvent = async (
       level: "info" | "success" | "warning" | "error",
       message: string,
-      itemId: string,
+      itemId: string | null,
       metadata: Record<string, unknown>,
     ) => {
       await this.#storage.query(
@@ -1852,97 +2320,192 @@ export class Memloom implements MemoryEngine {
             ? ` (+${linked.relationships} ${linked.relationships === 1 ? "relationship" : "relationships"})`
             : "");
 
+    // The expensive step per item is the LLM extraction (seconds); the writes around it
+    // are milliseconds. A worker pool overlaps the extractions while EVERY write (entity
+    // resolution, edges, indexed_at, run bookkeeping) passes through one serialized
+    // queue: no two items write concurrently, so #resolveEntity's read-check-insert can
+    // never race itself into duplicate entities and PGLite sees sequential writes.
+    const concurrency = Math.max(
+      1,
+      Math.min(16, Number(process.env.MEMLOOM_INDEX_CONCURRENCY) || 6),
+    );
+    // Consecutive item failures mean the provider path is down, not that items are bad:
+    // stop cleanly instead of burning through hundreds of doomed calls. Unvisited items
+    // stay unindexed; `memloom index` resumes.
+    const BREAKER_THRESHOLD = 5;
+    let consecutiveFailures = 0;
+    let breakerTripped = false;
+
+    let writeChain: Promise<unknown> = Promise.resolve();
+    const serialized = <T>(fn: () => Promise<T>): Promise<T> => {
+      const next = writeChain.then(fn, fn);
+      writeChain = next.then(
+        () => undefined,
+        () => undefined,
+      );
+      return next;
+    };
+
+    const runPool = async <T>(items: T[], worker: (item: T) => Promise<void>): Promise<void> => {
+      let cursor = 0;
+      await Promise.all(
+        Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+          for (;;) {
+            if (breakerTripped) return;
+            const item = items[cursor++];
+            if (item === undefined) return;
+            await worker(item);
+          }
+        }),
+      );
+    };
+
     try {
-      let memoryPosition = 0;
-      for (const memory of pending) {
-        memoryPosition += 1;
-        const base = {
-          kind: "memory" as const,
-          id: memory.id,
-          label: snippet(memory.content),
-          index: memoryPosition,
-          total: pending.length,
-        };
-        const prefix = `[${base.index}/${base.total}] memory ${base.label}`;
+      let memoryDone = 0;
+      await runPool(pending, async (memory) => {
+        const label = snippet(memory.content);
+        let extraction: Awaited<ReturnType<typeof extractGraph>> | null = null;
+        let failure: string | null = null;
         try {
-          const linked = await this.#linkGraph(ownerId, memory.id, memory.content, schema);
-          await this.#storage.query("UPDATE memory_objects SET indexed_at = now() WHERE id = $1", [
-            memory.id,
-          ]);
-          totals.memories += 1;
-          totals.entities += linked.entities.length;
-          totals.relations += linked.relationships;
-          await logEvent(
-            linked.entities.length > 0 ? "success" : "info",
-            `${prefix} → ${outcomeOf(linked)}`,
-            memory.id,
-            { entities: linked.entities, relationships: linked.relationships },
-          );
-          await syncTotals();
-          onProgress?.({ ...base, entities: linked.entities, relationships: linked.relationships });
+          extraction = await this.#extractForGraph(ownerId, memory.content, schema);
         } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          totals.failed += 1;
-          await logEvent("error", `${prefix} → failed: ${message}`, memory.id, { error: message });
-          await syncTotals();
-          onProgress?.({ ...base, entities: [], error: message });
+          failure = err instanceof Error ? err.message : String(err);
         }
-      }
+        await serialized(async () => {
+          memoryDone += 1;
+          const base = {
+            kind: "memory" as const,
+            id: memory.id,
+            label,
+            index: memoryDone,
+            total: pending.length,
+          };
+          const prefix = `[${base.index}/${base.total}] memory ${base.label}`;
+          try {
+            if (failure !== null || extraction === null) throw new Error(failure ?? "no extraction");
+            const linked = await this.#writeGraph(ownerId, memory.id, extraction);
+            await this.#storage.query(
+              "UPDATE memory_objects SET indexed_at = now() WHERE id = $1",
+              [memory.id],
+            );
+            totals.memories += 1;
+            totals.entities += linked.newEntities;
+            totals.relations += linked.relationships;
+            consecutiveFailures = 0;
+            await logEvent(
+              linked.entities.length > 0 ? "success" : "info",
+              `${prefix} → ${outcomeOf(linked)}`,
+              memory.id,
+              { entities: linked.entities, relationships: linked.relationships },
+            );
+            await syncTotals();
+            onProgress?.({
+              ...base,
+              entities: linked.entities,
+              relationships: linked.relationships,
+            });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            totals.failed += 1;
+            consecutiveFailures += 1;
+            if (consecutiveFailures >= BREAKER_THRESHOLD) breakerTripped = true;
+            await logEvent("error", `${prefix} → failed: ${message}`, memory.id, {
+              error: message,
+            });
+            await syncTotals();
+            onProgress?.({ ...base, entities: [], error: message });
+          }
+        });
+      });
 
-      let chunkPosition = 0;
-      for (const chunk of pendingChunks) {
-        chunkPosition += 1;
-        const base = {
-          kind: "chunk" as const,
-          id: chunk.id,
-          label: snippet(
-            `${chunk.doc_title} › ${chunk.heading_path ?? `#${Number(chunk.chunk_index) + 1}`}`,
-          ),
-          index: chunkPosition,
-          total: pendingChunks.length,
-        };
-        const prefix = `[${base.index}/${base.total}] chunk ${base.label}`;
-        try {
-          // Formula-dominated chunks have nothing extractable: skip the LLM call entirely
-          // (a math exercise sheet would otherwise become a graph of equations).
-          const skipped = isMathDense(chunk.content);
-          const linked = skipped
-            ? { entities: [], relationships: 0 }
-            : await this.#linkGraph(ownerId, chunk.id, chunk.content, schema, {
-                docTitle: chunk.doc_title,
-              });
-          await this.#storage.query("UPDATE context_chunks SET indexed_at = now() WHERE id = $1", [
-            chunk.id,
-          ]);
-          totals.chunks += 1;
-          totals.entities += linked.entities.length;
-          totals.relations += linked.relationships;
-          await logEvent(
-            skipped ? "info" : linked.entities.length > 0 ? "success" : "info",
-            `${prefix} → ${skipped ? "skipped (math-dense)" : outcomeOf(linked)}`,
-            chunk.id,
-            skipped
-              ? { skipped: "math-dense" }
-              : { entities: linked.entities, relationships: linked.relationships },
-          );
-          await syncTotals();
-          onProgress?.({
-            ...base,
-            entities: linked.entities,
-            relationships: linked.relationships,
-            ...(skipped ? { skipped: "math-dense" as const } : {}),
-          });
-        } catch (err) {
-          const message = err instanceof Error ? err.message : String(err);
-          totals.failed += 1;
-          await logEvent("error", `${prefix} → failed: ${message}`, chunk.id, { error: message });
-          await syncTotals();
-          onProgress?.({ ...base, entities: [], error: message });
+      let chunkDone = 0;
+      await runPool(pendingChunks, async (chunk) => {
+        const label = snippet(
+          `${chunk.doc_title} › ${chunk.heading_path ?? `#${Number(chunk.chunk_index) + 1}`}`,
+        );
+        // Formula-dominated chunks have nothing extractable: skip the LLM call entirely
+        // (a math exercise sheet would otherwise become a graph of equations).
+        const skipped = isMathDense(chunk.content);
+        let extraction: Awaited<ReturnType<typeof extractGraph>> | null = null;
+        let failure: string | null = null;
+        if (!skipped) {
+          try {
+            extraction = await this.#extractForGraph(ownerId, chunk.content, schema, {
+              docTitle: chunk.doc_title,
+            });
+          } catch (err) {
+            failure = err instanceof Error ? err.message : String(err);
+          }
         }
-      }
+        await serialized(async () => {
+          chunkDone += 1;
+          const base = {
+            kind: "chunk" as const,
+            id: chunk.id,
+            label,
+            index: chunkDone,
+            total: pendingChunks.length,
+          };
+          const prefix = `[${base.index}/${base.total}] chunk ${base.label}`;
+          try {
+            if (failure !== null) throw new Error(failure);
+            const linked =
+              skipped || extraction === null
+                ? { entities: [], newEntities: 0, relationships: 0 }
+                : await this.#writeGraph(ownerId, chunk.id, extraction);
+            await this.#storage.query(
+              "UPDATE context_chunks SET indexed_at = now() WHERE id = $1",
+              [chunk.id],
+            );
+            totals.chunks += 1;
+            totals.entities += linked.newEntities;
+            totals.relations += linked.relationships;
+            consecutiveFailures = 0;
+            await logEvent(
+              skipped ? "info" : linked.entities.length > 0 ? "success" : "info",
+              `${prefix} → ${skipped ? "skipped (math-dense)" : outcomeOf(linked)}`,
+              chunk.id,
+              skipped
+                ? { skipped: "math-dense" }
+                : { entities: linked.entities, relationships: linked.relationships },
+            );
+            await syncTotals();
+            onProgress?.({
+              ...base,
+              entities: linked.entities,
+              relationships: linked.relationships,
+              ...(skipped ? { skipped: "math-dense" as const } : {}),
+            });
+          } catch (err) {
+            const message = err instanceof Error ? err.message : String(err);
+            totals.failed += 1;
+            consecutiveFailures += 1;
+            if (consecutiveFailures >= BREAKER_THRESHOLD) breakerTripped = true;
+            await logEvent("error", `${prefix} → failed: ${message}`, chunk.id, {
+              error: message,
+            });
+            await syncTotals();
+            onProgress?.({ ...base, entities: [], error: message });
+          }
+        });
+      });
 
-      const status =
-        totals.failed === 0 ? "success" : totals.memories + totals.chunks > 0 ? "warning" : "error";
+      if (breakerTripped) {
+        await logEvent(
+          "error",
+          `stopped after ${BREAKER_THRESHOLD} consecutive failures; the provider looks ` +
+            "unreachable. Everything already indexed is saved; run `memloom index` to resume.",
+          null,
+          { breaker: true },
+        );
+      }
+      const status = breakerTripped
+        ? "interrupted"
+        : totals.failed === 0
+          ? "success"
+          : totals.memories + totals.chunks > 0
+            ? "warning"
+            : "error";
       await this.#storage.query(
         "UPDATE memory_index_runs SET status = $2, finished_at = now() WHERE id = $1",
         [runId, status],
@@ -3070,15 +3633,19 @@ export class Memloom implements MemoryEngine {
   // states (out-of-vocab and under-confident ones arrive already quarantined as 'mention'
   // by parseExtraction). The edge table has no FKs, so all node kinds share it. Returns
   // what the index progress stream reports.
-  async #linkGraph(
+  /**
+   * The read + LLM half of indexing one item: safe to run concurrently across items
+   * (nothing is written). Fetched per item (one cheap query next to one expensive LLM
+   * call) so an item's extraction sees the canonical spellings every COMPLETED item
+   * created; items in flight at the same moment do not see each other, the price of
+   * running extractions in parallel.
+   */
+  async #extractForGraph(
     owner: string,
-    sourceId: string,
     content: string,
     schema: ActiveSchema,
     context?: ExtractionContext,
-  ): Promise<{ entities: string[]; relationships: number }> {
-    // Fetched per item (one cheap query next to one expensive LLM call) so within a single
-    // run, document 2's extraction already sees the canonical spellings document 1 created.
+  ): Promise<Awaited<ReturnType<typeof extractGraph>>> {
     const known = await this.#storage.query<{ name: string }>(
       `SELECT me.name
        FROM memory_entities me
@@ -3089,28 +3656,44 @@ export class Memloom implements MemoryEngine {
        LIMIT 75`,
       [owner],
     );
-    const extraction = await extractGraph(
+    return extractGraph(
       this.#llm,
       content,
       { ...context, knownEntities: known.map((r) => r.name) },
       schema,
     );
+  }
+
+  /**
+   * The write half: entity resolution and edges. MUST run on the index run's serialized
+   * write queue; #resolveEntity is read-check-insert and duplicates entities if raced.
+   */
+  async #writeGraph(
+    owner: string,
+    sourceId: string,
+    extraction: Awaited<ReturnType<typeof extractGraph>>,
+  ): Promise<{ entities: string[]; newEntities: number; relationships: number }> {
     const idByName = new Map<string, string>();
+    // `entities` is every name this source mentions (the per-item console line);
+    // `newEntities` counts only rows that did not exist before, so run totals reconcile
+    // with the entity table instead of re-counting every resolve as a creation.
+    let newEntities = 0;
     for (const entity of extraction.entities) {
-      const entityId = await this.#resolveEntity(owner, entity.name, entity.type);
-      idByName.set(entity.name.toLowerCase(), entityId);
-      await addEdge(this.#storage, owner, sourceId, entityId, "mention");
+      const resolved = await this.#resolveEntity(owner, entity.name, entity.type);
+      if (resolved.created) newEntities += 1;
+      idByName.set(entity.name.toLowerCase(), resolved.id);
+      await addEdge(this.#storage, owner, sourceId, resolved.id, "mention");
     }
     let stored = 0;
     for (const rel of extraction.relationships) {
       const fromId = idByName.get(rel.subject.toLowerCase());
       const toId = idByName.get(rel.object.toLowerCase());
       if (!fromId || !toId) continue; // parser guarantees this; stay defensive
-      await addEdgeIfAbsent(this.#storage, owner, fromId, toId, rel.predicate, {
+      const created = await addEdgeIfAbsent(this.#storage, owner, fromId, toId, rel.predicate, {
         confidence: rel.confidence,
         sourceId,
       });
-      stored += 1;
+      if (created) stored += 1;
     }
     // Vocabulary the model wanted but the schema lacks: accumulate occurrences; the
     // review queue surfaces a name once enough independent extractions ask for it. The
@@ -3119,7 +3702,7 @@ export class Memloom implements MemoryEngine {
     for (const proposal of extraction.proposals) {
       await this.#recordProposal(owner, proposal.kind, proposal.name, proposal.examples, sourceId);
     }
-    return { entities: extraction.entities.map((e) => e.name), relationships: stored };
+    return { entities: extraction.entities.map((e) => e.name), newEntities, relationships: stored };
   }
 
   // --- schema registry ---
@@ -3284,12 +3867,12 @@ export class Memloom implements MemoryEngine {
     for (const example of examples) {
       if (row.kind === "entity_type" && example.entity) {
         if (!(await sourceAlive(example.sourceId))) continue;
-        const entityId = await this.#resolveEntity(ownerId, example.entity, row.name);
+        const resolved = await this.#resolveEntity(ownerId, example.entity, row.name);
         await addEdgeIfAbsent(
           this.#storage,
           ownerId,
           example.sourceId as string,
-          entityId,
+          resolved.id,
           "mention",
         );
         entitiesLinked += 1;
@@ -3362,7 +3945,11 @@ export class Memloom implements MemoryEngine {
     throw new Error("memloom: only disabled entries can be deleted; disable it first");
   }
 
-  async #resolveEntity(owner: string, name: string, type: string): Promise<string> {
+  async #resolveEntity(
+    owner: string,
+    name: string,
+    type: string,
+  ): Promise<{ id: string; created: boolean }> {
     // Identity is the NAME KEY alone (see entityNameKey): the type is an attribute, not
     // part of the key. The extractor classifies inconsistently across chunks ("@memloom/core"
     // as technology here, project there); forking a node per type is never what a personal
@@ -3376,7 +3963,7 @@ export class Memloom implements MemoryEngine {
        ORDER BY created_at LIMIT 1`,
       [owner, entityNameKey(name)],
     );
-    if (existing[0]) return existing[0].id;
+    if (existing[0]) return { id: existing[0].id, created: false };
     const [embedding] = await this.#embedding.embed([name]);
     if (!embedding) throw new Error("memloom: embedding provider returned no vector");
     const [row] = await this.#storage.query<{ id: string }>(
@@ -3385,7 +3972,7 @@ export class Memloom implements MemoryEngine {
       [owner, name, type, toVectorLiteral(embedding)],
     );
     if (!row) throw new Error("memloom: failed to insert entity");
-    return row.id;
+    return { id: row.id, created: true };
   }
 
   /** #resolveEntity's lookup half: find by name key, never create. */

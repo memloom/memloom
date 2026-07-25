@@ -210,6 +210,82 @@ export interface IndexRunEvent {
   createdAt: string;
 }
 
+// notion connector
+
+/** One Notion item the integration can see (a page or a database's data source). */
+export interface NotionItemRef {
+  id: string;
+  object: "page" | "data_source";
+  title: string;
+}
+
+/** The pages and data sources selected for sync; null = connector off. */
+export type NotionScope = { items: NotionItemRef[] } | null;
+
+/** One row of the Notion listing: a visible item plus its place in the tree. */
+export interface NotionListedPage extends NotionItemRef {
+  lastEdited: string;
+  url: string | null;
+  selected: boolean;
+  /** The listed item this one lives under, when that item is also listed; null at top level. */
+  parentId: string | null;
+  /** What kind of item parentId points at; "data_source" marks a database row-page. */
+  parentType: "page" | "data_source" | null;
+}
+
+export type NotionSyncOutcome =
+  | "waiting"
+  | "fetching"
+  | "added"
+  | "updated"
+  | "unchanged"
+  | "fresh"
+  | "would-sync"
+  | "error";
+
+/** Per-item progress during a sync run. */
+export interface NotionSyncEvent {
+  id: string;
+  title: string;
+  object: "page" | "data_source";
+  index: number;
+  total: number;
+  outcome: NotionSyncOutcome;
+  chunks: number;
+  error?: string;
+  truncated?: boolean;
+  sections?: number;
+  refetched?: number;
+}
+
+export interface NotionSyncResult {
+  items: number;
+  added: number;
+  updated: number;
+  unchanged: number;
+  fresh: number;
+  errors: number;
+  truncated: number;
+  dryRun: boolean;
+  error?: string;
+}
+
+export interface NotionStatus {
+  tokenPresent: boolean;
+  syncing: boolean;
+  scope: NotionScope;
+  lastSyncAt: string | null;
+  lastSyncError: string | null;
+  documents: number;
+  chunks: number;
+}
+
+// The NDJSON lines the sync stream emits: per-item progress, a final summary, or a failure.
+export type NotionSyncStreamEvent =
+  | ({ type: "item" } & NotionSyncEvent)
+  | ({ type: "done" } & NotionSyncResult)
+  | { type: "error"; error: string };
+
 // assistant chat
 
 export interface AssistantSource {
@@ -477,6 +553,65 @@ export const api = {
     }
     if (buffer.trim()) handleBlock(buffer);
     if (!done) throw new Error("assistant stream ended without a done event");
+    return done;
+  },
+  // The Notion connector. The daemon holds NOTION_TOKEN and owns the watermarks; the UI
+  // only reads status, edits the selection, and streams sync progress.
+  notionStatus: () => json<NotionStatus>("/notion/status"),
+  notionPages: () => json<NotionListedPage[]>("/notion/pages"),
+  setNotionScope: (scope: NotionScope) =>
+    json<{ ok: boolean }>("/notion/scope", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ scope }),
+    }),
+  // One sync run over NDJSON (one JSON object per line). Resolves with the done summary;
+  // onEvent fires per item. Pass wait so a running daemon poll queues instead of refusing.
+  notionSync: async (
+    input: { dryRun?: boolean; force?: boolean; wait?: boolean },
+    onEvent: (e: NotionSyncEvent) => void,
+  ): Promise<NotionSyncResult> => {
+    const res = await fetch("/notion/sync/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+    if (!res.ok || !res.body) {
+      const body = (await res.json().catch(() => null)) as { error?: string } | null;
+      throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
+    }
+    let done: NotionSyncResult | null = null;
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    const handleLine = (line: string) => {
+      if (!line.trim()) return;
+      // Parsed loose: the stream may carry heartbeat pings and event kinds from a newer
+      // daemon, which are skipped rather than rendered.
+      const event = JSON.parse(line) as { type: string; error?: string };
+      if (event.type === "error") throw new Error(event.error ?? "notion sync stream error");
+      if (event.type === "done") {
+        const { type: _t, ...result } = event;
+        done = result as unknown as NotionSyncResult;
+        return;
+      }
+      if (event.type !== "item") return;
+      const { type: _t, ...item } = event;
+      onEvent(item as unknown as NotionSyncEvent);
+    };
+    for (;;) {
+      const { done: eof, value } = await reader.read();
+      if (eof) break;
+      buffer += decoder.decode(value, { stream: true });
+      let nl = buffer.indexOf("\n");
+      while (nl >= 0) {
+        handleLine(buffer.slice(0, nl));
+        buffer = buffer.slice(nl + 1);
+        nl = buffer.indexOf("\n");
+      }
+    }
+    if (buffer.trim()) handleLine(buffer);
+    if (!done) throw new Error("notion sync stream ended without a done event");
     return done;
   },
   conflicts: () => json<{ conflicts: Conflict[] }>("/memory/conflicts").then((r) => r.conflicts),
