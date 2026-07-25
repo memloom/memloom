@@ -511,6 +511,70 @@ export interface ImportResult {
   error?: string;
 }
 
+// ---- Agent memory import (`memloom import agent-memory`) ----
+
+export interface AgentMemoryImportOptions {
+  /** Which agents to read. Default: all supported ("claude-code", "copilot"). */
+  agents?: string[];
+  /** Case-insensitive substring match on the Claude Code project directory name. */
+  project?: string;
+  /** Parse and count only: zero provider calls, zero writes, ledger untouched. */
+  dryRun?: boolean;
+  /** Ignore the ledger's unchanged check and reprocess every memory file. */
+  force?: boolean;
+  /** Override ~/.claude/projects (tests). */
+  claudeRoot?: string;
+  /** Override the per-OS Copilot candidates (tests). */
+  copilotRoots?: string[];
+  ownerId?: string;
+}
+
+/** One memory folder finished during an agent-memory import run: the progress line. */
+export interface AgentMemoryFolderEvent {
+  agent: string;
+  /** Claude Code: the project directory name; Copilot: "global". */
+  label: string;
+  path: string;
+  /** 1-based position in this run. */
+  index: number;
+  total: number;
+  outcome: "imported" | "up-to-date" | "dry-run" | "partial";
+  /** Set on "partial": the provider error that stopped the folder (and the run). */
+  error?: string;
+  /** Markdown files read (the MEMORY.md index is not counted). */
+  files: number;
+  /** Memories parsed out of those files. */
+  memories: number;
+  /** Memories skipped because their ledger hash is unchanged since the last run. */
+  unchanged: number;
+  saved: number;
+  merged: number;
+  versioned: number;
+  conflicts: number;
+  redactions: number;
+}
+
+export interface AgentMemoryImportResult {
+  /** Folders processed (or planned, on a dry run). */
+  folders: number;
+  files: number;
+  memories: number;
+  unchanged: number;
+  saved: number;
+  merged: number;
+  versioned: number;
+  conflicts: number;
+  redactions: number;
+  /** The cost line. Agent memories are already distilled: no extraction calls, ever. */
+  calls: { embedding: number; classifier: number };
+  dryRun: boolean;
+  /**
+   * Set when a provider failure stopped the run early. Everything saved before the failure
+   * is kept and ledgered, so a re-run resumes instead of re-spending.
+   */
+  error?: string;
+}
+
 // The four human-in-the-loop resolution actions. All reversible.
 /** Progress from the conflict auto-resolver: one event per examined conflict. */
 export interface ConflictAutoEvent {

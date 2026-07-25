@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Added `memloom import agent-memory`: bring in the memories your agents already saved on
+  disk. Claude Code's per-project memory folders and GitHub Copilot's memory-tool notes are
+  parsed, redacted, and saved through the belief pipeline with per-file provenance; no LLM
+  extraction is needed because the files are already distilled, and a content-hash ledger
+  makes re-runs free. Read-only on the agents' folders
+  ([docs](https://docs.memloom.dev/cli/import))
+
 ## 0.2.0
 
 - Added `memloom import sessions`: distill your agent's sessions into typed, searchable

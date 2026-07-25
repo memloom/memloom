@@ -484,6 +484,44 @@ paths:
                 example: |
                   {"type":"item","path":"/home/me/.claude/projects/-home-me-app/3f2a....jsonl","project":"app","sessionId":"3f2a...","index":1,"total":3,"outcome":"imported","chunks":2,"saved":4,"merged":0,"versioned":1,"conflicts":0,"autoResolved":0,"dropped":0,"truncated":0,"redactions":1,"malformed":0}
                   {"type":"done","sessions":3,"skipped":{"sidecars":0,"active":0,"outsideWindow":2,"overCap":0,"upToDate":1},"saved":4,"merged":0,"versioned":1,"conflicts":0,"autoResolved":0,"dropped":0,"truncated":0,"redactions":1,"malformed":0,"calls":{"extraction":2,"embedding":2,"classifier":1},"dryRun":false}
+  /import/agent-memory/stream:
+    post:
+      summary: Import memories agents already saved on disk
+      description: |
+        What `memloom import agent-memory` calls. Discovers the agents' own well-known
+        memory folders (Claude Code per-project memory directories, GitHub Copilot's
+        memory-tool notes; the client never supplies a filesystem path), parses each file
+        into memories, redacts secret-shaped strings, and saves through the belief
+        pipeline. No LLM extraction: the files are already distilled. A content-hash
+        ledger skips unchanged memories, so re-runs are free. The response streams NDJSON:
+        one `{"type":"item"}` event per folder, then `{"type":"done"}` with the totals.
+      operationId: importAgentMemoryStream
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                agents:
+                  type: array
+                  items:
+                    type: string
+                  description: Only these agents (claude-code, copilot). Default both.
+                project:
+                  type: string
+                  description: Only Claude Code projects whose folder name contains this substring.
+                dryRun:
+                  type: boolean
+                  description: List folders and counts; no provider calls, no writes.
+                force:
+                  type: boolean
+                  description: Re-import everything, ignoring the content-hash ledger.
+      responses:
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "200":
+          description: NDJSON progress stream ending with a done (or error) event.
   /import/claude-code/notify:
     post:
       summary: Notify the daemon a Claude Code session ended

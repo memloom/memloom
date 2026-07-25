@@ -9,6 +9,7 @@ import {
   type MemoryType,
   supportedExtensions,
 } from "@memloom/core";
+import { runAgentMemoryImport } from "./agent-memory.js";
 import { configPath, dataDir, ensureConfig, memloomHome } from "./config.js";
 import { connect } from "./connect.js";
 import { startDaemon } from "./daemon.js";
@@ -74,6 +75,8 @@ Usage: memloom <command> [args]
   auto-index [on|off]  show or set background entity extraction after saves/ingests
   conflicts [auto]     list pending conflicts; auto resolves the obvious ones with the LLM
   import sessions      distill recent agent sessions into memories (--dry-run first)
+  import agent-memory  bring in memories your agents already saved on disk (Claude Code
+                       memory folders, Copilot); no LLM needed
   connect claude-code  capture future sessions automatically as they end (--project X | --all)
   disconnect claude-code  stop capturing; removes only memloom's hook
   status               daemon, capture scope, last hook activity, today's spend
@@ -215,7 +218,26 @@ processed. Needs an API key; offline mode cannot distill.
   --force      reprocess from scratch, ignoring the ledger
   --days N     widen the day window (default 14)
   --sessions N raise the session cap (default 20)
-  --project X  only sessions whose project folder name contains X`,
+  --project X  only sessions whose project folder name contains X
+
+memloom import agent-memory [--dry-run] [--force] [--agent <name>] [--project <name>]
+
+Bring in the memories your agents already saved on disk. Claude Code keeps one
+markdown file per memory under ~/.claude/projects/<project>/memory/; Copilot
+keeps topic files in VS Code's globalStorage whose ## sections are memories.
+Those files are distilled already, so no LLM is needed: each memory is redacted,
+embedded, and saved through the belief pipeline, and keeps provenance back to
+its file. Re-running is free for unchanged files (a content-hash ledger skips
+them). Read-only: memloom never writes into the agents' folders.
+
+  memloom import agent-memory --dry-run          what would be imported
+  memloom import agent-memory                    the real run
+  memloom import agent-memory --agent claude-code --project memloom
+
+  --dry-run    list folders and memory counts; no provider calls, writes nothing
+  --force      reimport everything, ignoring the content-hash ledger
+  --agent X    only one agent: claude-code or copilot (repeatable)
+  --project X  only Claude Code projects whose folder name contains X`,
 
   connect: `memloom connect claude-code (--project <name> ... | --all)
 
@@ -473,15 +495,22 @@ export async function run(argv: readonly string[]): Promise<void> {
 
     case "import": {
       const [source, ...args] = rest;
-      // "claude-code" is a quiet alias from before the rename; not documented.
-      if (source !== "sessions" && source !== "claude-code") {
-        throw new Error(
-          "usage: memloom import sessions [--agent claude-code] [--dry-run] [--force] [--days N] [--sessions N] [--project <name>]",
-        );
+      // "claude-code" is a quiet alias from before the sessions rename; not documented.
+      if (source === "sessions" || source === "claude-code") {
+        const engine = await connect();
+        await runImport(engine, args);
+        return;
       }
-      const engine = await connect();
-      await runImport(engine, args);
-      return;
+      if (source === "agent-memory") {
+        const engine = await connect();
+        await runAgentMemoryImport(engine, args);
+        return;
+      }
+      throw new Error(
+        "usage: memloom import <sessions|agent-memory> [flags]. " +
+          "sessions distills transcripts (--agent claude-code); agent-memory brings in " +
+          "memories your agents already saved on disk.",
+      );
     }
 
     case "connect": {
