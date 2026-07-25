@@ -49,19 +49,20 @@ export async function addEdgeIfAbsent(
   toId: string,
   relation: string,
   opts?: { confidence?: number; sourceId?: string },
-): Promise<void> {
+): Promise<boolean> {
   const existing = await storage.query<{ id: string }>(
     `SELECT id FROM memory_edges
      WHERE owner_id = $1 AND from_id = $2 AND to_id = $3 AND relation = $4 AND active
      LIMIT 1`,
     [ownerId, fromId, toId, relation],
   );
-  if (existing[0]) return;
+  if (existing[0]) return false;
   await storage.query(
     `INSERT INTO memory_edges (owner_id, from_id, to_id, relation, confidence, source_id)
      VALUES ($1, $2, $3, $4, $5, $6)`,
     [ownerId, fromId, toId, relation, opts?.confidence ?? null, opts?.sourceId ?? null],
   );
+  return true;
 }
 
 /** Soft-delete edges of a relation that touch any of the given memory ids (from or to). */

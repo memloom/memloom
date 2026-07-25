@@ -1247,6 +1247,9 @@ textarea {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  /* Even expanded, the list scrolls inside its own viewport instead of growing the page. */
+  max-height: 380px;
+  overflow-y: auto;
 }
 
 .chunkCrumb {
@@ -1423,6 +1426,100 @@ textarea {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* ---------- connectors tab (Notion) ---------- */
+
+.notionSyncing {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--brand);
+}
+
+.notionSetup {
+  font-size: 13px;
+  color: var(--text-muted);
+  line-height: 1.6;
+}
+
+.notionSetup ol {
+  margin: 8px 0 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.notionStatusLines {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+
+.notionStatusMeta {
+  margin-left: 0;
+}
+
+.notionStatusError {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--danger);
+}
+
+.notionPickerHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+/* The listing tree scrolls inside its own viewport, like .entityList and .chunkList. */
+.notionTree {
+  max-height: 380px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+}
+
+.notionRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.notionRow:hover {
+  background: var(--bg-raised);
+}
+
+.notionRow input[type="checkbox"] {
+  flex: none;
+  accent-color: var(--brand);
+}
+
+.notionRowTitle {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.notionRowKind {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.notionRowMeta {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 11px;
 }
 
 /* server-side file/folder picker (Documents tab) */

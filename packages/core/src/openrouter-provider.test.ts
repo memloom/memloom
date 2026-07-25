@@ -116,3 +116,91 @@ describe("OpenRouterLLM per-request model override", () => {
     ).rejects.toThrow(/"some\/notool-model" does not support tool calling/);
   });
 });
+
+describe("postJson retry behavior", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  const okCompletion = {
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    text: async () => "",
+    json: async () => ({ choices: [{ message: { content: "ok" } }] }),
+  };
+
+  it("retries network failures and succeeds, without surfacing the blip", async () => {
+    vi.useFakeTimers();
+    const netErr = Object.assign(new TypeError("fetch failed"), {
+      cause: { code: "ECONNRESET" },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValueOnce(netErr)
+      .mockRejectedValueOnce(netErr)
+      .mockResolvedValue(okCompletion);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = new OpenRouterLLM({ apiKey: "k" }).complete("hi");
+    await vi.runAllTimersAsync();
+    await expect(pending).resolves.toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("gives up after 4 attempts and names the real cause, not just fetch failed", async () => {
+    vi.useFakeTimers();
+    const netErr = Object.assign(new TypeError("fetch failed"), {
+      cause: { code: "ECONNRESET" },
+    });
+    const fetchMock = vi.fn().mockRejectedValue(netErr);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = new OpenRouterLLM({ apiKey: "k" }).complete("hi");
+    pending.catch(() => {});
+    await vi.runAllTimersAsync();
+    await expect(pending).rejects.toThrow(/after 4 attempts.*fetch failed \(ECONNRESET\)/);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it("retries 429 honoring Retry-After, drains the body first", async () => {
+    vi.useFakeTimers();
+    let drained = false;
+    const throttled = {
+      ok: false,
+      status: 429,
+      headers: { get: (name: string) => (name === "retry-after" ? "2" : null) },
+      text: async () => {
+        drained = true;
+        return "slow down";
+      },
+      json: async () => ({}),
+    };
+    const fetchMock = vi.fn().mockResolvedValueOnce(throttled).mockResolvedValue(okCompletion);
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = new OpenRouterLLM({ apiKey: "k" }).complete("hi");
+    await vi.runAllTimersAsync();
+    await expect(pending).resolves.toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(drained).toBe(true);
+  });
+
+  it("does not retry a non-retryable status", async () => {
+    const bad = {
+      ok: false,
+      status: 400,
+      headers: { get: () => null },
+      text: async () => "bad request",
+      json: async () => ({}),
+    };
+    const fetchMock = vi.fn().mockResolvedValue(bad);
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(new OpenRouterLLM({ apiKey: "k" }).complete("hi")).rejects.toThrow(
+      /400 bad request/,
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

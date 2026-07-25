@@ -98,6 +98,9 @@ importers:
         specifier: ^1.6.2
         version: 1.6.2
     devDependencies:
+      '@notionhq/client':
+        specifier: ^5.23.2
+        version: 5.23.2
       '@types/pg':
         specifier: ^8.11.0
         version: 8.20.0
@@ -636,6 +639,10 @@ packages:
     peerDependenciesMeta:
       '@cfworker/json-schema':
         optional: true
+
+  '@notionhq/client@5.23.2':
+    resolution: {integrity: sha512-iyD5VU9MoNxCR0GespotyrMlBpO4kLG+BaZK2JpZW1yfFqrmOYmZGb3wl4xqfq3n1Z9eekFwNcZD6t63SaESig==}
+    engines: {node: '>=18'}
 
   '@rolldown/pluginutils@1.0.0-rc.3':
     resolution: {integrity: sha512-eybk3TjzzzV97Dlj5c+XrBFW57eTNhzod66y9HrBlzJ6NsCrWCp/2kaPS3K9wJmurBC0Tdw4yPjXKZqlznim3Q==}
@@ -2516,6 +2523,8 @@ snapshots:
       zod-to-json-schema: 3.25.2(zod@3.25.76)
     transitivePeerDependencies:
       - supports-color
+
+  '@notionhq/client@5.23.2': {}
 
   '@rolldown/pluginutils@1.0.0-rc.3': {}
 

@@ -39,6 +39,15 @@ const CONFIG_TEMPLATE = `# memloom configuration. The daemon (\`memloom serve\`)
 # per item, debounced). Set to off to index only via \`memloom index\` / the Console:
 # MEMLOOM_AUTO_INDEX=on
 
+# Indexing runs entity extraction on a worker pool; raise or lower the concurrency:
+# MEMLOOM_INDEX_CONCURRENCY=6
+
+# Notion connector: create an internal integration at notion.so/profile/integrations,
+# share your pages with it, and put the token here. Pick pages with \`memloom notion connect\`.
+# NOTION_TOKEN=ntn_...
+# How often the daemon checks Notion for edits (milliseconds, minimum 60000):
+# NOTION_POLL_MS=300000
+
 # Storage tier. Default is the embedded PGLite store in ~/.memloom/data (zero setup). To run
 # on a real Postgres server instead (local Docker or managed cloud; pgvector must be
 # available), point memloom at it and restart:

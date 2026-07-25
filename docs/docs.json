@@ -160,6 +160,17 @@
                 ]
               },
               {
+                "group": "Connectors",
+                "openapi": "openapi.yaml",
+                "expanded": false,
+                "pages": [
+                  "GET /notion/pages",
+                  "GET /notion/status",
+                  "PUT /notion/scope",
+                  "POST /notion/sync/stream"
+                ]
+              },
+              {
                 "group": "Daemon",
                 "openapi": "openapi.yaml",
                 "expanded": false,
@@ -186,6 +197,10 @@
               "cli/context",
               "cli/conflicts"
             ]
+          },
+          {
+            "group": "Connectors",
+            "pages": ["cli/notion"]
           }
         ]
       },

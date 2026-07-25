@@ -19,6 +19,12 @@ import type {
   IndexProgressEvent,
   IndexResult,
   Memory,
+  NotionListedPage,
+  NotionScope,
+  NotionStatus,
+  NotionSyncEvent,
+  NotionSyncOptions,
+  NotionSyncResult,
   RecallOptions,
   ResolveDecision,
   ResolvedConflict,
@@ -71,6 +77,20 @@ export interface MemoryEngine {
   importStatus(): Promise<ImportStatus>;
   /** Set (connect) or clear (disconnect) the hook capture scope. */
   setImportScope(scope: ImportCaptureScope): Promise<void>;
+  /** Everything the Notion integration can see, marked with what is selected. */
+  notionListPages(): Promise<NotionListedPage[]>;
+  /** Set (connect) or clear (disconnect) the Notion sync selection. */
+  setNotionScope(scope: NotionScope): Promise<void>;
+  /**
+   * Sync selected Notion items into context documents: one search call finds what changed,
+   * only changed items are fetched. `onProgress` fires after each item.
+   */
+  notionSync(
+    opts?: NotionSyncOptions,
+    onProgress?: (event: NotionSyncEvent) => void,
+  ): Promise<NotionSyncResult>;
+  /** Connector state for `memloom notion status`: token, scope, last sync, doc counts. */
+  notionStatus(): Promise<NotionStatus>;
   /** Extract entities from unindexed rows. `onProgress` fires after each item completes. */
   index(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
   /** Wipe all extracted entities/edges and re-run indexing from scratch (recovery path). */

@@ -10,6 +10,10 @@ packages/cli/viewer/
 .gstack/
 docs-review/
 
+# local session notes, not part of the project
+TODOS.md
+TESTING-claude-code-import.md
+
 # locally-installed agent skills (fetched via `npx skills add`), vendored
 # per-machine, not part of the project source
 .agents/

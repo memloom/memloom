@@ -1,0 +1,87 @@
+---
+title: "Notion"
+description: "Sync Notion pages and databases as recallable context"
+---
+
+## notion connect
+
+```bash
+memloom notion connect
+```
+
+Your Notion workspace holds the notes your agents keep asking you about: the diary, the
+project plans, the decision docs. The connector syncs the pages you choose into memloom as
+context documents, recallable alongside your memories and files, and keeps them fresh
+automatically. No LLM extraction: sync costs only embeddings, and only for content that
+changed.
+
+Setup once:
+
+1. Create an internal integration at
+   [notion.so/profile/integrations](https://notion.so/profile/integrations).
+2. Share the pages you want with it (page menu, Connections). Access recurses: sharing a
+   page includes its subpages and database rows.
+3. Put the token in `~/.memloom/config.env` as `NOTION_TOKEN=...` and restart the daemon.
+
+Then pick what to sync. The picker shows the workspace as a tree: subpages and databases
+indent under their parent, and database row-pages collapse into their database's row count
+(syncing a database captures every row; a specific row-page with body content is still
+selectable with `--page`).
+
+```bash
+memloom notion connect                   # interactive picker
+memloom notion connect --page Diary      # by title or id; repeatable
+memloom notion connect --all             # everything the integration can see
+```
+
+## notion sync
+
+```bash
+memloom notion sync
+memloom notion sync --dry-run
+memloom notion sync --force
+```
+
+Pages become markdown documents (`notion://` sources): toggles flattened, to-do state
+kept, tables as pipe rows. The daemon also polls every 5 minutes (`NOTION_POLL_MS` to
+change), so edits land within one poll interval without you running anything.
+
+Sync is incremental at two levels:
+
+- **Change detection asks each page directly** instead of trusting Notion's
+  eventually-consistent search index, so a fresh edit is never mistaken for no change. An
+  idle workspace costs one API call per poll.
+- **Only changed sections are refetched.** memloom caches each page's block tree and
+  re-downloads just the sections whose `last_edited_time` moved, so editing one day in a
+  494-day diary refetches one section, not the page. A page-level change no section
+  accounts for falls back to a full fetch, so nothing slips through.
+
+Re-ingestion is chunk-stable: chunks whose content is unchanged keep their row, embedding,
+indexed state, and entity links. One edited section embeds and indexes one chunk.
+
+A manual sync that arrives while the poll is mid-run waits its turn and then runs instead
+of being refused. `--force` bypasses every cache and refetches everything.
+
+| Flag | What it does |
+| --- | --- |
+| `--dry-run` | List what would sync; no fetches of page content, no writes |
+| `--force` | Ignore the caches and refetch every selected item in full |
+
+## notion status and disconnect
+
+```bash
+memloom notion status        # token, selection, last sync, synced documents
+memloom notion disconnect    # stop syncing; synced documents stay
+```
+
+Disconnect clears the selection and stops the polling; documents already synced remain in
+the store and stay recallable. Remove them like any context document if you want them
+gone.
+
+## Privacy notes
+
+The Notion token never crosses memloom's HTTP API or the viewer; the daemon reads it from
+its own environment. Page content goes only to the embedding provider you configured, and
+only the changed chunks of it. Notion webhooks require a public HTTPS endpoint, so a
+local-first daemon polls by design; nothing about your workspace is exposed to receive
+callbacks.

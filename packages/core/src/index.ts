@@ -81,6 +81,19 @@ export { migrate, storedEmbeddingDims } from "./migrate.js";
 export type { Migration } from "./migrations.js";
 export { buildMigrations } from "./migrations.js";
 export type {
+  NotionBlock,
+  NotionBlockNode,
+  NotionListedItem,
+  NotionRichText,
+} from "./notion.js";
+export { NOTION_VERSION, NotionClient, pageTitle } from "./notion.js";
+export {
+  blocksToMarkdown,
+  propertyToPlain,
+  richTextToMarkdown,
+  rowsToMarkdown,
+} from "./notion-markdown.js";
+export type {
   OpenRouterEmbeddingsOptions,
   OpenRouterLLMOptions,
 } from "./openrouter-provider.js";
@@ -102,6 +115,7 @@ export type {
 export { isChatProvider } from "./providers.js";
 export type { RedactResult } from "./redact.js";
 export { redact } from "./redact.js";
+
 // The graph schema: the system-tier vocabulary constants (seeded into the memory_schema
 // registry) plus the registry model types.
 export type {
@@ -170,6 +184,13 @@ export type {
   Memory,
   MemoryStatus,
   MemoryType,
+  NotionItemRef,
+  NotionListedPage,
+  NotionScope,
+  NotionStatus,
+  NotionSyncEvent,
+  NotionSyncOptions,
+  NotionSyncResult,
   RecallOptions,
   RecallSource,
   ReembedOptions,

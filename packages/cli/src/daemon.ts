@@ -209,6 +209,41 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   }, 3_000);
   sweep.unref?.();
 
+  // The Notion poll: webhooks need a public endpoint, a localhost daemon polls instead.
+  // Each tick is one search call when nothing changed (watermarks skip unchanged pages),
+  // so the default 5 minutes is cheap. Silent unless something synced or failed; failures
+  // also land in `memloom notion status`. Only runs when a token and a selection exist.
+  const notionPollMs = Math.max(60_000, Number(process.env.NOTION_POLL_MS) || 300_000);
+  let notionTickBusy = false;
+  const notionTick = async () => {
+    if (notionTickBusy || !process.env.NOTION_TOKEN) return;
+    notionTickBusy = true;
+    try {
+      const scope = await memloom.notionScope();
+      if (scope === null) return;
+      const result = await memloom.notionSync({});
+      if (result.added + result.updated > 0 || result.errors > 0) {
+        console.log(
+          `${new Date().toISOString()}  notion: ${result.added} new, ${result.updated} updated` +
+            (result.errors > 0 ? `, ${result.errors} FAILED (${result.error})` : ""),
+        );
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // A manual `memloom notion sync` holds the single-flight lock; that is not a failure.
+      if (!message.includes("already running")) {
+        console.log(`${new Date().toISOString()}  notion poll failed: ${message}`);
+      }
+    } finally {
+      notionTickBusy = false;
+    }
+  };
+  // First tick soon after start (edits made while the daemon was down), then the interval.
+  const notionFirst = setTimeout(notionTick, 5_000);
+  notionFirst.unref?.();
+  const notionPoll = setInterval(notionTick, notionPollMs);
+  notionPoll.unref?.();
+
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
 }
