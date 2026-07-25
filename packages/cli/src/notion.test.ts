@@ -60,7 +60,13 @@ describe("flattenListing", () => {
   it("indents children under parents and collapses database rows into a count", () => {
     const listing = [
       listed({ id: "trip", title: "Rome trip" }),
-      listed({ id: "exp", title: "Expenses", object: "data_source", parentId: "trip", parentType: "page" }),
+      listed({
+        id: "exp",
+        title: "Expenses",
+        object: "data_source",
+        parentId: "trip",
+        parentType: "page",
+      }),
       listed({ id: "r1", title: "Train", parentId: "exp", parentType: "data_source" }),
       listed({ id: "r2", title: "Hostel", parentId: "exp", parentType: "data_source" }),
       listed({ id: "sub", title: "Packing list", parentId: "trip", parentType: "page" }),

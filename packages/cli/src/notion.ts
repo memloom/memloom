@@ -124,9 +124,7 @@ export function matchPages(
       matched.set(byId.id, byId);
       continue;
     }
-    const byTitle = listing.filter((item) =>
-      item.title.toLowerCase().includes(want.toLowerCase()),
-    );
+    const byTitle = listing.filter((item) => item.title.toLowerCase().includes(want.toLowerCase()));
     if (byTitle.length === 1 && byTitle[0]) matched.set(byTitle[0].id, byTitle[0]);
     else missing.push(want);
   }
@@ -203,13 +201,13 @@ export async function runNotionConnect(engine: MemoryEngine, args: string[]): Pr
   await engine.setNotionScope(scope);
   console.log(`\nsyncing ${chosen.length} item${chosen.length === 1 ? "" : "s"}:`);
   for (const item of chosen) console.log(`  ${item.title}`);
-  console.log(
-    "\nthe daemon polls for edits every 5 minutes; sync now with: memloom notion sync",
-  );
+  console.log("\nthe daemon polls for edits every 5 minutes; sync now with: memloom notion sync");
 }
 
 function truncNote(e: NotionSyncEvent): string {
-  return e.truncated ? "  TRUNCATED: the page is over the block cap, its newest content was not synced" : "";
+  return e.truncated
+    ? "  TRUNCATED: the page is over the block cap, its newest content was not synced"
+    : "";
 }
 
 /** "; refetched 2 of 494 sections" when the sync used the cached tree, empty otherwise. */
@@ -284,7 +282,9 @@ export async function runNotionSync(engine: MemoryEngine, args: string[]): Promi
 
 export async function runNotionStatus(engine: MemoryEngine): Promise<void> {
   const status = await engine.notionStatus();
-  console.log(`token       ${status.tokenPresent ? "present in daemon environment" : "NOT SET (set NOTION_TOKEN and restart the daemon)"}`);
+  console.log(
+    `token       ${status.tokenPresent ? "present in daemon environment" : "NOT SET (set NOTION_TOKEN and restart the daemon)"}`,
+  );
   const scope =
     status.scope === null
       ? "nothing selected (memloom notion connect to choose)"

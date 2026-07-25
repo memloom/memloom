@@ -173,14 +173,20 @@ describe("context connector", () => {
   it("reordered sections keep their rows and land at the new positions", async () => {
     const { memloom, dir, storage } = await fresh();
     const path = join(dir, "notes.md");
-    writeFileSync(path, "# Notes\n## Alpha\nfirst topic body text\n## Beta\nsecond topic body text\n");
+    writeFileSync(
+      path,
+      "# Notes\n## Alpha\nfirst topic body text\n## Beta\nsecond topic body text\n",
+    );
     const added = await memloom.contextAdd({ path });
     const before = await storage.query<{ id: string; content: string }>(
       "SELECT id, content FROM context_chunks WHERE document_id = $1 ORDER BY chunk_index",
       [added.documentId],
     );
 
-    writeFileSync(path, "# Notes\n## Beta\nsecond topic body text\n## Alpha\nfirst topic body text\n");
+    writeFileSync(
+      path,
+      "# Notes\n## Beta\nsecond topic body text\n## Alpha\nfirst topic body text\n",
+    );
     const updated = await memloom.contextAdd({ path });
     expect(updated.outcome).toBe("updated");
 

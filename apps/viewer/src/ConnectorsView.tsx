@@ -214,6 +214,7 @@ function NotionCard({ onChanged }: { onChanged: () => void }) {
   }, [anyRunning, loadStatus]);
 
   // Keep the newest log line in view as the stream appends.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: log is the scroll trigger, not an input
   useEffect(() => {
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
@@ -338,8 +339,7 @@ function NotionCard({ onChanged }: { onChanged: () => void }) {
                 : `${scopeItems.length} selected: ${scopeItems.map((i) => i.title).join(", ")}`}
             </div>
             <div className="docMeta notionStatusMeta">
-              last sync{" "}
-              {status.lastSyncAt ? new Date(status.lastSyncAt).toLocaleString() : "never"}
+              last sync {status.lastSyncAt ? new Date(status.lastSyncAt).toLocaleString() : "never"}
             </div>
             {status.lastSyncError && (
               <div className="notionStatusError">last sync failed: {status.lastSyncError}</div>
@@ -364,8 +364,8 @@ function NotionCard({ onChanged }: { onChanged: () => void }) {
             <div className="spin">loading…</div>
           ) : pages.length === 0 ? (
             <p style={{ color: "var(--text-faint)" }}>
-              The integration cannot see any pages yet. Share pages with it in Notion, then
-              refresh. A just-shared page can take a minute to appear.
+              The integration cannot see any pages yet. Share pages with it in Notion, then refresh.
+              A just-shared page can take a minute to appear.
             </p>
           ) : (
             <div className="notionTree">
