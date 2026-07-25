@@ -1,6 +1,9 @@
 import type { MemoryEngine } from "./engine.js";
 import type { SchemaInfo } from "./schema.js";
 import type {
+  AgentMemoryFolderEvent,
+  AgentMemoryImportOptions,
+  AgentMemoryImportResult,
   Conflict,
   ConflictAutoEvent,
   ConflictAutoResult,
@@ -124,6 +127,24 @@ export class HttpMemloomClient implements MemoryEngine {
     };
     return this.#streamNdjson<ImportSessionEvent, ImportResult>(
       "/import/sessions/stream",
+      body,
+      onProgress,
+    );
+  }
+
+  importAgentMemories(
+    opts: AgentMemoryImportOptions = {},
+    onProgress?: (event: AgentMemoryFolderEvent) => void,
+  ): Promise<AgentMemoryImportResult> {
+    // Root overrides and ownerId are daemon-side concerns; only user-facing knobs cross.
+    const body = {
+      agents: opts.agents,
+      project: opts.project,
+      dryRun: opts.dryRun,
+      force: opts.force,
+    };
+    return this.#streamNdjson<AgentMemoryFolderEvent, AgentMemoryImportResult>(
+      "/import/agent-memory/stream",
       body,
       onProgress,
     );

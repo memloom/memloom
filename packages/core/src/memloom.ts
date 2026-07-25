@@ -1,5 +1,12 @@
 import { createHash, randomUUID } from "node:crypto";
 import { basename, dirname } from "node:path";
+import {
+  AGENT_MEMORY_SOURCES,
+  type AgentMemorySource,
+  type AgentMemoryUnit,
+  locateAgentMemoryFolders,
+  parseAgentMemoryFolder,
+} from "./agent-memories.js";
 import { type AssistantEvent, runAssistantTurn } from "./assistant.js";
 import { chunkMarkdown, chunkOutline } from "./chunker.js";
 import {
@@ -41,6 +48,9 @@ import {
 } from "./schema.js";
 import type { StorageAdapter } from "./storage.js";
 import type {
+  AgentMemoryFolderEvent,
+  AgentMemoryImportOptions,
+  AgentMemoryImportResult,
   AssistantChatResult,
   AssistantMessage,
   AssistantSession,
@@ -125,6 +135,23 @@ const UNATTENDED_DAILY_CALL_CAP = 200;
 
 // _memloom_meta keys for hook capture state. The scope is what `connect` configured
 // (project allowlist or "all"); the notify keys are what `memloom status` renders.
+// The import_ledger/import_provenance source value for agent memory folders. Session import
+// owns "claude-code"; keeping the sources distinct keeps status counts and provenance honest.
+const AGENT_MEMORY_LEDGER_SOURCE = "agent-memory";
+
+/** Narrow a wire-level agent list to the supported sources; unknown names are an input error. */
+function normalizeAgentSelection(agents?: string[]): AgentMemorySource[] | undefined {
+  if (!agents || agents.length === 0) return undefined;
+  return agents.map((agent) => {
+    if (!(AGENT_MEMORY_SOURCES as readonly string[]).includes(agent)) {
+      throw new Error(
+        `memloom: unknown agent "${agent}" (expected ${AGENT_MEMORY_SOURCES.join(" | ")})`,
+      );
+    }
+    return agent as AgentMemorySource;
+  });
+}
+
 const IMPORT_SCOPE_KEY = "import_capture_scope";
 const IMPORT_NOTIFY_AT_KEY = "import_last_notify_at";
 const IMPORT_NOTIFY_ERROR_KEY = "import_last_notify_error";
@@ -1133,6 +1160,191 @@ export class Memloom implements MemoryEngine {
     return result;
   }
 
+  /**
+   * Import memories agents already saved on disk: Claude Code's per-project memory folders
+   * and Copilot's global memory-tool folder. Those files are distilled memories already, so
+   * unlike session import there is no LLM extraction step: parse, redact, batch-embed per
+   * folder, and run every memory through the ordinary belief pipeline. A per-memory ledger
+   * row keyed by content hash makes re-runs idempotent: an unchanged file costs zero
+   * provider calls. Read-only on the agents' folders; memloom never writes back into them.
+   */
+  async importAgentMemories(
+    opts: AgentMemoryImportOptions = {},
+    onProgress?: (event: AgentMemoryFolderEvent) => void,
+  ): Promise<AgentMemoryImportResult> {
+    const owner = opts.ownerId ?? SENTINEL_OWNER;
+    const agents = normalizeAgentSelection(opts.agents);
+    const folders = await locateAgentMemoryFolders({
+      ...(agents ? { agents } : {}),
+      ...(opts.project ? { project: opts.project } : {}),
+      ...(opts.claudeRoot ? { claudeRoot: opts.claudeRoot } : {}),
+      ...(opts.copilotRoots ? { copilotRoots: opts.copilotRoots } : {}),
+    });
+
+    const result: AgentMemoryImportResult = {
+      folders: 0,
+      files: 0,
+      memories: 0,
+      unchanged: 0,
+      saved: 0,
+      merged: 0,
+      versioned: 0,
+      conflicts: 0,
+      redactions: 0,
+      calls: { embedding: 0, classifier: 0 },
+      dryRun: opts.dryRun ?? false,
+    };
+    const classifyBefore = this.#classifyCalls;
+
+    for (const [i, folder] of folders.entries()) {
+      const event: AgentMemoryFolderEvent = {
+        agent: folder.agent,
+        label: folder.label,
+        path: folder.path,
+        index: i + 1,
+        total: folders.length,
+        outcome: opts.dryRun ? "dry-run" : "imported",
+        files: 0,
+        memories: 0,
+        unchanged: 0,
+        saved: 0,
+        merged: 0,
+        versioned: 0,
+        conflicts: 0,
+        redactions: 0,
+      };
+      const parsed = await parseAgentMemoryFolder(folder);
+      event.files = parsed.files;
+      event.memories = parsed.units.length;
+      result.files += parsed.files;
+      result.memories += parsed.units.length;
+
+      // Ledger check per memory: an unchanged content hash skips the unit before any
+      // provider call. The hash is the watermark analog for files that are rewritten in
+      // place rather than appended to; there is no line offset to resume from.
+      const changed: AgentMemoryUnit[] = [];
+      for (const unit of parsed.units) {
+        if (!opts.force) {
+          const [row] = await this.#storage.query<{ prefix_hash: string }>(
+            "SELECT prefix_hash FROM import_ledger WHERE owner_id = $1 AND source = $2 AND session_id = $3",
+            [owner, AGENT_MEMORY_LEDGER_SOURCE, unit.identity],
+          );
+          if (row && row.prefix_hash === unit.contentHash) {
+            event.unchanged++;
+            continue;
+          }
+        }
+        changed.push(unit);
+      }
+      result.unchanged += event.unchanged;
+
+      if (opts.dryRun) {
+        result.folders++;
+        onProgress?.(event);
+        continue;
+      }
+      if (changed.length === 0) {
+        event.outcome = "up-to-date";
+        result.folders++;
+        onProgress?.(event);
+        continue;
+      }
+
+      // Agent notes should not carry secrets, but one that does must never reach a
+      // provider or the store: same redaction as session import.
+      const units = changed.map((unit) => {
+        const scrub = redact(unit.content);
+        event.redactions += scrub.hits;
+        return scrub.hits > 0 ? { ...unit, content: scrub.text } : unit;
+      });
+      result.redactions += event.redactions;
+
+      // One embed call per folder; each save and its ledger row land together, so a
+      // provider failure mid-folder keeps everything already saved and a re-run only
+      // reprocesses the remainder.
+      let folderError: string | undefined;
+      try {
+        result.calls.embedding++;
+        const vectors = await this.#embedding.embed(units.map((unit) => unit.content));
+        for (const [j, unit] of units.entries()) {
+          const saveResult = await this.#save(
+            {
+              content: unit.content,
+              ...(unit.canonical ? { canonical: unit.canonical } : {}),
+              memoryType: unit.memoryType,
+              ownerId: owner,
+            },
+            vectors[j],
+          );
+          if (saveResult.outcome === "merged") {
+            event.merged++;
+          } else {
+            if (saveResult.outcome === "versioned") event.versioned++;
+            else if (saveResult.outcome === "conflict") event.conflicts++;
+            else event.saved++;
+            await this.#storage.query(
+              `INSERT INTO import_provenance (memory_id, owner_id, source, session_id, file_path, start_line, end_line, excerpt)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               ON CONFLICT (memory_id) DO NOTHING`,
+              [
+                saveResult.id,
+                owner,
+                AGENT_MEMORY_LEDGER_SOURCE,
+                unit.identity,
+                unit.filePath,
+                unit.startLine,
+                unit.endLine,
+                unit.content.slice(0, PROVENANCE_EXCERPT_CHARS),
+              ],
+            );
+          }
+          await this.#storage.query(
+            `INSERT INTO import_ledger (owner_id, source, session_id, file_path, line_offset, prefix_hash, memories_saved)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
+             ON CONFLICT (owner_id, source, session_id) DO UPDATE SET
+               file_path = EXCLUDED.file_path,
+               line_offset = EXCLUDED.line_offset,
+               prefix_hash = EXCLUDED.prefix_hash,
+               memories_saved = import_ledger.memories_saved + EXCLUDED.memories_saved,
+               updated_at = now()`,
+            [
+              owner,
+              AGENT_MEMORY_LEDGER_SOURCE,
+              unit.identity,
+              unit.filePath,
+              unit.endLine,
+              unit.contentHash,
+              saveResult.outcome === "merged" ? 0 : 1,
+            ],
+          );
+        }
+      } catch (err) {
+        folderError = err instanceof Error ? err.message : String(err);
+      }
+
+      result.saved += event.saved;
+      result.merged += event.merged;
+      result.versioned += event.versioned;
+      result.conflicts += event.conflicts;
+      result.folders++;
+
+      if (folderError !== undefined) {
+        event.outcome = "partial";
+        event.error = folderError;
+        result.error = folderError;
+        onProgress?.(event);
+        break;
+      }
+      onProgress?.(event);
+    }
+
+    result.calls.classifier = this.#classifyCalls - classifyBefore;
+    if (!opts.dryRun && result.saved + result.versioned + result.conflicts > 0) {
+      this.#scheduleAutoIndex(owner);
+    }
+    return result;
+  }
+
   // ---- Hook capture state (scope, status, notify) ----------------------------------------
 
   async #metaGet(key: string): Promise<string | null> {
@@ -1182,9 +1394,10 @@ export class Memloom implements MemoryEngine {
   }
 
   async importStatus(ownerId: string = SENTINEL_OWNER): Promise<ImportStatus> {
+    // Session totals only: agent-memory ledger rows live under their own source.
     const [totals] = await this.#storage.query<{ sessions: string; saved: string }>(
       `SELECT count(*) AS sessions, COALESCE(sum(memories_saved), 0) AS saved
-       FROM import_ledger WHERE owner_id = $1`,
+       FROM import_ledger WHERE owner_id = $1 AND source = 'claude-code'`,
       [ownerId],
     );
     return {

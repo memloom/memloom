@@ -153,6 +153,7 @@
                 "expanded": false,
                 "pages": [
                   "POST /import/sessions/stream",
+                  "POST /import/agent-memory/stream",
                   "POST /import/claude-code/notify",
                   "GET /import/claude-code/status",
                   "PUT /import/claude-code/scope"

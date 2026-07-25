@@ -1,6 +1,22 @@
 // Ports (interfaces)
 
 // Domain types
+// Agent memory folder import building blocks
+export type {
+  AgentMemoryDiscoveryOptions,
+  AgentMemoryFolder,
+  AgentMemorySource,
+  AgentMemoryUnit,
+} from "./agent-memories.js";
+export {
+  AGENT_MEMORY_SOURCES,
+  claudeMemoryRoot,
+  copilotMemoryCandidates,
+  locateAgentMemoryFolders,
+  parseAgentMemoryFolder,
+  parseClaudeMemoryFolder,
+  parseCopilotMemoryFolder,
+} from "./agent-memories.js";
 export type { AssistantEvent } from "./assistant.js";
 export {
   buildAssistantSystemPrompt,
@@ -115,6 +131,9 @@ export {
 } from "./schema.js";
 export type { StorageAdapter } from "./storage.js";
 export type {
+  AgentMemoryFolderEvent,
+  AgentMemoryImportOptions,
+  AgentMemoryImportResult,
   AssistantChatResult,
   AssistantMessage,
   AssistantSession,

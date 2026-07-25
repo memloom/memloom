@@ -57,6 +57,34 @@ The run ends with a cost line: extraction calls (one per transcript chunk), dedu
 classifier calls (one per saved memory that had similar neighbors), and embedding calls
 (one batch per session). Nothing runs unattended; import spends only while you watch it.
 
+## import agent-memory
+
+```bash
+memloom import agent-memory --dry-run
+memloom import agent-memory
+```
+
+Your agents already keep long-term notes on disk: Claude Code writes one markdown file per
+memory under each project's `memory/` folder, and GitHub Copilot keeps topic files whose
+`##` sections are individual memories. Those files are distilled already, so this import
+needs no LLM extraction: each memory is redacted, embedded, and saved through the same
+belief pipeline (duplicates merge, restatements version, contradictions become reviewable
+conflicts), with provenance back to the file and line range.
+
+Re-running is free: a content-hash ledger skips unchanged memories before any provider
+call. The import is read-only on the agents' folders; memloom never writes into them.
+
+This is an import, not a sync: an edited agent file re-imports and versions the memory,
+but deleting a file from an agent's folder does not delete the memory here. memloom keeps
+what it learned; remove memories from the viewer or CLI if you want them gone.
+
+| Flag | What it does |
+| --- | --- |
+| `--agent X` | Only this agent's folders: `claude-code` or `copilot` (repeatable; default both) |
+| `--dry-run` | List folders and memory counts; no provider calls, no writes |
+| `--force` | Re-import everything, ignoring the content-hash ledger |
+| `--project X` | Only Claude Code projects whose folder name contains X |
+
 ## Automatic capture
 
 ```bash

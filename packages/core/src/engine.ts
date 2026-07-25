@@ -1,5 +1,8 @@
 import type { SchemaInfo } from "./schema.js";
 import type {
+  AgentMemoryFolderEvent,
+  AgentMemoryImportOptions,
+  AgentMemoryImportResult,
   Conflict,
   ConflictAutoEvent,
   ConflictAutoResult,
@@ -54,6 +57,16 @@ export interface MemoryEngine {
     opts?: ImportOptions,
     onProgress?: (event: ImportSessionEvent) => void,
   ): Promise<ImportResult>;
+  /**
+   * Import memories agents already saved on disk (Claude Code memory folders, Copilot's
+   * memory-tool folder) through the belief pipeline. No LLM extraction: the files are
+   * distilled memories already. Idempotent via per-memory content-hash ledger rows.
+   * `onProgress` fires after each folder completes.
+   */
+  importAgentMemories(
+    opts?: AgentMemoryImportOptions,
+    onProgress?: (event: AgentMemoryFolderEvent) => void,
+  ): Promise<AgentMemoryImportResult>;
   /** Hook capture state for `memloom status`: scope, last notify, spend, ledger totals. */
   importStatus(): Promise<ImportStatus>;
   /** Set (connect) or clear (disconnect) the hook capture scope. */

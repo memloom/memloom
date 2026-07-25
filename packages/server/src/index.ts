@@ -255,6 +255,17 @@ const importSchema = z.object({
   force: z.boolean().optional(),
 });
 
+const agentMemoryImportSchema = z.object({
+  agents: z
+    .array(z.enum(["claude-code", "copilot"]))
+    .min(1)
+    .max(10)
+    .optional(),
+  project: z.string().min(1).max(300).optional(),
+  dryRun: z.boolean().optional(),
+  force: z.boolean().optional(),
+});
+
 const importNotifySchema = z.object({
   path: z.string().min(1, "path must be a non-empty string").max(4096),
 });
@@ -577,6 +588,16 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     if (!body.ok) return body.res;
     const opts = body.data as Parameters<typeof memloom.importSessions>[0];
     return streamNdjson(c, (emit) => memloom.importSessions(opts, emit));
+  });
+
+  // Agent memory folder import: same daemon-side NDJSON contract as the session stream,
+  // one {type:"item"} per folder. Discovery is fixed to the agents' own well-known paths;
+  // the client never supplies a filesystem path.
+  app.post("/import/agent-memory/stream", async (c) => {
+    const body = await parseBody(c, agentMemoryImportSchema);
+    if (!body.ok) return body.res;
+    const opts = body.data;
+    return streamNdjson(c, (emit) => memloom.importAgentMemories(opts, emit));
   });
 
   // Index sessions: the persistent, session-grouped log the Console tab renders. Runs are
