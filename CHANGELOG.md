@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.4.0
 
 - Added `memloom notion connect`: sync selected Notion pages and databases into memloom
   as fresh context documents. The daemon polls and refetches only the sections whose
@@ -8,7 +8,7 @@
   spends embeddings only, and only on changes. The picker shows the workspace as a tree
   with database rows collapsed, in the CLI and in a new viewer connectors tab;
   `notion sync [--dry-run|--force]`, `notion status`, and `notion disconnect` complete
-  the set
+  the set ([docs](https://docs.memloom.dev/cli/notion))
 - Changed document re-ingestion to keep unchanged chunks: same row, same embedding, same
   indexed state, same entity links. Only new or edited chunks are embedded and re-indexed,
   so one edited diary day costs one chunk instead of the whole page
