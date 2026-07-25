@@ -1,27 +1,36 @@
 # memloom
 
-**A memory engine for AI agents that you can see and correct. One inspectable Postgres store,
-byte-identical from your laptop to the cloud.**
+![The memory graph: memories and documents recallable from one place](.github/memloom-graph.png)
 
-Agents forget, or silently overwrite what they knew. memloom gives every AI client you use
-(Claude Desktop, Claude Code, Cursor, your own scripts) one durable memory that you stay in
-charge of:
+**A local-first memory engine for AI agents that gives them a shared memory.**
 
-- **See and correct it.** When a new memory contradicts an old one, memloom flags the conflict
-  and lets you resolve it: keep new, keep old, keep both, or merge. Every decision is
-  reversible. Most memory systems auto-resolve and destroy the losing fact; memloom keeps
-  both and puts you in the loop.
-- **One Postgres engine.** Relational, vector, keyword, and entity-graph retrieval fused in a
-  single store (three-arm reciprocal-rank fusion in one SQL call). Open it with psql or Drizzle
-  Studio; it is plain Postgres.
-- **Your files are memory too.** `memloom context add ./notes` ingests .md/.txt/.pdf into the
-  same recall, with citations back to the exact section and page. PDFs are rebuilt from glyph
-  geometry, so even equation-heavy documents come out readable.
-- **Laptop to cloud, same engine.** Embedded (a folder on disk, no Docker, no signup), local
-  Postgres, or cloud Postgres all run the exact same SQL, so you can move your data between
-  tiers whenever you want.
+Memloom is built to give your agents a shared memory that persists across sessions and tools. Import what your agents already learned, keep it fresh automatically, and recall it from any AI client in one query.
 
-## Quickstart: two minutes, no Docker, no signup
+What that gets you:
+
+- **One knowledge layer across every tool:** Claude Desktop, Claude Code, Cursor, Copilot,
+  your own scripts: they all read and write the same store over MCP. Switch agents and the
+  memory comes along.
+- **Memory management:** When a new memory contradicts an
+  old one, memloom keeps both and flags the conflict; you resolve it (or let the LLM
+  resolve the obvious ones), and every decision is reversible.
+- **Answers with citations:** "What did we decide about the deploy target" is one
+  recall with the source cited, instead of minutes of transcript searching and token spend
+  every time it comes up. Import pays the extraction cost once.
+
+How it works:
+
+- **One Postgres engine.** Relational, vector, keyword, and entity-graph retrieval fused in
+  a single store (three-arm reciprocal-rank fusion in one SQL call).
+- **Your files are memory too.** `memloom context add ./notes` ingests .md/.txt/.pdf into
+  the same recall, with citations back to the exact section and page.
+- **Your agents' history is memory too.** Import months of coding sessions as
+  typed memories, bring in the memory files your agents already keep on disk, and sync
+  external sources like Notion as recallable context.
+
+If you want to see the design: [ARCHITECTURE.md](./ARCHITECTURE.md). Documentation of concepts, guides, and the full CLI, MCP, and HTTP API reference: [docs/](./docs).
+
+## Quickstart: two minutes
 
 Requires Node 20 or later.
 
@@ -68,11 +77,50 @@ Your agent gets eight tools: `save_memory`, `recall_memory` (memories *and* your
 files, with sources), full-passage reading, version history, conflict listing/resolution,
 and schema management, so the agent uses the memory and you keep control of the vocabulary.
 
+For a full list of MCP clients, see [docs/setup.mdx](./docs/mcp/setup.mdx).
+
+### Import what your agents already know
+
+Your coding agents have been accumulating knowledge for months. Two commands bring it in:
+
+```bash
+memloom import sessions --dry-run     # distill session transcripts into typed memories
+memloom import agent-memory           # bring in the memory files agents keep on disk
+memloom connect claude-code --all     # capture every future session as it ends
+```
+
+`import sessions` reads session transcripts locally, scrubs secret-shaped strings, and
+distills each session into facts, preferences, episodes, and procedures through your
+configured LLM. Starting with Claude Code; the `--agent` flag is ready for more. A ledger
+makes re-runs free, and `connect` turns it continuous with a session-end hook, scoped to
+an explicit project allowlist.
+
+`import agent-memory` skips the distillation step: agents already keep distilled memories
+as markdown on disk, so memloom parses and saves them with provenance back to each file
+(dedup and entity extraction still run on what arrives). Starting with Claude Code's
+per-project memory folders and GitHub Copilot's memory notes.
+
+### Connectors
+
+External sources sync into the same recall as fresh context documents. Starting with
+Notion:
+
+```bash
+memloom notion connect                # pick pages and databases to sync
+memloom notion sync                   # the daemon also polls and picks up edits
+```
+
+Share pages with an internal Notion integration, set `NOTION_TOKEN`, and your diary or
+project notes become recallable alongside your memories. Sync is incremental: only the
+sections that actually changed are refetched, and an idle workspace costs one API call
+per poll and zero LLM calls ever.
+
 ## How it compares
 
 |  | **memloom** | mem0 | Zep / Graphiti | Letta | Supermemory |
 |---|---|---|---|---|---|
 | Conflict handling | **Human-in-the-loop, every resolution reversible** | auto-resolve (LLM decides) | auto-invalidate (temporal) | agent decides | auto |
+| Import coding-agent history | **yes: session transcripts distilled, agents' own memory files parsed** | no | no | no | no |
 | Storage | **one Postgres store** (embedded / local / cloud) | vector DB + optional graph DB | Neo4j/FalkorDB + DB | Postgres + framework state | closed-source cloud |
 | Ingest local files into recall | **yes: .md/.txt/.pdf with section + page citations** | no | no | limited | cloud upload |
 | Retrieval | **hybrid: vector + keyword + entity graph, fused in SQL** | vector (+graph opt.) | graph + semantic | vector | proprietary |
@@ -90,7 +138,7 @@ One daemon (`memloom serve`) owns the store; everything else is a client:
 
 | Surface | What |
 | --- | --- |
-| CLI | `memloom save / recall / context / conflicts / ui` |
+| CLI | `memloom save / recall / context / import / connect / notion / conflicts / ui` |
 | MCP | `@memloom/mcp`: Claude Desktop, Claude Code, Cursor, any MCP client |
 | HTTP API | `http://127.0.0.1:4319`: full [API reference](./docs), localhost-only by design |
 | Viewer | `memloom ui`: memory graph, assistant chat, memories, documents, schema review, conflicts, indexing console |
@@ -106,7 +154,7 @@ wanted next: CSV/JSON, DOCX, URLs.
 
 ## Development
 
-Node >= 22 and pnpm 10. No Docker, no database to install: tests spin up PGLite
+Node >= 20 and pnpm 10. No Docker, no database to install: tests spin up PGLite
 (Postgres compiled to WebAssembly) in-process, run the migrations, and exercise the
 engine against a real database.
 
@@ -121,7 +169,7 @@ pnpm build       # tsup across packages
 ## Learn more
 
 - [ARCHITECTURE.md](./ARCHITECTURE.md): the design, and the two rules that are hard to reverse
-- [docs/](./docs): concepts, guides, and the full CLI, MCP, and HTTP API reference (Mintlify)
+- [docs/](./docs): concepts, guides, and the full CLI, MCP, and HTTP API reference
 
 ## License & trademark
 
