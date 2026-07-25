@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Added prompt-time recall to `memloom connect claude-code`: a second hook injects the
+  memories relevant to each prompt you type, so Claude uses your memory without being told
+  to search it. Silent when nothing matches or the daemon is down, never blocks a prompt;
+  opt out with `--no-recall` ([docs](https://docs.memloom.dev/cli/import))
+- Added an agent setup guide plus installable setup and usage skills, so an AI agent can
+  install and configure memloom end to end with the human only supplying the API key and
+  capture consent ([docs](https://docs.memloom.dev/guides/agent-setup))
+
 ## 0.4.0
 
 - Added `memloom notion connect`: sync selected Notion pages and databases into memloom

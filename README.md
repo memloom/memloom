@@ -63,6 +63,20 @@ start, this step never comes up.)
 `memloom init` writes a commented template to `~/.memloom/config.env`; uncomment and fill
 what you need. [config.env.example](./config.env.example) shows everything it supports.
 
+### Or let your agent set it up
+
+Paste this into Claude Code, Cursor, or any agent that can run commands:
+
+```text
+Set up memloom on this machine. Fetch https://docs.memloom.dev/guides/agent-setup
+and follow it exactly. Ask me before anything that spends money or captures a
+project. I will give you the API key when you ask.
+```
+
+The agent does the whole setup; you only hand over the API key and approve what gets
+captured. Agents with skill support can install memloom's skills instead:
+`npx skills add memloom/memloom`.
+
 ### Connect your AI tools (MCP)
 
 Every MCP client shares the same store through the daemon. For Claude Desktop / Claude Code /
@@ -96,7 +110,9 @@ memloom connect claude-code --all     # capture every future session as it ends
 distills each session into facts, preferences, episodes, and procedures through your
 configured LLM. Starting with Claude Code; the `--agent` flag is ready for more. A ledger
 makes re-runs free, and `connect` turns it continuous with a session-end hook, scoped to
-an explicit project allowlist.
+an explicit project allowlist. `connect` also installs a prompt-time recall hook: relevant
+memories are injected into every Claude Code prompt, so the agent uses its memory without
+being told to search it.
 
 `import agent-memory` skips the distillation step: agents already keep distilled memories
 as markdown on disk, so memloom parses and saves them with provenance back to each file
