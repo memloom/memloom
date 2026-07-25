@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0
 
 - Added prompt-time recall to `memloom connect claude-code`: a second hook injects the
   memories relevant to each prompt you type, so Claude uses your memory without being told

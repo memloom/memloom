@@ -1,6 +1,6 @@
 {
   "name": "@memloom/core",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "description": "The memloom memory engine: storage adapter, providers, write path, retrieval.",
   "license": "Apache-2.0",
