@@ -25,8 +25,8 @@ import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from
 import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
 import { NullLLMProvider } from "./hashing-provider.js";
 import { migrate } from "./migrate.js";
-import { dataSourceTitle, expandsInline, NotionClient, pageTitle } from "./notion.js";
 import type { NotionBlockNode } from "./notion.js";
+import { dataSourceTitle, expandsInline, NotionClient, pageTitle } from "./notion.js";
 import { blocksToMarkdown, rowsToMarkdown } from "./notion-markdown.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
 import { redact } from "./redact.js";
@@ -80,18 +80,18 @@ import type {
   ImportResult,
   ImportSessionEvent,
   ImportStatus,
-  NotionListedPage,
-  NotionScope,
-  NotionStatus,
-  NotionSyncEvent,
-  NotionSyncOptions,
-  NotionSyncResult,
   IndexProgressEvent,
   IndexResult,
   IndexRun,
   IndexRunEvent,
   Memory,
   MemoryType,
+  NotionListedPage,
+  NotionScope,
+  NotionStatus,
+  NotionSyncEvent,
+  NotionSyncOptions,
+  NotionSyncResult,
   RecallOptions,
   ReembedOptions,
   ReembedProgressEvent,
@@ -788,9 +788,7 @@ export class Memloom implements MemoryEngine {
     // Embed before the transaction: provider calls are slow and can fail; the store swap
     // below stays a short, all-or-nothing write. Only changed content is embedded.
     const embeddings =
-      freshChunks.length > 0
-        ? await this.#embedding.embed(freshChunks.map((c) => c.content))
-        : [];
+      freshChunks.length > 0 ? await this.#embedding.embed(freshChunks.map((c) => c.content)) : [];
     if (embeddings.length !== freshChunks.length) {
       throw new Error("memloom: embedding count mismatch during ingest");
     }
@@ -808,10 +806,7 @@ export class Memloom implements MemoryEngine {
             "DELETE FROM memory_edges WHERE owner_id = $2 AND (source_id = $1 OR from_id = $1)",
             [id, owner],
           );
-          await tx.query("DELETE FROM context_chunks WHERE id = $1 AND owner_id = $2", [
-            id,
-            owner,
-          ]);
+          await tx.query("DELETE FROM context_chunks WHERE id = $1 AND owner_id = $2", [id, owner]);
         }
         // Surviving rows move clear of the target range first: chunk_index is UNIQUE per
         // document, and a section that shifted position would otherwise collide with a
@@ -1705,8 +1700,7 @@ export class Memloom implements MemoryEngine {
     const changed = top.filter((block) => {
       const prev = cachedById.get(block.id);
       return (
-        !prev ||
-        String(prev.block.last_edited_time ?? "") !== String(block.last_edited_time ?? "")
+        !prev || String(prev.block.last_edited_time ?? "") !== String(block.last_edited_time ?? "")
       );
     });
     if (changed.length === 0) return client.blockTree(pageId, onProgress);
@@ -2382,7 +2376,8 @@ export class Memloom implements MemoryEngine {
           };
           const prefix = `[${base.index}/${base.total}] memory ${base.label}`;
           try {
-            if (failure !== null || extraction === null) throw new Error(failure ?? "no extraction");
+            if (failure !== null || extraction === null)
+              throw new Error(failure ?? "no extraction");
             const linked = await this.#writeGraph(ownerId, memory.id, extraction);
             await this.#storage.query(
               "UPDATE memory_objects SET indexed_at = now() WHERE id = $1",

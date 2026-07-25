@@ -123,12 +123,19 @@ describe("blocksToMarkdown", () => {
   it("keeps user-pasted URLs, drops expiring Notion-hosted file URLs", () => {
     const md = blocksToMarkdown("Media", [
       node("bookmark", { url: "https://example.com/post" }),
-      node("image", { external: { url: "https://example.com/pic.png" }, caption: [text("the chart")] }),
       node("image", {
-        file: { url: "https://prod-files-secure.s3.us-west-2.amazonaws.com/x?X-Amz-Credential=SECRETISH" },
+        external: { url: "https://example.com/pic.png" },
+        caption: [text("the chart")],
+      }),
+      node("image", {
+        file: {
+          url: "https://prod-files-secure.s3.us-west-2.amazonaws.com/x?X-Amz-Credential=SECRETISH",
+        },
         caption: [text("screenshot of the day")],
       }),
-      node("image", { file: { url: "https://prod-files-secure.s3.us-west-2.amazonaws.com/y?X-Amz-Signature=zzz" } }),
+      node("image", {
+        file: { url: "https://prod-files-secure.s3.us-west-2.amazonaws.com/y?X-Amz-Signature=zzz" },
+      }),
     ]);
     expect(md).toContain("[bookmark](https://example.com/post)");
     expect(md).toContain("[the chart](https://example.com/pic.png)");

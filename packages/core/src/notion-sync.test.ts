@@ -122,7 +122,12 @@ class FakeNotion {
     if (dsMeta?.[1]) {
       const ds = this.rows.get(dsMeta[1]);
       if (!ds) return json({ message: "not found" }, 404);
-      return json({ object: "data_source", id: dsMeta[1], last_edited_time: ds.lastEdited, name: ds.title });
+      return json({
+        object: "data_source",
+        id: dsMeta[1],
+        last_edited_time: ds.lastEdited,
+        name: ds.title,
+      });
     }
 
     void init;
@@ -206,7 +211,9 @@ describe("notionSync", () => {
       blocks: [paragraph("Finished the UI, now updating the pricing page.")],
     });
     const { memloom, storage } = await fresh(fake);
-    await memloom.setNotionScope({ items: [{ id: "p1", object: "page", title: "Personal Diary" }] });
+    await memloom.setNotionScope({
+      items: [{ id: "p1", object: "page", title: "Personal Diary" }],
+    });
 
     const first = await memloom.notionSync();
     expect(first).toMatchObject({ added: 1, updated: 0, fresh: 0, errors: 0 });
@@ -647,8 +654,18 @@ describe("incremental sync", () => {
 describe("notionListPages", () => {
   it("lists everything visible, marking the selection", async () => {
     const fake = new FakeNotion();
-    fake.pages.set("p1", { id: "p1", title: "Diary", lastEdited: "2026-07-20T10:00:00.000Z", blocks: [] });
-    fake.pages.set("p2", { id: "p2", title: "Work Notes", lastEdited: "2026-07-19T10:00:00.000Z", blocks: [] });
+    fake.pages.set("p1", {
+      id: "p1",
+      title: "Diary",
+      lastEdited: "2026-07-20T10:00:00.000Z",
+      blocks: [],
+    });
+    fake.pages.set("p2", {
+      id: "p2",
+      title: "Work Notes",
+      lastEdited: "2026-07-19T10:00:00.000Z",
+      blocks: [],
+    });
     const { memloom } = await fresh(fake);
     await memloom.setNotionScope({ items: [{ id: "p2", object: "page", title: "Work Notes" }] });
     const listing = await memloom.notionListPages();
@@ -660,7 +677,12 @@ describe("notionListPages", () => {
   it("resolves the hierarchy: subpages, databases under their page, rows marked", async () => {
     // Rome trip page > Expenses database (rows r1, r2) plus a plain subpage.
     const fake = new FakeNotion();
-    fake.pages.set("trip", { id: "trip", title: "Rome trip", lastEdited: "2026-07-23T09:00:00.000Z", blocks: [] });
+    fake.pages.set("trip", {
+      id: "trip",
+      title: "Rome trip",
+      lastEdited: "2026-07-23T09:00:00.000Z",
+      blocks: [],
+    });
     fake.pages.set("sub", {
       id: "sub",
       title: "Packing list",
