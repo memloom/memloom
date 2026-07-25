@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.3.0
 
 - Added `memloom import agent-memory`: bring in the memories your agents already saved on
   disk. Claude Code's per-project memory folders and GitHub Copilot's memory-tool notes are
