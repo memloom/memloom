@@ -8,6 +8,7 @@ import {
   type Memory,
   type MemoryType,
   supportedExtensions,
+  isHttpUrl,
 } from "@memloom/core";
 import { runAgentMemoryImport } from "./agent-memory.js";
 import { configPath, dataDir, ensureConfig, memloomHome } from "./config.js";
@@ -96,7 +97,8 @@ Usage: memloom <command> [args]
   notion sync          sync the selected Notion pages now (--dry-run | --force)
   notion status        Notion token, selection, last sync, synced documents
   notion disconnect    stop syncing Notion (synced documents stay)
-  context add <path>   ingest files (or a directory) as context: ${supportedExtensions().join(" ")}
+  context add <target> ingest files, a directory, or a web page URL as context:
+                       ${supportedExtensions().join(" ")} and http(s) links
   context list         list ingested context documents
   context remove <id>  remove a context document and its chunks
   schema               show the graph vocabulary (entity types + predicates, usage, status)
@@ -333,12 +335,19 @@ resolution is reversible.
 
   context: `memloom context <add|list|remove>
 
-  add <path...>   ingest files or folders as searchable context
-                  (${supportedExtensions().join(" ")}; folders recurse)
+  add <target...> ingest files, folders, or web pages as searchable context
+                  (${supportedExtensions().join(" ")}; folders recurse; http(s) URLs are fetched)
   list            ingested documents with ids and chunk counts
   remove <id>     delete a document and its chunks (the file on disk is untouched)
 
-Re-adding an unchanged file is a no-op; a changed file replaces its chunks.`,
+  memloom context add ./notes ./spec.pdf https://example.com/post
+
+A page is fetched and parsed on this machine, never through a reader service, and is
+stored under its own URL so citations link back to the heading they came from. A page
+that renders in the browser (a single-page app, or anything behind a login) yields
+little to a plain fetch and is reported rather than saved half-empty.
+
+Re-adding unchanged content is a no-op; changed content replaces its chunks.`,
 
   schema: `memloom schema [list|disable|enable|delete]
 
@@ -493,11 +502,28 @@ export async function run(argv: readonly string[]): Promise<void> {
       const engine = await connect();
 
       if (sub === "add") {
-        const targets = args.map((a) => resolve(a));
-        if (targets.length === 0) throw new Error("usage: memloom context add <path...>");
+        if (args.length === 0) throw new Error("usage: memloom context add <path-or-url...>");
+        // A URL is not a path: it never touches resolve() or the directory walk.
+        const urls = args.filter(isHttpUrl);
+        const targets = args.filter((a) => !isHttpUrl(a)).map((a) => resolve(a));
+
+        for (const url of urls) {
+          try {
+            const result = await engine.contextAddUrl({ url });
+            console.log(
+              `${result.outcome.padEnd(9)}  ${result.title}  (${result.chunks} chunks)\n  ${url}`,
+            );
+          } catch (err) {
+            // One bad URL should not abandon the rest of the batch.
+            console.error(`failed     ${url}\n  ${err instanceof Error ? err.message : err}`);
+          }
+        }
+
         const files = targets.flatMap(collectContextFiles);
         if (files.length === 0) {
-          console.log(`no ingestible files found (${supportedExtensions().join(", ")}).`);
+          if (urls.length === 0) {
+            console.log(`no ingestible files found (${supportedExtensions().join(", ")}).`);
+          }
           return;
         }
         for (const file of files) {

@@ -799,6 +799,51 @@ describe("server", () => {
     expect(bad.status).toBe(400);
   });
 
+  it("context/url ingests caller-supplied html, so no test ever hits the network", async () => {
+    const server = await app();
+    const html =
+      "<html><head><title>Deploy Guide</title></head><body><article>" +
+      "<h1>Deploy Guide</h1><h2>Database</h2>" +
+      "<p>the staging database runs postgres seventeen with pgvector enabled for recall</p>" +
+      "<p>checkpoints are written by the ingest worker every thirty seconds without fail</p>" +
+      "</article></body></html>";
+
+    const added = await server.request("/context/url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://example.com/deploy?utm_source=x#top", html }),
+    });
+    expect(added.status).toBe(200);
+    const result = (await added.json()) as { outcome: string; documentId: string };
+    expect(result.outcome).toBe("added");
+
+    // Stored under the normalized URL: tracking parameters and the fragment are gone.
+    const listed = await server.request("/context/documents");
+    const { documents } = (await listed.json()) as { documents: Array<{ path: string }> };
+    expect(documents).toHaveLength(1);
+    expect(documents[0]?.path).toBe("https://example.com/deploy");
+
+    // An extraction failure answers 400 with a stable code, not a 500.
+    const thin = await server.request("/context/url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: "https://example.com/spa",
+        html: "<html><body><div id='root'></div></body></html>",
+      }),
+    });
+    expect(thin.status).toBe(400);
+    expect((await thin.json()) as { code: string }).toMatchObject({ code: "empty" });
+
+    // A non-URL is refused by validation before anything is fetched.
+    const bad = await server.request("/context/url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "/etc/passwd" }),
+    });
+    expect(bad.status).toBe(400);
+  });
+
   it("open route launches the injected opener for known documents only", async () => {
     const storage = await PgliteAdapter.open();
     cleanups.push(() => storage.close());

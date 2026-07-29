@@ -8,6 +8,7 @@ import type {
   ConflictAutoEvent,
   ConflictAutoResult,
   ContextAddInput,
+  ContextAddUrlInput,
   ContextAddResult,
   ContextDocument,
   DocumentChunks,
@@ -322,6 +323,10 @@ export class HttpMemloomClient implements MemoryEngine {
 
   contextAdd(input: ContextAddInput): Promise<ContextAddResult> {
     return this.#post<ContextAddResult>("/context/add", input);
+  }
+
+  contextAddUrl(input: ContextAddUrlInput): Promise<ContextAddResult> {
+    return this.#post<ContextAddResult>("/context/url", input);
   }
 
   async contextList(): Promise<ContextDocument[]> {

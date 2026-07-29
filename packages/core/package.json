@@ -43,7 +43,10 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.4.6",
+    "defuddle": "^0.19.2",
+    "linkedom": "^0.18.13",
     "proper-lockfile": "^4.1.2",
+    "turndown": "^7.2.4",
     "unpdf": "^1.6.2"
   },
   "optionalDependencies": {

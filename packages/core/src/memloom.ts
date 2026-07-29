@@ -23,6 +23,7 @@ import { type DistilledMemory, distillChunk } from "./distill.js";
 import type { MemoryEngine } from "./engine.js";
 import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from "./entities.js";
 import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
+import { extractUrl, isHttpUrl } from "./link.js";
 import { NullLLMProvider } from "./hashing-provider.js";
 import { migrate } from "./migrate.js";
 import type { NotionBlockNode } from "./notion.js";
@@ -65,6 +66,7 @@ import type {
   ConflictCandidate,
   ContextAddInput,
   ContextAddResult,
+  ContextAddUrlInput,
   ContextAttachInput,
   ContextAttachResult,
   ContextDocument,
@@ -571,6 +573,28 @@ export class Memloom implements MemoryEngine {
     return result;
   }
 
+  /**
+   * Ingest a web page as context. memloom fetches and parses it in this process: the URL
+   * never goes to a reader service, so a page stays as private as a file on disk.
+   *
+   * The document's path IS the normalized URL, following the attachment:// and upload://
+   * precedent, so re-adding the same page updates it in place and citations can rebuild a
+   * deep link from path plus heading anchor. `html` lets a caller that already rendered the
+   * page (the browser extension) skip the fetch entirely, which is what makes a
+   * single-page app or a page behind a login savable at all.
+   */
+  async contextAddUrl(input: ContextAddUrlInput): Promise<ContextAddResult> {
+    const owner = input.ownerId ?? SENTINEL_OWNER;
+    const link = await extractUrl(
+      input.url,
+      (bytes) => createHash("sha256").update(bytes).digest("hex"),
+      input.html === undefined ? {} : { html: input.html },
+    );
+    const result = await this.#ingestDocument(owner, link.url, link, null);
+    if (result.outcome !== "unchanged") this.#scheduleAutoIndex(owner);
+    return result;
+  }
+
   /** The files attached to one assistant chat, newest first. */
   async sessionAttachments(
     sessionId: string,
@@ -613,7 +637,12 @@ export class Memloom implements MemoryEngine {
     sessionId: string | null,
   ): Promise<ContextAddResult> {
     const isUpload = path.startsWith("upload://");
+    // A URL's last path segment is not a filename. "https://example.com/post" would
+    // basename to "post" and absorb an unrelated uploaded file called "post", so links
+    // match on content hash only and never by name, in either direction.
     const basenameOf = (p: string) => p.toLowerCase().split(/[/\\]/).pop() ?? "";
+    const nameMatches = (a: string, b: string) =>
+      !isHttpUrl(a) && !isHttpUrl(b) && basenameOf(a) === basenameOf(b);
 
     const existing = await this.#storage.query<{
       id: string;
@@ -643,9 +672,8 @@ export class Memloom implements MemoryEngine {
          ORDER BY created_at`,
         [owner],
       );
-      const base = basenameOf(path);
       const twins = uploads.filter(
-        (u) => u.content_hash === file.contentHash || basenameOf(u.path) === base,
+        (u) => u.content_hash === file.contentHash || nameMatches(u.path, path),
       );
       if (!prior && twins.length > 0) {
         const hashTwin = twins.find((t) => t.content_hash === file.contentHash);
@@ -676,10 +704,9 @@ export class Memloom implements MemoryEngine {
          WHERE owner_id = $1 AND session_id IS NULL ORDER BY created_at`,
         [owner],
       );
-      const base = basenameOf(path);
       const twin =
         globals.find((g) => g.content_hash === file.contentHash) ??
-        globals.find((g) => !g.path.startsWith("upload://") && basenameOf(g.path) === base);
+        globals.find((g) => !g.path.startsWith("upload://") && nameMatches(g.path, path));
       if (twin) {
         return {
           documentId: twin.id,

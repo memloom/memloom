@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="en-gb">
+<head>
+<meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="canonical" href="https://simonwillison.net/2025/Jan/10/ai-predictions/">
+<title>My AI/LLM predictions for the next 1, 3 and 6 years, for Oxide and Friends</title>
+<script defer data-domain="simonwillison.net" src="https://plausible.io/js/plausible.js"></script>
+<link rel="alternate" type="application/atom+xml" title="Atom" href="/atom/everything/">
+<link rel="stylesheet" type="text/css" href="/static/css/all.8f6d6562671f.css">
+<link rel="webmention" href="https://webmention.io/simonwillison.net/webmention">
+<link rel="pingback" href="https://webmention.io/simonwillison.net/xmlrpc">
+<meta name="author" content="Simon Willison">
+<meta property="og:site_name" content="Simon Willison’s Weblog">
+
+
+<meta name="twitter:card" content="summary"><meta name="twitter:card" content="summary">
+<meta name="twitter:creator" content="@simonw">
+<meta property="og:url" content="https://simonwillison.net/2025/Jan/10/ai-predictions/">
+<meta property="og:title" content="My AI/LLM predictions for the next 1, 3 and 6 years, for Oxide and Friends">
+<meta property="og:type" content="article">
+<meta property="og:description" content="The Oxide and Friends podcast has an annual tradition of asking guests to share their predictions for the next 1, 3 and 6 years. Here’s 2022, 2023 and 2024. This …">
+<meta property="og:updated_time" content="1736473396">
+
+
+
+
+
+<script>
+(function() { // Apply theme immediately to prevent flash
+  const theme = localStorage.getItem('theme');
+  if (theme === 'light' || theme === 'dark') {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+})();
+</script>
+</head>
+<body class="smallhead">
+
+<div id="smallhead">
+  <div id="smallhead-inner">
+    <h1><a href="/">Simon Willison’s Weblog</a></h1>
+    <a id="smallhead-about" href="/about/#subscribe">Subscribe</a>
+  </div>
+</div><!-- #smallhead -->
+
+
+<div id="sponsored-banner" class="sponsor-scheme-sky">
+  <div id="sponsored-banner-inner">
+    <strong class="sponsored-label">Sponsored by:</strong> Cursor &mdash; Delegate engineering tasks to Cursor Cloud Agents—even while your laptop is closed. <a class="sponsor-learn-more-label" href="https://10xn.link/simon-cursor" rel="sponsored noopener" target="_blank">Try Cursor &amp; get 50% off your first month</a>
+  </div>
+</div>
+
+
+<div id="wrapper">
+<div id="primary">
+
+<div class="entry entryPage">
+
+
+<div data-permalink-context="/2025/Jan/10/ai-predictions/">
+<h2>My AI/LLM predictions for the next 1, 3 and 6 years, for Oxide and Friends</h2>
+<p class="mobile-date">10th January 2025</p>
+
+
+
+<p>The <a href="https://oxide-and-friends.transistor.fm/">Oxide and Friends</a> podcast has an annual tradition of asking guests to share their predictions for the next 1, 3 and 6 years. Here’s <a href="https://github.com/oxidecomputer/oxide-and-friends/blob/master/2022_01_03.md">2022</a>, <a href="https://github.com/oxidecomputer/oxide-and-friends/blob/master/2023_01_09.md">2023</a> and <a href="https://github.com/oxidecomputer/oxide-and-friends/blob/master/2024_01_08.md">2024</a>. This year they invited me to participate. I’ve never been brave enough to share <em>any</em> public predictions before, so this was a great opportunity to get outside my comfort zone!</p>
+<p>We recorded the episode live using Discord on Monday. It’s now available <a href="https://www.youtube.com/watch?v=-pk6VokHpGY">on YouTube</a> and <a href="https://oxide-and-friends.transistor.fm/">in podcast form</a>.</p>
+
+<p><lite-youtube videoid="-pk6VokHpGY" title="Oxide and Friends 1/6/2025 -- Predictions 2025" playlabel="Play: Oxide and Friends 1/6/2025 -- Predictions 2025"> </lite-youtube></p>
+
+<p>Here are my predictions, written up here in a little more detail than the stream of consciousness I shared on the podcast.</p>
+<p>I should emphasize that I find the very idea of trying to predict AI/LLMs over a multi-year period to be completely absurd! I can’t predict what’s going to happen a week from now, six years is a different universe.</p>
+<p>With that disclaimer out of the way, here’s an expanded version of what I said.</p>
+<ul>
+  <li><a href="https://simonwillison.net/2025/Jan/10/ai-predictions/#one-year-agents-fail-to-happen-again">One year: Agents fail to happen, again</a></li>
+  <li><a href="https://simonwillison.net/2025/Jan/10/ai-predictions/#one-year-code-research-assistants">One year: ... except for code and research assistants</a></li>
+  <li><a href="https://simonwillison.net/2025/Jan/10/ai-predictions/#three-years-someone-wins-a-pulitzer-for-ai-assisted-investigative-reporting">Three years: Someone wins a Pulitzer for AI-assisted investigative reporting</a></li>
+  <li><a href="https://simonwillison.net/2025/Jan/10/ai-predictions/#three-years-part-two-privacy-laws-with-teeth">Three years part two: privacy laws with teeth</a></li>
+  <li><a href="https://simonwillison.net/2025/Jan/10/ai-predictions/#six-years-utopian-amazing-art">Six years utopian: amazing art</a></li>
+  <li><a href="https://simonwillison.net/2025/Jan/10/ai-predictions/#six-years-dystopian-agi-asi-causes-mass-civil-unrest">Six years dystopian: AGI/ASI causes mass civil unrest</a></li>
+  <li><a href="https://simonwillison.net/2025/Jan/10/ai-predictions/#my-total-lack-of-conviction">My total lack of conviction</a></li>
+</ul>
+<h4 id="one-year-agents-fail-to-happen-again">One year: Agents fail to happen, again</h4>
+<p>I wrote about how <a href="https://simonwillison.net/2024/Dec/31/llms-in-2024/#-agents-still-haven-t-really-happened-yet">“Agents” still haven’t really happened yet</a> in my review of Large Language Model developments  in 2024.</p>
+<p>I think we are going to see a <em>lot</em> more froth about agents in 2025, but I expect the results will be a great disappointment to most of the people who are excited about this term. I expect a lot of money will be lost chasing after several different poorly defined dreams that share that name.</p>
+<p>What are agents anyway? Ask a dozen people and you’ll get a dozen slightly different answers—I collected and <a href="https://gist.github.com/simonw/beaa5f90133b30724c5cc1c4008d0654">then AI-summarized a bunch of those here</a>.</p>
+<p>For the sake of argument, let’s pick a definition that I can predict won’t come to fruition: the idea of an AI assistant that can go out into the world and semi-autonomously act on your behalf. I think of this as the <strong>travel agent</strong> definition of agents, because for some reason everyone always jumps straight to flight and hotel booking and itinerary planning when they describe this particular dream.</p>
+<p>Having the current generation of LLMs make material decisions on your behalf—like what to spend money on—is a <em>really bad idea</em>. They’re too unreliable, but more importantly they are too <strong>gullible</strong>.</p>
+<p>If you’re going to arm your AI assistant with a credit card and set it loose on the world, you need to be confident that it’s not going to hit “buy” on the first website that claims to offer the best bargains!</p>
+<p>I’m confident that reliability is the reason we haven’t seen LLM-powered agents that have taken off yet, despite the idea attracting a huge amount of buzz since right after ChatGPT first came out.</p>
+<p>I would be very surprised if any of the models released over the next twelve months had enough of a reliability improvement to make this work. Solving gullibility is an astonishingly difficult problem.</p>
+<p>(I had <a href="https://www.youtube.com/watch?v=-pk6VokHpGY&amp;t=1206s">a particularly spicy rant</a> about how stupid the idea of sending a “digital twin” to a meeting on your behalf is.)</p>
+<h4 id="one-year-code-research-assistants">One year: ... except for code and research assistants</h4>
+<p>There are two categories of “agent” that I do believe in, because they’re proven to work already.</p>
+<p>The first is <strong>coding assistants</strong>—where an LLM writes, executes and then refines computer code in a loop.</p>
+<p>I first saw this pattern demonstrated by OpenAI with their <a href="https://simonwillison.net/tags/code-interpreter/">Code Interpreter</a> feature for ChatGPT, released back in March/April of 2023.</p>
+<p>You can ask ChatGPT to solve a problem that can use Python code and it will write that Python, execute it in a secure sandbox (I think it’s Kubernetes) and then use the output—or any error messages—to determine if the goal has been achieved.</p>
+<p>It’s a beautiful pattern that worked great with early 2023 models (I believe it first shipped using original GPT-4), and continues to work today.</p>
+<p>Claude added their own version in October (<a href="https://simonwillison.net/2024/Oct/24/claude-analysis-tool/">Claude analysis</a>, using JavaScript that runs in the browser), Mistral have it, Gemini has a version and there are dozens of other implementations of the same pattern.</p>
+<p>The second category of agents that I believe in is <strong>research assistants</strong>—where an LLM can run multiple searches, gather information and aggregate that into an answer to a question or write a report.</p>
+<p><a href="https://www.perplexity.ai/">Perplexity</a> and <a href="https://openai.com/index/introducing-chatgpt-search/">ChatGPT Search</a> have both been operating in this space for a while, but by far the most impressive implementation I’ve seen is Google Gemini’s <a href="https://blog.google/products/gemini/google-gemini-deep-research/">Deep Research</a> tool, which I’ve had access to for a few weeks.</p>
+<p>With Deep Research I can pose a question like this one:</p>
+<blockquote>
+<p>Pillar Point Harbor is one of the largest communal brown pelican roosts on the west coast of North America.</p>
+<p>find others</p>
+</blockquote>
+<p>And Gemini will draft a plan, consult dozens of different websites via Google Search and then assemble a report (with all-important citations) describing what it found.</p>
+<p>Here’s the plan it came up with:</p>
+<blockquote>
+<p>Pillar Point Harbor is one of the largest communal brown pelican roosts on the west coast of North America. Find other large communal brown pelican roosts on the west coast of North America.<br>
+(1) Find a list of brown pelican roosts on the west coast of North America.<br>
+(2) Find research papers or articles about brown pelican roosts and their size.<br>
+(3) Find information from birdwatching organizations or government agencies about brown pelican roosts.<br>
+(4) Compare the size of the roosts found in (3) to the size of the Pillar Point Harbor roost.<br>
+(5) Find any news articles or recent reports about brown pelican roosts and their populations.</p>
+</blockquote>
+<p>It dug up a whole bunch of details, but the one I cared most about was <a href="https://birdallianceoregon.org/wp-content/uploads/2021/04/Brown-Pelican-survey_4-year_summary-infographic_2016-19_final.pdf">these PDF results for the 2016-2019 Pacific Brown Pelican Survey</a> conducted by the West Coast Audubon network and partners—a PDF that included this delightful list:</p>
+<blockquote>
+<p>Top 10 Megaroosts (sites that traditionally host &gt;500 pelicans) with average fall count numbers:</p>
+<ul>
+<li>Alameda Breakwater, CA (3,183)</li>
+<li>Pillar Point Harbor, CA (1,481)</li>
+<li>East Sand Island, OR (1,121)</li>
+<li>Ano Nuevo State Park, CA (1,068)</li>
+<li>Salinas River mouth, CA (762)</li>
+<li>Bolinas Lagoon, CA (755)</li>
+<li>Morro Rock, CA (725)</li>
+<li>Moss landing, CA (570)</li>
+<li>Crescent City Harbor, CA (514)</li>
+<li>Bird Rock Tomales, CA (514)</li>
+</ul>
+</blockquote>
+<p>My local harbor is the second biggest megaroost!</p>
+<p>It makes intuitive sense to me that this kind of research assistant can be built on our current generation of LLMs. They’re competent at driving tools, they’re capable of coming up with a relatively obvious research plan (look for newspaper articles and research papers) and they can synthesize sensible answers given the right collection of context gathered through search.</p>
+<p>Google are particularly well suited to solving this problem: they have the world’s largest search index and their Gemini model has a 2 million token context. I expect Deep Research to get a whole lot better, and I expect it to attract plenty of competition.</p>
+<h4 id="three-years-someone-wins-a-pulitzer-for-ai-assisted-investigative-reporting">Three years: Someone wins a Pulitzer for AI-assisted investigative reporting</h4>
+<p>I went for a bit of a self-serving prediction here: I think within three years someone is going to win a Pulitzer prize for a piece of investigative reporting that was aided by generative AI tools.</p>
+
+<p><em><strong>Update</strong>: after publishing this piece I learned about this May 2024 story from Nieman Lab: <a href="https://www.niemanlab.org/2024/05/for-the-first-time-two-pulitzer-winners-disclosed-using-ai-in-their-reporting/">For the first time, two Pulitzer winners disclosed using AI in their reporting</a>. I think these were both examples of traditional machine learning as opposed to LLM-based generative AI, but this is yet another example of my predictions being less ambitious than I had thought!</em></p>
+
+<p>I do <em>not</em> mean that an LLM will write the article! I continue to think that having LLMs write on your behalf is one of the least interesting applications of these tools.</p>
+<p>I called this prediction self-serving because I want to help make this happen! My <a href="https://datasette.io">Datasette</a> suite of open source tools for data journalism has been growing AI features, like <a href="https://simonwillison.net/2023/Dec/1/datasette-enrichments/">LLM-powered data enrichments</a> and <a href="https://www.datasette.cloud/blog/2024/datasette-extract/">extracting structured data</a> into tables from unstructured text.</p>
+<p>My dream is for those tools—or tools like them—to be used for an award winning piece of investigative reporting.</p>
+<p>I picked three years for this because I think that’s how long it will take for knowledge of how to responsibly and effectively use these tools to become widespread enough for that to happen.</p>
+<p>LLMs are not an obvious fit for journalism: journalists look for the truth, and LLMs are notoriously prone to hallucination and making things up. But journalists are also <em>really good</em> at extracting useful information from potentially untrusted sources—that’s a lot of what the craft of journalism is about.</p>
+<p>The two areas I think LLMs are particularly relevant to journalism are:</p>
+<ul>
+<li>Structured data extraction. If you have 10,000 PDFs from a successful Freedom of Information Act request, someone or something needs to kick off the process of reading through them to find the stories. LLMs are a fantastic way to take a vast amount of information and start making some element of sense from it. They can act as lead generators, helping identify the places to start looking more closely.</li>
+<li>Coding assistance. Writing code to help analyze data is a huge part of modern data journalism—from SQL queries through data cleanup scripts, custom web scrapers or visualizations to help find signal among the noise. Most newspapers don’t have a team of programmers on staff: I think within three years we’ll have robust enough tools built around this pattern that non-programmer journalists will be able to use them as part of their reporting process.</li>
+</ul>
+<p>I hope to build some of these tools myself!</p>
+<p>So my concrete prediction for three years is that someone wins a Pulitzer with a small amount of assistance from LLMs.</p>
+<p>My more general prediction: within three years it won’t be surprising at all to see most information professionals use LLMs as part of their daily workflow, in increasingly sophisticated ways. We’ll know exactly what patterns work and how best to explain them to people. These skills will become widespread.</p>
+<h4 id="three-years-part-two-privacy-laws-with-teeth">Three years part two: privacy laws with teeth</h4>
+<p>My other three year prediction concerned privacy legislation.</p>
+<p>The levels of (often justified) paranoia around both targeted advertising and what happens to the data people paste into these models is a constantly growing problem.</p>
+<p>I wrote recently about the <a href="https://simonwillison.net/2025/Jan/2/they-spy-on-you-but-not-like-that/">inexterminable conspiracy theory that Apple target ads through spying through your phone’s microphone</a>. I’ve written in the past about <a href="https://simonwillison.net/2023/Dec/14/ai-trust-crisis/">the AI trust crisis</a>, where people refuse to believe that models are not being trained on their inputs no matter how emphatically the companies behind them deny it.</p>
+<p>I think the AI industry itself would benefit enormously from legislation that helps clarify what’s going on with training on user-submitted data, and the wider tech industry could really do with harder rules around things like data retention and targeted advertising.</p>
+<p>I don’t expect the next four years of US federal government to be effective at passing legislation, but I expect we’ll see privacy legislation with sharper teeth emerging at the state level or internationally. Let’s just hope we don’t end up with a new generation of cookie-consent banners as a result!</p>
+<h4 id="six-years-utopian-amazing-art">Six years utopian: amazing art</h4>
+<p>For six years I decided to go with two rival predictions, one optimistic and one pessimistic.</p>
+<p>I think six years is long enough that we’ll figure out how to harness this stuff to make some <strong>really great art</strong>.</p>
+<p>I don’t think generative AI for art—images, video and music—deserves nearly the same level of respect as a useful tool as text-based LLMs. Generative art tools are a lot of fun to try out but the lack of fine-grained control over the output greatly limits its utility outside of personal amusement or generating <a href="https://simonwillison.net/tags/slop/">slop</a>.</p>
+<p>More importantly, they lack social acceptability. The vibes aren’t good. Many talented artists have loudly rejected the idea of these tools, to the point that the very term “AI” is developing a distasteful connotation in society at large.</p>
+<p>Image and video models are also ground zero for the AI training data ethics debate, and for good reason: no artist wants to see a model trained on their work without their permission that then directly competes with them!</p>
+<p>I think six years is long enough for this whole thing to shake out—for society to figure out acceptable ways of using these tools to truly elevate human expression. What excites me is the idea of truly talented, visionary creative artists using whatever these tools have evolved into in six years to make meaningful art that could never have been achieved without them.</p>
+<p>On the podcast I talked about <a href="https://en.wikipedia.org/wiki/Everything_Everywhere_All_at_Once">Everything Everywhere All at Once</a>, a film that deserved every one of its seven Oscars. The core visual effects team on that film was just five people. Imagine what a team like that could do with the generative AI tools we’ll have in six years time!</p>
+<p id="since-recording">Since recording the podcast I learned from <a href="https://www.swyx.io/">Swyx</a> that Everything Everywhere All at Once <a href="https://www.aboutamazon.com/news/aws/how-ai-tools-are-creating-new-possibilities-for-movies-and-visual-design-according-to-this-aws-powered-startup">used Runway ML as part of their toolset already</a>:</p>
+<blockquote>
+<p>Evan Halleck was on this team, and he used Runway’s AI tools to save time and automate tedious aspects of editing. Specifically in the film’s rock scene, he used Runway’s rotoscoping tool to get a quick, clean cut of the rocks as sand and dust were moving around the shot. This translated days of work to a matter of minutes.</p>
+</blockquote>
+<p>I said I thought a film that had used generative AI tools would win an Oscar within six years. Looks like I was eight years out on that one!</p>
+<h4 id="six-years-dystopian-agi-asi-causes-mass-civil-unrest">Six years dystopian: AGI/ASI causes mass civil unrest</h4>
+<p>My pessimistic alternative take for 2031 concerns “AGI”—a term which, like “agents”, is constantly being redefined. The Information <a href="https://www.theinformation.com/articles/microsoft-and-openai-wrangle-over-terms-of-their-blockbuster-partnership">recently reported</a> (see also <a href="https://www.theverge.com/2025/1/6/24337106/sam-altman-says-openai-knows-how-to-build-agi-blog-post">The Verge</a>) that Microsoft and OpenAI are now defining AGI as a system capable of generating $100bn in profit!</p>
+<p>If we assume AGI is the point at which AI systems are capable of performing almost any job currently reserved for a human being it’s hard <em>not</em> to see potentially negative consequences.</p>
+<p>Sam Altman may have <a href="https://www.bloomberg.com/news/articles/2024-07-22/ubi-study-backed-by-openai-s-sam-altman-bolsters-support-for-basic-income">experimented with Universal Basic Income</a>, but the USA is a country that can’t even figure out universal healthcare! I have huge trouble imagining a future economy that works for the majority of people when the majority of jobs are being done by machines.</p>
+<p>So my dystopian prediction for 2031 is that if that form of AGI has come to pass it will be accompanied by extraordinarily bad economic outcomes and mass civil unrest.</p>
+<p>My version of an AI utopia is tools that augment existing humans. That’s what we’ve had with LLMs so far, and my ideal is that those tools continue to improve and subsequently humans become able to take on <a href="https://simonwillison.net/2023/Mar/27/ai-enhanced-development/">more ambitious work</a>.</p>
+<p>If there’s a version of AGI that results in that kind of utopia, I’m all for it.</p>
+<h4 id="my-total-lack-of-conviction">My total lack of conviction</h4>
+<p>There’s a reason I haven’t made predictions like this before: my confidence in my ability to predict the future is almost non-existent. At least one of my predictions here <a href="https://simonwillison.net/2025/Jan/10/ai-predictions/#since-recording">already proved to be eight years late</a>!</p>
+<p>These predictions are in the public record now (I even <a href="https://github.com/oxidecomputer/oxide-and-friends/pull/158">submitted a pull request</a>).</p>
+<p>It’s going to be interesting looking back at these in one, three and six years to see how I did.</p>
+
+
+</div>
+<div class="entryFooter">Posted <a href="/2025/Jan/10/">10th January 2025</a> at 1:43 am &middot; Follow me on <a href="https://fedi.simonwillison.net/@simon">Mastodon</a>, <a href="https://bsky.app/profile/simonwillison.net">Bluesky</a>, <a href="https://twitter.com/simonw">Twitter</a> or <a href="https://simonwillison.net/about/#subscribe">subscribe to my newsletter</a></div>
+<p class="edit-page-link" data-admin-url="/admin/blog/entry/8689/" style="display: none;"></p>
+
+</div>
+
+
+<div class="recent-articles">
+<h2>More recent articles</h2>
+<ul class="bullets">
+  
+    <li><a href="/2026/Jul/22/openai-cyberattack/">OpenAI’s accidental cyberattack against Hugging Face is science fiction that happened</a> - 22nd July 2026</li>
+  
+    <li><a href="/2026/Jul/21/cat-and-thariq/">A Fireside Chat with Cat and Thariq from the Claude Code team</a> - 21st July 2026</li>
+  
+    <li><a href="/2026/Jul/16/kimi-k3/">Kimi K3, and what we can still learn from the pelican benchmark</a> - 16th July 2026</li>
+  
+</ul>
+</div>
+
+
+
+</div> <!-- #primary -->
+
+<div id="secondary">
+
+<div class="metabox">
+<p class="this-is">This is <strong>My AI/LLM predictions for the next 1, 3 and 6 years, for Oxide and Friends</strong> by Simon Willison, posted on <a href="/2025/Jan/10/">10th January 2025</a>.</p>
+
+
+    
+        <a class="item-tag" href="/tags/data-journalism/" rel="tag">
+            data-journalism
+            <span>76</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/predictions/" rel="tag">
+            predictions
+            <span>7</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/ai/" rel="tag">
+            ai
+            <span>2,143</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/openai/" rel="tag">
+            openai
+            <span>434</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/generative-ai/" rel="tag">
+            generative-ai
+            <span>1,895</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/llms/" rel="tag">
+            llms
+            <span>1,862</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/ai-assisted-programming/" rel="tag">
+            ai-assisted-programming
+            <span>400</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/gemini/" rel="tag">
+            gemini
+            <span>191</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/code-interpreter/" rel="tag">
+            code-interpreter
+            <span>30</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/oxide/" rel="tag">
+            oxide
+            <span>10</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/ai-agents/" rel="tag">
+            ai-agents
+            <span>111</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/deep-research/" rel="tag">
+            deep-research
+            <span>9</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/ai-assisted-search/" rel="tag">
+            ai-assisted-search
+            <span>34</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/coding-agents/" rel="tag">
+            coding-agents
+            <span>226</span>
+        </a>
+    
+        <a class="item-tag" href="/tags/agent-definitions/" rel="tag">
+            agent-definitions
+            <span>19</span>
+        </a>
+    
+
+
+
+<p><strong>Next:</strong> <a href="/2025/Jan/20/deepseek-r1/">DeepSeek-R1 and exploring DeepSeek-R1-Distill-Llama-8B</a></p>
+
+
+<p><strong>Previous:</strong> <a href="/2025/Jan/4/weeknotes/">Weeknotes: Starting 2025 a little slow</a></p>
+
+
+<section style="
+    /* .promo */
+    border-radius: 8px;
+    margin: 1.5rem 0;
+    padding: 1rem 1.25rem;
+    /* .variant-a */
+    border: 2px solid #6c3eb9;
+  ">
+  <h3 style="
+      /* h3 */
+      margin: 0 0 0.5rem;
+      font-size: 1.25rem;
+    ">
+    Monthly briefing
+  </h3>
+  <p style="
+      /* p */
+      margin: 0 0 1rem;
+      line-height: 1.4;
+    ">
+    Sponsor me for <strong>$10/month</strong> and get a curated email digest of the month's most important LLM developments.
+  </p>
+  <p style="
+      /* p */
+      margin: 0 0 1rem;
+      line-height: 1.4;
+    ">
+    Pay me to send you less!
+  </p>
+  <a href="https://github.com/sponsors/simonw/" style="
+      /* a.button */
+      display: inline-block;
+      padding: 0.5rem 1rem;
+      background: #6c3eb9;
+      color: #fff;
+      text-decoration: none;
+      border-radius: 4px;
+      font-weight: 600;
+    ">
+    Sponsor &amp; subscribe
+  </a>
+</section>
+</div>
+
+
+
+</div> <!-- #secondary -->
+</div> <!-- #wrapper -->
+
+
+
+
+
+
+
+
+
+
+
+<div id="ft">
+    <ul>
+      <li><a href="/about/#disclosures">Disclosures</a></li>
+      <li><a href="/about/#about-site">Colophon</a></li>
+      <li>&copy;</li>
+      <li><a href="/2002/">2002</a></li>
+      <li><a href="/2003/">2003</a></li>
+      <li><a href="/2004/">2004</a></li>
+      <li><a href="/2005/">2005</a></li>
+      <li><a href="/2006/">2006</a></li>
+      <li><a href="/2007/">2007</a></li>
+      <li><a href="/2008/">2008</a></li>
+      <li><a href="/2009/">2009</a></li>
+      <li><a href="/2010/">2010</a></li>
+      <li><a href="/2011/">2011</a></li>
+      <li><a href="/2012/">2012</a></li>
+      <li><a href="/2013/">2013</a></li>
+      <li><a href="/2014/">2014</a></li>
+      <li><a href="/2015/">2015</a></li>
+      <li><a href="/2016/">2016</a></li>
+      <li><a href="/2017/">2017</a></li>
+      <li><a href="/2018/">2018</a></li>
+      <li><a href="/2019/">2019</a></li>
+      <li><a href="/2020/">2020</a></li>
+      <li><a href="/2021/">2021</a></li>
+      <li><a href="/2022/">2022</a></li>
+      <li><a href="/2023/">2023</a></li>
+      <li><a href="/2024/">2024</a></li>
+      <li><a href="/2025/">2025</a></li>
+      <li><a href="/2026/">2026</a></li>
+      <li>
+        <button id="theme-toggle" type="button" aria-label="Toggle theme">
+          <!-- Auto/System icon (default) -->
+          <svg id="icon-auto" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 22C6.477 22 2 17.523 2 12S6.477 2 12 2s10 4.477 10 10-4.477 10-10 10zm0-2V4a8 8 0 1 0 0 16z"/></svg>
+          <!-- Light icon -->
+          <svg id="icon-light" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="display:none"><path d="M12 18a6 6 0 1 1 0-12 6 6 0 0 1 0 12zm0-2a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM11 1h2v3h-2V1zm0 19h2v3h-2v-3zM3.515 4.929l1.414-1.414L7.05 5.636 5.636 7.05 3.515 4.93zM16.95 18.364l1.414-1.414 2.121 2.121-1.414 1.414-2.121-2.121zm2.121-14.85l1.414 1.415-2.121 2.121-1.414-1.414 2.121-2.121zM5.636 16.95l1.414 1.414-2.121 2.121-1.414-1.414 2.121-2.121zM23 11v2h-3v-2h3zM4 11v2H1v-2h3z"/></svg>
+          <!-- Dark icon -->
+          <svg id="icon-dark" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" style="display:none"><path d="M10 7a7 7 0 0 0 12 4.9v.1c0 5.523-4.477 10-10 10S2 17.523 2 12 6.477 2 12 2h.1A6.979 6.979 0 0 0 10 7zm-6 5a8 8 0 0 0 15.062 3.762A9 9 0 0 1 8.238 4.938 7.999 7.999 0 0 0 4 12z"/></svg>
+        </button>
+      </li>
+    </ul>
+</div>
+
+
+
+<style>image-gallery:not(:defined) img {max-height: 150px;} captioned-image-gallery:not(:defined) > figure {max-height: 240px; overflow: hidden;}</style>
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('h2[id],h3[id],h4[id],h5[id],h6[id]').forEach(el => {
+    const id = el.getAttribute('id');
+    const permalinkContext = el.closest('[data-permalink-context]');
+    if (permalinkContext) {
+      const url = permalinkContext.getAttribute('data-permalink-context');
+      const hashLink = document.createElement('a');
+      hashLink.style.borderBottom = 'none';
+      hashLink.style.color = '#666';
+      hashLink.style.fontSize = '1em';
+      hashLink.style.opacity = 0.8;
+      hashLink.setAttribute('href', url + '#' + id);
+      hashLink.innerText = '#';
+      el.appendChild(document.createTextNode('\u00A0'));
+      el.appendChild(hashLink);
+    }
+  });
+});
+</script>
+<script type="module">
+const config = [
+  {"tag": "lite-youtube", "js": "/static/lite-yt-embed.js", "css": "/static/lite-yt-embed.css"},
+  {"tag": "image-gallery", "js": "/static/image-gallery.js", "css": null},
+  {"tag": "captioned-image-gallery", "js": "/static/captioned-image-gallery.js", "css": null},
+  {"tag": "click-to-play", "js": "/static/click-to-play.js", "css": "/static/click-to-play.css"},
+  {"tag": "github-code", "js": "/static/github-code.js", "css": null}
+];
+for (const {tag, js, css} of config) {
+  if (document.querySelector(tag)) {
+    if (css) {
+      document.head.appendChild(
+        Object.assign(document.createElement('link'), {
+          rel: 'stylesheet',
+          href: css
+        })
+      );
+    }
+    if (js) {
+      await import(js);
+    }
+  }
+}
+</script>
+<script>
+  document.addEventListener('DOMContentLoaded', () => {
+    if (window.localStorage.getItem('ADMIN')) {
+      document.querySelectorAll('.edit-page-link').forEach(el => {
+        const url = el.getAttribute('data-admin-url');
+        if (url) {
+          const a = document.createElement('a');
+          a.href = url;
+          a.className = 'edit-link';
+          a.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg> Edit';
+          el.appendChild(a);
+          el.style.display = 'block';
+        }
+      });
+    }
+  });
+</script>
+<script>
+// Random tag navigation - shows button if recently came from tag random
+(function() {
+  const stored = localStorage.getItem('random_tag');
+  if (!stored) return;
+
+  try {
+    const data = JSON.parse(stored);
+    const elapsed = Date.now() - data.timestamp;
+
+    // Only show if within 5 seconds
+    if (elapsed > 5000) return;
+
+    const header = document.getElementById('smallhead-inner');
+    if (!header) return;
+
+    const btn = document.createElement('a');
+    btn.href = '/random/' + encodeURIComponent(data.tag) + '/';
+    btn.className = 'random-tag-nav';
+    btn.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><circle cx="8.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="15.5" cy="8.5" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="8.5" cy="15.5" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="15.5" cy="15.5" r="1.5" fill="currentColor" stroke="none"></circle><circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"></circle></svg> Random ' + data.tag;
+
+    btn.addEventListener('click', function(e) {
+      // Bump the timestamp before navigating
+      localStorage.setItem('random_tag', JSON.stringify({
+        tag: data.tag,
+        timestamp: Date.now()
+      }));
+    });
+
+    // Insert before the Subscribe link
+    const subscribeLink = document.getElementById('smallhead-about');
+    if (subscribeLink) {
+      header.insertBefore(btn, subscribeLink);
+    } else {
+      header.appendChild(btn);
+    }
+  } catch (e) {
+    // Invalid JSON, clear it
+    localStorage.removeItem('random_tag');
+  }
+})();
+</script>
+<script>
+// Theme toggle functionality
+(function() {
+  const toggle = document.getElementById('theme-toggle');
+  const iconAuto = document.getElementById('icon-auto');
+  const iconLight = document.getElementById('icon-light');
+  const iconDark = document.getElementById('icon-dark');
+
+  // Theme states: 'auto' (default), 'light', 'dark'
+  function getTheme() {
+    return localStorage.getItem('theme') || 'auto';
+  }
+
+  function setTheme(theme) {
+    if (theme === 'auto') {
+      localStorage.removeItem('theme');
+      document.documentElement.removeAttribute('data-theme');
+    } else {
+      localStorage.setItem('theme', theme);
+      document.documentElement.setAttribute('data-theme', theme);
+    }
+    updateIcon(theme);
+  }
+
+  function updateIcon(theme) {
+    iconAuto.style.display = theme === 'auto' ? 'block' : 'none';
+    iconLight.style.display = theme === 'light' ? 'block' : 'none';
+    iconDark.style.display = theme === 'dark' ? 'block' : 'none';
+
+    // Update aria-label for accessibility
+    const labels = {
+      'auto': 'Theme: Auto (system preference). Click to switch to light.',
+      'light': 'Theme: Light. Click to switch to dark.',
+      'dark': 'Theme: Dark. Click to switch to auto.'
+    };
+    toggle.setAttribute('aria-label', labels[theme]);
+  }
+
+  // Cycle through themes: auto -> light -> dark -> auto
+  function cycleTheme() {
+    const current = getTheme();
+    const next = current === 'auto' ? 'light' : current === 'light' ? 'dark' : 'auto';
+    setTheme(next);
+  }
+
+  // Initialize
+  updateIcon(getTheme());
+  toggle.addEventListener('click', cycleTheme);
+})();
+</script>
+</body>
+</html>

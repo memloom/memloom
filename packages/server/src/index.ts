@@ -6,8 +6,10 @@ import { promisify } from "node:util";
 import { serve as nodeServe } from "@hono/node-server";
 import {
   detectKind,
+  isHttpUrl,
   type IndexProgressEvent,
   isChatProvider,
+  LinkExtractionError,
   MEMORY_TYPES,
   type Memloom,
   supportedExtensions,
@@ -215,6 +217,14 @@ const updateSchema = z.object({
 
 const contextAddSchema = z.object({
   path: z.string().min(1, "path must be a non-empty string"),
+  ownerId: z.string().uuid().optional(),
+});
+
+// The html field is capped well under the page fetcher own 10 MB limit: a rendered DOM
+// arrives as JSON here, and an unbounded string would be a memory hole on a local port.
+const contextUrlSchema = z.object({
+  url: z.string().refine(isHttpUrl, "url must start with http:// or https://"),
+  html: z.string().max(10_000_000).optional(),
   ownerId: z.string().uuid().optional(),
 });
 
@@ -964,6 +974,25 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       return c.json(await memloom.contextUpload({ filename, bytes }));
     },
   );
+
+  // Ingest a web page. The daemon fetches and parses it locally, so nothing about the page
+  // reaches a third party. `html` lets a caller that already rendered the page hand over
+  // its DOM instead, which is what a browser extension would send: no fetch, and pages
+  // behind a login or built as single-page apps work because the caller was signed in.
+  app.post("/context/url", async (c) => {
+    const body = await parseBody(c, contextUrlSchema);
+    if (!body.ok) return body.res;
+    try {
+      return c.json(await memloom.contextAddUrl(body.data));
+    } catch (err) {
+      // Extraction failures are the caller's problem to act on (try the extension, the page
+      // is a PDF, the site blocked us), so they answer 400 with a stable code, not a 500.
+      if (err instanceof LinkExtractionError) {
+        return c.json({ error: err.message, code: err.code, url: err.url }, 400);
+      }
+      throw err;
+    }
+  });
 
   // Ingest a file, or a whole folder: directories are walked (bounded depth, hidden and
   // node_modules-style dirs skipped) and every supported file is added.

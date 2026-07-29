@@ -332,6 +332,18 @@ export interface ContextAddInput {
   ownerId?: string;
 }
 
+export interface ContextAddUrlInput {
+  /** http(s) URL. Stored normalized (tracking params and fragment stripped) as the path. */
+  url: string;
+  /**
+   * Rendered HTML from a caller that already loaded the page, so the daemon skips the
+   * fetch. This is how a browser extension saves a single-page app or a page behind a
+   * login: the DOM it hands over is the one the user was looking at.
+   */
+  html?: string;
+  ownerId?: string;
+}
+
 /**
  * "converted": an upload:// snapshot became this linked document (a link is the stronger
  * identity: it can refresh from disk). "exists": an upload was skipped because the same

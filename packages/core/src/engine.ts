@@ -7,6 +7,7 @@ import type {
   ConflictAutoEvent,
   ConflictAutoResult,
   ContextAddInput,
+  ContextAddUrlInput,
   ContextAddResult,
   ContextDocument,
   DocumentChunks,
@@ -111,6 +112,8 @@ export interface MemoryEngine {
   ): Promise<ConflictAutoResult>;
   /** Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors; re-add replaces. */
   contextAdd(input: ContextAddInput): Promise<ContextAddResult>;
+  /** Ingest a web page as context. Fetched and parsed locally; the URL becomes the path. */
+  contextAddUrl(input: ContextAddUrlInput): Promise<ContextAddResult>;
   contextList(ownerId?: string): Promise<ContextDocument[]>;
   /** One document at chunk granularity: chunks in order + their chunk -> entity edges. */
   contextChunks(documentId: string, ownerId?: string): Promise<DocumentChunks>;

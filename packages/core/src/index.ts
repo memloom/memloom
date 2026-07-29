@@ -69,6 +69,16 @@ export {
 } from "./hashing-provider.js";
 export type { FetchLike, HttpResponse } from "./http-client.js";
 export { HttpMemloomClient } from "./http-client.js";
+// Web link ingestion (fetch + defuddle on linkedom, all in-process)
+export type { ExtractedLink, ExtractedPage, ExtractUrlOptions, FetchedPage } from "./link.js";
+export {
+  extractHtml,
+  extractUrl,
+  fetchPage,
+  isHttpUrl,
+  LinkExtractionError,
+  normalizeUrl,
+} from "./link.js";
 export type { ReleaseLock } from "./lock.js";
 export { acquireDataDirLock } from "./lock.js";
 export type { InitOptions, MemloomConfig } from "./memloom.js";
@@ -158,6 +168,7 @@ export type {
   ContextAddInput,
   ContextAddOutcome,
   ContextAddResult,
+  ContextAddUrlInput,
   ContextAttachInput,
   ContextAttachResult,
   ContextChunk,
