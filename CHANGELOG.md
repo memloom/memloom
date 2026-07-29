@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- Added entity resolution: memloom now folds the several spellings of one thing
+  (`Claude Opus 4.8` and `Opus 4.8`, `Postgres` and `PostgreSQL`) into one entity. Spellings
+  that differ only in case and punctuation fold automatically; anything less certain is
+  queued in the Conflicts tab for you to decide. Every fold is reversible, and the absorbed
+  spelling keeps resolving to the survivor, so new memories using the old name land in the
+  right place ([docs](https://docs.memloom.dev/concepts/entity-resolution))
+- Recall now follows folded spellings. The entity arm anchors on alias vectors as well as
+  entity vectors, so a query using a name that was folded away still reaches everything the
+  surviving entity is attached to. This matters because duplicate spellings compete for the
+  arm's ten anchor slots, so folding them is a retrieval improvement, not just tidiness
+- Added `GET /memory/entities/related` and the `related_entities` MCP tool: walk the graph
+  from one entity to see who and what it is connected to, filtered by entity type. Accepts a
+  name, an id, or a folded-away spelling, and reports which one it matched. Relationships
+  extraction actually stated are listed separately from entities that merely appear in the
+  same memories
+- Added `agent` as a built-in entity type, for a named AI model or assistant that does work
+- `DELETE /memory/entities/{id}` now refuses while an unreverted fold points at the entity.
+  It used to take the alias row with it, which made the fold permanent and swept the absorbed
+  entity's mentions along with it
+
 ## 0.5.0
 
 - Added prompt-time recall to `memloom connect claude-code`: a second hook injects the

@@ -58,6 +58,17 @@ The graph is yours to correct: the extraction vocabulary is a registry you can e
 review, and prune, and every entity can be renamed, retyped, merged into another, or
 deleted from the schema tab. See [The graph](/concepts/graph).
 
+Duplicate spellings get folded for you. A graph naturally accumulates `Claude Opus 4.8` and
+`Opus 4.8`, `Postgres` and `PostgreSQL`, and each one quietly costs recall quality by
+competing for the entity arm's ten anchor slots. memloom folds the ones that are obviously
+the same, asks you about the rest in the Conflicts tab, keeps every fold reversible, and
+teaches recall to follow the spellings it folded away. See
+[Entity resolution](/concepts/entity-resolution).
+
+Once identity is settled you can ask the graph about connections rather than content: which
+people are related to this person, what this project uses. See
+[Asking who is connected to what](/concepts/graph#asking-who-is-connected-to-what).
+
 ## Version history for every belief
 
 Every memory is a version chain. Rewording a fact, editing it with `memloom update`, or

@@ -1,11 +1,11 @@
 ---
 title: "Tools"
-description: "The eight tools memloom exposes to MCP clients, and how they chain together"
+description: "The nine tools memloom exposes to MCP clients, and how they chain together"
 ---
 
-Eight tools, split by what they touch: memories, conflicts, and the graph vocabulary. The
-descriptions the calling agent sees are written so it knows when to reach for each one; this
-page is the human-readable version, with the flows between tools spelled out.
+Nine tools, split by what they touch: memories, the graph, conflicts, and the graph
+vocabulary. The descriptions the calling agent sees are written so it knows when to reach for
+each one; this page is the human-readable version, with the flows between tools spelled out.
 
 ## save_memory
 
@@ -55,6 +55,32 @@ Exists for exactly one flow: a recall result ended with the truncation marker an
 may be in the cut part. Works for memories and document chunks alike. A markdown chunk is a
 whole heading section (up to 16k characters), so the tail of a big section is always
 reachable even though recall injects at most 8k.
+
+## related_entities
+
+Walk the memory **graph** from one entity: who and what it is connected to. Use it for
+questions about connections rather than content ("which people are related to this person",
+"what does this project use"), where `recall_memory` would return prose the agent still has
+to read.
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `entity` | string | a name, an id, or a known alias |
+| `type` | string | optional filter: `person`, `organization`, `project`, `tool`, `technology`, `agent`, `place`, `event`, `concept` |
+| `limit` | number | optional, default 50 |
+
+The target is matched exactly, not by meaning, so this is a graph lookup rather than a second
+search. A spelling that [entity resolution](/concepts/entity-resolution) folded away resolves
+to its canonical entity and the answer says so, which is often the useful part: asking about
+`Bob` answers about `Robert` and reports that they are the same person.
+
+Two kinds of connection are printed as separate groups, deliberately:
+
+- **Stated relationships** the extractor asserted, with their direction (`works_on ->`).
+- **Appears together with**, entities named by the same sources, with a shared-source count.
+
+An agent relaying the answer should not present the second as the first. The graph asserted
+one and merely observed the other.
 
 ## memory_history
 
