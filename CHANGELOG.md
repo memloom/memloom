@@ -12,11 +12,13 @@
   entity vectors, so a query using a name that was folded away still reaches everything the
   surviving entity is attached to. This matters because duplicate spellings compete for the
   arm's ten anchor slots, so folding them is a retrieval improvement, not just tidiness
-- Added `GET /memory/entities/related` and the `related_entities` MCP tool: walk the graph
-  from one entity to see who and what it is connected to, filtered by entity type. Accepts a
-  name, an id, or a folded-away spelling, and reports which one it matched. Relationships
-  extraction actually stated are listed separately from entities that merely appear in the
-  same memories
+- Added graph traversal: walk from one entity to see who and what it is connected to,
+  filtered by entity type. Accepts a name, an id, or a folded-away spelling, and reports
+  which one it matched. Relationships extraction actually stated are listed separately from
+  entities that merely appear in the same memories. Available as a **traverse** panel on the
+  viewer's Graph tab, where searching an entity dims the canvas to its neighbourhood and
+  clicking a neighbour follows it, plus `GET /memory/entities/related` and the
+  `related_entities` MCP tool
 - Added `agent` as a built-in entity type, for a named AI model or assistant that does work
 - `DELETE /memory/entities/{id}` now refuses while an unreverted fold points at the entity.
   It used to take the alias row with it, which made the fold permanent and swept the absorbed

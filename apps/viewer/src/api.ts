@@ -49,6 +49,30 @@ export interface EntityDetail extends Entity {
   aliases: string[];
 }
 
+/** One stated relationship between two entities, seen from the entity being asked about. */
+export interface EntityLink {
+  relation: string;
+  direction: "out" | "in";
+  confidence: number | null;
+}
+
+/** One entity connected to the entity being asked about, and how. */
+export interface RelatedEntity extends Entity {
+  mentions: number;
+  aliases: string[];
+  /** Empty means the connection is co-mention only: nothing stated how they relate. */
+  links: EntityLink[];
+  sharedSources: number;
+}
+
+/** The neighbourhood of one entity. `matchedAlias` is set when a folded spelling was asked for. */
+export interface RelatedEntities {
+  entity: EntityDetail;
+  matchedAlias: string | null;
+  related: RelatedEntity[];
+  truncated: number;
+}
+
 /** A canonical an uncertain fold could go to. */
 export interface EntityConflictCandidate {
   id: string;
@@ -537,6 +561,20 @@ export const api = {
     post<EntityResolutionResult>("/memory/entities/resolve", { dryRun }),
   revertEntityMerge: (id: string) =>
     post<{ ok: boolean }>(`/memory/entities/merges/${id}/revert`, {}),
+  /**
+   * Walk the graph from one entity. `target` may be a name, an id, or a folded-away spelling;
+   * null means nothing matched, which is different from an entity with no neighbours.
+   */
+  relatedEntities: async (target: string, entityType?: string): Promise<RelatedEntities | null> => {
+    const params = new URLSearchParams({ q: target });
+    if (entityType) params.set("type", entityType);
+    // Not json(): a 404 here means "no such entity", which is an answer rather than a failure.
+    const res = await fetch(`/memory/entities/related?${params}`);
+    if (res.status === 404) return null;
+    const body = (await res.json().catch(() => null)) as ({ error?: string } & RelatedEntities) | null;
+    if (!res.ok) throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
+    return body as RelatedEntities;
+  },
   assistantSessions: () =>
     json<{ sessions: AssistantSession[] }>("/assistant/sessions").then((r) => r.sessions),
   assistantSearch: (q: string) =>

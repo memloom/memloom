@@ -133,7 +133,10 @@ variants, queues the uncertain ones for review, and keeps every fold reversible.
 `GET /memory/entities/related?q=<name or id>&type=<entity type>` walks the graph from one
 entity instead of returning all of it. The target can be a name, an id, or a folded-away
 spelling. Stated relationships come back separately from entities that merely appear in the
-same memories, because those are different kinds of evidence. Agents reach the same thing
+same memories, because those are different kinds of evidence.
+
+In the viewer this is the **traverse** panel on the Graph tab: search an entity and the canvas
+dims to its neighbourhood, so the answer is whatever stays lit. Agents reach the same thing
 through the [`related_entities`](/mcp/tools#related_entities) MCP tool.
 
 The HTTP surface is `GET /memory/entities`, `GET /memory/entities/related`,

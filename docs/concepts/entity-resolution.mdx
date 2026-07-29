@@ -180,8 +180,10 @@ separately, never blended into one score:
 Folding feeds this directly: because the absorbed spelling's mention edges were repointed, a
 fold makes a neighbourhood more complete rather than merely tidier.
 
-Agents reach the same thing through the [`related_entities`](/mcp/tools#related_entities) MCP
-tool, which is where the question is usually worth asking.
+In the Console this is the **traverse** panel on the Graph tab. Searching an entity dims the
+canvas to its neighbourhood, so the answer is the part of the graph still lit; clicking a
+neighbour follows it and the lit region moves one hop. Agents reach the same thing through the
+[`related_entities`](/mcp/tools#related_entities) MCP tool.
 
 ## What it deliberately will not do
 
@@ -197,6 +199,7 @@ mention of the alias resolves to the canonical. The missing piece is only a chan
 
 | Surface | How |
 | --- | --- |
-| Console | The Conflicts tab, "Duplicate entities" section: Find, three actions per card, and a Folded list with Revert |
-| HTTP | `POST /memory/entities/resolve`, `GET /memory/entities/conflicts`, `GET /memory/entities/merges`, `POST /memory/entities/merges/{id}/revert` |
+| Console, Conflicts tab | "Duplicate entities": Find, three actions per card, and a Folded list with Revert |
+| Console, Graph tab | The **traverse** panel: search an entity, and the canvas dims to its neighbourhood |
+| HTTP | `POST /memory/entities/resolve`, `GET /memory/entities/conflicts`, `GET /memory/entities/merges`, `POST /memory/entities/merges/{id}/revert`, `GET /memory/entities/related` |
 | MCP | `related_entities` for traversal; folds are reviewed by a human, not an agent |
