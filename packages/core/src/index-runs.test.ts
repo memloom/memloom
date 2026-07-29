@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { HashingEmbeddingProvider, ScriptedLLMProvider } from "./hashing-provider.js";
 import { Memloom, SENTINEL_OWNER } from "./memloom.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
 import type { StorageAdapter } from "./storage.js";
+import { truncateAll } from "./test-store.js";
 
 // Index sessions: every index()/reindex() pass records a memory_index_runs row plus one
 // event per item, so the Console's log is persistent (survives tab switches, page reloads,
@@ -20,6 +21,17 @@ const extractor = new ScriptedLLMProvider((prompt) => {
   return JSON.stringify({ entities, relationships: [] });
 });
 
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteAdapter.open();
+});
+afterAll(async () => {
+  await storage.close();
+});
+
 describe("index run sessions", () => {
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => {
@@ -27,8 +39,7 @@ describe("index run sessions", () => {
   });
 
   async function fresh(llm = extractor): Promise<{ m: Memloom; storage: StorageAdapter }> {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const m = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -108,8 +119,7 @@ describe("index run sessions", () => {
   });
 
   it("auto-index: a save triggers a background run; a burst debounces into one", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const m = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -151,8 +161,7 @@ describe("index run sessions", () => {
   });
 
   it("auto-index failures never reject the save that scheduled them", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const exploding = new ScriptedLLMProvider(() => {
       throw new Error("provider exploded");
     });

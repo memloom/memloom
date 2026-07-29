@@ -1,9 +1,11 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type AssistantEvent, runAssistantTurn, stripInvalidMarkers } from "./assistant.js";
 import { HashingEmbeddingProvider, NullLLMProvider } from "./hashing-provider.js";
 import { Memloom } from "./memloom.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
 import type { ChatMessage, ChatProvider, ChatResult, ChatTool, LLMProvider } from "./providers.js";
+import type { StorageAdapter } from "./storage.js";
+import { truncateAll } from "./test-store.js";
 import type { Memory } from "./types.js";
 
 // The assistant harness: the model decides whether to recall; the loop enforces caps,
@@ -57,6 +59,17 @@ const toolCall = (query: string, id = "c1") => ({
   id,
   name: "recall_memory",
   arguments: JSON.stringify({ query }),
+});
+
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteAdapter.open();
+});
+afterAll(async () => {
+  await storage.close();
 });
 
 describe("assistant harness", () => {
@@ -338,14 +351,8 @@ function engineLLM(): ChatLLM {
 }
 
 describe("assistant engine", () => {
-  const cleanups: Array<() => Promise<void> | void> = [];
-  afterEach(async () => {
-    while (cleanups.length) await cleanups.pop()?.();
-  });
-
   async function fresh(llm: LLMProvider = engineLLM()): Promise<Memloom> {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const m = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),

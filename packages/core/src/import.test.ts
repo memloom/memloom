@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   HashingEmbeddingProvider,
   NullLLMProvider,
@@ -18,7 +18,9 @@ import {
 } from "./hashing-provider.js";
 import { Memloom } from "./memloom.js";
 import type { EmbeddingProvider } from "./providers.js";
+import { truncateAll } from "./test-store.js";
 import { PgliteFactory } from "./testkit.js";
+import type { StorageAdapter } from "./storage.js";
 
 // End-to-end importSessions against the in-memory store: bounded discovery, distillation
 // through the belief pipeline, the ledger watermark, provenance rows, and the dry-run and
@@ -28,6 +30,17 @@ import { PgliteFactory } from "./testkit.js";
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()?.();
+});
+
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteFactory.open();
+});
+afterAll(async () => {
+  await storage.close();
 });
 
 function makeRoot(): string {
@@ -86,8 +99,7 @@ function distillingLLM(): ScriptedLLMProvider & { distillCalls: { count: number 
 }
 
 async function fresh(llm = distillingLLM()) {
-  const storage = await PgliteFactory.open();
-  cleanups.push(() => storage.close());
+  await truncateAll(storage);
   const embedding = new CountingEmbeddings();
   const memloom = new Memloom({ storage, embedding, llm, autoIndexDelayMs: 999_999 });
   await memloom.init();
@@ -398,8 +410,7 @@ describe("importSessions", () => {
   });
 
   it("refuses without an LLM", async () => {
-    const storage = await PgliteFactory.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),

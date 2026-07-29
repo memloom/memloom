@@ -1,3 +1,4 @@
+import type { StorageAdapter } from "@memloom/core";
 import {
   type FetchLike,
   HashingEmbeddingProvider,
@@ -6,7 +7,8 @@ import {
   PgliteAdapter,
   ScriptedLLMProvider,
 } from "@memloom/core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { truncateAll } from "../../core/src/test-store.js";
 import { createServer } from "./index.js";
 
 // HttpMemloomClient talks to the HTTP surface. We point it at the Hono app's request handler
@@ -16,6 +18,17 @@ const contradictory = new ScriptedLLMProvider(
   () => '[{"candidate": 1, "relation": "contradictory", "reason": "different"}]',
 );
 
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteAdapter.open();
+});
+afterAll(async () => {
+  await storage.close();
+});
+
 describe("HttpMemloomClient", () => {
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
@@ -23,8 +36,7 @@ describe("HttpMemloomClient", () => {
   });
 
   async function client() {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -86,8 +98,7 @@ describe("access-control gate", () => {
   });
 
   async function app() {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),

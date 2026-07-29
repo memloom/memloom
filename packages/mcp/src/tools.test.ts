@@ -1,10 +1,12 @@
+import type { StorageAdapter } from "@memloom/core";
 import {
   HashingEmbeddingProvider,
   Memloom,
   PgliteAdapter,
   ScriptedLLMProvider,
 } from "@memloom/core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { truncateAll } from "../../core/src/test-store.js";
 import {
   deleteSchemaEntry,
   listConflicts,
@@ -23,6 +25,17 @@ const contradictory = new ScriptedLLMProvider(
   () => '[{"candidate": 1, "relation": "contradictory", "reason": "different value"}]',
 );
 
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteAdapter.open();
+});
+afterAll(async () => {
+  await storage.close();
+});
+
 describe("mcp tools", () => {
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
@@ -30,8 +43,7 @@ describe("mcp tools", () => {
   });
 
   async function fresh() {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -74,8 +86,7 @@ describe("mcp tools", () => {
   });
 
   it("recall exposes a memory id, and memory_history returns the version chain", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const m = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -99,8 +110,7 @@ describe("mcp tools", () => {
   });
 
   it("recall truncates monster passages at the shared budget; read_passage serves the rest", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const m = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
