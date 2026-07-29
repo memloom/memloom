@@ -26,6 +26,7 @@ import type {
   NotionSyncOptions,
   NotionSyncResult,
   RecallOptions,
+  RelatedEntities,
   ResolveDecision,
   ResolvedConflict,
   SaveInput,
@@ -96,6 +97,15 @@ export interface MemoryEngine {
   /** Wipe all extracted entities/edges and re-run indexing from scratch (recovery path). */
   reindex(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
   graph(ownerId?: string): Promise<Graph>;
+  /**
+   * The graph neighbourhood of one entity, by id, name, or a folded-away spelling. Null when
+   * nothing matches. On the engine contract rather than Memloom-only because the MCP server
+   * talks to the daemon over HTTP: this is the surface that answers "who is X connected to".
+   */
+  relatedEntities(
+    target: string,
+    opts?: { ownerId?: string; entityType?: string; limit?: number },
+  ): Promise<RelatedEntities | null>;
   conflicts(ownerId?: string): Promise<Conflict[]>;
   /** Resolved conflicts, newest first: the revertable history behind the pending queue. */
   resolvedConflicts(ownerId?: string): Promise<ResolvedConflict[]>;
