@@ -65,6 +65,7 @@ import type {
   ConflictAutoResult,
   ConflictCandidate,
   ContextAddInput,
+  ContextProgressEvent,
   ContextAddResult,
   ContextAddUrlInput,
   ContextAttachInput,
@@ -505,10 +506,17 @@ export class Memloom implements MemoryEngine {
    * MIRRORS of files: no belief pipeline, no conflicts; re-adding a changed file replaces
    * its chunks in one transaction, and an unchanged file (same content hash) is a no-op.
    */
-  async contextAdd(input: ContextAddInput): Promise<ContextAddResult> {
+  async contextAdd(
+    input: ContextAddInput,
+    onProgress?: (event: ContextProgressEvent) => void,
+  ): Promise<ContextAddResult> {
     const owner = input.ownerId ?? SENTINEL_OWNER;
-    const file = await extractFile(input.path, (bytes) =>
-      createHash("sha256").update(bytes).digest("hex"),
+    const file = await extractFile(
+      input.path,
+      (bytes) => createHash("sha256").update(bytes).digest("hex"),
+      // Only slow extractors emit anything, so a markdown file streams nothing and costs
+      // nothing. Transcription emits per decode chunk.
+      onProgress && ((event) => onProgress({ path: input.path, ...event })),
     );
     const result = await this.#ingestDocument(owner, input.path, file, null);
     if (result.outcome !== "unchanged") this.#scheduleAutoIndex(owner);

@@ -7,6 +7,7 @@ import type {
   ConflictAutoEvent,
   ConflictAutoResult,
   ContextAddInput,
+  ContextProgressEvent,
   ContextAddUrlInput,
   ContextAddResult,
   ContextDocument,
@@ -110,8 +111,15 @@ export interface MemoryEngine {
     ownerId?: string,
     onProgress?: (event: ConflictAutoEvent) => void,
   ): Promise<ConflictAutoResult>;
-  /** Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors; re-add replaces. */
-  contextAdd(input: ContextAddInput): Promise<ContextAddResult>;
+  /**
+   * Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors; re-add replaces.
+   * `onProgress` only fires for extractors slow enough to need it, which today means audio
+   * and video; every other format finishes before it would emit anything.
+   */
+  contextAdd(
+    input: ContextAddInput,
+    onProgress?: (event: ContextProgressEvent) => void,
+  ): Promise<ContextAddResult>;
   /** Ingest a web page as context. Fetched and parsed locally; the URL becomes the path. */
   contextAddUrl(input: ContextAddUrlInput): Promise<ContextAddResult>;
   contextList(ownerId?: string): Promise<ContextDocument[]>;

@@ -190,6 +190,23 @@ export interface IndexResult {
   chunksIndexed: number;
 }
 
+/**
+ * One step of a slow context ingest, streamed as NDJSON while `context add` runs.
+ * Only extractors that take minutes emit these; a markdown file streams nothing.
+ */
+export interface ContextProgressEvent {
+  /** The file being ingested, so a batch of several stays legible. */
+  path: string;
+  /** For media: "decoding" | "transcribing" | "checking" | "repairing". */
+  stage: string;
+  /** 1-based position within the stage; 0 when the stage has no countable units. */
+  done: number;
+  total: number;
+  /** How far into the recording this step reached. */
+  seconds: number;
+  audioSeconds: number;
+}
+
 /** One item finished during an index run: the real-time progress signal. */
 export interface IndexProgressEvent {
   kind: "memory" | "chunk";

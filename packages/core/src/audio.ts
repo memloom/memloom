@@ -278,6 +278,22 @@ interface Recognizer {
 }
 
 /**
+ * Hand the event loop back between decode calls.
+ *
+ * `recognizer.decode()` is a synchronous native call: while it runs, Node does nothing else
+ * at all. Without this the daemon is frozen for the entire transcription, queued progress
+ * writes cannot flush, and every other HTTP request waits. Measured before adding it: all
+ * four progress events for a 3-minute clip arrived together at the very end.
+ *
+ * This does not make decoding non-blocking, it only bounds how long a single block lasts to
+ * one chunk, which at 60 seconds of audio is a handful of seconds. Moving the recognizer to
+ * a worker thread is the real fix and is not done here.
+ */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolve) => setImmediate(resolve));
+}
+
+/**
  * Merge sub-word tokens back into words. The model emits pieces ("co", "un", "tr", "y"), and
  * a piece that begins a new word carries a leading space. Each word takes the timestamp of
  * its first token, which is what makes a citation point at a moment rather than a guess.
@@ -300,11 +316,23 @@ function tokensToWords(
   return words.filter((w) => w.word.length > 0);
 }
 
+/** One step of a transcription, shaped for the daemon's NDJSON progress stream. */
+export interface TranscribeProgress {
+  stage: "decoding" | "transcribing" | "checking" | "repairing";
+  /** 1-based position among this stage's units of work; 0 when the stage is not countable. */
+  done: number;
+  total: number;
+  /** How far into the recording this step reached. */
+  seconds: number;
+  audioSeconds: number;
+}
+
 export interface TranscribeOptions {
   numThreads?: number;
   chunkSeconds?: number;
-  /** Called after each decode chunk so callers can stream progress. */
-  onProgress?: (done: number, total: number, seconds: number) => void;
+  /** Catalog id, e.g. "parakeet-v3". Defaults to whatever `memloom audio use` selected. */
+  modelId?: string;
+  onProgress?: (event: TranscribeProgress) => void;
 }
 
 /** Everything the extractor needs: the words with their times, and what was repaired. */
@@ -321,29 +349,26 @@ export async function transcribeWav(
   wavPath: string,
   options: TranscribeOptions = {},
 ): Promise<TranscribeResult> {
-  const { requireModels } = await import("./audio-models.js");
+  const { requireModels, resolveModel } = await import("./audio-models.js");
   await requireModels();
+  const resolved = await resolveModel(options.modelId);
   const sherpa = await loadSherpa();
-  const dir = modelDir();
-  const asrDir = join(dir, "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8");
-  const vadModel = join(dir, "silero_vad.onnx");
+  const vadModel = join(modelDir(), "silero_vad.onnx");
 
   const numThreads = options.numThreads ?? 4;
   const chunkSeconds = options.chunkSeconds ?? DECODE_CHUNK_SECONDS;
 
+  // The architecture decides which key sherpa reads the model files from, and passing the
+  // wrong one fails at construction rather than degrading, so the config is built by the
+  // catalog rather than assumed here.
   const makeRecognizer = () =>
     new (sherpa.OfflineRecognizer as new (c: unknown) => Recognizer)({
       featConfig: { sampleRate: SAMPLE_RATE, featureDim: 80 },
       modelConfig: {
-        transducer: {
-          encoder: join(asrDir, "encoder.int8.onnx"),
-          decoder: join(asrDir, "decoder.int8.onnx"),
-          joiner: join(asrDir, "joiner.int8.onnx"),
-        },
-        tokens: join(asrDir, "tokens.txt"),
+        ...resolved.config,
+        tokens: resolved.tokens,
         numThreads,
         provider: "cpu",
-        modelType: "nemo_transducer",
       },
     });
 
@@ -420,7 +445,14 @@ export async function transcribeWav(
     const { words, count } = decodeRange(c.start, c.end);
     perChunk.push(words);
     counts.push(count);
-    options.onProgress?.(i + 1, chunks.length, c.end / SAMPLE_RATE);
+    options.onProgress?.({
+      stage: "transcribing",
+      done: i + 1,
+      total: chunks.length,
+      seconds: c.end / SAMPLE_RATE,
+      audioSeconds,
+    });
+    await yieldToEventLoop();
   }
 
   // The repair pass. A flagged chunk is decoded again at half the length, which changes the
@@ -429,6 +461,15 @@ export async function transcribeWav(
   // quiet stretch is never made worse.
   let repaired = 0;
   const suspects = findSuspectChunks(chunks, counts);
+  if (suspects.length > 0) {
+    options.onProgress?.({
+      stage: "checking",
+      done: suspects.length,
+      total: chunks.length,
+      seconds: audioSeconds,
+      audioSeconds,
+    });
+  }
   for (const index of suspects) {
     const c = chunks[index]!;
     const halved = packChunks(
@@ -436,7 +477,18 @@ export async function transcribeWav(
       Math.max(10, chunkSeconds / 2),
     );
     if (halved.length < 2) continue;
-    const redone = halved.flatMap((h) => decodeRange(h.start, h.end).words);
+    options.onProgress?.({
+      stage: "repairing",
+      done: repaired + 1,
+      total: suspects.length,
+      seconds: c.start / SAMPLE_RATE,
+      audioSeconds,
+    });
+    const redone: TimedWord[] = [];
+    for (const h of halved) {
+      redone.push(...decodeRange(h.start, h.end).words);
+      await yieldToEventLoop();
+    }
     if (redone.length > counts[index]!) {
       perChunk[index] = redone;
       counts[index] = redone.length;
@@ -547,24 +599,36 @@ export const TRANSCRIPT_PIPELINE_VERSION = 1;
  * the same podcast added from two directories, or re-added after a remove, also costs
  * nothing.
  */
-function cachePath(sha256: string): string {
+/**
+ * Keyed on the model as well as the file. Two models transcribe the same recording
+ * differently, so a file-only key would serve whichever ran first no matter which model is
+ * now selected. Keeping them in separate entries also means switching back to a model you
+ * used before costs nothing.
+ */
+function cachePath(sha256: string, modelId: string): string {
   const dir = process.env.MEMLOOM_TRANSCRIPT_DIR ?? join(homedir(), ".memloom", "transcripts");
-  return join(dir, `${sha256}.json`);
+  return join(dir, `${sha256}-${modelId.replace(/[^a-z0-9._-]/gi, "_")}.json`);
 }
 
 interface CachedTranscript {
   pipelineVersion: number;
+  modelId: string;
   audioSeconds: number;
   markdown: string;
   suspectChunks: number;
   repairedChunks: number;
 }
 
-async function readCache(sha256: string): Promise<CachedTranscript | null> {
+async function readCache(sha256: string, modelId: string): Promise<CachedTranscript | null> {
   try {
     const { readFile } = await import("node:fs/promises");
-    const parsed = JSON.parse(await readFile(cachePath(sha256), "utf8")) as CachedTranscript;
-    return parsed.pipelineVersion === TRANSCRIPT_PIPELINE_VERSION ? parsed : null;
+    const raw = await readFile(cachePath(sha256, modelId), "utf8");
+    const parsed = JSON.parse(raw) as CachedTranscript;
+    // The model is checked as well as the filename, so a hand-edited or older entry cannot
+    // pass one model's transcript off as another's.
+    const fresh =
+      parsed.pipelineVersion === TRANSCRIPT_PIPELINE_VERSION && parsed.modelId === modelId;
+    return fresh ? parsed : null;
   } catch {
     // A missing or corrupt cache entry is never fatal: it just means transcribing again.
     return null;
@@ -574,7 +638,7 @@ async function readCache(sha256: string): Promise<CachedTranscript | null> {
 async function writeCache(sha256: string, record: CachedTranscript): Promise<void> {
   try {
     const { mkdir, writeFile } = await import("node:fs/promises");
-    const file = cachePath(sha256);
+    const file = cachePath(sha256, record.modelId);
     await mkdir(join(file, ".."), { recursive: true });
     await writeFile(file, JSON.stringify(record));
   } catch {
@@ -595,10 +659,12 @@ export async function transcribeMedia(
   options: TranscribeOptions & { sha256: (p: string) => Promise<string> },
 ): Promise<TranscribeFileResult> {
   const contentHash = await options.sha256(path);
+  const { selectedModelId } = await import("./audio-models.js");
+  const modelId = options.modelId ?? (await selectedModelId());
 
   // Checked before any decoding: re-adding an unchanged recording must not cost an ASR run
   // to establish that it is unchanged.
-  const hit = contentHash ? await readCache(contentHash) : null;
+  const hit = contentHash ? await readCache(contentHash, modelId) : null;
   if (hit) {
     return {
       units: [{ text: hit.markdown, page: null }],
@@ -613,12 +679,18 @@ export async function transcribeMedia(
   const workDir = await mkdtemp(join(tmpdir(), "memloom-asr-"));
   const wavPath = join(workDir, "audio.wav");
   try {
+    // Reported separately because it is the one stage with no progress of its own: ffmpeg
+    // runs for 10 to 30 seconds per hour of audio and says nothing until it finishes.
+    options.onProgress?.({ stage: "decoding", done: 0, total: 0, seconds: 0, audioSeconds: 0 });
     await decodeToWav(path, wavPath);
-    const result = await transcribeWav(wavPath, options);
+    // Pinned to the id the cache was keyed on, so the entry written below always names the
+    // model that actually produced it even if the selection changes mid-run.
+    const result = await transcribeWav(wavPath, { ...options, modelId });
     const markdown = toMarkdown(sectionize(result.words));
     if (contentHash) {
       await writeCache(contentHash, {
         pipelineVersion: TRANSCRIPT_PIPELINE_VERSION,
+        modelId,
         audioSeconds: result.audioSeconds,
         markdown,
         suspectChunks: result.suspectChunks,

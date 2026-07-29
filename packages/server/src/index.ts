@@ -7,6 +7,7 @@ import { serve as nodeServe } from "@hono/node-server";
 import {
   detectKind,
   isHttpUrl,
+  type ContextProgressEvent,
   type IndexProgressEvent,
   isChatProvider,
   LinkExtractionError,
@@ -1035,6 +1036,54 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       chunks,
       ...(absorbed > 0 ? { absorbed } : {}),
       ...(errors.length > 0 ? { errors } : {}),
+    });
+  });
+
+  // The same ingest, streamed. Transcribing an hour of audio takes 8 to 11 minutes, which
+  // is far past what a plain request can hold open without looking hung, so the media path
+  // reports per decode chunk. Every other format finishes before it emits anything, which
+  // is why this is an additional route rather than a replacement for /context/add.
+  app.post("/context/add/stream", async (c) => {
+    const body = await parseBody(c, contextAddSchema);
+    if (!body.ok) return body.res;
+    const target = resolve(body.data.path);
+    const info = await stat(target).catch(() => null);
+    if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
+    const files = info.isDirectory() ? await collectSupportedFiles(target) : [target];
+    if (files.length === 0) {
+      return c.json(
+        { error: `no supported files (${supportedExtensions().join(", ")}) under ${target}` },
+        400,
+      );
+    }
+
+    // Both event shapes carry `stage`, so a consumer discriminates on one field instead of
+    // guessing from which properties happen to be present.
+    type FileDone = { stage: "file"; path: string; outcome: string; chunks: number };
+    return streamNdjson<ContextProgressEvent | FileDone>(c, async (emit) => {
+      let added = 0;
+      let unchanged = 0;
+      let chunks = 0;
+      const errors: string[] = [];
+      for (const file of files) {
+        try {
+          const r = await memloom.contextAdd({ path: file }, emit);
+          chunks += r.chunks;
+          if (r.outcome === "unchanged") unchanged += 1;
+          else added += 1;
+          // A per-file completion line, so a folder of recordings reports as it goes
+          // rather than only at the end.
+          emit({ stage: "file", path: file, outcome: r.outcome, chunks: r.chunks });
+        } catch (err) {
+          errors.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      return {
+        documents: added,
+        unchanged,
+        chunks,
+        ...(errors.length > 0 ? { errors } : {}),
+      };
     });
   });
 

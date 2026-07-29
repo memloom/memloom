@@ -53,7 +53,21 @@ export interface Extractor {
    */
   extractPath?(
     path: string,
+    onProgress?: (event: ExtractProgress) => void,
   ): Promise<{ title?: string; units: ExtractedUnit[]; contentHash: string }>;
+}
+
+/**
+ * Progress from an extractor slow enough to need it. Only the media path emits this today:
+ * transcribing an hour of audio takes 8 to 11 minutes, and a silent CLI for that long reads
+ * as a hang.
+ */
+export interface ExtractProgress {
+  stage: string;
+  done: number;
+  total: number;
+  seconds: number;
+  audioSeconds: number;
 }
 
 const registry = new Map<string, Extractor>();
@@ -142,9 +156,9 @@ for (const [kind, extensions] of [
     extensions: [...extensions],
     version: 1,
     chunker: "markdown",
-    async extractPath(path) {
+    async extractPath(path, onProgress) {
       const { transcribeMedia, hashFile } = await import("./audio.js");
-      const result = await transcribeMedia(path, { sha256: hashFile });
+      const result = await transcribeMedia(path, { sha256: hashFile, onProgress });
       return { units: result.units, contentHash: result.contentHash };
     },
     // The upload path, where bytes arrived over HTTP and never touched disk. ffmpeg needs a
@@ -172,10 +186,11 @@ for (const [kind, extensions] of [
 export async function extractFile(
   path: string,
   hash: (bytes: Uint8Array) => string,
+  onProgress?: (event: ExtractProgress) => void,
 ): Promise<ExtractedFile> {
   const extractor = registry.get(extname(path).toLowerCase());
   if (extractor?.extractPath) {
-    const { title, units, contentHash } = await extractor.extractPath(path);
+    const { title, units, contentHash } = await extractor.extractPath(path, onProgress);
     return {
       kind: extractor.kind,
       title: title || basename(path),

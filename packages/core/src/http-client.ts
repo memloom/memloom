@@ -11,6 +11,7 @@ import type {
   ContextAddUrlInput,
   ContextAddResult,
   ContextDocument,
+  ContextProgressEvent,
   DocumentChunks,
   Graph,
   ImportCaptureScope,
@@ -321,8 +322,18 @@ export class HttpMemloomClient implements MemoryEngine {
     await this.#post(`/memory/conflicts/${conflictId}/revert`, {});
   }
 
-  contextAdd(input: ContextAddInput): Promise<ContextAddResult> {
-    return this.#post<ContextAddResult>("/context/add", input);
+  contextAdd(
+    input: ContextAddInput,
+    onProgress?: (event: ContextProgressEvent) => void,
+  ): Promise<ContextAddResult> {
+    // Without a callback this stays a plain request, so every non-media format keeps the
+    // simpler path and the response shape it already had.
+    if (!onProgress) return this.#post<ContextAddResult>("/context/add", input);
+    return this.#streamNdjson<ContextProgressEvent, ContextAddResult>(
+      "/context/add/stream",
+      input,
+      onProgress,
+    );
   }
 
   contextAddUrl(input: ContextAddUrlInput): Promise<ContextAddResult> {

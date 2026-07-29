@@ -302,6 +302,48 @@ describe("server", () => {
     expect(docs.documents).toHaveLength(3);
   });
 
+  // The streaming variant exists because transcribing an hour of audio takes 8 to 11
+  // minutes, far past what a plain request can hold open without looking hung. Markdown
+  // emits no progress of its own, so this asserts the envelope rather than the events.
+  it("context add streams NDJSON and ends with a done line", async () => {
+    const server = await app();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-ctx-stream-"));
+    writeFileSync(join(dir, "a.md"), "# A\nthe staging database is Postgres");
+    writeFileSync(join(dir, "b.md"), "# B\nmore notes here");
+
+    const res = await server.request("/context/add/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: dir }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/x-ndjson");
+
+    const lines = (await res.text())
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as { type: string; stage?: string; documents?: number });
+
+    // One completion line per file as it lands, so a folder of recordings reports as it goes
+    // rather than only at the end.
+    expect(lines.filter((l) => l.type === "item" && l.stage === "file")).toHaveLength(2);
+
+    const done = lines.at(-1);
+    expect(done?.type).toBe("done");
+    expect(done?.documents).toBe(2);
+  });
+
+  it("context add stream rejects a missing path up front, not mid-stream", async () => {
+    const server = await app();
+    const res = await server.request("/context/add/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: join(tmpdir(), "memloom-does-not-exist-12345") }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("schema endpoint reports vocabularies with live counts", async () => {
     const server = await app();
     await server.request("/memory/save", {

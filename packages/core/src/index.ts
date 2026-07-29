@@ -53,7 +53,13 @@ export {
 export type { DistilledMemory, DistillOutput } from "./distill.js";
 export { buildDistillPrompt, distillChunk, parseDistillation } from "./distill.js";
 export type { MemoryEngine } from "./engine.js";
-export type { ContextKind, ExtractedFile, ExtractedUnit, Extractor } from "./extract.js";
+export type {
+  ContextKind,
+  ExtractedFile,
+  ExtractedUnit,
+  Extractor,
+  ExtractProgress,
+} from "./extract.js";
 export {
   detectKind,
   extractBytes,
@@ -85,6 +91,7 @@ export type {
   TimedWord,
   TranscribeFileResult,
   TranscribeOptions,
+  TranscribeProgress,
   TranscribeResult,
   TranscriptSection,
   VadSegment,
@@ -104,8 +111,25 @@ export {
   transcribeMedia,
   transcribeWav,
 } from "./audio.js";
-export type { DownloadProgress, ModelStatus, SetupOptions } from "./audio-models.js";
-export { modelStatus, requireModels, setupModels } from "./audio-models.js";
+export type {
+  CatalogModel,
+  DownloadProgress,
+  ModelArchitecture,
+  ModelStatus,
+  ResolvedModel,
+  SetupOptions,
+} from "./audio-models.js";
+export {
+  CATALOG,
+  DEFAULT_MODEL_ID,
+  findModel,
+  modelStatus,
+  requireModels,
+  resolveModel,
+  selectedModelId,
+  selectModel,
+  setupModels,
+} from "./audio-models.js";
 export type { ReleaseLock } from "./lock.js";
 export { acquireDataDirLock } from "./lock.js";
 export type { InitOptions, MemloomConfig } from "./memloom.js";
@@ -197,6 +221,7 @@ export type {
   ContextAddResult,
   ContextAddUrlInput,
   ContextAttachInput,
+  ContextProgressEvent,
   ContextAttachResult,
   ContextChunk,
   ContextDocument,
