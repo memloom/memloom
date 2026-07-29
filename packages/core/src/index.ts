@@ -53,6 +53,20 @@ export {
 export type { DistilledMemory, DistillOutput } from "./distill.js";
 export { buildDistillPrompt, distillChunk, parseDistillation } from "./distill.js";
 export type { MemoryEngine } from "./engine.js";
+// Entity resolution: the pure decision rules behind folding name variants.
+export type { PairJudgement, PairVerdict, ResolvableEntity } from "./entity-resolution.js";
+export {
+  boundedEditDistance,
+  CONFIRMING_COSINE,
+  groupPairs,
+  judgePair,
+  MAX_VARIANT_EDIT_DISTANCE,
+  MIN_AUTO_KEY_LENGTH,
+  mergeKey,
+  nameTokens,
+  pickCanonical,
+  versionTokens,
+} from "./entity-resolution.js";
 export type { ContextKind, ExtractedFile, ExtractedUnit, Extractor } from "./extract.js";
 export {
   detectKind,
@@ -164,7 +178,12 @@ export type {
   ContextDocument,
   DocumentChunks,
   Entity,
+  EntityConflict,
+  EntityConflictCandidate,
   EntityDetail,
+  EntityLink,
+  EntityMerge,
+  EntityResolutionResult,
   Graph,
   GraphDocument,
   GraphEdge,
@@ -196,6 +215,8 @@ export type {
   ReembedOptions,
   ReembedProgressEvent,
   ReembedResult,
+  RelatedEntities,
+  RelatedEntity,
   ResolveDecision,
   ResolvedConflict,
   SaveInput,
