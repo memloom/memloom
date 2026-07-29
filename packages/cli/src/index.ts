@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import {
   detectKind,
   type ImportStatus,
@@ -101,6 +101,8 @@ Usage: memloom <command> [args]
                        ${supportedExtensions().join(" ")} and http(s) links
   context list         list ingested context documents
   context remove <id>  remove a context document and its chunks
+  audio setup          download the speech model, once per machine (465 MB)
+  audio status         where the speech model lives, and whether ffmpeg is on PATH
   schema               show the graph vocabulary (entity types + predicates, usage, status)
   schema disable <entity_type|predicate> <name>
                        stop using an entry for future extraction (built-ins too)
@@ -527,6 +529,21 @@ export async function run(argv: readonly string[]): Promise<void> {
           return;
         }
         for (const file of files) {
+          // Transcription runs for minutes with nothing on screen otherwise, and the model
+          // has to be there before it starts. Both are worth saying up front rather than
+          // after a long silence.
+          const kind = detectKind(file);
+          if (kind === "audio" || kind === "video") {
+            const { modelStatus } = await import("@memloom/core");
+            const status = await modelStatus();
+            if (!status.installed) {
+              console.error(
+                `skipped    ${basename(file)}\n  the speech model is not installed. Run: memloom audio setup`,
+              );
+              continue;
+            }
+            console.log(`transcribing ${basename(file)} (about 10 minutes per hour of audio)...`);
+          }
           const result = await engine.contextAdd({ path: file });
           const extras = [
             result.outcome === "converted"
@@ -566,6 +583,48 @@ export async function run(argv: readonly string[]): Promise<void> {
       }
 
       throw new Error("usage: memloom context <add|list|remove>");
+    }
+
+    // Model management only, so it deliberately does not connect to the daemon: setting up
+    // transcription should work before anything is running.
+    case "audio": {
+      const [sub] = rest;
+      const { modelStatus, setupModels } = await import("@memloom/core");
+
+      if (sub === "status") {
+        const status = await modelStatus();
+        console.log(`models   ${status.dir}`);
+        console.log(`state    ${status.installed ? "installed" : "not installed"}`);
+        for (const m of status.missing) console.log(`missing  ${m}`);
+        const { hasFfmpeg } = await import("@memloom/core");
+        console.log(`ffmpeg   ${(await hasFfmpeg()) ? "found" : "NOT FOUND, install it first"}`);
+        return;
+      }
+
+      if (sub === "setup") {
+        const before = await modelStatus();
+        if (before.installed) {
+          console.log(`already installed in ${before.dir}`);
+          return;
+        }
+        let lastPercent = -1;
+        const status = await setupModels({
+          onStage: (stage) => console.log(stage),
+          onProgress: ({ receivedBytes, totalBytes }) => {
+            if (!totalBytes) return;
+            const percent = Math.floor((receivedBytes / totalBytes) * 100);
+            // Redrawing every chunk would flood a piped log; every whole percent is enough.
+            if (percent === lastPercent) return;
+            lastPercent = percent;
+            process.stderr.write(`\r  ${percent}%`);
+          },
+        });
+        process.stderr.write("\r      \r");
+        console.log(`installed in ${status.dir}`);
+        return;
+      }
+
+      throw new Error("usage: memloom audio <setup|status>");
     }
 
     case "notion": {

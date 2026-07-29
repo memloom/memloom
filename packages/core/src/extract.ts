@@ -45,6 +45,15 @@ export interface Extractor {
   /** How chunks are sectioned: markdown headings, or outline (ALL-CAPS titles + numbered points). */
   chunker: "markdown" | "outline";
   extract(bytes: Uint8Array, path: string): Promise<{ title?: string; units: ExtractedUnit[] }>;
+  /**
+   * Optional path-based extraction, for formats too large to hold in memory. `extractFile`
+   * prefers this and never reads the file, which is what keeps a multi-gigabyte video from
+   * being buffered just to hash it. Returns its own content hash because such an extractor
+   * streams the bytes past a digest itself rather than being handed them.
+   */
+  extractPath?(
+    path: string,
+  ): Promise<{ title?: string; units: ExtractedUnit[]; contentHash: string }>;
 }
 
 const registry = new Map<string, Extractor>();
@@ -117,12 +126,65 @@ registerExtractor({
   },
 });
 
+// Audio and video. Both are the same job (get a WAV, run ASR, keep the timestamps) and
+// differ only in the kind stored on the document, which is worth keeping distinct so a
+// recording and a screencast do not look identical in `context list`.
+//
+// These declare `chunker: "markdown"` because the transcript IS markdown: each section is a
+// heading holding its time range, so chunkMarkdown makes one chunk per span and the existing
+// citation formatter renders "from talk.mp4 > 12:30 - 14:28" with no new machinery.
+for (const [kind, extensions] of [
+  ["audio", [".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus", ".aac", ".wma"]],
+  ["video", [".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v"]],
+] as const) {
+  registerExtractor({
+    kind,
+    extensions: [...extensions],
+    version: 1,
+    chunker: "markdown",
+    async extractPath(path) {
+      const { transcribeMedia, hashFile } = await import("./audio.js");
+      const result = await transcribeMedia(path, { sha256: hashFile });
+      return { units: result.units, contentHash: result.contentHash };
+    },
+    // The upload path, where bytes arrived over HTTP and never touched disk. ffmpeg needs a
+    // file, so this spills to a temp file rather than refusing an uploaded recording.
+    async extract(bytes, path) {
+      const { transcribeMedia } = await import("./audio.js");
+      const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const dir = await mkdtemp(join(tmpdir(), "memloom-upload-"));
+      const file = join(dir, basename(path));
+      try {
+        await writeFile(file, bytes);
+        const result = await transcribeMedia(file, { sha256: async () => "" });
+        return { units: result.units };
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  });
+}
+
 // -----------------------------------------------------------------------------------------
 
 export async function extractFile(
   path: string,
   hash: (bytes: Uint8Array) => string,
 ): Promise<ExtractedFile> {
+  const extractor = registry.get(extname(path).toLowerCase());
+  if (extractor?.extractPath) {
+    const { title, units, contentHash } = await extractor.extractPath(path);
+    return {
+      kind: extractor.kind,
+      title: title || basename(path),
+      contentHash:
+        extractor.version === 1 ? contentHash : `${contentHash}#p${extractor.version}`,
+      chunker: extractor.chunker,
+      units,
+    };
+  }
   return extractBytes(new Uint8Array(await readFile(path)), path, hash);
 }
 

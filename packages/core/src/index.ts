@@ -79,6 +79,33 @@ export {
   LinkExtractionError,
   normalizeUrl,
 } from "./link.js";
+// Audio and video transcription (ffmpeg + silero VAD + parakeet under sherpa-onnx, local)
+export type {
+  DecodeChunk,
+  TimedWord,
+  TranscribeFileResult,
+  TranscribeOptions,
+  TranscribeResult,
+  TranscriptSection,
+  VadSegment,
+} from "./audio.js";
+export {
+  AudioError,
+  DECODE_CHUNK_SECONDS,
+  findSuspectChunks,
+  formatTime,
+  hasFfmpeg,
+  hashFile,
+  modelDir,
+  packChunks,
+  SECTION_SECONDS,
+  sectionize,
+  toMarkdown,
+  transcribeMedia,
+  transcribeWav,
+} from "./audio.js";
+export type { DownloadProgress, ModelStatus, SetupOptions } from "./audio-models.js";
+export { modelStatus, requireModels, setupModels } from "./audio-models.js";
 export type { ReleaseLock } from "./lock.js";
 export { acquireDataDirLock } from "./lock.js";
 export type { InitOptions, MemloomConfig } from "./memloom.js";
