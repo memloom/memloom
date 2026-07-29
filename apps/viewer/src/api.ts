@@ -45,6 +45,50 @@ export interface EntityDetail extends Entity {
   mentions: number;
   memories: number;
   documents: number;
+  /** Folded-in spellings that still resolve to this entity. */
+  aliases: string[];
+}
+
+/** A canonical an uncertain fold could go to. */
+export interface EntityConflictCandidate {
+  id: string;
+  name: string;
+  entityType: string;
+  mentions: number;
+  score: number;
+  reason: string;
+}
+
+/** An uncertain entity fold awaiting arbitration, on the same surface as memory conflicts. */
+export interface EntityConflict {
+  id: string;
+  createdAt: string;
+  incoming: { id: string; name: string; entityType: string; mentions: number };
+  candidates: EntityConflictCandidate[];
+}
+
+/** One reversible fold of a name variant into a canonical entity. */
+export interface EntityMerge {
+  id: string;
+  canonicalId: string;
+  canonicalName: string;
+  sourceId: string;
+  sourceName: string;
+  sourceType: string;
+  decidedBy: "auto" | "llm" | "human";
+  score: number | null;
+  reason: string | null;
+  createdAt: string;
+  revertedAt: string | null;
+}
+
+export interface EntityResolutionResult {
+  examined: number;
+  pairs: number;
+  merged: number;
+  queued: number;
+  deferred: number;
+  skipped: number;
 }
 
 export interface GraphDocument {
@@ -482,6 +526,17 @@ export const api = {
     post<{ ok: boolean }>(`/memory/entities/${id}/merge`, { into }),
   deleteEntity: (id: string) =>
     json<{ ok: boolean }>(`/memory/entities/${id}`, { method: "DELETE" }),
+  // Entity resolution. Uncertain folds are resolved through the same resolve/revert calls as
+  // memory conflicts (the daemon dispatches on the decision's kind), so only the reads and
+  // the fold history are separate.
+  entityConflicts: () =>
+    json<{ conflicts: EntityConflict[] }>("/memory/entities/conflicts").then((r) => r.conflicts),
+  entityMerges: () =>
+    json<{ merges: EntityMerge[] }>("/memory/entities/merges").then((r) => r.merges),
+  resolveEntities: (dryRun = false) =>
+    post<EntityResolutionResult>("/memory/entities/resolve", { dryRun }),
+  revertEntityMerge: (id: string) =>
+    post<{ ok: boolean }>(`/memory/entities/merges/${id}/revert`, {}),
   assistantSessions: () =>
     json<{ sessions: AssistantSession[] }>("/assistant/sessions").then((r) => r.sessions),
   assistantSearch: (q: string) =>
