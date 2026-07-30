@@ -163,15 +163,6 @@ export async function mediaDurationSeconds(path: string): Promise<number | null>
 }
 
 /**
- * Any container the user has -> 16 kHz mono 16-bit PCM, which is the only thing the model
- * accepts. 16 kHz because Nyquist puts the ceiling at 8 kHz and speech carries essentially
- * no phonetic information above that, but mostly because the model was trained at 16 kHz and
- * feeding it 44.1 does not error, it just quietly transcribes worse. Mono because the model
- * takes one channel and stereo would double the work for the same speech.
- *
- * This also transparently handles video: ffmpeg pulls the audio track and ignores the rest.
- */
-/**
  * How many audio tracks a file carries. Returns 1 when it cannot tell, which keeps a
  * missing ffprobe from blocking an otherwise fine transcription.
  */
@@ -196,6 +187,17 @@ export async function countAudioStreams(inputPath: string): Promise<number> {
   }
 }
 
+/**
+ * Any container the user has -> 16 kHz mono 16-bit PCM, which is the only thing the model
+ * accepts. 16 kHz because Nyquist puts the ceiling at 8 kHz and speech carries essentially
+ * no phonetic information above that, but mostly because the model was trained at 16 kHz and
+ * feeding it 44.1 does not error, it just quietly transcribes worse. Mono because the model
+ * takes one channel and stereo would double the work for the same speech.
+ *
+ * This also transparently handles video: ffmpeg pulls the audio track and ignores the rest.
+ *
+ * Returns how many audio tracks were mixed in.
+ */
 export async function decodeToWav(inputPath: string, outPath: string): Promise<number> {
   if (!(await hasFfmpeg())) {
     throw new AudioError(
