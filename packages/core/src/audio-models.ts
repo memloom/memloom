@@ -377,6 +377,9 @@ async function extractTarBz2(archive: string, into: string): Promise<void> {
     const child = spawn("tar", ["-xjf", basename(archive)], {
       cwd: into,
       stdio: ["ignore", "ignore", "pipe"],
+      // Without this Windows gives a console program its own window whenever the parent has
+      // no console, which the detached daemon does not. Unpacking would flash a black box.
+      windowsHide: true,
     });
     let stderr = "";
     child.stderr.on("data", (d) => (stderr += String(d)));

@@ -88,6 +88,11 @@ export interface TranscriptSection {
 // ---------------------------------------------------------------------------------------
 // ffmpeg
 // ---------------------------------------------------------------------------------------
+//
+// Every spawn here passes `windowsHide: true`. Windows gives a console program its own
+// window whenever the parent process has no console to inherit, and the daemon is started
+// detached with no console, so ffmpeg and ffprobe would each pop a black box on screen
+// while a recording is read. It has no effect on other platforms.
 
 /** Like `run`, but keeps stdout too: ffprobe answers on stdout. */
 function runCapture(
@@ -95,7 +100,7 @@ function runCapture(
   args: string[],
 ): Promise<{ code: number; stdout: string; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => {
@@ -111,7 +116,7 @@ function runCapture(
 
 function run(cmd: string, args: string[]): Promise<{ code: number; stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(cmd, args, { stdio: ["ignore", "ignore", "pipe"] });
+    const child = spawn(cmd, args, { stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
     let stderr = "";
     child.stderr.on("data", (d) => {
       stderr += String(d);
@@ -148,7 +153,7 @@ export async function mediaDurationSeconds(path: string): Promise<number | null>
     const child = spawn(
       "ffprobe",
       ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nokey=1", path],
-      { stdio: ["ignore", "pipe", "ignore"] },
+      { stdio: ["ignore", "pipe", "ignore"], windowsHide: true },
     );
     let stdout = "";
     child.stdout.on("data", (d) => {
