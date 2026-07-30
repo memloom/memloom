@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { HashingEmbeddingProvider, ScriptedLLMProvider } from "./hashing-provider.js";
 import { Memloom } from "./memloom.js";
+import type { StorageAdapter } from "./storage.js";
+import { truncateAll } from "./test-store.js";
 import { PgliteFactory } from "./testkit.js";
 import type { ConflictAutoEvent } from "./types.js";
 
@@ -11,6 +13,17 @@ import type { ConflictAutoEvent } from "./types.js";
 const cleanups: Array<() => Promise<void> | void> = [];
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()?.();
+});
+
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteFactory.open();
+});
+afterAll(async () => {
+  await storage.close();
 });
 
 // Scripted brain: the dedup classifier calls everything contradictory (so two similar
@@ -28,8 +41,7 @@ function scripted(resolverReply: () => string) {
 }
 
 async function seedConflict(llm: ScriptedLLMProvider) {
-  const storage = await PgliteFactory.open();
-  cleanups.push(() => storage.close());
+  await truncateAll(storage);
   const memloom = new Memloom({
     storage,
     embedding: new HashingEmbeddingProvider(1024),

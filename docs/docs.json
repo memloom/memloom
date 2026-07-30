@@ -38,6 +38,7 @@
               "concepts/conflicts",
               "concepts/distillation",
               "concepts/graph",
+              "concepts/entity-resolution",
               "concepts/retrieval",
               "concepts/assistant"
             ]
@@ -103,6 +104,11 @@
                   "POST /memory/schema/{id}/approve",
                   "POST /memory/schema/{id}/dismiss",
                   "GET /memory/entities",
+                  "GET /memory/entities/related",
+                  "POST /memory/entities/resolve",
+                  "GET /memory/entities/conflicts",
+                  "GET /memory/entities/merges",
+                  "POST /memory/entities/merges/{id}/revert",
                   "PATCH /memory/entities/{id}",
                   "POST /memory/entities/{id}/merge",
                   "DELETE /memory/entities/{id}"

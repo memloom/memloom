@@ -1,8 +1,10 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { HashingEmbeddingProvider } from "./hashing-provider.js";
 import { Memloom } from "./memloom.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
 import type { LLMProvider } from "./providers.js";
+import type { StorageAdapter } from "./storage.js";
+import { truncateAll } from "./test-store.js";
 
 // The parallel index run: extractions overlap, writes stay serialized (no duplicate
 // entities from racing read-check-insert), the circuit breaker stops a run whose
@@ -44,8 +46,7 @@ afterEach(async () => {
 });
 
 async function fresh(llm: LLMProvider): Promise<Memloom> {
-  const storage = await PgliteAdapter.open();
-  cleanups.push(() => storage.close());
+  await truncateAll(storage);
   const m = new Memloom({
     storage,
     embedding: new HashingEmbeddingProvider(1024),
@@ -55,6 +56,17 @@ async function fresh(llm: LLMProvider): Promise<Memloom> {
   await m.init();
   return m;
 }
+
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteAdapter.open();
+});
+afterAll(async () => {
+  await storage.close();
+});
 
 describe("parallel index run", () => {
   it("overlaps extractions but never duplicates a shared entity", async () => {

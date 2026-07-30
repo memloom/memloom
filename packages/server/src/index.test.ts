@@ -1,6 +1,7 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import type { StorageAdapter } from "@memloom/core";
 import {
   type ChatProvider,
   HashingEmbeddingProvider,
@@ -8,8 +9,9 @@ import {
   Memloom,
   PgliteAdapter,
   ScriptedLLMProvider,
+  truncateAll,
 } from "@memloom/core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "./index.js";
 
 // Exercise the HTTP surface end-to-end via Hono's request helper (no network needed).
@@ -22,6 +24,17 @@ const extractor = new ScriptedLLMProvider((prompt) =>
     : "[]",
 );
 
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteAdapter.open();
+});
+afterAll(async () => {
+  await storage.close();
+});
+
 describe("server", () => {
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
@@ -29,8 +42,7 @@ describe("server", () => {
   });
 
   async function app() {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -198,8 +210,7 @@ describe("server", () => {
       chat: async () => ({ content: "It is Sunday.", toolCalls: [] }),
       chatStream: async () => "unused",
     };
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -243,8 +254,7 @@ describe("server", () => {
   });
 
   it("pick route returns the native picker's paths, 501 when unavailable", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -343,8 +353,7 @@ describe("server", () => {
 
     // A daemon-like engine (flag passed) can toggle, and the choice survives a "restart"
     // (a second engine on the same storage reads the persisted value in init).
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const config = {
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -413,6 +422,32 @@ describe("server", () => {
     expect(gone.status).toBe(404);
   });
 
+  it("related route: resolves by name, filters by type, and 404s on an unknown target", async () => {
+    // Registered ABOVE /memory/entities/:id, so the first thing this proves is that "related"
+    // is not being read as an entity id by the router.
+    const server = await app();
+    await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "the staging database runs on Postgres" }),
+    });
+    await server.request("/memory/index", { method: "POST" });
+
+    const ok = await server.request("/memory/entities/related?q=Postgres");
+    expect(ok.status).toBe(200);
+    const body = (await ok.json()) as { entity: { name: string }; related: unknown[] };
+    expect(body.entity.name).toBe("Postgres");
+    expect(Array.isArray(body.related)).toBe(true);
+
+    const filtered = await server.request("/memory/entities/related?q=Postgres&type=person");
+    expect(filtered.status).toBe(200);
+    expect(((await filtered.json()) as { related: unknown[] }).related).toEqual([]);
+
+    expect((await server.request("/memory/entities/related?q=Nobody")).status).toBe(404);
+    // A missing target is a bad request, not an empty answer about nothing.
+    expect((await server.request("/memory/entities/related")).status).toBe(400);
+  });
+
   it("schema delete: disabled user entries only, guards mapped to 409/404", async () => {
     const server = await app();
     const added = (await (
@@ -458,8 +493,7 @@ describe("server", () => {
   });
 
   it("shutdown endpoint acks then invokes the hook", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -528,8 +562,7 @@ describe("server", () => {
   });
 
   it("conflict round trip over HTTP: resolve, list resolved history, revert re-queues", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const contradictory = new ScriptedLLMProvider((prompt) =>
       prompt.includes("classify how each existing")
         ? '[{"candidate": 1, "relation": "contradictory", "reason": "different value"}]'
@@ -659,8 +692,7 @@ describe("server", () => {
   });
 
   it("responds 503 fast when the store is locked instead of hanging", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -682,8 +714,7 @@ describe("server", () => {
   });
 
   it("engine errors surface as JSON 500, not bare text", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -707,8 +738,7 @@ describe("server", () => {
   });
 
   it("serves the viewer bundle without shadowing the API", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -800,8 +830,7 @@ describe("server", () => {
   });
 
   it("open route launches the injected opener for known documents only", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -949,8 +978,7 @@ describe("server", () => {
   });
 
   it("models route shapes and caches the OpenRouter catalog", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -1019,8 +1047,7 @@ describe("server", () => {
       },
       chatStream: async () => "unused",
     };
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),

@@ -52,6 +52,11 @@ set `MEMLOOM_PG_URL` in `config.env` and restart the daemon.
   CLI/MCP route through it rather than opening the directory a second time.
 - **Sync-ready.** Every row carries a stable UUID, `created_at`/`updated_at`, and an `owner_id`
   (a fixed sentinel in the embedded tier) so a future sync layer has what it needs.
+- **Nothing destructive.** Memories go stale rather than being deleted, edges deactivate
+  rather than being removed, and an entity fold keeps the absorbed row's id and vector in
+  `memory_entity_aliases` so revert restores the same uuid the deactivated edges still point
+  at. Anything the engine decides on its own has to be undoable, because the engine is
+  sometimes wrong and the user owns the data.
 
 ## Memory vs context
 

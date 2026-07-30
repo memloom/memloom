@@ -148,6 +148,109 @@ export interface EntityDetail extends Entity {
   memories: number;
   /** Distinct context documents whose chunks mention it. */
   documents: number;
+  /** Folded-in spellings that still resolve here. Empty for an entity nothing merged into. */
+  aliases: string[];
+}
+
+/**
+ * One reversible fold: the record that a variant spelling was absorbed into a canonical
+ * entity. The absorbed row is gone from memory_entities but fully recoverable from here.
+ */
+export interface EntityMerge {
+  id: string;
+  canonicalId: string;
+  canonicalName: string;
+  /** The absorbed entity's original id, restored verbatim on revert. */
+  sourceId: string;
+  sourceName: string;
+  sourceType: string;
+  decidedBy: "auto" | "llm" | "human";
+  score: number | null;
+  reason: string | null;
+  createdAt: string;
+  revertedAt: string | null;
+}
+
+/** A candidate canonical an uncertain fold could go to. */
+export interface EntityConflictCandidate {
+  id: string;
+  name: string;
+  entityType: string;
+  mentions: number;
+  score: number;
+  reason: string;
+}
+
+/**
+ * An uncertain fold awaiting arbitration. Lives in the same memory_dedup_decisions table
+ * with the same revert semantics as a memory conflict, under action = 'entity_merge'; it is
+ * read separately because its shape is entity-shaped, not memory-shaped.
+ */
+export interface EntityConflict {
+  id: string;
+  createdAt: string;
+  incoming: { id: string; name: string; entityType: string; mentions: number };
+  candidates: EntityConflictCandidate[];
+}
+
+/** What one resolution pass over the entity table did. */
+export interface EntityResolutionResult {
+  /** Entities considered. */
+  examined: number;
+  /** Pairs that survived blocking and were judged. */
+  pairs: number;
+  /** Folds applied without asking (deterministic orthographic matches). */
+  merged: number;
+  /** Uncertain folds written to the conflicts surface. */
+  queued: number;
+  /**
+   * Uncertain folds not written because the queue is already as deep as it is allowed to
+   * get. They are the lowest-impact ones (fewest mentions on the weaker side) and a later
+   * pass picks them up as waiting questions get answered. Reported rather than dropped
+   * silently, so "nothing queued" never hides "there was more to ask about".
+   */
+  deferred: number;
+  /** Pairs skipped because they were already merged, queued, or settled as distinct. */
+  skipped: number;
+}
+
+/** One stated relationship between two entities, as seen from the entity being asked about. */
+export interface EntityLink {
+  /** The predicate the extractor recorded ("works_on", "uses", "part_of"). */
+  relation: string;
+  /** "out" when the asked-about entity is the subject, "in" when it is the object. */
+  direction: "out" | "in";
+  confidence: number | null;
+}
+
+/** One entity connected to the entity being asked about, and how. */
+export interface RelatedEntity extends Entity {
+  /** Total active mention edges pointing at this entity, for weighing how central it is. */
+  mentions: number;
+  /** Folded-in spellings that resolve here. */
+  aliases: string[];
+  /**
+   * Stated relationships between the two, if the extractor recorded any. Empty means the
+   * connection is co-mention only: they turn up in the same memories without the graph ever
+   * having asserted how they relate.
+   */
+  links: EntityLink[];
+  /** Distinct sources (memories and chunks) that mention both. */
+  sharedSources: number;
+}
+
+/**
+ * The neighbourhood of one entity. Answers "who is connected to X", where X may be given by
+ * id, by name, or by a folded-away spelling: an alias resolves to its canonical, and
+ * `matchedAlias` says so, because being told "Bob is Robert" is part of the answer.
+ */
+export interface RelatedEntities {
+  entity: EntityDetail;
+  /** The spelling asked for, when it was an alias rather than the canonical name. */
+  matchedAlias: string | null;
+  related: RelatedEntity[];
+  /** Neighbours beyond `limit`, so a truncated answer never reads as a complete one. */
+  truncated: number;
 }
 
 export interface GraphMemory {

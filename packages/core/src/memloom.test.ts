@@ -1,6 +1,8 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { HashingEmbeddingProvider, NullLLMProvider } from "./hashing-provider.js";
 import { Memloom } from "./memloom.js";
+import type { StorageAdapter } from "./storage.js";
+import { truncateAll } from "./test-store.js";
 import { PgAdapterFactory, PgliteFactory, type StorageFactory } from "./testkit.js";
 
 // The Phase 1 gate: save -> embed -> vector recall, with identical behaviour on every storage
@@ -13,15 +15,18 @@ if (process.env.MEMLOOM_TEST_PG_URL)
 
 for (const factory of factories) {
   describe(`spine [${factory.name}]`, () => {
-    const cleanups: Array<() => Promise<void>> = [];
-
-    afterEach(async () => {
-      while (cleanups.length) await cleanups.pop()?.();
+    // One store per FACTORY, emptied between tests, so the spine still runs against every
+    // adapter while paying each adapter's startup once. See test-store.ts.
+    let storage: StorageAdapter;
+    beforeAll(async () => {
+      storage = await factory.open();
+    });
+    afterAll(async () => {
+      await storage.close();
     });
 
     async function fresh(): Promise<Memloom> {
-      const storage = await factory.open();
-      cleanups.push(() => storage.close());
+      await truncateAll(storage);
       const memloom = new Memloom({
         storage,
         embedding: new HashingEmbeddingProvider(1024),

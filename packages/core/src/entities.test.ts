@@ -1,10 +1,12 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { HashingEmbeddingProvider, ScriptedLLMProvider } from "./hashing-provider.js";
 import { Memloom } from "./memloom.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
+import type { StorageAdapter } from "./storage.js";
+import { truncateAll } from "./test-store.js";
 
 // Phase 4: the indexer extracts entities, links memories to them, and the entity arm retrieves
 // memories by entity anchor. Scripted LLM extracts entities deterministically from content.
@@ -26,6 +28,17 @@ const extractor = new ScriptedLLMProvider((prompt) => {
   return JSON.stringify({ entities, relationships: [] });
 });
 
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteAdapter.open();
+});
+afterAll(async () => {
+  await storage.close();
+});
+
 describe("entities + indexer", () => {
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => {
@@ -33,8 +46,7 @@ describe("entities + indexer", () => {
   });
 
   async function fresh(): Promise<Memloom> {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const m = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -213,8 +225,7 @@ describe("entities + indexer", () => {
   });
 
   it("skips math-dense chunks without an LLM call", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const throwing = new ScriptedLLMProvider(() => {
       throw new Error("LLM must not be called for a math-dense chunk");
     });
@@ -246,8 +257,7 @@ describe("entities + indexer", () => {
   });
 
   it("stores high-confidence typed relationships and quarantines weak ones", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const rel = new ScriptedLLMProvider((prompt) => {
       if (prompt.includes("Tomek builds")) {
         return JSON.stringify({
@@ -301,8 +311,7 @@ describe("entities + indexer", () => {
   });
 
   it("suppresses duplicate typed edges across sources", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const rel = new ScriptedLLMProvider((prompt) => {
       if (prompt.includes("Tomek builds")) {
         return JSON.stringify({
@@ -334,8 +343,7 @@ describe("entities + indexer", () => {
   });
 
   it("reindex wipes extracted artifacts, keeps belief edges, and rebuilds", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     let mode: "garbage" | "clean" = "garbage";
     const flippable = new ScriptedLLMProvider(() =>
       JSON.stringify({
@@ -375,8 +383,7 @@ describe("entities + indexer", () => {
   });
 
   it("proposal lifecycle: suggest twice, review, approve materializes without re-index", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const rel = new ScriptedLLMProvider((prompt) => {
       if (prompt.includes("ibuprofen")) {
         return JSON.stringify({
@@ -427,8 +434,7 @@ describe("entities + indexer", () => {
   });
 
   it("approving a predicate proposal upgrades the quarantined pair to a typed edge", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const rel = new ScriptedLLMProvider((prompt) => {
       if (!prompt.includes("lovelace")) return JSON.stringify({ entities: [], relationships: [] });
       return JSON.stringify({
@@ -476,8 +482,7 @@ describe("entities + indexer", () => {
   });
 
   it("dismissed proposals are blocklisted in the prompt", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const prompts: string[] = [];
     const rel = new ScriptedLLMProvider((prompt) => {
       prompts.push(prompt);
@@ -567,8 +572,7 @@ describe("entities + indexer", () => {
       }
       return JSON.stringify({ entities: [], relationships: [] });
     });
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const m = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -620,15 +624,23 @@ describe("entities + indexer", () => {
       /not an active entity type/,
     );
 
-    // Merge: Redis folds into PostgreSQL; edges repoint, the source row is gone.
+    // Merge: Redis folds into PostgreSQL; edges repoint, the source row leaves the list.
     const pg = await byName("PostgreSQL");
-    await m.mergeEntities(redis?.id ?? "", pg?.id ?? "");
+    const mergeId = await m.mergeEntities(redis?.id ?? "", pg?.id ?? "");
     const merged = await m.listEntities();
     expect(merged).toHaveLength(1);
     expect(merged[0]).toMatchObject({ name: "PostgreSQL", mentions: 2, memories: 2 });
+    // The fold is a record, not a destructive edit: the absorbed spelling stays addressable.
+    expect(merged[0]?.aliases).toEqual(["Redis"]);
+
+    // Deleting the canonical now would make that fold permanent, so it is refused until the
+    // merge is reverted. (This is a behavior change: delete used to cascade silently.)
+    await expect(m.deleteEntity(merged[0]?.id ?? "")).rejects.toThrow(/Revert the merge/);
+    await m.revertEntityMerge(mergeId);
+    expect(await m.listEntities()).toHaveLength(2);
 
     // Delete sweeps the edge table.
-    await m.deleteEntity(merged[0]?.id ?? "");
+    for (const e of await m.listEntities()) await m.deleteEntity(e.id);
     expect(await m.listEntities()).toHaveLength(0);
     expect((await m.graph()).edges.filter((e) => e.relation === "mention")).toHaveLength(0);
     await expect(m.deleteEntity(merged[0]?.id ?? "")).rejects.toThrow(/no entity/);

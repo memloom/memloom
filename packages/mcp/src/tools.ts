@@ -78,6 +78,57 @@ export async function readPassage(memloom: MemoryEngine, args: { id: string }): 
   return content;
 }
 
+/**
+ * The graph neighbourhood of one entity, rendered for an agent to read aloud.
+ *
+ * Stated relationships and co-mentions are printed as separate groups rather than one ranked
+ * list: "Robert works_on memloom" is something the graph asserted, and "these two turn up
+ * in the same nine memories" is not, and an agent relaying the answer should not present the
+ * second as the first.
+ */
+export async function relatedEntities(
+  memloom: MemoryEngine,
+  args: { entity: string; type?: string; limit?: number },
+): Promise<string> {
+  const result = await memloom.relatedEntities(args.entity, {
+    ...(args.type ? { entityType: args.type } : {}),
+    ...(args.limit ? { limit: args.limit } : {}),
+  });
+  if (!result) {
+    return `No entity matching "${args.entity}". Names are matched exactly (aliases included), not by meaning.`;
+  }
+  const { entity, matchedAlias, related, truncated } = result;
+  const header = matchedAlias
+    ? `${entity.name} (${entity.entityType}); "${matchedAlias}" is a known alias for it`
+    : `${entity.name} (${entity.entityType})`;
+  if (related.length === 0) {
+    const scope = args.type ? ` of type ${args.type}` : "";
+    return `${header}\nNothing${scope} is connected to it in the graph yet.`;
+  }
+  const stated = related.filter((r) => r.links.length > 0);
+  const coOnly = related.filter((r) => r.links.length === 0);
+  const describe = (r: (typeof related)[number]) => {
+    const also = r.aliases.length > 0 ? ` (also: ${r.aliases.join(", ")})` : "";
+    const links = r.links
+      .map((l) => (l.direction === "out" ? `${l.relation} ->` : `<- ${l.relation}`))
+      .join(", ");
+    const shared = `${r.sharedSources} shared ${r.sharedSources === 1 ? "source" : "sources"}`;
+    return `- ${r.name} [${r.entityType}]${also}${links ? `; ${links}` : ""}; ${shared}`;
+  };
+  const sections = [header];
+  if (stated.length > 0) {
+    sections.push("Stated relationships:", ...stated.map(describe));
+  }
+  if (coOnly.length > 0) {
+    sections.push(
+      "Appears together with (no relationship stated):",
+      ...coOnly.map((r) => describe(r)),
+    );
+  }
+  if (truncated > 0) sections.push(`... and ${truncated} more; raise limit to see them.`);
+  return sections.join("\n");
+}
+
 export async function memoryHistory(
   memloom: MemoryEngine,
   args: { memoryId: string },

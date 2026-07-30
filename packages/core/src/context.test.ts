@@ -1,10 +1,12 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { HashingEmbeddingProvider, NullLLMProvider } from "./hashing-provider.js";
 import { Memloom } from "./memloom.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
+import type { StorageAdapter } from "./storage.js";
+import { truncateAll } from "./test-store.js";
 
 // End-to-end context connector: file → extract → chunk → embed → store → hybrid recall.
 // Uses the offline hashing embeddings (word overlap = similarity), so keyword-ish queries
@@ -34,6 +36,17 @@ function makePdf(text: string): Uint8Array {
   return new TextEncoder().encode(pdf);
 }
 
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteAdapter.open();
+});
+afterAll(async () => {
+  await storage.close();
+});
+
 describe("context connector", () => {
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => {
@@ -41,8 +54,7 @@ describe("context connector", () => {
   });
 
   async function fresh() {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(256),
@@ -258,8 +270,7 @@ describe("upload/link dedup", () => {
   });
 
   async function fresh() {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(256),

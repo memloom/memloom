@@ -5,6 +5,7 @@ import { ConflictsView } from "./ConflictsView";
 import { ConnectorsView } from "./ConnectorsView";
 import { ConsoleView } from "./ConsoleView";
 import { DocumentsView } from "./DocumentsView";
+import { EntityFoldsView } from "./EntityFoldsView";
 import { GraphView } from "./GraphView";
 import { graphsEqual } from "./graphEquality";
 import { MemoriesView } from "./MemoriesView";
@@ -142,7 +143,14 @@ export function App() {
         {tab === "memories" && <MemoriesView />}
         {tab === "documents" && <DocumentsView onChanged={refresh} />}
         {tab === "schema" && <SchemaView onChanged={refresh} />}
-        {tab === "conflicts" && <ConflictsView conflicts={conflicts} onChanged={refresh} />}
+        {/* Entity folds sit above the memory conflicts, same tab: both are contradictions
+            the pipeline flagged, one about identity and one about content. */}
+        {tab === "conflicts" && (
+          <>
+            <EntityFoldsView onChanged={refresh} />
+            <ConflictsView conflicts={conflicts} onChanged={refresh} />
+          </>
+        )}
         {tab === "connectors" && <ConnectorsView onChanged={refresh} />}
         {tab === "console" && <ConsoleView onChanged={refresh} />}
       </main>

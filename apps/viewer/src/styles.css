@@ -1119,6 +1119,50 @@ textarea {
   margin-top: 4px;
 }
 
+/* Traverse panel: the graph-tab dock that walks entity to entity. */
+.traverseForm {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.traverseType {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.traverseType:focus {
+  border-color: var(--text);
+}
+
+/* A neighbour card is a button: the whole card is the hop target, so it has to lose the
+   button chrome and keep the card's left-aligned block layout. */
+.traverseCard {
+  width: 100%;
+  gap: 6px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.traverseCard:hover {
+  border-color: var(--border-strong);
+}
+
+.traverseLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 8px;
+  font-family: var(--mono);
+}
+
 .entityFilter {
   width: 100%;
   margin: 6px 0 8px;
