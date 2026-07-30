@@ -346,6 +346,36 @@ describe("server", () => {
     expect(done?.documents).toBe(2);
   });
 
+  // A single file must come back as a ContextAddResult, the same shape /context/add returns.
+  // This route answered folder-shaped totals for every request, so a caller reading
+  // `outcome` got undefined and crashed on it.
+  it("context add stream returns a single file's own result, not folder totals", async () => {
+    const server = await app();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-ctx-one-"));
+    const file = join(dir, "solo.md");
+    writeFileSync(file, "# Solo\nthe staging database is Postgres");
+
+    const res = await server.request("/context/add/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: file }),
+    });
+    expect(res.status).toBe(200);
+
+    const done = (await res.text())
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .at(-1);
+
+    expect(done?.type).toBe("done");
+    expect(done?.outcome).toBe("added");
+    expect(done?.title).toBeTruthy();
+    expect(done?.documentId).toBeTruthy();
+    expect(done?.chunks).toBeGreaterThan(0);
+  });
+
   it("context add stream rejects a missing path up front, not mid-stream", async () => {
     const server = await app();
     const res = await server.request("/context/add/stream", {

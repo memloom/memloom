@@ -255,6 +255,11 @@ export class HttpMemloomClient implements MemoryEngine {
         onItem?.(item as TItem);
       } else if (event.type === "done") {
         const { type: _type, ...done } = event;
+        // A stream cannot revise its status code once it has begun, so a run that failed
+        // reports the reason in its done payload. Raising it here means the caller sees
+        // that reason rather than crashing on whichever field it expected to find.
+        const failure = (done as { error?: unknown }).error;
+        if (typeof failure === "string") throw new Error(failure);
         result = done as TDone;
       } else if (event.type === "error") {
         throw new Error(event.error ?? "memloom: stream error");

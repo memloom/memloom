@@ -1163,14 +1163,23 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     // Both event shapes carry `stage`, so a consumer discriminates on one field instead of
     // guessing from which properties happen to be present.
     type FileDone = { stage: "file"; path: string; outcome: string; chunks: number };
+
+    // One file in, one ContextAddResult out, exactly as /context/add answers. Clients type
+    // this route's result as ContextAddResult, so returning only folder-shaped totals left
+    // them holding an undefined `outcome`. A directory still reports totals, because there
+    // is no single result to report.
+    const single = !info.isDirectory();
+
     return streamNdjson<ContextProgressEvent | FileDone>(c, async (emit) => {
       let added = 0;
       let unchanged = 0;
       let chunks = 0;
+      let lastResult: Awaited<ReturnType<typeof memloom.contextAdd>> | null = null;
       const errors: string[] = [];
       for (const file of files) {
         try {
           const r = await memloom.contextAdd({ path: file }, emit);
+          lastResult = r;
           chunks += r.chunks;
           if (r.outcome === "unchanged") unchanged += 1;
           else added += 1;
@@ -1181,6 +1190,9 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
           errors.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
+      // A single file that failed has only its failure to report, and a stream cannot go
+      // back and change its status code, so it travels in band.
+      if (single) return lastResult ?? { error: errors[0] ?? `could not ingest ${target}` };
       return {
         documents: added,
         unchanged,
