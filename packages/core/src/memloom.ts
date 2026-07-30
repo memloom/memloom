@@ -544,14 +544,20 @@ export class Memloom implements MemoryEngine {
   async contextAdd(
     input: ContextAddInput,
     onProgress?: (event: ContextProgressEvent) => void,
+    signal?: AbortSignal,
   ): Promise<ContextAddResult> {
     const owner = input.ownerId ?? SENTINEL_OWNER;
     const file = await extractFile(
       input.path,
       (bytes) => createHash("sha256").update(bytes).digest("hex"),
-      // Only slow extractors emit anything, so a markdown file streams nothing and costs
-      // nothing. Transcription emits per decode chunk.
-      onProgress && ((event) => onProgress({ path: input.path, ...event })),
+      {
+        // Only slow extractors emit anything, so a markdown file streams nothing and costs
+        // nothing. Transcription emits per decode chunk.
+        onProgress: onProgress && ((event) => onProgress({ path: input.path, ...event })),
+        // Cancelling before this returns leaves nothing behind, because the store is only
+        // touched below.
+        signal,
+      },
     );
     const result = await this.#ingestDocument(owner, input.path, file, null);
     if (result.outcome !== "unchanged") this.#scheduleAutoIndex(owner);

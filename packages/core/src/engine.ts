@@ -129,6 +129,7 @@ export interface MemoryEngine {
   contextAdd(
     input: ContextAddInput,
     onProgress?: (event: ContextProgressEvent) => void,
+    signal?: AbortSignal,
   ): Promise<ContextAddResult>;
   /** Ingest a web page as context. Fetched and parsed locally; the URL becomes the path. */
   contextAddUrl(input: ContextAddUrlInput): Promise<ContextAddResult>;

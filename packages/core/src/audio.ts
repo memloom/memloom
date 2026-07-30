@@ -61,7 +61,13 @@ export const SAMPLE_RATE = 16_000;
 export class AudioError extends Error {
   constructor(
     message: string,
-    readonly code: "no_ffmpeg" | "no_asr" | "no_model" | "decode_failed" | "no_speech",
+    readonly code:
+      | "no_ffmpeg"
+      | "no_asr"
+      | "no_model"
+      | "decode_failed"
+      | "no_speech"
+      | "cancelled",
   ) {
     super(message);
     this.name = "AudioError";
@@ -385,8 +391,19 @@ interface Recognizer {
  * one chunk, which at 60 seconds of audio is a handful of seconds. Moving the recognizer to
  * a worker thread is the real fix and is not done here.
  */
-function yieldToEventLoop(): Promise<void> {
-  return new Promise((resolve) => setImmediate(resolve));
+async function yieldToEventLoop(): Promise<void> {
+  // A timer rather than setImmediate, and two turns rather than one. setImmediate resumes in
+  // the check phase, which is too early for libuv to have noticed a socket the client just
+  // closed, and the cancellation then has to travel a promise chain on top of that. With one
+  // setImmediate a cancel took about two chunks (11 seconds) to land; this makes it one.
+  // A couple of milliseconds against a chunk that decodes for seconds is free.
+  await new Promise((resolve) => setTimeout(resolve, 1));
+  await new Promise((resolve) => setImmediate(resolve));
+}
+
+/** Raised as a typed AudioError so callers can tell a cancel from a real failure. */
+function throwIfCancelled(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new AudioError("transcription cancelled", "cancelled");
 }
 
 /**
@@ -429,6 +446,16 @@ export interface TranscribeOptions {
   /** Catalog id, e.g. "parakeet-v3". Defaults to whatever `memloom audio use` selected. */
   modelId?: string;
   onProgress?: (event: TranscribeProgress) => void;
+  /**
+   * Stops the run at the next chunk boundary. Checked between decode calls rather than
+   * inside one, because `decode()` is a synchronous native call that cannot be interrupted
+   * once entered, so the worst-case wait is one chunk.
+   *
+   * Cancelling is clean by construction: the temp wav is removed in a finally, the
+   * transcript cache is only written on success, and the document is only stored after
+   * extraction returns. A cancelled ingest leaves nothing behind.
+   */
+  signal?: AbortSignal;
 }
 
 /** Everything the extractor needs: the words with their times, and what was repaired. */
@@ -549,6 +576,7 @@ export async function transcribeWav(
       audioSeconds,
     });
     await yieldToEventLoop();
+    throwIfCancelled(options.signal);
   }
 
   // The repair pass. A flagged chunk is decoded again at half the length, which changes the
@@ -584,6 +612,7 @@ export async function transcribeWav(
     for (const h of halved) {
       redone.push(...decodeRange(h.start, h.end).words);
       await yieldToEventLoop();
+      throwIfCancelled(options.signal);
     }
     if (redone.length > counts[index]!) {
       perChunk[index] = redone;
@@ -754,6 +783,7 @@ export async function transcribeMedia(
   path: string,
   options: TranscribeOptions & { sha256: (p: string) => Promise<string> },
 ): Promise<TranscribeFileResult> {
+  throwIfCancelled(options.signal);
   const contentHash = await options.sha256(path);
   const { selectedModelId } = await import("./audio-models.js");
   const modelId = options.modelId ?? (await selectedModelId());
@@ -779,6 +809,9 @@ export async function transcribeMedia(
     // runs for 10 to 30 seconds per hour of audio and says nothing until it finishes.
     options.onProgress?.({ stage: "decoding", done: 0, total: 0, seconds: 0, audioSeconds: 0 });
     await decodeToWav(path, wavPath);
+    // ffmpeg on a long video runs for tens of seconds, so a cancel arriving during it
+    // should not then load a 641 MB model and start transcribing anyway.
+    throwIfCancelled(options.signal);
     // Pinned to the id the cache was keyed on, so the entry written below always names the
     // model that actually produced it even if the selection changes mid-run.
     const result = await transcribeWav(wavPath, { ...options, modelId });

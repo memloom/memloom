@@ -603,7 +603,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   const STREAM_HEARTBEAT_MS = 15_000;
   const streamNdjson = <TEvent>(
     c: Context,
-    run: (emit: (event: TEvent) => void) => Promise<object>,
+    run: (emit: (event: TEvent) => void, signal: AbortSignal) => Promise<object>,
   ) => {
     c.header("content-type", "application/x-ndjson");
     return stream(c, async (s) => {
@@ -614,9 +614,15 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
           await s.write(`${JSON.stringify(payload)}\n`);
         });
       };
+      // The client hanging up means "stop", and a long run must honour that rather than
+      // burn a core for minutes with nobody listening. This comes from the stream rather
+      // than from c.req.raw.signal, which does not fire on disconnect under the Node
+      // adapter: verified by watching a cancelled transcription keep running.
+      const cancel = new AbortController();
+      s.onAbort(() => cancel.abort());
       const heartbeat = setInterval(() => write({ type: "ping" }), STREAM_HEARTBEAT_MS);
       try {
-        const result = await run((event) => write({ type: "item", ...event }));
+        const result = await run((event) => write({ type: "item", ...event }), cancel.signal);
         write({ type: "done", ...result });
       } catch (err) {
         // Mid-stream failures can't become an HTTP error status: surface them in-band.
@@ -1170,15 +1176,18 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     // is no single result to report.
     const single = !info.isDirectory();
 
-    return streamNdjson<ContextProgressEvent | FileDone>(c, async (emit) => {
+    // Closing the stream cancels the work. Transcribing an hour takes 8 to 11 minutes, and
+    // the common reason to stop is having picked the wrong file.
+    return streamNdjson<ContextProgressEvent | FileDone>(c, async (emit, signal) => {
       let added = 0;
       let unchanged = 0;
       let chunks = 0;
       let lastResult: Awaited<ReturnType<typeof memloom.contextAdd>> | null = null;
       const errors: string[] = [];
       for (const file of files) {
+        if (signal.aborted) break;
         try {
-          const r = await memloom.contextAdd({ path: file }, emit);
+          const r = await memloom.contextAdd({ path: file }, emit, signal);
           lastResult = r;
           chunks += r.chunks;
           if (r.outcome === "unchanged") unchanged += 1;
@@ -1192,7 +1201,14 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       }
       // A single file that failed has only its failure to report, and a stream cannot go
       // back and change its status code, so it travels in band.
-      if (single) return lastResult ?? { error: errors[0] ?? `could not ingest ${target}` };
+      //
+      // On success the payload is a superset: the file's own ContextAddResult, which the CLI
+      // reads `outcome` and `title` from, plus the same totals a folder reports, which the
+      // viewer counts. One shape satisfying both beats making each caller guess which it got.
+      if (single) {
+        if (!lastResult) return { error: errors[0] ?? `could not ingest ${target}` };
+        return { ...lastResult, documents: added, unchanged, chunks };
+      }
       return {
         documents: added,
         unchanged,

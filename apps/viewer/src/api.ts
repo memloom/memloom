@@ -524,11 +524,13 @@ async function readNdjson<TItem, TDone>(
   path: string,
   body: unknown,
   onItem: (item: TItem) => void,
+  signal?: AbortSignal,
 ): Promise<TDone> {
   const res = await fetch(path, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body ?? {}),
+    signal,
   });
   if (!res.ok || !res.body) {
     const failure = (await res.json().catch(() => null)) as { error?: string } | null;
@@ -595,11 +597,16 @@ export const api = {
   // The same ingest, streamed. Media transcribes for minutes, which is far past what a plain
   // request can hold open without looking hung, so the media and folder paths report as they
   // go. Progress events and per-file completions both arrive here; `stage` tells them apart.
-  contextAddStream: (path: string, onProgress: (event: ContextStreamEvent) => void) =>
+  contextAddStream: (
+    path: string,
+    onProgress: (event: ContextStreamEvent) => void,
+    signal?: AbortSignal,
+  ) =>
     readNdjson<ContextStreamEvent, ContextAddStreamResult>(
       "/context/add/stream",
       { path },
       onProgress,
+      signal,
     ),
   // Ingest a web page. The daemon fetches and parses it in its own process, so the URL never
   // reaches a third party. Not json(): a refusal answers 400 with a stable code, and losing

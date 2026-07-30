@@ -53,7 +53,7 @@ export interface Extractor {
    */
   extractPath?(
     path: string,
-    onProgress?: (event: ExtractProgress) => void,
+    opts?: ExtractPathOptions,
   ): Promise<{ title?: string; units: ExtractedUnit[]; contentHash: string }>;
 }
 
@@ -68,6 +68,17 @@ export interface ExtractProgress {
   total: number;
   seconds: number;
   audioSeconds: number;
+}
+
+/** What a path-based extractor accepts beyond the path itself. */
+export interface ExtractPathOptions {
+  onProgress?: (event: ExtractProgress) => void;
+  /**
+   * Stops a slow extraction early. Only the media path honours it, and only between decode
+   * chunks, so the worst-case wait after a cancel is one chunk. Nothing is stored when an
+   * extraction is cancelled, because the document is written only after it returns.
+   */
+  signal?: AbortSignal;
 }
 
 const registry = new Map<string, Extractor>();
@@ -156,9 +167,13 @@ for (const [kind, extensions] of [
     extensions: [...extensions],
     version: 1,
     chunker: "markdown",
-    async extractPath(path, onProgress) {
+    async extractPath(path, opts) {
       const { transcribeMedia, hashFile } = await import("./audio.js");
-      const result = await transcribeMedia(path, { sha256: hashFile, onProgress });
+      const result = await transcribeMedia(path, {
+        sha256: hashFile,
+        onProgress: opts?.onProgress,
+        signal: opts?.signal,
+      });
       return { units: result.units, contentHash: result.contentHash };
     },
     // The upload path, where bytes arrived over HTTP and never touched disk. ffmpeg needs a
@@ -186,11 +201,11 @@ for (const [kind, extensions] of [
 export async function extractFile(
   path: string,
   hash: (bytes: Uint8Array) => string,
-  onProgress?: (event: ExtractProgress) => void,
+  opts?: ExtractPathOptions,
 ): Promise<ExtractedFile> {
   const extractor = registry.get(extname(path).toLowerCase());
   if (extractor?.extractPath) {
-    const { title, units, contentHash } = await extractor.extractPath(path, onProgress);
+    const { title, units, contentHash } = await extractor.extractPath(path, opts);
     return {
       kind: extractor.kind,
       title: title || basename(path),

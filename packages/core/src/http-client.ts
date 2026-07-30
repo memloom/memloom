@@ -344,6 +344,7 @@ export class HttpMemloomClient implements MemoryEngine {
   contextAdd(
     input: ContextAddInput,
     onProgress?: (event: ContextProgressEvent) => void,
+    _signal?: AbortSignal,
   ): Promise<ContextAddResult> {
     // Without a callback this stays a plain request, so every non-media format keeps the
     // simpler path and the response shape it already had.

@@ -293,6 +293,8 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
   // With auto-index on, "run index" would be stale advice: extraction is already queued.
   const [autoIndexOn, setAutoIndexOn] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  // Held so the Stop button can abort a transcription that is already under way.
+  const abortRef = useRef<AbortController | null>(null);
   const indexHint = autoIndexOn
     ? "Entities are being extracted in the background."
     : "Run index to extract entities.";
@@ -350,26 +352,35 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
     setError(null);
     setNotice(null);
     setStatus(null);
+    // Aborting the request is what stops the work: the daemon watches the request's signal
+    // and gives up at the next chunk boundary. Choosing the wrong recording should not cost
+    // ten minutes of waiting for a result nobody wants.
+    const controller = new AbortController();
+    abortRef.current = controller;
     let files = 0;
     let unchanged = 0;
     let chunks = 0;
     const failures: string[] = [];
     try {
       for (const target of targets) {
-        const result = await api.contextAddStream(target, (event) => {
-          setStatus((prev) => {
-            const done = prev?.files ?? 0;
-            if (isFileDone(event)) {
-              return {
-                path: event.path,
-                line: `${event.outcome}; ${event.chunks} chunks`,
-                fraction: 1,
-                files: done + 1,
-              };
-            }
-            return { path: event.path, ...describeStage(event), files: done };
-          });
-        });
+        const result = await api.contextAddStream(
+          target,
+          (event) => {
+            setStatus((prev) => {
+              const done = prev?.files ?? 0;
+              if (isFileDone(event)) {
+                return {
+                  path: event.path,
+                  line: `${event.outcome}; ${event.chunks} chunks`,
+                  fraction: 1,
+                  files: done + 1,
+                };
+              }
+              return { path: event.path, ...describeStage(event), files: done };
+            });
+          },
+          controller.signal,
+        );
         files += result.documents;
         unchanged += result.unchanged;
         chunks += result.chunks;
@@ -384,8 +395,14 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
       setPath("");
       onAdded();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      // A cancel is not a failure, and reporting it in red as one reads like something broke.
+      if (controller.signal.aborted) {
+        setNotice("stopped. Nothing was saved for the file that was still being read.");
+      } else {
+        setError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
+      abortRef.current = null;
       setStatus(null);
       setBusy(false);
     }
@@ -551,9 +568,23 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
               Upload…
             </button>
           </div>
-          <button type="submit" className="btn btnPrimary" disabled={busy || path.trim() === ""}>
-            {busy ? "Ingesting…" : "Add"}
-          </button>
+          {busy && abortRef.current ? (
+            <button
+              type="button"
+              className="btn"
+              onClick={() => abortRef.current?.abort()}
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              type="submit"
+              className="btn btnPrimary"
+              disabled={busy || path.trim() === ""}
+            >
+              {busy ? "Ingesting…" : "Add"}
+            </button>
+          )}
         </div>
       </form>
       <p className="addFileHint">
