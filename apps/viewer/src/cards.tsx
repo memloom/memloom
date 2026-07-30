@@ -241,9 +241,37 @@ function isFileDone(event: ContextStreamEvent): event is ContextFileDone {
   return event.stage === "file";
 }
 
-/** One progress event as a line of copy. Only transcription can report how far along it is. */
+/** Bytes as "1.4 GB": the hashing stage counts a file, not a clock. */
+function bytes(n: number): string {
+  if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
+  if (n >= 1024 ** 2) return `${Math.round(n / 1024 ** 2)} MB`;
+  return `${Math.round(n / 1024)} KB`;
+}
+
+/**
+ * One progress event as a line of copy.
+ *
+ * Every stage is named, including the ones that cannot report a percentage. On a large
+ * recording the work before the first transcribed word runs for minutes, and an unnamed
+ * stage there reads as a hang rather than as progress.
+ */
 function describeStage(event: ContextProgress): { line: string; fraction: number | null } {
-  if (event.stage === "decoding") return { line: "reading the audio", fraction: null };
+  if (event.stage === "hashing") {
+    // Bytes, not chunks: this stage is reading the file, and saying "3% of 4.1 GB" tells
+    // the user both what is happening and why it is not instant.
+    return {
+      line: event.total > 0 ? `reading the file; ${bytes(event.total)}` : "reading the file",
+      fraction: event.total > 0 ? event.done / event.total : null,
+    };
+  }
+  if (event.stage === "decoding") return { line: "extracting the audio track", fraction: null };
+  if (event.stage === "detecting") {
+    return {
+      line: `finding speech in ${clock(event.audioSeconds)}`,
+      fraction: event.total > 0 ? event.done / event.total : null,
+    };
+  }
+  if (event.stage === "loading") return { line: "loading the speech model", fraction: null };
   if (event.stage === "checking") return { line: "checking the transcript", fraction: null };
   if (event.stage === "repairing") {
     return { line: `re-reading a rough stretch at ${clock(event.seconds)}`, fraction: null };

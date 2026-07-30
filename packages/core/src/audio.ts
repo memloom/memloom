@@ -429,9 +429,26 @@ function tokensToWords(
   return words.filter((w) => w.word.length > 0);
 }
 
-/** One step of a transcription, shaped for the daemon's NDJSON progress stream. */
+/**
+ * One step of a transcription, shaped for the daemon's NDJSON progress stream.
+ *
+ * Every slow stage reports, not just the decode loop. On a multi-gigabyte recording the work
+ * before the first word is read is minutes long: the file is hashed in full, ffmpeg walks the
+ * whole container, VAD sweeps the audio, and a 641 MB model loads. Leaving those silent made
+ * a working ingest look hung, which is the exact failure this stream exists to prevent.
+ *
+ * `done` and `total` are bytes during "hashing" and chunks during "transcribing". The stage
+ * says which, so a consumer never has to guess from magnitudes.
+ */
 export interface TranscribeProgress {
-  stage: "decoding" | "transcribing" | "checking" | "repairing";
+  stage:
+    | "hashing"
+    | "decoding"
+    | "detecting"
+    | "loading"
+    | "transcribing"
+    | "checking"
+    | "repairing";
   /** 1-based position among this stage's units of work; 0 when the stage is not countable. */
   done: number;
   total: number;
@@ -534,19 +551,44 @@ export async function transcribeWav(
       segments.push({ start: seg.start, end: seg.start + seg.samples.length });
     }
   };
+  // VAD is cheap per second of audio (measured RTF 0.006) but an hour of it is still about
+  // twenty seconds, and it used to pass in silence between the model loading and the first
+  // word appearing. Reported every percent, with a yield so the events actually reach the
+  // client: acceptWaveform is native and synchronous, so nothing flushes without one.
+  const totalSamples = wave.samples.length;
+  const audioSeconds = totalSamples / SAMPLE_RATE;
   const windowSize = vad.config.sileroVad.windowSize;
-  for (let i = 0; i < wave.samples.length; i += windowSize) {
+  let vadPercent = -1;
+  options.onProgress?.({ stage: "detecting", done: 0, total: 100, seconds: 0, audioSeconds });
+  for (let i = 0; i < totalSamples; i += windowSize) {
     vad.acceptWaveform(wave.samples.subarray(i, i + windowSize));
     drain();
+    const percent = Math.floor((i / totalSamples) * 100);
+    if (percent !== vadPercent) {
+      vadPercent = percent;
+      options.onProgress?.({
+        stage: "detecting",
+        done: percent,
+        total: 100,
+        seconds: i / SAMPLE_RATE,
+        audioSeconds,
+      });
+      await yieldToEventLoop();
+      throwIfCancelled(options.signal);
+    }
   }
   vad.flush();
   drain();
 
-  const audioSeconds = wave.samples.length / SAMPLE_RATE;
   if (segments.length === 0) {
     throw new AudioError("no speech found in this recording", "no_speech");
   }
 
+  // Emitted here rather than at the top of the function because this call is where the
+  // 641 MB model is actually read off disk, about seven seconds. Labelling it earlier named
+  // the stage before the cost, which left the real wait unaccounted for.
+  options.onProgress?.({ stage: "loading", done: 0, total: 0, seconds: 0, audioSeconds });
+  await yieldToEventLoop();
   const recognizer = makeRecognizer();
   const decodeRange = (start: number, end: number): { words: TimedWord[]; count: number } => {
     const stream = recognizer.createStream();
@@ -781,10 +823,30 @@ async function writeCache(sha256: string, record: CachedTranscript): Promise<voi
  */
 export async function transcribeMedia(
   path: string,
-  options: TranscribeOptions & { sha256: (p: string) => Promise<string> },
+  options: TranscribeOptions & {
+    sha256: (p: string, onProgress?: (read: number, total: number) => void) => Promise<string>;
+  },
 ): Promise<TranscribeFileResult> {
   throwIfCancelled(options.signal);
-  const contentHash = await options.sha256(path);
+
+  // Reported before it starts as well as during, so the very first thing the user sees is a
+  // named stage rather than a still bar. A large file spends real time here.
+  let lastPercent = -1;
+  options.onProgress?.({ stage: "hashing", done: 0, total: 0, seconds: 0, audioSeconds: 0 });
+  const contentHash = await options.sha256(path, (read, total) => {
+    // One event per whole percent. A read stream fires thousands of chunks, and a line per
+    // chunk would flood the NDJSON stream with more traffic than the work it describes.
+    const percent = total > 0 ? Math.floor((read / total) * 100) : 0;
+    if (percent === lastPercent) return;
+    lastPercent = percent;
+    options.onProgress?.({
+      stage: "hashing",
+      done: read,
+      total,
+      seconds: 0,
+      audioSeconds: 0,
+    });
+  });
   const { selectedModelId } = await import("./audio-models.js");
   const modelId = options.modelId ?? (await selectedModelId());
 
@@ -839,14 +901,34 @@ export async function transcribeMedia(
   }
 }
 
-/** Streaming sha256 so a multi-gigabyte video never lands in memory. */
-export async function hashFile(path: string): Promise<string> {
-  const { createReadStream } = await import("node:fs");
+/**
+ * Streaming sha256 so a multi-gigabyte video never lands in memory.
+ *
+ * Reports bytes as it goes, because this is the first thing that happens to a file and on a
+ * large recording it runs for tens of seconds. Measured at about 180 MB/s, so a 5 GB video
+ * spends nearly half a minute here before anything else begins.
+ */
+export async function hashFile(
+  path: string,
+  onProgress?: (readBytes: number, totalBytes: number) => void,
+): Promise<string> {
+  const { createReadStream, statSync } = await import("node:fs");
+  let totalBytes = 0;
+  try {
+    totalBytes = statSync(path).size;
+  } catch {
+    // A size we cannot read only costs the percentage, never the hash.
+  }
   return new Promise((resolve, reject) => {
     const hash = createHash("sha256");
     const stream = createReadStream(path);
+    let read = 0;
     stream.on("error", reject);
-    stream.on("data", (d) => hash.update(d));
+    stream.on("data", (d) => {
+      hash.update(d);
+      read += d.length;
+      onProgress?.(read, totalBytes);
+    });
     stream.on("end", () => resolve(hash.digest("hex")));
   });
 }

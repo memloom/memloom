@@ -175,9 +175,13 @@ export class LinkIngestError extends Error {
  */
 export interface ContextProgress {
   path: string;
-  /** "decoding" | "transcribing" | "checking" | "repairing"; an open set. */
+  /**
+   * "hashing" | "decoding" | "detecting" | "loading" | "transcribing" | "checking" |
+   * "repairing". An open set on purpose: a newer daemon naming a stage this viewer has not
+   * heard of falls through to showing the raw name rather than showing nothing at all.
+   */
   stage: string;
-  /** 1-based position within the stage; both 0 when the stage has nothing to count. */
+  /** Bytes during "hashing", chunks during "transcribing"; both 0 when there is nothing to count. */
   done: number;
   total: number;
   /** How far into the recording this step reached, and how long the recording runs. */

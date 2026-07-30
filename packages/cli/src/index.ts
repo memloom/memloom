@@ -576,22 +576,36 @@ export async function run(argv: readonly string[]): Promise<void> {
               );
               continue;
             }
+            // Every stage prints, not only transcription. On a large recording the work
+            // before the first word is minutes long, and a blank terminal for that stretch
+            // is indistinguishable from a hang.
             progress = (event) => {
-              if (event.stage === "decoding") {
-                process.stderr.write(`\r  ${basename(file)}: reading audio...`);
-                return;
+              const show = (line: string) =>
+                process.stderr.write(`\r  ${basename(file)}: ${line}${" ".repeat(12)}`);
+              const pct = () =>
+                event.total > 0 ? ` ${Math.round((event.done / event.total) * 100)}%` : "";
+              switch (event.stage) {
+                case "hashing":
+                  return show(
+                    `reading the file${event.total > 0 ? ` (${Math.round(event.total / 1048576)} MB)` : ""}${pct()}`,
+                  );
+                case "decoding":
+                  return show("extracting the audio track...");
+                case "detecting":
+                  return show(`finding speech${pct()}`);
+                case "loading":
+                  return show("loading the speech model...");
+                case "checking":
+                  return show("checking the transcript...");
+                case "repairing":
+                  return show(`re-checking a rough stretch at ${formatClock(event.seconds)}`);
+                case "transcribing":
+                  return show(
+                    `transcribing ${formatClock(event.seconds)} of ${formatClock(event.audioSeconds)}${pct()}`,
+                  );
+                default:
+                  return show(event.stage);
               }
-              if (event.stage === "repairing") {
-                process.stderr.write(
-                  `\r  ${basename(file)}: re-checking a suspect stretch at ${formatClock(event.seconds)}   `,
-                );
-                return;
-              }
-              if (event.stage !== "transcribing") return;
-              const percent = event.total ? Math.round((event.done / event.total) * 100) : 0;
-              process.stderr.write(
-                `\r  ${basename(file)}: ${percent}% (${formatClock(event.seconds)} of ${formatClock(event.audioSeconds)})   `,
-              );
             };
           }
 
