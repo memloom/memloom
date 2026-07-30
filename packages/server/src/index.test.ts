@@ -2,7 +2,6 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StorageAdapter } from "@memloom/core";
-import { truncateAll } from "@memloom/core";
 import {
   type ChatProvider,
   HashingEmbeddingProvider,
@@ -10,6 +9,7 @@ import {
   Memloom,
   PgliteAdapter,
   ScriptedLLMProvider,
+  truncateAll,
 } from "@memloom/core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "./index.js";

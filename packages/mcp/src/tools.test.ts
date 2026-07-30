@@ -1,10 +1,10 @@
 import type { StorageAdapter } from "@memloom/core";
-import { truncateAll } from "@memloom/core";
 import {
   HashingEmbeddingProvider,
   Memloom,
   PgliteAdapter,
   ScriptedLLMProvider,
+  truncateAll,
 } from "@memloom/core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {

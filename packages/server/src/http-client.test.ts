@@ -1,5 +1,4 @@
 import type { StorageAdapter } from "@memloom/core";
-import { truncateAll } from "@memloom/core";
 import {
   type FetchLike,
   HashingEmbeddingProvider,
@@ -7,6 +6,7 @@ import {
   Memloom,
   PgliteAdapter,
   ScriptedLLMProvider,
+  truncateAll,
 } from "@memloom/core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { createServer } from "./index.js";

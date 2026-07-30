@@ -12,7 +12,6 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { AssistantView } from "./AssistantView";
-import { TraverseView } from "./TraverseView";
 import { api, type ContextChunk, type DocumentChunks, type Graph } from "./api";
 import { AddFileCard } from "./cards";
 import { GraphControlsPanel } from "./GraphControlsPanel";
@@ -35,6 +34,7 @@ import {
   stable01,
   type ViewRect,
 } from "./graphRender";
+import { TraverseView } from "./TraverseView";
 import { useTheme } from "./useTheme";
 
 // The memory graph on a production-proven canvas architecture: home-anchor physics
@@ -517,8 +517,8 @@ export function GraphView({
 
   // Select a node and pan to it. Shared by the external focus prop below and the traverse
   // panel, which is the same gesture from two directions: something outside the canvas names
-  // a node and the canvas has to go show it.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: nodeMap is read live via the ref
+  // a node and the canvas has to go show it. Reads the live node map through the ref rather
+  // than closing over it, so this identity survives every graph rebuild.
   const focusNode = useCallback(
     (id: string) => {
       const node = nodeMapRef.current.get(id);
