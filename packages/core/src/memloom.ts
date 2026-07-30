@@ -22,6 +22,13 @@ import { type Candidate, classify } from "./dedup.js";
 import { type DistilledMemory, distillChunk } from "./distill.js";
 import type { MemoryEngine } from "./engine.js";
 import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from "./entities.js";
+import {
+  judgePair,
+  mergeKey,
+  nameTokens,
+  type PairJudgement,
+  pickCanonical,
+} from "./entity-resolution.js";
 import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
 import { extractUrl, isHttpUrl } from "./link.js";
 import { NullLLMProvider } from "./hashing-provider.js";
@@ -73,7 +80,11 @@ import type {
   ContextDocument,
   DocumentChunks,
   Entity,
+  EntityConflict,
+  EntityConflictCandidate,
   EntityDetail,
+  EntityMerge,
+  EntityResolutionResult,
   Graph,
   GraphDocument,
   GraphEdge,
@@ -99,6 +110,8 @@ import type {
   ReembedOptions,
   ReembedProgressEvent,
   ReembedResult,
+  RelatedEntities,
+  RelatedEntity,
   ResolveDecision,
   ResolvedConflict,
   SaveInput,
@@ -115,6 +128,28 @@ export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
 // Dedup only considers existing memories at least this similar to the incoming one.
 const CANDIDATE_THRESHOLD = 0.5;
 const CANDIDATE_LIMIT = 5;
+
+// Entity folds live in memory_dedup_decisions under their own action, so they share the
+// conflicts surface and its revert semantics without appearing in the memory queue (0003's
+// pending index is scoped WHERE action = 'conflict'; 0020 adds the matching one for these).
+const ENTITY_MERGE_ACTION = "entity_merge";
+
+// relatedEntities takes an id or a name in one argument. Entity names are free text and a
+// user could in principle name something after a uuid, but they have not, and the cost of
+// guessing wrong is one extra lookup that returns nothing.
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * How many uncertain folds one pass may add to the conflicts queue. The 1793-entity store
+ * this was built against produces 241 review pairs; queueing all of them at once buries the
+ * memory conflicts the surface exists for. Later passes drain the rest.
+ */
+const ENTITY_QUEUE_LIMIT = 50;
+
+/** Order-independent key for one entity pair: the dedupe key for "already asked about this". */
+function entityPairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
 
 // Session import: how many lines before a ledger watermark a tail run re-reads (context for
 // decisions cut mid-thought), and how much source text one provenance excerpt keeps.
@@ -3322,6 +3357,12 @@ export class Memloom implements MemoryEngine {
 
   /** Resolve a pending conflict. Every action is reversible via revertConflict. */
   async resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void> {
+    // Entity folds share this table, this method and this revert story, but none of the
+    // memory semantics below (nothing goes stale, no lineage moves). Dispatch first.
+    if (await this.#isEntityDecision(conflictId)) {
+      await this.#resolveEntityConflict(conflictId, decision);
+      return;
+    }
     const [row] = await this.#storage.query<{
       owner_id: string;
       incoming_id: string;
@@ -3390,6 +3431,10 @@ export class Memloom implements MemoryEngine {
 
   /** Undo a resolution: restore staled memories, deactivate the edges it created, re-queue it. */
   async revertConflict(conflictId: string): Promise<void> {
+    if (await this.#isEntityDecision(conflictId)) {
+      await this.#revertEntityConflict(conflictId);
+      return;
+    }
     const [row] = await this.#storage.query<{
       owner_id: string;
       incoming_id: string;
@@ -3994,6 +4039,11 @@ export class Memloom implements MemoryEngine {
       [owner, entityNameKey(name)],
     );
     if (existing[0]) return { id: existing[0].id, created: false };
+    // A spelling that was folded away resolves to whatever absorbed it. Without this, a
+    // merge silently undoes itself: the absorbed row is gone from memory_entities, so the
+    // next memory using that spelling would miss above and insert a fresh duplicate.
+    const alias = await this.#aliasTarget(owner, name);
+    if (alias) return { id: alias, created: false };
     const [embedding] = await this.#embedding.embed([name]);
     if (!embedding) throw new Error("memloom: embedding provider returned no vector");
     const [row] = await this.#storage.query<{ id: string }>(
@@ -4014,7 +4064,21 @@ export class Memloom implements MemoryEngine {
        ORDER BY created_at LIMIT 1`,
       [owner, entityNameKey(name)],
     );
-    return row?.id ?? null;
+    if (row) return row.id;
+    return await this.#aliasTarget(owner, name);
+  }
+
+  /**
+   * The canonical entity a folded-away spelling now resolves to, or null. Alias rows are
+   * keyed by the same entityNameKey the entity table is keyed by, so this is the exact
+   * continuation of the lookup above.
+   */
+  async #aliasTarget(owner: string, name: string): Promise<string | null> {
+    const [row] = await this.#storage.query<{ canonical_id: string }>(
+      "SELECT canonical_id FROM memory_entity_aliases WHERE owner_id = $1 AND name_key = $2",
+      [owner, entityNameKey(name)],
+    );
+    return row?.canonical_id ?? null;
   }
 
   // --- entity management (the schema tab's instances list) ---
@@ -4043,6 +4107,19 @@ export class Memloom implements MemoryEngine {
        ORDER BY count(e.id) DESC, lower(me.name)`,
       [ownerId],
     );
+    // Folded-in spellings, so the list shows what each canonical now stands for. Separate
+    // query rather than a join: the mention/memory/document counts above are already three
+    // LEFT JOINs deep and one more would multiply the grouping.
+    const aliasRows = await this.#storage.query<{ canonical_id: string; name: string }>(
+      "SELECT canonical_id, name FROM memory_entity_aliases WHERE owner_id = $1 ORDER BY name",
+      [ownerId],
+    );
+    const aliases = new Map<string, string[]>();
+    for (const a of aliasRows) {
+      const bucket = aliases.get(a.canonical_id);
+      if (bucket) bucket.push(a.name);
+      else aliases.set(a.canonical_id, [a.name]);
+    }
     return rows.map((r) => ({
       id: r.id,
       name: r.name,
@@ -4050,7 +4127,212 @@ export class Memloom implements MemoryEngine {
       mentions: Number(r.mentions),
       memories: Number(r.memories),
       documents: Number(r.documents),
+      aliases: aliases.get(r.id) ?? [],
     }));
+  }
+
+  /**
+   * Everything connected to one entity: "which people does this person turn up with", asked of
+   * the graph rather than of recall.
+   *
+   * `target` is an id, a name, or a folded-away spelling. All three land on the same canonical
+   * row, which is the point of doing this after resolution rather than before: asking about
+   * "Bob" answers about Robert, and `matchedAlias` reports the redirection instead of
+   * hiding it.
+   *
+   * Two kinds of connection, deliberately not blended into one score:
+   *
+   * - STATED links are typed edges the extractor asserted ("works_on", "part_of"). They are
+   *   the real answer when they exist, so they sort first regardless of volume.
+   * - CO-MENTION is the fallback and, on a real store, the bulk of it: two entities named by
+   *   the same memory are related in a way worth showing even though nothing said how. It is
+   *   weaker evidence, so it never outranks a stated link and always reports its own count.
+   *
+   * Folding feeds this directly. mergeEntities repointed the absorbed spelling's mention edges
+   * onto the canonical, so every fold makes a neighbourhood more complete, not just tidier.
+   */
+  async relatedEntities(
+    target: string,
+    opts: { ownerId?: string; entityType?: string; limit?: number } = {},
+  ): Promise<RelatedEntities | null> {
+    const owner = opts.ownerId ?? SENTINEL_OWNER;
+    const limit = Math.max(1, opts.limit ?? 50);
+    const wantedType = opts.entityType ?? null;
+
+    // A uuid is chased through folds (it may name a row that was absorbed); anything else is
+    // a name, and #findEntityId already falls through to the alias table.
+    const id = UUID_PATTERN.test(target)
+      ? await this.#liveEntityId(owner, target)
+      : await this.#findEntityId(owner, target);
+    if (!id) return null;
+
+    const [self] = await this.#storage.query<{
+      id: string;
+      name: string;
+      entity_type: string;
+      mentions: number;
+      memories: number;
+      documents: number;
+    }>(
+      `SELECT me.id, me.name, me.entity_type,
+              count(e.id)::int AS mentions,
+              count(DISTINCT mo.id)::int AS memories,
+              count(DISTINCT cc.document_id)::int AS documents
+       FROM memory_entities me
+       LEFT JOIN memory_edges e
+         ON e.to_id = me.id AND e.relation = 'mention' AND e.active AND e.owner_id = me.owner_id
+       LEFT JOIN memory_objects mo ON mo.id = e.from_id AND mo.status = 'active'
+       LEFT JOIN context_chunks cc ON cc.id = e.from_id
+       WHERE me.owner_id = $1 AND me.id = $2
+       GROUP BY me.id, me.name, me.entity_type`,
+      [owner, id],
+    );
+    if (!self) return null;
+
+    // Every alias for this owner in one pass, the way listEntities reads them: the table holds
+    // one row per fold, so this is cheaper than a join per neighbour.
+    const aliasRows = await this.#storage.query<{ canonical_id: string; name: string }>(
+      "SELECT canonical_id, name FROM memory_entity_aliases WHERE owner_id = $1 ORDER BY name",
+      [owner],
+    );
+    const aliasesOf = new Map<string, string[]>();
+    for (const a of aliasRows) {
+      const bucket = aliasesOf.get(a.canonical_id);
+      if (bucket) bucket.push(a.name);
+      else aliasesOf.set(a.canonical_id, [a.name]);
+    }
+    // Did the caller ask by a spelling that is not this row's name? Then say which one.
+    const askedKey = entityNameKey(target);
+    const matchedAlias =
+      askedKey && askedKey !== entityNameKey(self.name)
+        ? ((aliasesOf.get(id) ?? []).find((a) => entityNameKey(a) === askedKey) ?? null)
+        : null;
+
+    const linkRows = await this.#storage.query<{
+      from_id: string;
+      to_id: string;
+      relation: string;
+      confidence: number | null;
+    }>(
+      `SELECT e.from_id, e.to_id, e.relation, e.confidence
+       FROM memory_edges e
+       JOIN memory_entities other
+         ON other.id = CASE WHEN e.from_id = $2 THEN e.to_id ELSE e.from_id END
+        AND other.owner_id = e.owner_id
+       WHERE e.owner_id = $1 AND e.active AND e.relation <> 'mention'
+         AND (e.from_id = $2 OR e.to_id = $2)`,
+      [owner, id],
+    );
+
+    // Entities named by the same sources. The correlated count is the same mention total
+    // listEntities reports, so a neighbour's weight reads the same in both places.
+    const coRows = await this.#storage.query<{
+      id: string;
+      name: string;
+      entity_type: string;
+      shared: number;
+      mentions: number;
+    }>(
+      `SELECT me.id, me.name, me.entity_type,
+              count(DISTINCT e2.from_id)::int AS shared,
+              (SELECT count(*)::int FROM memory_edges m
+                WHERE m.owner_id = $1 AND m.to_id = me.id
+                  AND m.relation = 'mention' AND m.active) AS mentions
+       FROM memory_edges e1
+       JOIN memory_edges e2
+         ON e2.from_id = e1.from_id AND e2.owner_id = e1.owner_id
+        AND e2.relation = 'mention' AND e2.active AND e2.to_id <> e1.to_id
+       JOIN memory_entities me ON me.id = e2.to_id AND me.owner_id = e2.owner_id
+       WHERE e1.owner_id = $1 AND e1.relation = 'mention' AND e1.active AND e1.to_id = $2
+       GROUP BY me.id, me.name, me.entity_type
+       ORDER BY count(DISTINCT e2.from_id) DESC, lower(me.name)`,
+      [owner, id],
+    );
+
+    const byId = new Map<string, RelatedEntity>();
+    for (const r of coRows) {
+      byId.set(r.id, {
+        id: r.id,
+        name: r.name,
+        entityType: r.entity_type,
+        mentions: Number(r.mentions),
+        aliases: aliasesOf.get(r.id) ?? [],
+        links: [],
+        sharedSources: Number(r.shared),
+      });
+    }
+
+    // A stated link whose other end shares no source is possible after a revert moved edges
+    // around, so linked neighbours are added rather than assumed present.
+    const missing = new Set<string>();
+    for (const row of linkRows) {
+      const otherId = row.from_id === id ? row.to_id : row.from_id;
+      if (!byId.has(otherId)) missing.add(otherId);
+    }
+    if (missing.size > 0) {
+      for (const otherId of missing) {
+        const [row] = await this.#storage.query<{
+          id: string;
+          name: string;
+          entity_type: string;
+          mentions: number;
+        }>(
+          `SELECT me.id, me.name, me.entity_type,
+                  (SELECT count(*)::int FROM memory_edges m
+                    WHERE m.owner_id = $1 AND m.to_id = me.id
+                      AND m.relation = 'mention' AND m.active) AS mentions
+           FROM memory_entities me
+           WHERE me.owner_id = $1 AND me.id = $2`,
+          [owner, otherId],
+        );
+        if (!row) continue;
+        byId.set(row.id, {
+          id: row.id,
+          name: row.name,
+          entityType: row.entity_type,
+          mentions: Number(row.mentions),
+          aliases: aliasesOf.get(row.id) ?? [],
+          links: [],
+          sharedSources: 0,
+        });
+      }
+    }
+    for (const row of linkRows) {
+      const otherId = row.from_id === id ? row.to_id : row.from_id;
+      byId.get(otherId)?.links.push({
+        relation: row.relation,
+        direction: row.from_id === id ? "out" : "in",
+        confidence: row.confidence === null ? null : Number(row.confidence),
+      });
+    }
+
+    // Type filter and self-exclusion in one place. Both could be pushed into the two queries
+    // above, and then a third source of neighbours would silently skip them; the neighbourhood
+    // is small enough that one pass over it is cheaper than that risk.
+    const all = [...byId.values()]
+      .filter((r) => r.id !== id && (!wantedType || r.entityType === wantedType))
+      .sort(
+        (a, b) =>
+          Number(b.links.length > 0) - Number(a.links.length > 0) ||
+          b.sharedSources - a.sharedSources ||
+          b.mentions - a.mentions ||
+          a.name.localeCompare(b.name),
+      );
+
+    return {
+      entity: {
+        id: self.id,
+        name: self.name,
+        entityType: self.entity_type,
+        mentions: Number(self.mentions),
+        memories: Number(self.memories),
+        documents: Number(self.documents),
+        aliases: aliasesOf.get(self.id) ?? [],
+      },
+      matchedAlias,
+      related: all.slice(0, limit),
+      truncated: Math.max(0, all.length - limit),
+    };
   }
 
   /**
@@ -4093,6 +4375,14 @@ export class Memloom implements MemoryEngine {
       if (clash[0]) {
         throw new Error(`memloom: an entity named "${name}" already exists. Merge instead`);
       }
+      // A folded-away spelling is just as taken as a live row: renaming onto it would make
+      // #resolveEntity's two lookups disagree about which id that name means.
+      const aliasClash = await this.#aliasTarget(ownerId, name);
+      if (aliasClash && aliasClash !== id) {
+        throw new Error(
+          `memloom: "${name}" is already an alias of another entity. Revert that merge first`,
+        );
+      }
       const [embedding] = await this.#embedding.embed([name]);
       if (!embedding) throw new Error("memloom: embedding provider returned no vector");
       await this.#storage.query(
@@ -4103,71 +4393,524 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
-   * Merge one entity into another: every edge touching the source is repointed to the
-   * target (would-be duplicates and would-be self-loops are dropped first), then the
-   * source row is deleted. The target's name and type win.
+   * Merge one entity into another. Every edge touching the source is repointed to the
+   * target and the source leaves memory_entities, so the graph and the fuse entity arm see
+   * one row instead of several. The target's name and type win; the source's spelling
+   * survives as an alias, which is both how the fold stays addressable and how
+   * #resolveEntity keeps a later mention of that spelling from re-creating the row.
+   *
+   * The fold is a RECORD, not a destructive edit. Edges that cannot be repointed (they
+   * would become self-loops or duplicates) are deactivated and tagged with the merge id
+   * rather than deleted, following the convention 0003 set for conflict resolution, and the
+   * absorbed row's id, type, vector and creation time are kept whole. revertEntityMerge
+   * puts all of it back.
    */
   async mergeEntities(
     sourceId: string,
     targetId: string,
     ownerId: string = SENTINEL_OWNER,
-  ): Promise<void> {
+    provenance: { decidedBy?: "auto" | "llm" | "human"; score?: number; reason?: string } = {},
+  ): Promise<string> {
     if (sourceId === targetId) throw new Error("memloom: cannot merge an entity into itself");
+    const mergeId = randomUUID();
     await this.#storage.tx(async (tx) => {
+      const rows: Record<string, { name: string; entity_type: string }> = {};
       for (const eid of [sourceId, targetId]) {
-        const [row] = await tx.query<{ id: string }>(
-          "SELECT id FROM memory_entities WHERE id = $1 AND owner_id = $2",
+        const [row] = await tx.query<{ id: string; name: string; entity_type: string }>(
+          "SELECT id, name, entity_type FROM memory_entities WHERE id = $1 AND owner_id = $2",
           [eid, ownerId],
         );
         if (!row) throw new Error(`memloom: no entity ${eid}`);
+        rows[eid] = { name: row.name, entity_type: row.entity_type };
       }
-      // Edges between the two would become self-loops after repointing.
-      await tx.query(
-        `DELETE FROM memory_edges
-         WHERE owner_id = $1
-           AND ((from_id = $2 AND to_id = $3) OR (from_id = $3 AND to_id = $2))`,
+      const source = rows[sourceId];
+      if (!source) throw new Error(`memloom: no entity ${sourceId}`);
+
+      // Capture the edges that cannot survive repointing, BEFORE touching anything: edges
+      // between the two (self-loops after the fold) and source edges whose target-side twin
+      // already exists (duplicates after the fold).
+      const doomed = await tx.query<{ id: string }>(
+        `SELECT e.id FROM memory_edges e
+         WHERE e.owner_id = $1
+           AND (
+             (e.from_id = $2 AND e.to_id = $3) OR (e.from_id = $3 AND e.to_id = $2)
+             OR (e.to_id = $2 AND EXISTS (
+                   SELECT 1 FROM memory_edges t
+                   WHERE t.owner_id = $1 AND t.to_id = $3
+                     AND t.from_id = e.from_id AND t.relation = e.relation))
+             OR (e.from_id = $2 AND EXISTS (
+                   SELECT 1 FROM memory_edges t
+                   WHERE t.owner_id = $1 AND t.from_id = $3
+                     AND t.to_id = e.to_id AND t.relation = e.relation))
+           )`,
         [ownerId, sourceId, targetId],
       );
-      // Source edges that already exist against the target would become duplicates.
-      await tx.query(
-        `DELETE FROM memory_edges e
-         WHERE e.owner_id = $1 AND e.to_id = $2
-           AND EXISTS (
-             SELECT 1 FROM memory_edges t
-             WHERE t.owner_id = $1 AND t.to_id = $3
-               AND t.from_id = e.from_id AND t.relation = e.relation)`,
+      const deactivated = doomed.map((r) => r.id);
+
+      // Soft-delete them, stamped with the merge that did it so revert reactivates exactly
+      // these and not edges some other decision had already switched off.
+      for (const id of deactivated) {
+        await tx.query(
+          `UPDATE memory_edges
+              SET active = false,
+                  metadata = metadata || jsonb_build_object('merged_by', $2::text)
+            WHERE id = $1 AND active`,
+          [id, mergeId],
+        );
+      }
+
+      const survivorsTo = await tx.query<{ id: string }>(
+        "SELECT id FROM memory_edges WHERE owner_id = $1 AND to_id = $2 AND NOT (id = ANY($3::uuid[]))",
+        [ownerId, sourceId, deactivated],
+      );
+      const survivorsFrom = await tx.query<{ id: string }>(
+        "SELECT id FROM memory_edges WHERE owner_id = $1 AND from_id = $2 AND NOT (id = ANY($3::uuid[]))",
+        [ownerId, sourceId, deactivated],
+      );
+      const repointedTo = survivorsTo.map((r) => r.id);
+      const repointedFrom = survivorsFrom.map((r) => r.id);
+      if (repointedTo.length > 0) {
+        await tx.query("UPDATE memory_edges SET to_id = $2 WHERE id = ANY($1::uuid[])", [
+          repointedTo,
+          targetId,
+        ]);
+      }
+      if (repointedFrom.length > 0) {
+        await tx.query("UPDATE memory_edges SET from_id = $2 WHERE id = ANY($1::uuid[])", [
+          repointedFrom,
+          targetId,
+        ]);
+      }
+
+      // Spellings the source had already absorbed follow it to the new canonical, so a
+      // chain of folds stays one hop deep and lookups never have to walk it.
+      const moved = await tx.query<{ id: string }>(
+        "UPDATE memory_entity_aliases SET canonical_id = $3 WHERE owner_id = $1 AND canonical_id = $2 RETURNING id",
         [ownerId, sourceId, targetId],
       );
+
       await tx.query(
-        `DELETE FROM memory_edges e
-         WHERE e.owner_id = $1 AND e.from_id = $2
-           AND EXISTS (
-             SELECT 1 FROM memory_edges t
-             WHERE t.owner_id = $1 AND t.from_id = $3
-               AND t.to_id = e.to_id AND t.relation = e.relation)`,
-        [ownerId, sourceId, targetId],
+        `INSERT INTO memory_entity_merges
+           (id, owner_id, canonical_id, source_id, source_name, source_type, source_created_at,
+            decided_by, score, reason, edge_changes)
+         SELECT $1, $2, $3, me.id, me.name, me.entity_type, me.created_at, $4, $5, $6, $7::jsonb
+           FROM memory_entities me WHERE me.id = $8 AND me.owner_id = $2`,
+        [
+          mergeId,
+          ownerId,
+          targetId,
+          provenance.decidedBy ?? "human",
+          provenance.score ?? null,
+          provenance.reason ?? null,
+          JSON.stringify({
+            repointedTo,
+            repointedFrom,
+            deactivated,
+            aliasesMoved: moved.map((r) => r.id),
+          }),
+          sourceId,
+        ],
       );
-      await tx.query("UPDATE memory_edges SET to_id = $3 WHERE owner_id = $1 AND to_id = $2", [
-        ownerId,
-        sourceId,
-        targetId,
-      ]);
-      await tx.query("UPDATE memory_edges SET from_id = $3 WHERE owner_id = $1 AND from_id = $2", [
-        ownerId,
-        sourceId,
-        targetId,
-      ]);
+
+      // The alias row carries the absorbed row's own id and vector so revert restores the
+      // same uuid the deactivated edges still reference.
+      await tx.query(
+        `INSERT INTO memory_entity_aliases
+           (owner_id, canonical_id, name, name_key, entity_id, embedding, merge_id)
+         SELECT $1, $2, me.name, $3, me.id, me.embedding, $4
+           FROM memory_entities me WHERE me.id = $5 AND me.owner_id = $1
+         ON CONFLICT (owner_id, name_key) DO NOTHING`,
+        [ownerId, targetId, entityNameKey(source.name), mergeId, sourceId],
+      );
+
       await tx.query("DELETE FROM memory_entities WHERE id = $1 AND owner_id = $2", [
         sourceId,
         ownerId,
       ]);
     });
+    return mergeId;
+  }
+
+  /** Every fold for this owner, newest first: the reversible history behind the entity list. */
+  async entityMerges(ownerId: string = SENTINEL_OWNER): Promise<EntityMerge[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      canonical_id: string;
+      canonical_name: string | null;
+      source_id: string;
+      source_name: string;
+      source_type: string;
+      decided_by: "auto" | "llm" | "human";
+      score: number | null;
+      reason: string | null;
+      created_at: string;
+      reverted_at: string | null;
+    }>(
+      `SELECT m.id, m.canonical_id, me.name AS canonical_name, m.source_id, m.source_name,
+              m.source_type, m.decided_by, m.score, m.reason, m.created_at, m.reverted_at
+         FROM memory_entity_merges m
+         LEFT JOIN memory_entities me ON me.id = m.canonical_id AND me.owner_id = m.owner_id
+        WHERE m.owner_id = $1
+        ORDER BY m.created_at DESC`,
+      [ownerId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      canonicalId: r.canonical_id,
+      canonicalName: r.canonical_name ?? "(removed)",
+      sourceId: r.source_id,
+      sourceName: r.source_name,
+      sourceType: r.source_type,
+      decidedBy: r.decided_by,
+      score: r.score === null ? null : Number(r.score),
+      reason: r.reason,
+      createdAt: r.created_at,
+      revertedAt: r.reverted_at,
+    }));
+  }
+
+  /**
+   * Undo a fold: restore the absorbed entity with its original id, type, vector and creation
+   * time, repoint exactly the edges the merge moved, and reactivate exactly the ones it
+   * switched off. Reversibility is the property the whole belief pipeline rests on, and
+   * entities are not the exception.
+   */
+  async revertEntityMerge(mergeId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    await this.#storage.tx(async (tx) => {
+      const [merge] = await tx.query<{
+        canonical_id: string;
+        source_id: string;
+        source_name: string;
+        source_type: string;
+        source_created_at: string | null;
+        edge_changes: {
+          repointedTo?: string[];
+          repointedFrom?: string[];
+          deactivated?: string[];
+          aliasesMoved?: string[];
+        };
+        reverted_at: string | null;
+      }>(
+        `SELECT canonical_id, source_id, source_name, source_type, source_created_at,
+                edge_changes, reverted_at
+           FROM memory_entity_merges WHERE id = $1 AND owner_id = $2`,
+        [mergeId, ownerId],
+      );
+      if (!merge) throw new Error(`memloom: no entity merge ${mergeId}`);
+      if (merge.reverted_at) return; // already undone; revert is idempotent
+
+      // Restore the row from the alias record, which kept the id and the vector.
+      const restored = await tx.query<{ id: string }>(
+        `INSERT INTO memory_entities (id, owner_id, name, entity_type, embedding, created_at)
+         SELECT a.entity_id, a.owner_id, a.name, $3, a.embedding, COALESCE($4::timestamptz, now())
+           FROM memory_entity_aliases a
+          WHERE a.merge_id = $1 AND a.owner_id = $2 AND a.entity_id IS NOT NULL
+         ON CONFLICT (id) DO NOTHING
+         RETURNING id`,
+        [mergeId, ownerId, merge.source_type, merge.source_created_at],
+      );
+      // The alias row is what carries the vector, so without it there is nothing to restore.
+      // A live entity cannot share a name key with an alias (both lookups run in
+      // #resolveEntity, and updateEntity refuses the collision), so this is unreachable
+      // today. Fail loudly rather than reporting a revert that silently restored nothing.
+      if (restored.length === 0) {
+        const [already] = await tx.query<{ id: string }>(
+          "SELECT id FROM memory_entities WHERE id = $1 AND owner_id = $2",
+          [merge.source_id, ownerId],
+        );
+        if (!already) {
+          throw new Error(
+            `memloom: cannot revert merge ${mergeId}: the alias row holding "${merge.source_name}" and its vector is gone`,
+          );
+        }
+      }
+
+      const changes = merge.edge_changes ?? {};
+      const repointedTo = changes.repointedTo ?? [];
+      const repointedFrom = changes.repointedFrom ?? [];
+      if (repointedTo.length > 0) {
+        await tx.query("UPDATE memory_edges SET to_id = $2 WHERE id = ANY($1::uuid[])", [
+          repointedTo,
+          merge.source_id,
+        ]);
+      }
+      if (repointedFrom.length > 0) {
+        await tx.query("UPDATE memory_edges SET from_id = $2 WHERE id = ANY($1::uuid[])", [
+          repointedFrom,
+          merge.source_id,
+        ]);
+      }
+      // Only edges THIS merge switched off, identified by the stamp it left.
+      await tx.query(
+        `UPDATE memory_edges
+            SET active = true, metadata = metadata - 'merged_by'
+          WHERE owner_id = $1 AND metadata->>'merged_by' = $2`,
+        [ownerId, mergeId],
+      );
+      const aliasesMoved = changes.aliasesMoved ?? [];
+      if (aliasesMoved.length > 0) {
+        await tx.query(
+          "UPDATE memory_entity_aliases SET canonical_id = $2 WHERE id = ANY($1::uuid[])",
+          [aliasesMoved, merge.source_id],
+        );
+      }
+      await tx.query("DELETE FROM memory_entity_aliases WHERE merge_id = $1 AND owner_id = $2", [
+        mergeId,
+        ownerId,
+      ]);
+      await tx.query("UPDATE memory_entity_merges SET reverted_at = now() WHERE id = $1", [
+        mergeId,
+      ]);
+    });
+  }
+
+  /**
+   * One resolution pass over the whole entity table: find name variants, fold the certain
+   * ones, and route the uncertain ones to the conflicts surface.
+   *
+   * Safe to run twice, and safe to interrupt. Idempotence is structural rather than
+   * bookkept: a folded row leaves memory_entities, so the pass cannot see that pair again,
+   * and an uncertain pair is recorded under a deterministic pair key that #alreadySettled
+   * checks before queueing. A second run over an unchanged store therefore reports zero
+   * merged and zero queued, whether or not the first run finished.
+   *
+   * Pass `dryRun` to see what it would do without touching anything.
+   */
+  async resolveEntities(
+    options: { ownerId?: string; dryRun?: boolean; limit?: number } = {},
+  ): Promise<EntityResolutionResult> {
+    const ownerId = options.ownerId ?? SENTINEL_OWNER;
+    const limit = options.limit ?? ENTITY_QUEUE_LIMIT;
+    const entities = await this.listEntities(ownerId);
+    const result: EntityResolutionResult = {
+      examined: entities.length,
+      pairs: 0,
+      merged: 0,
+      queued: 0,
+      deferred: 0,
+      skipped: 0,
+    };
+    if (entities.length < 2) return result;
+
+    const byId = new Map(entities.map((e) => [e.id, e]));
+    // Blocking. Comparing all 1.6M pairs of a 1800-entity store would work but is wasteful;
+    // two variants of one name always share either a word or the start of the merge key, so
+    // those two buckets are a complete index for the rules in judgePair.
+    const buckets = new Map<string, string[]>();
+    const put = (key: string, id: string) => {
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(id);
+      else buckets.set(key, [id]);
+    };
+    for (const e of entities) {
+      const key = mergeKey(e.name);
+      if (key) put(`k:${key.slice(0, 3)}`, e.id);
+      for (const t of nameTokens(e.name)) put(`t:${t}`, e.id);
+    }
+
+    const seen = new Set<string>();
+    const judged: { a: EntityDetail; b: EntityDetail; judgement: PairJudgement }[] = [];
+    for (const e of entities) {
+      const neighbours = new Set<string>();
+      const key = mergeKey(e.name);
+      if (key) for (const id of buckets.get(`k:${key.slice(0, 3)}`) ?? []) neighbours.add(id);
+      for (const t of nameTokens(e.name)) {
+        for (const id of buckets.get(`t:${t}`) ?? []) neighbours.add(id);
+      }
+      for (const other of neighbours) {
+        if (other === e.id) continue;
+        const pairKey = e.id < other ? `${e.id}|${other}` : `${other}|${e.id}`;
+        if (seen.has(pairKey)) continue;
+        seen.add(pairKey);
+        const b = byId.get(other);
+        if (!b) continue;
+        const judgement = judgePair(e, b);
+        if (judgement.verdict === "reject") continue;
+        result.pairs++;
+        judged.push({ a: e, b, judgement });
+      }
+    }
+
+    // Certain folds first, so an uncertain pair that names a row about to disappear is
+    // re-pointed at whatever absorbed it rather than queued against a stale id.
+    const foldedInto = new Map<string, string>();
+    const chase = (id: string): string => {
+      let cur = id;
+      const guard = new Set<string>();
+      while (foldedInto.has(cur) && !guard.has(cur)) {
+        guard.add(cur);
+        cur = foldedInto.get(cur) ?? cur;
+      }
+      return cur;
+    };
+
+    for (const { a, b, judgement } of judged) {
+      if (judgement.verdict !== "auto") continue;
+      const left = chase(a.id);
+      const right = chase(b.id);
+      if (left === right) {
+        result.skipped++;
+        continue;
+      }
+      const { canonical, source } = pickCanonical(byId.get(left) ?? a, byId.get(right) ?? b);
+      if (options.dryRun) {
+        result.merged++;
+        continue;
+      }
+      await this.mergeEntities(source.id, canonical.id, ownerId, {
+        decidedBy: "auto",
+        score: judgement.score,
+        reason: judgement.reason,
+      });
+      foldedInto.set(source.id, canonical.id);
+      result.merged++;
+    }
+
+    // Uncertain folds are a demand on someone's attention, which is the scarce resource: a
+    // real store produces hundreds of them and a queue of hundreds is one nobody works
+    // through. Ask about the ones that change retrieval most first, where "most" is the
+    // weaker side's mention count, since a fold only pays off if both spellings are actually
+    // in use. The rest are not discarded, just deferred to a later pass and reported.
+    //
+    // The limit bounds the QUEUE, not the pass, so it counts questions already waiting.
+    // Bounding the pass instead would let repeated runs pile up the same hundreds it exists
+    // to prevent; this way the queue drains as answers come in and refills to the same depth.
+    const [waiting] = await this.#storage.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM memory_dedup_decisions
+        WHERE owner_id = $1 AND action = $2 AND resolution_action IS NULL`,
+      [ownerId, ENTITY_MERGE_ACTION],
+    );
+    let pending = Number(waiting?.n ?? 0);
+
+    const reviews = judged
+      .filter((p) => p.judgement.verdict === "review")
+      .sort(
+        (x, y) =>
+          Math.min(y.a.mentions, y.b.mentions) - Math.min(x.a.mentions, x.b.mentions) ||
+          y.judgement.score - x.judgement.score,
+      );
+
+    for (const { a, b } of reviews) {
+      const left = chase(a.id);
+      const right = chase(b.id);
+      if (left === right) {
+        result.skipped++; // an auto fold already settled this pair
+        continue;
+      }
+      if (await this.#alreadySettled(ownerId, left, right)) {
+        result.skipped++;
+        continue;
+      }
+      if (pending >= limit) {
+        result.deferred++;
+        continue;
+      }
+      const { canonical, source } = pickCanonical(byId.get(left) ?? a, byId.get(right) ?? b);
+      // The vectors are already stored, so confirming the lexical signal costs one query and
+      // no tokens. It can raise the score shown to the human; it can never create a pair.
+      const cosine = options.dryRun ? null : await this.#entityCosine(ownerId, left, right);
+      const confirmed = judgePair(source, canonical, cosine);
+      if (options.dryRun) {
+        result.queued++;
+        continue;
+      }
+      await this.#queueEntityConflict(ownerId, source, canonical, confirmed);
+      result.queued++;
+      pending++;
+    }
+    return result;
+  }
+
+  /** Cosine between two entities' stored name vectors, or null if either lacks one. */
+  async #entityCosine(owner: string, a: string, b: string): Promise<number | null> {
+    const [row] = await this.#storage.query<{ cosine: number }>(
+      `SELECT 1 - (x.embedding <=> y.embedding) AS cosine
+         FROM memory_entities x, memory_entities y
+        WHERE x.id = $2 AND y.id = $3 AND x.owner_id = $1 AND y.owner_id = $1
+          AND x.embedding IS NOT NULL AND y.embedding IS NOT NULL`,
+      [owner, a, b],
+    );
+    return row ? Number(row.cosine) : null;
+  }
+
+  /**
+   * Has this pair already been asked about? Covers pending rows (do not ask twice) and
+   * resolved ones (a human who said keep_both must not be re-asked every pass). The pair key
+   * lives in incoming_canonical, which is unused for entity rows and gives the lookup a
+   * plain equality instead of a jsonb scan.
+   */
+  async #alreadySettled(owner: string, a: string, b: string): Promise<boolean> {
+    const [row] = await this.#storage.query<{ id: string }>(
+      `SELECT id FROM memory_dedup_decisions
+        WHERE owner_id = $1 AND action = $2 AND incoming_canonical = $3 LIMIT 1`,
+      [owner, ENTITY_MERGE_ACTION, entityPairKey(a, b)],
+    );
+    return Boolean(row);
+  }
+
+  async #queueEntityConflict(
+    owner: string,
+    source: EntityDetail,
+    canonical: EntityDetail,
+    judgement: PairJudgement,
+  ): Promise<string> {
+    const candidates = [
+      {
+        id: canonical.id,
+        name: canonical.name,
+        entityType: canonical.entityType,
+        mentions: canonical.mentions,
+        score: judgement.score,
+        reason: judgement.reason,
+        // The queued entity's own type and weight ride along: memory_dedup_decisions has no
+        // column for them and entityConflicts needs them to render the choice.
+        incomingType: source.entityType,
+        incomingMentions: source.mentions,
+      },
+    ];
+    const [row] = await this.#storage.query<{ id: string }>(
+      `INSERT INTO memory_dedup_decisions
+         (owner_id, action, incoming_id, incoming_canonical, incoming_content, candidates)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb) RETURNING id`,
+      [
+        owner,
+        ENTITY_MERGE_ACTION,
+        source.id,
+        entityPairKey(source.id, canonical.id),
+        source.name,
+        JSON.stringify(candidates),
+      ],
+    );
+    if (!row) throw new Error("memloom: failed to queue entity conflict");
+    return row.id;
   }
 
   /** Delete one entity and every edge touching it (no FK cascade on the shared edge table). */
   async deleteEntity(id: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    // Refuse while an unreverted fold points here. The alias row carries the absorbed
+    // entity's id and vector, so deleting the canonical would make that fold permanent and
+    // sweep the absorbed row's mentions with it: a far larger blast radius than deleting an
+    // entity used to have, and the one place entities would stop being reversible.
+    const folded = await this.#storage.query<{ source_name: string }>(
+      `SELECT source_name FROM memory_entity_merges
+        WHERE owner_id = $1 AND canonical_id = $2 AND reverted_at IS NULL`,
+      [ownerId, id],
+    );
+    if (folded.length > 0) {
+      const names = folded.map((f) => `"${f.source_name}"`).join(", ");
+      throw new Error(
+        `memloom: ${names} ${folded.length === 1 ? "was" : "were"} merged into this entity. ` +
+          "Revert the merge before deleting it, or the fold becomes permanent",
+      );
+    }
     await this.#storage.tx(async (tx) => {
       await this.#deleteEntityEdges(tx, ownerId, id);
+      // Belt and braces: the guard above means no alias rows should point here, but a stray
+      // one would resolve future mentions to a row that is gone.
+      await tx.query(
+        "DELETE FROM memory_entity_aliases WHERE owner_id = $1 AND canonical_id = $2",
+        [ownerId, id],
+      );
       const deleted = await tx.query<{ id: string }>(
         "DELETE FROM memory_entities WHERE id = $1 AND owner_id = $2 RETURNING id",
         [id, ownerId],
@@ -4228,6 +4971,183 @@ export class Memloom implements MemoryEngine {
     );
     if (!row) throw new Error("memloom: failed to record conflict");
     return row.id;
+  }
+
+  // --- entity resolution ---
+
+  /**
+   * Follow an entity id to whatever currently holds it, or null if it is gone for good.
+   * A queued decision stores ids that a later fold can absorb, and the alias row records
+   * where each absorbed row went, so this walks that chain. Chains are flattened on merge,
+   * but a revert can rebuild depth, hence the loop and the cycle guard.
+   */
+  async #liveEntityId(owner: string, id: string): Promise<string | null> {
+    let current = id;
+    const seen = new Set<string>();
+    while (!seen.has(current)) {
+      seen.add(current);
+      const [row] = await this.#storage.query<{ id: string }>(
+        "SELECT id FROM memory_entities WHERE id = $1 AND owner_id = $2",
+        [current, owner],
+      );
+      if (row) return row.id;
+      const [alias] = await this.#storage.query<{ canonical_id: string }>(
+        "SELECT canonical_id FROM memory_entity_aliases WHERE owner_id = $1 AND entity_id = $2",
+        [owner, current],
+      );
+      if (!alias) return null;
+      current = alias.canonical_id;
+    }
+    return null;
+  }
+
+  /** Is this decision row an entity fold rather than a memory contradiction? */
+  async #isEntityDecision(conflictId: string): Promise<boolean> {
+    const [row] = await this.#storage.query<{ action: string }>(
+      "SELECT action FROM memory_dedup_decisions WHERE id = $1",
+      [conflictId],
+    );
+    return row?.action === ENTITY_MERGE_ACTION;
+  }
+
+  /**
+   * Uncertain folds awaiting arbitration. Same table and same revert semantics as
+   * conflicts(), read separately because the payload is entity-shaped: widening Conflict
+   * itself would force a union type on every consumer of the memory queue.
+   */
+  async entityConflicts(ownerId: string = SENTINEL_OWNER): Promise<EntityConflict[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      incoming_id: string;
+      incoming_content: string;
+      candidates: (EntityConflictCandidate & {
+        incomingType?: string;
+        incomingMentions?: number;
+      })[];
+      created_at: string;
+    }>(
+      `SELECT id, incoming_id, incoming_content, candidates, created_at
+         FROM memory_dedup_decisions
+        WHERE owner_id = $1 AND action = $2 AND resolution_action IS NULL
+        ORDER BY created_at DESC`,
+      [ownerId, ENTITY_MERGE_ACTION],
+    );
+    return rows.map((r) => {
+      const [first] = r.candidates;
+      return {
+        id: r.id,
+        createdAt: r.created_at,
+        incoming: {
+          id: r.incoming_id,
+          name: r.incoming_content,
+          entityType: first?.incomingType ?? "",
+          mentions: first?.incomingMentions ?? 0,
+        },
+        candidates: r.candidates.map((c) => ({
+          id: c.id,
+          name: c.name,
+          entityType: c.entityType,
+          mentions: c.mentions,
+          score: c.score,
+          reason: c.reason,
+        })),
+      };
+    });
+  }
+
+  /**
+   * Arbitrate one uncertain fold. The four memory actions map cleanly onto entities except
+   * `merge`, which needs reconciled prose and means nothing for a name.
+   *
+   * keep_existing: fold the queued spelling into the candidate (the usual answer).
+   * keep_new:      the queued spelling is the better name, so fold the candidate into it.
+   * keep_both:     they are genuinely different things. Recorded so it never re-queues.
+   */
+  async #resolveEntityConflict(conflictId: string, decision: ResolveDecision): Promise<void> {
+    const [row] = await this.#storage.query<{
+      owner_id: string;
+      incoming_id: string;
+      candidates: EntityConflictCandidate[];
+    }>("SELECT owner_id, incoming_id, candidates FROM memory_dedup_decisions WHERE id = $1", [
+      conflictId,
+    ]);
+    if (!row) throw new Error(`memloom: no conflict ${conflictId}`);
+    const owner = row.owner_id;
+    const primary = row.candidates[0];
+
+    // The graph moves under a pending question. One entity is often the candidate in many
+    // queued pairs ("Claude Code" is in eleven on the motivating store), so answering one of
+    // them folds that row away and leaves the rest naming an id that no longer exists.
+    // Follow both sides to whatever now holds them before doing anything.
+    const incoming = await this.#liveEntityId(owner, row.incoming_id);
+    const candidateId =
+      decision.action === "keep_existing" ? (decision.candidateId ?? primary?.id) : primary?.id;
+    const target = candidateId ? await this.#liveEntityId(owner, candidateId) : null;
+
+    // Both sides are already one row, or one of them is gone entirely: the question no longer
+    // has an answer to give. Settle it so it leaves the queue instead of becoming a row the
+    // user clicks forever.
+    if (!incoming || !target || incoming === target) {
+      await this.#attachResolution(conflictId, "keep_both", null, []);
+      return;
+    }
+
+    switch (decision.action) {
+      case "keep_existing": {
+        const mergeId = await this.mergeEntities(incoming, target, owner, {
+          decidedBy: "human",
+          score: primary?.score,
+          reason: primary?.reason,
+        });
+        await this.#attachResolution(conflictId, "supersede", target, [mergeId]);
+        break;
+      }
+      case "keep_new": {
+        const mergeId = await this.mergeEntities(target, incoming, owner, {
+          decidedBy: "human",
+          score: primary?.score,
+          reason: primary?.reason,
+        });
+        await this.#attachResolution(conflictId, "supersede", incoming, [mergeId]);
+        break;
+      }
+      case "keep_both": {
+        // No graph change: the point is the record, which #alreadySettled reads so a later
+        // pass does not ask again.
+        await this.#attachResolution(conflictId, "keep_both", null, []);
+        break;
+      }
+      case "merge":
+        throw new Error(
+          "memloom: 'merge' takes reconciled content and does not apply to entities. " +
+            "Use keep_existing or keep_new to choose the surviving name",
+        );
+    }
+  }
+
+  /** Undo an arbitrated fold and put the pair back in the queue. */
+  async #revertEntityConflict(conflictId: string): Promise<void> {
+    const [row] = await this.#storage.query<{
+      owner_id: string;
+      resolution_action: string | null;
+      resolution_loser_ids: string[] | null;
+    }>(
+      `SELECT owner_id, resolution_action, resolution_loser_ids
+         FROM memory_dedup_decisions WHERE id = $1`,
+      [conflictId],
+    );
+    if (!row) throw new Error(`memloom: no conflict ${conflictId}`);
+    if (!row.resolution_action) return; // already pending
+    for (const mergeId of row.resolution_loser_ids ?? []) {
+      await this.revertEntityMerge(mergeId, row.owner_id);
+    }
+    await this.#storage.query(
+      `UPDATE memory_dedup_decisions
+          SET resolution_action = NULL, resolution_winner_id = NULL,
+              resolution_loser_ids = NULL, resolved_at = NULL
+        WHERE id = $1`,
+      [conflictId],
+    );
   }
 
   async #attachResolution(

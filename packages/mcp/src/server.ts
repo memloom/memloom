@@ -7,6 +7,7 @@ import {
   memoryHistory,
   readPassage,
   recallMemory,
+  relatedEntities,
   resolveConflict,
   saveMemory,
   setSchemaEntryStatus,
@@ -50,6 +51,24 @@ export function buildServer(memloom: MemoryEngine): McpServer {
       "a result ended with a truncation marker and the answer may be in the cut part.",
     { id: z.string() },
     async (args) => ({ content: [{ type: "text", text: await readPassage(memloom, args) }] }),
+  );
+
+  server.tool(
+    "related_entities",
+    "Walk the memory GRAPH from one entity: who and what it is connected to. Use for " +
+      'questions about connections rather than content ("which people are related to X", ' +
+      '"what does X work on"), where recall_memory would return prose you still have to ' +
+      "read. `entity` is a name, an id, or a known alias, matched exactly rather than by " +
+      "meaning; a folded-away spelling resolves to its canonical entity and the answer says " +
+      "so. Filter with `type` (person, organization, project, tool, technology, agent, " +
+      "place, event, concept). Relationships the graph actually asserted are listed " +
+      "separately from entities that merely appear in the same memories.",
+    {
+      entity: z.string(),
+      type: z.string().optional(),
+      limit: z.number().optional(),
+    },
+    async (args) => ({ content: [{ type: "text", text: await relatedEntities(memloom, args) }] }),
   );
 
   server.tool(

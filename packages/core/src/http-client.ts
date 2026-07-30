@@ -29,6 +29,7 @@ import type {
   NotionSyncOptions,
   NotionSyncResult,
   RecallOptions,
+  RelatedEntities,
   ResolveDecision,
   ResolvedConflict,
   SaveInput,
@@ -118,6 +119,19 @@ export class HttpMemloomClient implements MemoryEngine {
     if (!res.ok) throw new Error(`memloom server ${res.status}: ${await res.text()}`);
     const { content } = (await res.json()) as { content: string };
     return content;
+  }
+
+  async relatedEntities(
+    target: string,
+    opts: { entityType?: string; limit?: number } = {},
+  ): Promise<RelatedEntities | null> {
+    const params = new URLSearchParams({ q: target });
+    if (opts.entityType) params.set("type", opts.entityType);
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    const res = await this.#fetch(`${this.#baseUrl}/memory/entities/related?${params}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`memloom server ${res.status}: ${await res.text()}`);
+    return (await res.json()) as RelatedEntities;
   }
 
   importSessions(

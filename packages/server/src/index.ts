@@ -252,6 +252,10 @@ const entityMergeSchema = z.object({
   into: z.string().uuid(),
 });
 
+const entityResolveSchema = z.object({
+  dryRun: z.boolean().optional(),
+});
+
 const autoIndexSchema = z.object({
   enabled: z.boolean(),
 });
@@ -738,6 +742,44 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   // Entity instances (the schema tab's management list): rename/retype, merge, delete.
   app.get("/memory/entities", async (c) => c.json({ entities: await memloom.listEntities() }));
+
+  // Entity resolution. These sit ABOVE the /:id routes on purpose: Hono matches in
+  // registration order, so "conflicts" would otherwise be read as an entity id.
+  app.get("/memory/entities/conflicts", async (c) =>
+    c.json({ conflicts: await memloom.entityConflicts() }),
+  );
+
+  app.get("/memory/entities/merges", async (c) => c.json({ merges: await memloom.entityMerges() }));
+
+  app.post("/memory/entities/resolve", async (c) => {
+    const body = await parseBody(c, entityResolveSchema);
+    if (!body.ok) return body.res;
+    return c.json(await memloom.resolveEntities({ dryRun: body.data.dryRun }));
+  });
+
+  // "Which people is this person connected to." Query rather than path parameter because the
+  // target may be a NAME, and real entity names carry slashes and dots ("@memloom/cli").
+  app.get("/memory/entities/related", async (c) => {
+    const target = c.req.query("q");
+    if (!target) return c.json({ error: "q is required (an entity id, name, or alias)" }, 400);
+    const limit = Number(c.req.query("limit") ?? 50);
+    const result = await memloom.relatedEntities(target, {
+      ...(c.req.query("type") ? { entityType: c.req.query("type") as string } : {}),
+      ...(Number.isFinite(limit) ? { limit } : {}),
+    });
+    if (!result) return c.json({ error: `no entity matching "${target}"` }, 404);
+    return c.json(result);
+  });
+
+  app.post("/memory/entities/merges/:id/revert", async (c) => {
+    try {
+      await memloom.revertEntityMerge(c.req.param("id"));
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no entity merge/.test(message) ? 404 : 400);
+    }
+  });
 
   app.patch("/memory/entities/:id", async (c) => {
     const body = await parseBody(c, entityPatchSchema);

@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { HashingEmbeddingProvider, NullLLMProvider } from "./hashing-provider.js";
 import { Memloom, SENTINEL_OWNER } from "./memloom.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
 import type { StorageAdapter } from "./storage.js";
+import { truncateAll } from "./test-store.js";
 import { toVectorLiteral } from "./vector.js";
 
 // Phase 2: the fused retrieval works and both arms contribute. We can't reproduce real MRR
@@ -11,15 +12,20 @@ import { toVectorLiteral } from "./vector.js";
 // misses. We do that by calling memloom_fuse with a query embedding that is lexically
 // unrelated to the target, so only the keyword arm can retrieve it.
 
-describe("hybrid retrieval", () => {
-  const cleanups: Array<() => Promise<void>> = [];
-  afterEach(async () => {
-    while (cleanups.length) await cleanups.pop()?.();
-  });
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteAdapter.open();
+});
+afterAll(async () => {
+  await storage.close();
+});
 
+describe("hybrid retrieval", () => {
   async function fresh(): Promise<Memloom> {
-    const storage: StorageAdapter = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const m = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),

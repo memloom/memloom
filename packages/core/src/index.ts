@@ -53,6 +53,20 @@ export {
 export type { DistilledMemory, DistillOutput } from "./distill.js";
 export { buildDistillPrompt, distillChunk, parseDistillation } from "./distill.js";
 export type { MemoryEngine } from "./engine.js";
+// Entity resolution: the pure decision rules behind folding name variants.
+export type { PairJudgement, PairVerdict, ResolvableEntity } from "./entity-resolution.js";
+export {
+  boundedEditDistance,
+  CONFIRMING_COSINE,
+  groupPairs,
+  judgePair,
+  MAX_VARIANT_EDIT_DISTANCE,
+  MIN_AUTO_KEY_LENGTH,
+  mergeKey,
+  nameTokens,
+  pickCanonical,
+  versionTokens,
+} from "./entity-resolution.js";
 export type {
   ContextKind,
   ExtractedFile,
@@ -205,6 +219,9 @@ export {
   PROPOSAL_MIN_OCCURRENCES,
 } from "./schema.js";
 export type { StorageAdapter } from "./storage.js";
+// Test-only helper, exported for the same reason PgliteAdapter is: the server and MCP test
+// suites build stores too, and reaching into core/src across packages breaks their rootDir.
+export { truncateAll } from "./test-store.js";
 export type {
   AgentMemoryFolderEvent,
   AgentMemoryImportOptions,
@@ -227,7 +244,12 @@ export type {
   ContextDocument,
   DocumentChunks,
   Entity,
+  EntityConflict,
+  EntityConflictCandidate,
   EntityDetail,
+  EntityLink,
+  EntityMerge,
+  EntityResolutionResult,
   Graph,
   GraphDocument,
   GraphEdge,
@@ -259,6 +281,8 @@ export type {
   ReembedOptions,
   ReembedProgressEvent,
   ReembedResult,
+  RelatedEntities,
+  RelatedEntity,
   ResolveDecision,
   ResolvedConflict,
   SaveInput,

@@ -27,6 +27,13 @@ known entity (query ↔ entity cosine ≥ 0.60). A vague query anchors to nothin
 contributes nothing, so it never drags in unrelated results. The keyword arm abstains
 the same way: no lexical match, no votes.
 
+It anchors on at most **10** entities per query, which is why duplicate spellings of one
+thing cost real recall quality: each one spends a slot. The arm also anchors on the spellings
+that [entity resolution](/concepts/entity-resolution) has folded away, mapping each back to
+the entity it now belongs to, so a query using an old spelling reaches everything the
+surviving entity is attached to. A folded spelling and its canonical are counted once between
+them, not twice.
+
 ## Reciprocal-rank fusion
 
 Each arm produces a ranking; fusion combines *ranks* rather than scores (cosine distances and FTS

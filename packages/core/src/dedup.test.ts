@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   HashingEmbeddingProvider,
   NullLLMProvider,
@@ -7,6 +7,8 @@ import {
 import { Memloom } from "./memloom.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
 import type { LLMProvider } from "./providers.js";
+import type { StorageAdapter } from "./storage.js";
+import { truncateAll } from "./test-store.js";
 
 // Phase 3: the belief pipeline. Uses a scripted LLM so the full classify -> route -> resolve
 // path is deterministic without a live model.
@@ -19,15 +21,20 @@ const complementary = new ScriptedLLMProvider(
   () => '[{"candidate": 1, "relation": "complementary", "reason": "both can be true"}]',
 );
 
-describe("belief pipeline", () => {
-  const cleanups: Array<() => Promise<void>> = [];
-  afterEach(async () => {
-    while (cleanups.length) await cleanups.pop()?.();
-  });
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteAdapter.open();
+});
+afterAll(async () => {
+  await storage.close();
+});
 
+describe("belief pipeline", () => {
   async function make(llm: LLMProvider): Promise<Memloom> {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const m = new Memloom({ storage, embedding: new HashingEmbeddingProvider(1024), llm });
     await m.init();
     return m;

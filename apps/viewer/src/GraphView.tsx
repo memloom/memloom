@@ -1,5 +1,14 @@
 import { forceCollide } from "d3-force-3d";
-import { FilePlus, Maximize, MessageSquare, Minus, Plus, SlidersHorizontal, X } from "lucide-react";
+import {
+  FilePlus,
+  Maximize,
+  MessageSquare,
+  Minus,
+  Plus,
+  Route,
+  SlidersHorizontal,
+  X,
+} from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { AssistantView } from "./AssistantView";
@@ -25,6 +34,7 @@ import {
   stable01,
   type ViewRect,
 } from "./graphRender";
+import { TraverseView } from "./TraverseView";
 import { useTheme } from "./useTheme";
 
 // The memory graph on a production-proven canvas architecture: home-anchor physics
@@ -192,6 +202,9 @@ function buildGraphData(
   expanded: Map<string, DocumentChunks>,
   config: ViewerGraphConfig,
   activeId: string | null,
+  /** Entities a traverse answer names. Revealed even with "show entities" off, or the
+      dimming would darken the canvas and leave nothing lit to look at. */
+  traverseIds: Set<string> | null,
 ) {
   const sizeMul = config.display.nodeSizeMultiplier;
   const spread = getCenterLayoutSpreadMultiplier(config.forces.centerForce);
@@ -204,6 +217,7 @@ function buildGraphData(
   let revealedEntities: Set<string> | null = null;
   if (!config.display.showEntities) {
     revealedEntities = new Set();
+    if (traverseIds) for (const id of traverseIds) revealedEntities.add(id);
     if (activeId) {
       revealedEntities.add(activeId);
       const reveal = (from: string, to: string) => {
@@ -407,7 +421,13 @@ export function GraphView({
   const [expanded, setExpanded] = useState<Map<string, DocumentChunks>>(new Map());
   // The right-hand dock: launched from the corner buttons above the legend. One panel hosts
   // either the compact assistant or the "+ add" file ingest, at a width the user can drag.
-  const [dock, setDock] = useState<"assistant" | "add" | null>(null);
+  const [dock, setDock] = useState<"assistant" | "add" | "traverse" | null>(null);
+
+  // The set of node ids a traverse result covers, or null when nothing is being traversed.
+  // Kept in a ref because the canvas callbacks read it every frame and must not be rebuilt
+  // per render; the state copy exists only to drive the redraw when the answer changes.
+  const traverseRef = useRef<Set<string> | null>(null);
+  const [traverseFocus, setTraverseFocus] = useState<Set<string> | null>(null);
   const [dockWidth, setDockWidth] = useState(420);
 
   // Drag the panel's left edge to resize; clamped so it can neither vanish nor eat the canvas.
@@ -486,8 +506,8 @@ export function GraphView({
   // entities are revealed. Selecting/deselecting rebuilds; positions survive via the cache.
   const selectedId = selected?.id ?? null;
   const { graphData, nodeMap, neighborMap, chunkParent } = useMemo(
-    () => buildGraphData(graph, expanded, config, selectedId),
-    [graph, expanded, config, selectedId],
+    () => buildGraphData(graph, expanded, config, selectedId, traverseFocus),
+    [graph, expanded, config, selectedId, traverseFocus],
   );
 
   const nodeMapRef = useRef(nodeMap);
@@ -495,36 +515,84 @@ export function GraphView({
     nodeMapRef.current = nodeMap;
   });
 
+  // Select a node and pan to it. Shared by the external focus prop below and the traverse
+  // panel, which is the same gesture from two directions: something outside the canvas names
+  // a node and the canvas has to go show it. Reads the live node map through the ref rather
+  // than closing over it, so this identity survives every graph rebuild.
+  const focusNode = useCallback(
+    (id: string) => {
+      const node = nodeMapRef.current.get(id);
+      if (node) {
+        setSelected({ kind: node.kind, title: node.label, body: node.full, id: node.id });
+      } else {
+        // A hidden entity ("show entities" off) has no node yet; selecting it is what
+        // reveals it, so build the selection straight from the graph payload.
+        const entity = graph.entities.find((e) => e.id === id);
+        if (entity) {
+          setSelected({
+            kind: "entity",
+            title: entity.name,
+            body: `${entity.name} (${entity.entityType})`,
+            id: entity.id,
+          });
+        }
+      }
+      window.setTimeout(() => {
+        // Re-resolve: the reveal rebuild may have created the node after this ran.
+        const target = nodeMapRef.current.get(id);
+        if (target?.x != null && target.y != null) {
+          fgRef.current?.centerAt?.(target.x, target.y, 600);
+        }
+      }, 320);
+    },
+    [graph.entities],
+  );
+
+  /**
+   * Light up a traverse answer on the canvas: the entity asked about, the entities it is
+   * connected to, and the memories and documents the focal entity is attached to. Those
+   * sources are included because they are the evidence behind the answer; the neighbours'
+   * own sources are not, or a hub entity would light up most of the graph and dim nothing.
+   */
+  const showTraverse = useCallback(
+    (focal: string | null, related: string[]) => {
+      if (!focal) {
+        setTraverseFocus(null);
+        return;
+      }
+      const set = new Set<string>([focal, ...related]);
+      // Read the raw payload rather than the built neighbourMap: with "show entities" off the
+      // built graph may not contain these nodes yet, and this set is what makes them appear.
+      for (const e of graph.edges) {
+        if (e.from === focal) set.add(e.to);
+        if (e.to === focal) set.add(e.from);
+      }
+      setTraverseFocus(set);
+    },
+    [graph.edges],
+  );
+
+  // Push the set into the ref the canvas callbacks read, then force one redraw: the
+  // simulation may already be settled, in which case nothing else would repaint.
+  useEffect(() => {
+    traverseRef.current = traverseFocus;
+    fgRef.current?.refresh?.();
+  }, [traverseFocus]);
+
+  // Closing the panel (or switching it to another tool) must clear the highlight, or the
+  // graph stays half-dark with no visible reason why.
+  useEffect(() => {
+    if (dock !== "traverse") setTraverseFocus(null);
+  }, [dock]);
+
   // External focus: an assistant source asks to see itself in the graph. The target arrives
   // as a prop from App (which also switches the tab, so the view is visible and resumed when
-  // the recenter fires). Highlight the node immediately, recenter shortly after, then
-  // consume the request so App's background refresh does not re-center every tick.
+  // the recenter fires). Consume the request afterwards so App's background refresh does not
+  // re-center every tick.
   // biome-ignore lint/correctness/useExhaustiveDependencies: one-shot on the focus prop only
   useEffect(() => {
     if (!focus) return;
-    const node = nodeMap.get(focus);
-    if (node) {
-      setSelected({ kind: node.kind, title: node.label, body: node.full, id: node.id });
-    } else {
-      // A hidden entity ("show entities" off) has no node yet; selecting it is what
-      // reveals it, so build the selection straight from the graph payload.
-      const entity = graph.entities.find((e) => e.id === focus);
-      if (entity) {
-        setSelected({
-          kind: "entity",
-          title: entity.name,
-          body: `${entity.name} (${entity.entityType})`,
-          id: entity.id,
-        });
-      }
-    }
-    window.setTimeout(() => {
-      // Re-resolve: the reveal rebuild may have created the node after this effect ran.
-      const target = nodeMapRef.current.get(focus);
-      if (target?.x != null && target.y != null) {
-        fgRef.current?.centerAt?.(target.x, target.y, 600);
-      }
-    }, 320);
+    focusNode(focus);
     onFocusConsumed?.();
   }, [focus]);
 
@@ -796,11 +864,17 @@ export function GraphView({
       const isSelected = selected?.id === node.id;
       const isFocused = hover.focusNode === node.id;
       const isNeighbor = hover.neighborSet.has(node.id);
-      const alpha = !hover.focusNode
-        ? 1
-        : isFocused || isNeighbor || isSelected
+      // A traverse result mutes everything outside the neighbourhood being examined. Harder
+      // than the hover fade and it wins over it: hover is a glance, traverse is a question the
+      // user asked, so the answer should stay legible while they move the cursor around.
+      const outside = traverseRef.current != null && !traverseRef.current.has(node.id);
+      const alpha = outside
+        ? 0.06
+        : !hover.focusNode
           ? 1
-          : Math.max(0.14, 1 - hover.mix * 0.84);
+          : isFocused || isNeighbor || isSelected
+            ? 1
+            : Math.max(0.14, 1 - hover.mix * 0.84);
       const radius =
         node.size *
         (isSelected
@@ -869,6 +943,10 @@ export function GraphView({
     const base = relationColor(palRef.current, link.relation);
     const s = getLinkEndpointId(link.source);
     const t = getLinkEndpointId(link.target);
+    // An edge belongs to the traverse result only when BOTH ends do; a link running out of
+    // the neighbourhood is exactly the noise the dimming exists to remove.
+    const tf = traverseRef.current;
+    if (tf && !(tf.has(s) && tf.has(t))) return scaleColorAlpha(base, 0.05);
     const touches = hover.focusNode === s || hover.focusNode === t;
     if (touches) return mixColors(base, brandRef.current, hover.mix);
     if (!hover.focusNode) return base;
@@ -1043,6 +1121,14 @@ export function GraphView({
         <div className="graphCorner">
           <button
             type="button"
+            className={`graphLauncher ${dock === "traverse" ? "graphLauncherActive" : ""}`}
+            onClick={() => setDock((d) => (d === "traverse" ? null : "traverse"))}
+            title="Walk the graph from one entity"
+          >
+            <Route size={13} strokeWidth={1.75} /> traverse
+          </button>
+          <button
+            type="button"
             className={`graphLauncher ${dock === "assistant" ? "graphLauncherActive" : ""}`}
             onClick={() => setDock((d) => (d === "assistant" ? null : "assistant"))}
             title="Ask the assistant"
@@ -1162,7 +1248,11 @@ export function GraphView({
           />
           <div className="graphDockHead">
             <span className="graphDockTitle">
-              {dock === "assistant" ? "assistant" : "add to knowledge base"}
+              {dock === "assistant"
+                ? "assistant"
+                : dock === "traverse"
+                  ? "traverse the graph"
+                  : "add to knowledge base"}
             </span>
             <button
               type="button"
@@ -1176,6 +1266,8 @@ export function GraphView({
           <div className="graphDockBody">
             {dock === "assistant" ? (
               <AssistantView compact />
+            ) : dock === "traverse" ? (
+              <TraverseView onOpenEntity={focusNode} onResult={showTraverse} />
             ) : (
               <div className="graphDockScroll">
                 <h2 className="sectionTitle">Add a file/folder</h2>

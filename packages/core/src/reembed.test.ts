@@ -1,13 +1,14 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { HashingEmbeddingProvider, ScriptedLLMProvider } from "./hashing-provider.js";
 import { EmbeddingFingerprintError, Memloom, SENTINEL_OWNER } from "./memloom.js";
 import { migrate, storedEmbeddingDims } from "./migrate.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
 import type { EmbeddingProvider } from "./providers.js";
 import type { StorageAdapter } from "./storage.js";
+import { truncateAll } from "./test-store.js";
 import { toVectorLiteral } from "./vector.js";
 
 // reembed(): the provider-switch migration. A store embedded under one config gets every
@@ -39,6 +40,17 @@ const extractor = new ScriptedLLMProvider((prompt) => {
   return JSON.stringify({ entities, relationships: [] });
 });
 
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteAdapter.open();
+});
+afterAll(async () => {
+  await storage.close();
+});
+
 describe("reembed", () => {
   const cleanups: Array<() => Promise<void> | void> = [];
   afterEach(async () => {
@@ -51,8 +63,7 @@ describe("reembed", () => {
 
   /** A store under provider A with rows in all four embedded tables. */
   async function seeded(): Promise<{ storage: StorageAdapter; a: EmbeddingProvider }> {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const a = new HashingEmbeddingProvider(1024);
     const m = engine(storage, a);
     await m.init();
@@ -198,11 +209,18 @@ describe("reembed", () => {
   });
 
   it("storedEmbeddingDims is null on an uninitialized store and set after migrate", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
-    expect(await storedEmbeddingDims(storage)).toBeNull();
-    await migrate(storage, 256);
-    expect(await storedEmbeddingDims(storage)).toBe(256);
+    // The one test in this file that cannot share the file's store. It asserts what a store
+    // looks like BEFORE any migration has run, and truncateAll deliberately keeps the schema
+    // and the migration ledger, so a shared store is already past the state under test. This
+    // one pays the six seconds on its own.
+    const virgin = await PgliteAdapter.open();
+    try {
+      expect(await storedEmbeddingDims(virgin)).toBeNull();
+      await migrate(virgin, 256);
+      expect(await storedEmbeddingDims(virgin)).toBe(256);
+    } finally {
+      await virgin.close();
+    }
   });
 
   it("guard message points at reembed on a plain fingerprint mismatch", async () => {

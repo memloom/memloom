@@ -90,9 +90,10 @@ Cursor, add:
 }
 ```
 
-Your agent gets eight tools: `save_memory`, `recall_memory` (memories *and* your ingested
-files, with sources), full-passage reading, version history, conflict listing/resolution,
-and schema management, so the agent uses the memory and you keep control of the vocabulary.
+Your agent gets nine tools: `save_memory`, `recall_memory` (memories *and* your ingested
+files, with sources), `related_entities` (walk the graph from one entity: who is connected to
+whom), full-passage reading, version history, conflict listing/resolution, and schema
+management, so the agent uses the memory and you keep control of the vocabulary.
 
 For a full list of MCP clients, see [docs/setup.mdx](./docs/mcp/setup.mdx).
 

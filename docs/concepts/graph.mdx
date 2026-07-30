@@ -47,10 +47,11 @@ the LLM. Extraction is **schema-constrained and
 precision-first**: it would rather miss an entity than add a wrong one.
 
 1. Every unindexed memory and context chunk goes to the LLM with an extraction prompt built
-   from the graph schema: a **closed vocabulary of 8 entity types** (`person`,
-   `organization`, `project`, `tool`, `technology`, `place`, `event`, and `concept`, which
-   is explicitly a last resort). The prompt instructs the model to abstain when in doubt and
-   caps output at the 5 most salient entities per text.
+   from the graph schema: a **closed vocabulary of 9 entity types** (`person`,
+   `organization`, `project`, `tool`, `technology`, `agent`, `place`, `event`, and `concept`,
+   which is explicitly a last resort). `agent` is for a named AI model or assistant that does
+   work, the actor itself rather than the company that made it. The prompt instructs the model
+   to abstain when in doubt and caps output at the 5 most salient entities per text.
 2. A deterministic validator checks every extraction: it drops anything with an out-of-vocab
    type, anything shaped like a math expression (`f(x) = x^3 - 2x^2`), sentence fragments
    (over 40 characters or 5 words), and names with fewer than two letters.
@@ -60,9 +61,11 @@ precision-first**: it would rather miss an entity than add a wrong one.
    stripped, whitespace collapsed. `@memloom/core` in one document and `memloom/core` in
    another land on the same node, and the first-seen spelling and type stay (the node's
    identity is its name key alone; type is an attribute, so an extractor that says `technology`
-   today and `project` tomorrow cannot fork the node). The prompt also lists the names
-   already in your graph, so the model reuses canonical spellings instead of minting
-   variants. A `mention` edge links the source to each resolved entity.
+   today and `project` tomorrow cannot fork the node). The lookup also covers folded-away
+   spellings, so once `Opus 4.8` has been folded into `Claude Opus 4.8` every later mention of
+   either lands on the same node. The prompt also lists the names already in your graph, so
+   the model reuses canonical spellings instead of minting variants. A `mention` edge links
+   the source to each resolved entity.
 5. The same call also extracts **typed relationships between entities**, classified against a
    closed predicate vocabulary: `uses`, `depends_on`, `part_of`, `created_by`, `works_on`,
    `works_at`, `located_in`, `attended`. Out-of-vocab predicates and claims below 0.7
@@ -115,13 +118,30 @@ in the graph with its usage (mentions, documents, memories) and the tools to cor
   name is refused; that situation is a merge.
 - **Retype** to any active vocabulary type.
 - **Merge into** another entity: every mention and typed relationship moves to the
-  survivor (duplicates and would-be self-loops are dropped), then the duplicate node is
-  deleted. This is the fix for near-duplicates the name key could not fold.
+  survivor (duplicates and would-be self-loops are dropped), the absorbed spelling is kept as
+  an alias, and the whole fold is revertable. This is the fix for near-duplicates the name key
+  could not fold, and it works for any two entities, however differently they are spelled.
 - **Delete** an entity and every edge touching it. The memories and documents that
-  mentioned it are untouched.
+  mentioned it are untouched. Refused while an unreverted fold points at the entity.
 
-The HTTP surface is `GET /memory/entities`, `PATCH /memory/entities/{id}`,
-`POST /memory/entities/{id}/merge`, and `DELETE /memory/entities/{id}`.
+memloom can also find the duplicates for you: see
+[Entity resolution](/concepts/entity-resolution) for the pass that folds the obvious spelling
+variants, queues the uncertain ones for review, and keeps every fold reversible.
+
+## Asking who is connected to what
+
+`GET /memory/entities/related?q=<name or id>&type=<entity type>` walks the graph from one
+entity instead of returning all of it. The target can be a name, an id, or a folded-away
+spelling. Stated relationships come back separately from entities that merely appear in the
+same memories, because those are different kinds of evidence.
+
+In the viewer this is the **traverse** panel on the Graph tab: search an entity and the canvas
+dims to its neighbourhood, so the answer is whatever stays lit. Agents reach the same thing
+through the [`related_entities`](/mcp/tools#related_entities) MCP tool.
+
+The HTTP surface is `GET /memory/entities`, `GET /memory/entities/related`,
+`PATCH /memory/entities/{id}`, `POST /memory/entities/{id}/merge`, and
+`DELETE /memory/entities/{id}`.
 
 ## Navigating in the viewer
 
