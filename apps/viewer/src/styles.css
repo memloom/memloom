@@ -974,6 +974,67 @@ textarea {
   flex-wrap: wrap;
 }
 
+/* Live ingest progress. Transcription runs for minutes, so the card says which file, which
+   stage, and how far into the recording, rather than spinning in silence. */
+.ingestStatus {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.ingestStatusHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.ingestStatusFile {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.ingestStatusStage {
+  color: var(--ok);
+}
+
+.ingestStatusCount {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.ingestBar {
+  height: 3px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.ingestBarFill {
+  height: 100%;
+  background: var(--ok);
+  transition: width 150ms linear;
+}
+
+/* Decoding and repair report no countable units, so the bar travels instead of standing
+   at zero, which would read as stalled. */
+.ingestBarSlide {
+  width: 30%;
+  animation: ingestSlide 1.2s ease-in-out infinite;
+}
+
+@keyframes ingestSlide {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(333%);
+  }
+}
+
 .schemaKindSelect {
   background: var(--bg-inset);
   border: 1px solid var(--border-strong);
@@ -1280,6 +1341,24 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* A link's path is the page itself, so it is the one path worth clicking. */
+.docPathLink {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.docPathLink:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+/* An anchor wearing the button's clothes: same box, no underline, centred label. */
+.btnLink {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 .btnDanger:hover:not(:disabled),
 .btnDangerArmed {
   border-color: var(--danger);
@@ -1303,6 +1382,22 @@ textarea {
   margin-bottom: 4px;
 }
 
+/* A recording's passage is cited by clock range, not by heading: read it as a timecode. */
+.chunkTime {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--ok);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  padding: 1px 7px;
+  margin-bottom: 6px;
+}
+
 .notice {
   border: 1px solid var(--border);
   border-left: 3px solid var(--ok);
@@ -1312,6 +1407,21 @@ textarea {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* Advice on the first line, the daemon's own words under it. */
+.noticeStacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: 1.5;
+}
+
+.noticeDetail {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
 }
 
 .noticeError {

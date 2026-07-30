@@ -8,6 +8,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/memory": "http://127.0.0.1:4319",
+      "/context": "http://127.0.0.1:4319",
       "/health": "http://127.0.0.1:4319",
     },
   },

@@ -144,6 +144,65 @@ export interface DocumentChunks {
   edges: GraphEdge[];
 }
 
+/** Why a page could not be turned into a document. Stable, so the UI can branch on it. */
+export type LinkErrorCode =
+  | "not_html"
+  | "too_large"
+  | "too_many_redirects"
+  | "http_error"
+  | "empty"
+  | "likely_rendered";
+
+/**
+ * A refused page. The code is carried rather than flattened into the message, because the
+ * difference between "try another way" and "this is broken" is the whole point of showing
+ * the failure at all.
+ */
+export class LinkIngestError extends Error {
+  constructor(
+    message: string,
+    readonly code: LinkErrorCode | null,
+    readonly url: string,
+  ) {
+    super(message);
+    this.name = "LinkIngestError";
+  }
+}
+
+/**
+ * One step of a slow ingest. Only media emits these: transcribing an hour of audio takes
+ * minutes, and every other format finishes before it would emit anything.
+ */
+export interface ContextProgress {
+  path: string;
+  /** "decoding" | "transcribing" | "checking" | "repairing"; an open set. */
+  stage: string;
+  /** 1-based position within the stage; both 0 when the stage has nothing to count. */
+  done: number;
+  total: number;
+  /** How far into the recording this step reached, and how long the recording runs. */
+  seconds: number;
+  audioSeconds: number;
+}
+
+/** One file finished inside a streamed ingest, so a folder reports as it goes. */
+export interface ContextFileDone {
+  stage: "file";
+  path: string;
+  outcome: string;
+  chunks: number;
+}
+
+export type ContextStreamEvent = ContextProgress | ContextFileDone;
+
+/** The streamed ingest's summary: the same totals /context/add reports for a folder. */
+export interface ContextAddStreamResult {
+  documents: number;
+  unchanged: number;
+  chunks: number;
+  errors?: string[];
+}
+
 export interface GraphEdge {
   from: string;
   to: string;
@@ -455,6 +514,59 @@ function post<T>(path: string, body?: unknown): Promise<T> {
   });
 }
 
+/**
+ * Read one of the daemon's NDJSON progress streams. Every line is a JSON object with a
+ * `type`: "item" per step, one "done" carrying the summary, "error" for a failure that
+ * happened after the headers went out, and "ping" keepalives. Unknown types are skipped, so
+ * a newer daemon never breaks an older viewer.
+ */
+async function readNdjson<TItem, TDone>(
+  path: string,
+  body: unknown,
+  onItem: (item: TItem) => void,
+): Promise<TDone> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+  });
+  if (!res.ok || !res.body) {
+    const failure = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(failure?.error ?? `${res.status} ${res.statusText}`);
+  }
+  let done: TDone | null = null;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const handleLine = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line) as { type: string; error?: string };
+    if (event.type === "error") throw new Error(event.error ?? "stream error");
+    if (event.type === "done") {
+      const { type: _t, ...result } = event;
+      done = result as unknown as TDone;
+      return;
+    }
+    if (event.type !== "item") return;
+    const { type: _t, ...item } = event;
+    onItem(item as unknown as TItem);
+  };
+  for (;;) {
+    const { done: eof, value } = await reader.read();
+    if (eof) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline = buffer.indexOf("\n");
+    while (newline >= 0) {
+      handleLine(buffer.slice(0, newline));
+      buffer = buffer.slice(newline + 1);
+      newline = buffer.indexOf("\n");
+    }
+  }
+  if (buffer.trim()) handleLine(buffer);
+  if (!done) throw new Error("the stream ended without a result");
+  return done;
+}
+
 export const api = {
   graph: () => json<Graph>("/memory/graph"),
   memories: () => json<{ memories: Memory[] }>("/memory/list").then((r) => r.memories),
@@ -480,6 +592,43 @@ export const api = {
       unchanged?: number;
       errors?: string[];
     }>("/context/add", { path }),
+  // The same ingest, streamed. Media transcribes for minutes, which is far past what a plain
+  // request can hold open without looking hung, so the media and folder paths report as they
+  // go. Progress events and per-file completions both arrive here; `stage` tells them apart.
+  contextAddStream: (path: string, onProgress: (event: ContextStreamEvent) => void) =>
+    readNdjson<ContextStreamEvent, ContextAddStreamResult>(
+      "/context/add/stream",
+      { path },
+      onProgress,
+    ),
+  // Ingest a web page. The daemon fetches and parses it in its own process, so the URL never
+  // reaches a third party. Not json(): a refusal answers 400 with a stable code, and losing
+  // that code would leave the UI with nothing but prose to act on.
+  contextAddUrl: async (url: string) => {
+    const res = await fetch("/context/url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const body = (await res.json().catch(() => null)) as {
+      error?: string;
+      code?: LinkErrorCode;
+      url?: string;
+    } | null;
+    if (!res.ok) {
+      throw new LinkIngestError(
+        body?.error ?? `${res.status} ${res.statusText}`,
+        body?.code ?? null,
+        body?.url ?? url,
+      );
+    }
+    return body as unknown as {
+      documentId?: string;
+      outcome: "added" | "updated" | "unchanged" | "converted";
+      title: string;
+      chunks: number;
+    };
+  },
   // Opens the OS-native picker on the daemon's desktop; resolves when the user picks or
   // cancels ([] = cancelled). 501 when the platform has no picker. Picks return absolute
   // paths, so linked documents stay openable and change-trackable (the sync roadmap).
