@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0
 
 - Added entity resolution: memloom now folds the several spellings of one thing
   (`Claude Opus 4.8` and `Opus 4.8`, `Postgres` and `PostgreSQL`) into one entity. Spellings
