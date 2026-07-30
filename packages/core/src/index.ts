@@ -117,6 +117,7 @@ export {
   formatTime,
   hasFfmpeg,
   hashFile,
+  mediaDurationSeconds,
   modelDir,
   packChunks,
   SECTION_SECONDS,

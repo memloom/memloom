@@ -133,6 +133,36 @@ export async function hasFfmpeg(): Promise<boolean> {
 }
 
 /**
+ * How long a recording is, without decoding it.
+ *
+ * ffprobe reads the container header and stops, so this costs milliseconds on a file that
+ * would take minutes to transcribe. That is the whole point: a caller deciding whether it
+ * can afford to transcribe inline must not pay for the answer.
+ *
+ * Null when ffprobe is absent or the container carries no duration, so a caller learns
+ * "unknown" rather than being told zero. ffprobe ships with ffmpeg, and transcription needs
+ * ffmpeg anyway, so its absence is not worth a separate error path.
+ */
+export async function mediaDurationSeconds(path: string): Promise<number | null> {
+  return new Promise((resolve) => {
+    const child = spawn(
+      "ffprobe",
+      ["-v", "error", "-show_entries", "format=duration", "-of", "default=nw=1:nokey=1", path],
+      { stdio: ["ignore", "pipe", "ignore"] },
+    );
+    let stdout = "";
+    child.stdout.on("data", (d) => {
+      stdout += String(d);
+    });
+    child.on("error", () => resolve(null));
+    child.on("close", (code) => {
+      const seconds = Number.parseFloat(stdout.trim());
+      resolve(code === 0 && Number.isFinite(seconds) ? seconds : null);
+    });
+  });
+}
+
+/**
  * Any container the user has -> 16 kHz mono 16-bit PCM, which is the only thing the model
  * accepts. 16 kHz because Nyquist puts the ceiling at 8 kHz and speech carries essentially
  * no phonetic information above that, but mostly because the model was trained at 16 kHz and

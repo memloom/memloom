@@ -5,14 +5,21 @@ import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { serve as nodeServe } from "@hono/node-server";
 import {
-  detectKind,
-  isHttpUrl,
+  AudioError,
+  CATALOG,
   type ContextProgressEvent,
+  detectKind,
+  findModel,
+  hasFfmpeg,
   type IndexProgressEvent,
   isChatProvider,
+  isHttpUrl,
   LinkExtractionError,
   MEMORY_TYPES,
   type Memloom,
+  modelStatus,
+  selectModel,
+  setupModels,
   supportedExtensions,
 } from "@memloom/core";
 import { type Context, Hono } from "hono";
@@ -229,6 +236,14 @@ const contextUrlSchema = z.object({
   ownerId: z.string().uuid().optional(),
 });
 
+const audioSelectSchema = z.object({
+  id: z.string().min(1, "id must be a non-empty string"),
+});
+
+const audioSetupSchema = z.object({
+  id: z.string().min(1).optional(),
+});
+
 const schemaEntrySchema = z.object({
   kind: z.enum(["entity_type", "predicate"]),
   name: z.string().min(2, "name must be at least 2 characters"),
@@ -382,6 +397,37 @@ async function parseBody<S extends z.ZodTypeAny>(
   return { ok: true, data: parsed.data };
 }
 
+/**
+ * The speech-model catalog with everything a picker needs to render it in one call: which
+ * models are on disk, which one transcription would use, and whether ffmpeg is there to feed
+ * them. Shaped this way because a list where each row needs its own request is a list that
+ * renders wrong while it loads.
+ */
+async function audioCatalog() {
+  const status = await modelStatus();
+  return {
+    dir: status.dir,
+    ffmpeg: await hasFfmpeg(),
+    selected: status.selected.id,
+    installed: status.installed,
+    models: CATALOG.map((m) => ({
+      ...m,
+      installed: status.installedIds.includes(m.id),
+      selected: m.id === status.selected.id,
+    })),
+  };
+}
+
+/**
+ * An AudioError is the caller's problem to act on (download the model, install ffmpeg), so it
+ * answers 400 with its stable code, the same contract /context/url gives extraction failures.
+ * A model nobody has downloaded yet is not a server fault.
+ */
+function audioFailure(c: Context, err: unknown): Response {
+  if (err instanceof AudioError) return c.json({ error: err.message, code: err.code }, 400);
+  throw err;
+}
+
 // A local browser Origin: the viewer served from the daemon, or a dev viewer on another
 // localhost port. Anything else is a cross-site caller.
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
@@ -438,6 +484,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         c.req.path.startsWith("/memory") ||
         c.req.path.startsWith("/context") ||
         c.req.path.startsWith("/assistant") ||
+        c.req.path.startsWith("/audio") ||
         c.req.path.startsWith("/import") ||
         c.req.path.startsWith("/notion") ||
         c.req.path.startsWith("/admin");
@@ -1014,7 +1061,12 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       }
       const bytes = new Uint8Array(Buffer.from(body.data.contentBase64, "base64"));
       if (bytes.length === 0) return c.json({ error: "empty file" }, 400);
-      return c.json(await memloom.contextUpload({ filename, bytes }));
+      try {
+        return c.json(await memloom.contextUpload({ filename, bytes }));
+      } catch (err) {
+        // An uploaded recording transcribes too, so it hits the same setup wall.
+        return audioFailure(c, err);
+      }
     },
   );
 
@@ -1045,7 +1097,16 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const target = resolve(body.data.path);
     const info = await stat(target).catch(() => null);
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
-    if (!info.isDirectory()) return c.json(await memloom.contextAdd({ path: target }));
+    if (!info.isDirectory()) {
+      try {
+        return c.json(await memloom.contextAdd({ path: target }));
+      } catch (err) {
+        // A recording whose model was never downloaded, or a machine without ffmpeg, is a
+        // setup step the caller has to take, so it answers 400 with its code like
+        // /context/url does. The folder branch below already collects per-file failures.
+        return audioFailure(c, err);
+      }
+    }
 
     const files = await collectSupportedFiles(target);
     if (files.length === 0) {
@@ -1193,6 +1254,78 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.delete("/context/documents/:id", async (c) => {
     await memloom.contextRemove(c.req.param("id"));
     return c.json({ ok: true });
+  });
+
+  // Speech models. Outside the store probe on purpose: transcription is set up before
+  // anything has been ingested, and a locked store has no bearing on a download.
+  app.get("/audio/models", async (c) => {
+    try {
+      return c.json(await audioCatalog());
+    } catch (err) {
+      // MEMLOOM_ASR_MODEL can pin an id that is no longer in the catalog, which is a
+      // configuration mistake to report rather than an outage.
+      return audioFailure(c, err);
+    }
+  });
+
+  app.post("/audio/select", async (c) => {
+    const body = await parseBody(c, audioSelectSchema);
+    if (!body.ok) return body.res;
+    try {
+      const model = await selectModel(body.data.id);
+      const status = await modelStatus();
+      return c.json({ ok: true, selected: model.id, installed: status.installed });
+    } catch (err) {
+      return audioFailure(c, err);
+    }
+  });
+
+  // The default model is a 465 MB download, so this streams rather than holding a request
+  // open in silence: a line per stage, and a line per whole percent while bytes arrive.
+  app.post("/audio/setup/stream", async (c) => {
+    const body = await parseBody(c, audioSetupSchema);
+    if (!body.ok) return body.res;
+    const id = body.data.id;
+    // Checked BEFORE the stream opens. Once the response is a 200 stream, every failure can
+    // only be an in-band error line, and an unknown id deserves a real status code.
+    if (id !== undefined) {
+      try {
+        findModel(id);
+      } catch (err) {
+        return audioFailure(c, err);
+      }
+    }
+    // Both shapes carry `stage`, so a consumer discriminates on one field rather than
+    // guessing from which properties happen to be present.
+    type StageEvent = { stage: "stage"; message: string };
+    type DownloadEvent = {
+      stage: "download";
+      file: string;
+      receivedBytes: number;
+      totalBytes: number | null;
+      percent: number | null;
+    };
+    return streamNdjson<StageEvent | DownloadEvent>(c, async (emit) => {
+      // 465 MB arrives as thousands of chunks and a progress bar can only use whole
+      // percents, so anything finer is bytes on the wire for nothing. When the server
+      // declares no length there is no percent to throttle on, so one line per 5 MB keeps
+      // the bar moving instead of freezing after the first event.
+      let last = "";
+      await setupModels({
+        ...(id ? { modelId: id } : {}),
+        onStage: (message) => emit({ stage: "stage", message }),
+        onProgress: ({ file, receivedBytes, totalBytes }) => {
+          const percent = totalBytes ? Math.floor((receivedBytes / totalBytes) * 100) : null;
+          const key = `${file}:${percent ?? Math.floor(receivedBytes / 5_000_000)}`;
+          if (key === last) return;
+          last = key;
+          emit({ stage: "download", file, receivedBytes, totalBytes, percent });
+        },
+      });
+      // The same payload GET /audio/models serves, so a client re-renders its picker from
+      // the done event instead of following up with another request.
+      return audioCatalog();
+    });
   });
 
   // The viewer bundle, mounted last so every API route wins first. Unknown paths fall back to

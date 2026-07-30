@@ -3,7 +3,9 @@ import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StorageAdapter } from "@memloom/core";
 import {
+  CATALOG,
   type ChatProvider,
+  findModel,
   HashingEmbeddingProvider,
   type LLMProvider,
   Memloom,
@@ -11,7 +13,7 @@ import {
   ScriptedLLMProvider,
   truncateAll,
 } from "@memloom/core";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createServer } from "./index.js";
 
 // Exercise the HTTP surface end-to-end via Hono's request helper (no network needed).
@@ -1152,5 +1154,170 @@ describe("server", () => {
     expect(res.status).toBe(200);
     await res.text(); // drain the SSE stream so the turn completes
     expect(seenModels).toEqual(["anthropic/claude-sonnet-5"]);
+  });
+});
+
+// The speech-model routes. MEMLOOM_MODEL_DIR points at a throwaway directory for every test
+// here, so nothing reads a real install, overwrites a real selection, or downloads 465 MB.
+describe("speech models over HTTP", () => {
+  let dir: string;
+  const originalDir = process.env.MEMLOOM_MODEL_DIR;
+  const originalModel = process.env.MEMLOOM_ASR_MODEL;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "memloom-server-models-"));
+    process.env.MEMLOOM_MODEL_DIR = dir;
+    delete process.env.MEMLOOM_ASR_MODEL;
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    if (originalDir === undefined) delete process.env.MEMLOOM_MODEL_DIR;
+    else process.env.MEMLOOM_MODEL_DIR = originalDir;
+    if (originalModel === undefined) delete process.env.MEMLOOM_ASR_MODEL;
+    else process.env.MEMLOOM_ASR_MODEL = originalModel;
+  });
+
+  /** Lay down the files an unpacked model would have, without downloading one. */
+  function fakeInstall(id: string, files: string[]) {
+    const modelDir = join(dir, findModel(id).archive);
+    mkdirSync(modelDir, { recursive: true });
+    for (const f of [...files, "tokens.txt"]) writeFileSync(join(modelDir, f), "x");
+  }
+
+  const PARAKEET_FILES = ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx"];
+
+  async function app() {
+    await truncateAll(storage);
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+    });
+    await memloom.init();
+    return createServer(memloom);
+  }
+
+  it("lists the whole catalog with install and selection state in one call", async () => {
+    fakeInstall("sense-voice", ["model.int8.onnx"]);
+    const res = await (await app()).request("/audio/models");
+    expect(res.status).toBe(200);
+    const payload = (await res.json()) as {
+      dir: string;
+      ffmpeg: boolean;
+      selected: string;
+      installed: boolean;
+      models: Array<{ id: string; downloadMb: number; installed: boolean; selected: boolean }>;
+    };
+    expect(payload.dir).toBe(dir);
+    expect(typeof payload.ffmpeg).toBe("boolean");
+    // Every catalog row is present, so a picker renders the un-downloaded ones too.
+    expect(payload.models).toHaveLength(CATALOG.length);
+    expect(payload.models.find((m) => m.id === "sense-voice")).toMatchObject({ installed: true });
+    expect(payload.models.find((m) => m.id === "parakeet-v3")).toMatchObject({
+      installed: false,
+      selected: true,
+      downloadMb: 465,
+    });
+    // The default is selected but not on disk: the state the viewer must offer setup for.
+    expect(payload.selected).toBe("parakeet-v3");
+    expect(payload.installed).toBe(false);
+  });
+
+  it("select switches the model transcription would use", async () => {
+    fakeInstall("sense-voice", ["model.int8.onnx"]);
+    const server = await app();
+    const res = await server.request("/audio/select", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "sense-voice" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, selected: "sense-voice", installed: true });
+
+    const after = (await (await server.request("/audio/models")).json()) as { selected: string };
+    expect(after.selected).toBe("sense-voice");
+  });
+
+  it("select answers an unknown model with a 400 and its code, never a 500", async () => {
+    const server = await app();
+    const res = await server.request("/audio/select", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "gpt-voice" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.code).toBe("no_model");
+    expect(body.error).toMatch(/unknown speech model/);
+
+    const empty = await server.request("/audio/select", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(empty.status).toBe(400);
+  });
+
+  it("setup/stream rejects an unknown id before it opens the stream", async () => {
+    const res = await (await app()).request("/audio/setup/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "gpt-voice" }),
+    });
+    // A 200 here would mean the failure could only arrive as an in-band error line.
+    expect(res.status).toBe(400);
+    expect((await res.json()) as { code: string }).toMatchObject({ code: "no_model" });
+  });
+
+  // The requirement with the most reach: /context/add is where a missing model or a missing
+  // ffmpeg actually surfaces, and without the mapping it would be an opaque 500.
+  it("context/add answers 400 with a code when a recording cannot be transcribed", async () => {
+    const files = mkdtempSync(join(tmpdir(), "memloom-server-media-"));
+    const recording = join(files, "interview.mp3");
+    writeFileSync(recording, "not really audio");
+    try {
+      const res = await (await app()).request("/context/add", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: recording }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string; code: string };
+      // No model in the throwaway dir, and the bytes are not decodable either, so which
+      // wall it hits depends on the machine. What matters is that it is a coded 400.
+      expect(["no_model", "no_ffmpeg", "no_asr", "decode_failed"]).toContain(body.code);
+      expect(body.error.length).toBeGreaterThan(0);
+    } finally {
+      rmSync(files, { recursive: true, force: true });
+    }
+  });
+
+  it("setup/stream streams a done event and downloads nothing when everything is present", async () => {
+    // Setup is idempotent, so with the model and the VAD already on disk it must reach done
+    // without touching the network. This is also the only way to exercise the stream
+    // contract without a 465 MB download.
+    fakeInstall("parakeet-v3", PARAKEET_FILES);
+    writeFileSync(join(dir, "silero_vad.onnx"), "x");
+
+    const res = await (await app()).request("/audio/setup/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/x-ndjson");
+    const lines = (await res.text())
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.some((l) => l.type === "error")).toBe(false);
+    expect(lines.some((l) => l.stage === "download")).toBe(false);
+    expect(lines.at(-1)).toMatchObject({
+      type: "done",
+      selected: "parakeet-v3",
+      installed: true,
+    });
   });
 });
