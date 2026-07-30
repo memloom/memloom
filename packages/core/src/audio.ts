@@ -89,6 +89,26 @@ export interface TranscriptSection {
 // ffmpeg
 // ---------------------------------------------------------------------------------------
 
+/** Like `run`, but keeps stdout too: ffprobe answers on stdout. */
+function runCapture(
+  cmd: string,
+  args: string[],
+): Promise<{ code: number; stdout: string; stderr: string }> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(cmd, args, { stdio: ["ignore", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (d) => {
+      if (stdout.length < 64_000) stdout += String(d);
+    });
+    child.stderr.on("data", (d) => {
+      if (stderr.length < 64_000) stderr += String(d);
+    });
+    child.on("error", reject);
+    child.on("close", (code) => resolve({ code: code ?? 1, stdout, stderr }));
+  });
+}
+
 function run(cmd: string, args: string[]): Promise<{ code: number; stderr: string }> {
   return new Promise((resolve, reject) => {
     const child = spawn(cmd, args, { stdio: ["ignore", "ignore", "pipe"] });
@@ -121,7 +141,32 @@ export async function hasFfmpeg(): Promise<boolean> {
  *
  * This also transparently handles video: ffmpeg pulls the audio track and ignores the rest.
  */
-export async function decodeToWav(inputPath: string, outPath: string): Promise<void> {
+/**
+ * How many audio tracks a file carries. Returns 1 when it cannot tell, which keeps a
+ * missing ffprobe from blocking an otherwise fine transcription.
+ */
+export async function countAudioStreams(inputPath: string): Promise<number> {
+  try {
+    const { code, stdout } = await runCapture("ffprobe", [
+      "-v",
+      "error",
+      "-select_streams",
+      "a",
+      "-show_entries",
+      "stream=index",
+      "-of",
+      "csv=p=0",
+      inputPath,
+    ]);
+    if (code !== 0) return 1;
+    const lines = stdout.split(/\r?\n/).filter((l) => l.trim().length > 0);
+    return Math.max(1, lines.length);
+  } catch {
+    return 1;
+  }
+}
+
+export async function decodeToWav(inputPath: string, outPath: string): Promise<number> {
   if (!(await hasFfmpeg())) {
     throw new AudioError(
       "ffmpeg is required to read audio and video, and was not found on PATH. " +
@@ -129,6 +174,18 @@ export async function decodeToWav(inputPath: string, outPath: string): Promise<v
       "no_ffmpeg",
     );
   }
+
+  // Screen recordings routinely carry two tracks, microphone on one and desktop audio on
+  // the other. ffmpeg's default is to pick exactly one, which would silently transcribe
+  // half the recording and give no sign that the rest existed. Mixing keeps everything.
+  // amix normalizes by input count, so a two-track mix is quieter rather than clipped, and
+  // the log-mel front end is not sensitive to that.
+  const tracks = await countAudioStreams(inputPath);
+  const mix =
+    tracks > 1
+      ? ["-filter_complex", `amix=inputs=${tracks}:duration=longest`]
+      : ["-ac", "1"];
+
   const { code, stderr } = await run("ffmpeg", [
     "-nostdin",
     "-loglevel",
@@ -137,6 +194,7 @@ export async function decodeToWav(inputPath: string, outPath: string): Promise<v
     "-i",
     inputPath,
     "-vn",
+    ...mix,
     "-ac",
     "1",
     "-ar",
@@ -151,6 +209,7 @@ export async function decodeToWav(inputPath: string, outPath: string): Promise<v
       "decode_failed",
     );
   }
+  return tracks;
 }
 
 // ---------------------------------------------------------------------------------------
