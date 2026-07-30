@@ -1,9 +1,19 @@
 import { useEffect, useRef, useState } from "react";
-import { api, fileToBase64, type Memory, type SaveResult } from "./api";
+import {
+  api,
+  type ContextFileDone,
+  type ContextProgress,
+  type ContextStreamEvent,
+  fileToBase64,
+  type LinkErrorCode,
+  LinkIngestError,
+  type Memory,
+  type SaveResult,
+} from "./api";
 
-// Shared action cards: save a memory, recall, ingest a file. Used by the Console (both,
-// unfiltered), the Memories tab (save + memory-only recall), and the Documents tab
-// (add file + context-only recall).
+// Shared action cards: save a memory, recall, ingest a file, add a link. Used by the Console
+// (save + recall, unfiltered), the Memories tab (save + memory-only recall), and the
+// Documents tab (add file, add link, context-only recall).
 
 export function SaveMemoryCard({
   onSaved,
@@ -157,12 +167,121 @@ export function RecallCard({ only }: { only?: "memory" | "context" }) {
   );
 }
 
+// Upload (the browser dialog) sends bytes over HTTP and cannot report progress, so media
+// stays off this list on purpose: a recording uploaded that way would be the silent
+// multi-minute wait the streaming path exists to avoid. Link a recording instead.
 const SUPPORTED_EXTENSIONS = [".md", ".markdown", ".txt", ".pdf"];
 const MAX_UPLOAD_FILES = 200;
+
+// The formats the daemon transcribes. Kept here so the add card can choose the streaming
+// route from the path alone, before the daemon has looked at anything.
+const MEDIA_EXTENSIONS = [
+  ".mp3",
+  ".m4a",
+  ".wav",
+  ".flac",
+  ".ogg",
+  ".opus",
+  ".aac",
+  ".wma",
+  ".mp4",
+  ".mkv",
+  ".mov",
+  ".webm",
+  ".avi",
+  ".m4v",
+];
 
 function isSupported(name: string): boolean {
   const lower = name.toLowerCase();
   return SUPPORTED_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+function isMedia(target: string): boolean {
+  const lower = target.toLowerCase();
+  return MEDIA_EXTENSIONS.some((ext) => lower.endsWith(ext));
+}
+
+function fileName(target: string): string {
+  return target.split(/[\\/]/).pop() || target;
+}
+
+/**
+ * Whether this target is worth streaming. Media transcribes for minutes, and a folder can
+ * hold media or simply hold a lot, so both report as they go. Guessing wrong is harmless
+ * either way: the stream handles a lone text file, and the plain add handles a folder.
+ */
+function wantsProgress(target: string): boolean {
+  return isMedia(target) || !fileName(target).includes(".");
+}
+
+/** Seconds as "12:30", or "1:12:30" past an hour: the same clock the transcript cites by. */
+function clock(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const rest = total % 60;
+  const mm = hours > 0 ? String(minutes).padStart(2, "0") : String(minutes);
+  return `${hours > 0 ? `${hours}:` : ""}${mm}:${String(rest).padStart(2, "0")}`;
+}
+
+/** What the card says while one file is being ingested. */
+interface IngestStatus {
+  path: string;
+  line: string;
+  /** 0 to 1, or null when the stage has nothing to count. */
+  fraction: number | null;
+  /** Files finished so far in this run. */
+  files: number;
+}
+
+// Both stream shapes carry `stage`, and the progress one holds an open set of stage names,
+// so the split is a guard rather than a discriminated union.
+function isFileDone(event: ContextStreamEvent): event is ContextFileDone {
+  return event.stage === "file";
+}
+
+/** One progress event as a line of copy. Only transcription can report how far along it is. */
+function describeStage(event: ContextProgress): { line: string; fraction: number | null } {
+  if (event.stage === "decoding") return { line: "reading the audio", fraction: null };
+  if (event.stage === "checking") return { line: "checking the transcript", fraction: null };
+  if (event.stage === "repairing") {
+    return { line: `re-reading a rough stretch at ${clock(event.seconds)}`, fraction: null };
+  }
+  if (event.stage === "transcribing") {
+    return {
+      line: `transcribing ${clock(event.seconds)} of ${clock(event.audioSeconds)}`,
+      fraction: event.total > 0 ? event.done / event.total : null,
+    };
+  }
+  return { line: event.stage, fraction: null };
+}
+
+/** Live progress under the add card: which file, which stage, how far in. */
+function IngestStatusBar({ status }: { status: IngestStatus }) {
+  const percent = status.fraction === null ? null : Math.round(status.fraction * 100);
+  return (
+    <div className="ingestStatus">
+      <div className="ingestStatusHead">
+        <span className="ingestStatusFile">{fileName(status.path)}</span>
+        <span className="ingestStatusStage">
+          {status.line}
+          {percent === null ? "" : `; ${percent}%`}
+        </span>
+      </div>
+      <div className="ingestBar">
+        <div
+          className={percent === null ? "ingestBarFill ingestBarSlide" : "ingestBarFill"}
+          style={percent === null ? undefined : { width: `${percent}%` }}
+        />
+      </div>
+      {status.files > 0 && (
+        <div className="ingestStatusCount">
+          {status.files} {status.files === 1 ? "file" : "files"} done
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function AddFileCard({ onAdded }: { onAdded: () => void }) {
@@ -170,6 +289,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [status, setStatus] = useState<IngestStatus | null>(null);
   // With auto-index on, "run index" would be stale advice: extraction is already queued.
   const [autoIndexOn, setAutoIndexOn] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -188,6 +308,9 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
   // the document keeps a real path: "open file" works, re-adding detects changes, and
   // the planned file-sync watcher can follow it. Upload (below) is the snapshot flow.
   async function ingest(target: string) {
+    // A recording, or a folder that may hold one, goes through the streaming ingest so the
+    // card can say what is happening. Text and PDFs answer before a bar would ever move.
+    if (wantsProgress(target)) return ingestStreaming([target]);
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -219,7 +342,57 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
     }
   }
 
+  // One streamed ingest per target. Progress arrives per decode chunk while a recording
+  // transcribes, and once more per file when one finishes, so a folder of recordings moves
+  // visibly instead of sitting on a spinner for the length of the whole batch.
+  async function ingestStreaming(targets: string[]) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    setStatus(null);
+    let files = 0;
+    let unchanged = 0;
+    let chunks = 0;
+    const failures: string[] = [];
+    try {
+      for (const target of targets) {
+        const result = await api.contextAddStream(target, (event) => {
+          setStatus((prev) => {
+            const done = prev?.files ?? 0;
+            if (isFileDone(event)) {
+              return {
+                path: event.path,
+                line: `${event.outcome}; ${event.chunks} chunks`,
+                fraction: 1,
+                files: done + 1,
+              };
+            }
+            return { path: event.path, ...describeStage(event), files: done };
+          });
+        });
+        files += result.documents;
+        unchanged += result.unchanged;
+        chunks += result.chunks;
+        if (result.errors) failures.push(...result.errors);
+      }
+      setNotice(
+        `ingested ${files} ${files === 1 ? "file" : "files"}` +
+          `${unchanged ? ` (${unchanged} unchanged)` : ""}; ${chunks} chunks. ` +
+          indexHint,
+      );
+      if (failures.length > 0) setError(failures.join("; "));
+      setPath("");
+      onAdded();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setStatus(null);
+      setBusy(false);
+    }
+  }
+
   async function ingestMany(targets: string[]) {
+    if (targets.some(wantsProgress)) return ingestStreaming(targets);
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -334,14 +507,22 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
         className="addFileForm"
         onSubmit={(e) => {
           e.preventDefault();
-          if (path.trim()) void ingest(path.trim());
+          const target = path.trim();
+          if (!target) return;
+          // A pasted address would fail here as a missing file. Web pages have their own
+          // card, and their own failure modes, so point at it instead of guessing.
+          if (/^https?:\/\//i.test(target)) {
+            setError("that looks like a web page; add it under Add a link below");
+            return;
+          }
+          void ingest(target);
         }}
       >
         <input
           type="text"
           value={path}
           onChange={(e) => setPath(e.target.value)}
-          placeholder="Path to a file (.md, .txt, .pdf) or a folder on this machine…"
+          placeholder="Path to a file (.md, .txt, .pdf, .mp3, .mp4) or a folder on this machine…"
         />
         <div className="addFileBar">
           <div className="addFileBarGroup">
@@ -378,7 +559,103 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
       <p className="addFileHint">
         Linked files keep their place on disk: openable, re-scanned on add, and ready for file sync.
         Uploads are one-time snapshots from the browser dialog; linking the same file later replaces
-        its snapshot, and an upload never duplicates a linked file.
+        its snapshot, and an upload never duplicates a linked file. Recordings are transcribed on
+        this machine and cited by timestamp, which takes a few minutes per hour of audio; link them
+        rather than uploading them, so you can watch the progress.
+      </p>
+
+      {status && <IngestStatusBar status={status} />}
+      {notice && <div className="resultOutcome outcome-added">{notice}</div>}
+    </div>
+  );
+}
+
+/**
+ * Why a page was refused, in the reader's terms. The daemon's own message stays underneath
+ * as the detail: this line is what to do about it.
+ */
+function linkAdvice(code: LinkErrorCode | null): string | null {
+  switch (code) {
+    case "likely_rendered":
+      // Print to PDF and not "save page as": the extractor registry reads .md, .txt, .pdf
+      // and media, so a saved .html would be refused as an unsupported file type.
+      return "This page builds itself in the browser, so what the server sends holds almost no text. Print it to PDF from your browser and add that file instead.";
+    case "not_html":
+      return "That address points at a file, not a web page. Download it and add it as a file.";
+    case "too_large":
+      return "That page is over the 10 MB limit.";
+    case "too_many_redirects":
+      return "The address kept redirecting. Try the page it finally lands on.";
+    case "http_error":
+      return "The site answered with an error. The page may be gone, it may need a sign-in, or the site may be turning away anything that is not a browser.";
+    case "empty":
+      return "Nothing readable came back from that address.";
+    default:
+      return null;
+  }
+}
+
+export function AddLinkCard({ onAdded }: { onAdded: () => void }) {
+  const [url, setUrl] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [failure, setFailure] = useState<{ advice: string | null; detail: string } | null>(null);
+
+  return (
+    <div className="card">
+      {failure && (
+        <div className="notice noticeError noticeStacked">
+          <span>{failure.advice ?? failure.detail}</span>
+          {failure.advice && <span className="noticeDetail">{failure.detail}</span>}
+        </div>
+      )}
+      <form
+        className="formRow"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const target = url.trim();
+          if (!target) return;
+          setBusy(true);
+          setFailure(null);
+          setNotice(null);
+          try {
+            const r = await api.contextAddUrl(target);
+            setNotice(
+              r.outcome === "unchanged"
+                ? `"${r.title}" is unchanged, nothing to do.`
+                : `${r.outcome} "${r.title}"; ${r.chunks} chunks.`,
+            );
+            setUrl("");
+            onAdded();
+          } catch (err) {
+            // The daemon's likely_rendered message sends the reader to a browser extension
+            // that does not ship yet, so that one code shows the address it settled on.
+            setFailure(
+              err instanceof LinkIngestError
+                ? {
+                    advice: linkAdvice(err.code),
+                    detail: err.code === "likely_rendered" ? err.url : err.message,
+                  }
+                : { advice: null, detail: err instanceof Error ? err.message : String(err) },
+            );
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        <input
+          type="text"
+          value={url}
+          onChange={(e) => setUrl(e.target.value)}
+          placeholder="https://…"
+        />
+        <button type="submit" className="btn btnPrimary" disabled={busy || url.trim() === ""}>
+          {busy ? "Reading…" : "Add link"}
+        </button>
+      </form>
+      <p className="addFileHint">
+        memloom fetches the page and pulls the article out of it here, on this machine: no reader
+        service, no crawler, nothing about the page leaves. Adding the same link again refreshes it.
       </p>
 
       {notice && <div className="resultOutcome outcome-added">{notice}</div>}
