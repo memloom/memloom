@@ -1,4 +1,5 @@
 import type { StorageAdapter } from "@memloom/core";
+import { truncateAll } from "@memloom/core";
 import {
   HashingEmbeddingProvider,
   Memloom,
@@ -6,7 +7,6 @@ import {
   ScriptedLLMProvider,
 } from "@memloom/core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { truncateAll } from "../../core/src/test-store.js";
 import {
   deleteSchemaEntry,
   listConflicts,

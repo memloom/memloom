@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { HashingEmbeddingProvider, NullLLMProvider } from "./hashing-provider.js";
 import { Memloom } from "./memloom.js";
+import type { StorageAdapter } from "./storage.js";
 import { truncateAll } from "./test-store.js";
 import { PgliteFactory } from "./testkit.js";
 

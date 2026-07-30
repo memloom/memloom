@@ -18,9 +18,9 @@ import {
 } from "./hashing-provider.js";
 import { Memloom } from "./memloom.js";
 import type { EmbeddingProvider } from "./providers.js";
+import type { StorageAdapter } from "./storage.js";
 import { truncateAll } from "./test-store.js";
 import { PgliteFactory } from "./testkit.js";
-import type { StorageAdapter } from "./storage.js";
 
 // End-to-end importSessions against the in-memory store: bounded discovery, distillation
 // through the belief pipeline, the ledger watermark, provenance rows, and the dry-run and

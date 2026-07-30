@@ -2,6 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import type { StorageAdapter } from "@memloom/core";
+import { truncateAll } from "@memloom/core";
 import {
   type ChatProvider,
   HashingEmbeddingProvider,
@@ -11,7 +12,6 @@ import {
   ScriptedLLMProvider,
 } from "@memloom/core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { truncateAll } from "../../core/src/test-store.js";
 import { createServer } from "./index.js";
 
 // Exercise the HTTP surface end-to-end via Hono's request helper (no network needed).

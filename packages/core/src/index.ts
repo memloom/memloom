@@ -53,6 +53,9 @@ export {
 export type { DistilledMemory, DistillOutput } from "./distill.js";
 export { buildDistillPrompt, distillChunk, parseDistillation } from "./distill.js";
 export type { MemoryEngine } from "./engine.js";
+// Test-only helper, exported for the same reason PgliteAdapter is: the server and MCP
+// test suites build stores too, and reaching into core/src across packages breaks rootDir.
+export { truncateAll } from "./test-store.js";
 // Entity resolution: the pure decision rules behind folding name variants.
 export type { PairJudgement, PairVerdict, ResolvableEntity } from "./entity-resolution.js";
 export {

@@ -163,9 +163,7 @@ describe("judgePair: the guards that matter", () => {
   it("keeps the exception to people, and to both sides of the pair", () => {
     // A project named after a person is exactly the pair this must not fold, so one-sided
     // person typing earns nothing.
-    expect(judgePair(ent("a", "Ada", "person"), ent("b", "Ada Lovelace")).verdict).toBe(
-      "reject",
-    );
+    expect(judgePair(ent("a", "Ada", "person"), ent("b", "Ada Lovelace")).verdict).toBe("reject");
     expect(judgePair(ent("a", "memloom"), ent("b", "memloom serve")).verdict).toBe("reject");
   });
 

@@ -1,4 +1,5 @@
 import type { StorageAdapter } from "@memloom/core";
+import { truncateAll } from "@memloom/core";
 import {
   type FetchLike,
   HashingEmbeddingProvider,
@@ -8,7 +9,6 @@ import {
   ScriptedLLMProvider,
 } from "@memloom/core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { truncateAll } from "../../core/src/test-store.js";
 import { createServer } from "./index.js";
 
 // HttpMemloomClient talks to the HTTP surface. We point it at the Hono app's request handler
