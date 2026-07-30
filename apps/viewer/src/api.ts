@@ -571,7 +571,9 @@ export const api = {
     // Not json(): a 404 here means "no such entity", which is an answer rather than a failure.
     const res = await fetch(`/memory/entities/related?${params}`);
     if (res.status === 404) return null;
-    const body = (await res.json().catch(() => null)) as ({ error?: string } & RelatedEntities) | null;
+    const body = (await res.json().catch(() => null)) as
+      | ({ error?: string } & RelatedEntities)
+      | null;
     if (!res.ok) throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
     return body as RelatedEntities;
   },

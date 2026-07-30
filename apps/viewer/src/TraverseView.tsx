@@ -120,17 +120,17 @@ export function TraverseView({
 
       {missing && !result && (
         <p style={{ color: "var(--text-faint)" }}>
-          No entity named "{missing}". Names are matched exactly, aliases included, not by
-          meaning. Try a name from the graph or the schema tab.
+          No entity named "{missing}". Names are matched exactly, aliases included, not by meaning.
+          Try a name from the graph or the schema tab.
         </p>
       )}
 
       {!result && !missing && !error && (
         <p style={{ color: "var(--text-faint)" }}>
-          Walk the graph from one entity: who and what it is connected to. The canvas dims to
-          the answer, and clicking a neighbour follows it. Relationships the extractor stated
-          are listed apart from entities that merely turn up in the same memories, because only
-          the first kind is something the graph asserted.
+          Walk the graph from one entity: who and what it is connected to. The canvas dims to the
+          answer, and clicking a neighbour follows it. Relationships the extractor stated are listed
+          apart from entities that merely turn up in the same memories, because only the first kind
+          is something the graph asserted.
         </p>
       )}
 
