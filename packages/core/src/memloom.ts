@@ -30,13 +30,14 @@ import {
   pickCanonical,
 } from "./entity-resolution.js";
 import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
-import { extractUrl, isHttpUrl } from "./link.js";
 import { NullLLMProvider } from "./hashing-provider.js";
+import { extractUrl, isHttpUrl } from "./link.js";
 import { migrate } from "./migrate.js";
 import type { NotionBlockNode } from "./notion.js";
 import { dataSourceTitle, expandsInline, NotionClient, pageTitle } from "./notion.js";
 import { blocksToMarkdown, rowsToMarkdown } from "./notion-markdown.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
+import { uploadStoreDir } from "./queue.js";
 import { redact } from "./redact.js";
 import {
   addEdge,
@@ -72,12 +73,12 @@ import type {
   ConflictAutoResult,
   ConflictCandidate,
   ContextAddInput,
-  ContextProgressEvent,
   ContextAddResult,
   ContextAddUrlInput,
   ContextAttachInput,
   ContextAttachResult,
   ContextDocument,
+  ContextProgressEvent,
   DocumentChunks,
   Entity,
   EntityConflict,
@@ -120,7 +121,6 @@ import type {
   UpdateInput,
   UpdateResult,
 } from "./types.js";
-import { uploadStoreDir } from "./queue.js";
 import { toVectorLiteral } from "./vector.js";
 
 // The fixed owner for the single-user embedded tier. Multi-tenant hosts pass a real
@@ -704,6 +704,12 @@ export class Memloom implements MemoryEngine {
     sessionId: string | null,
   ): Promise<ContextAddResult> {
     const isUpload = path.startsWith("upload://");
+    // A document is a mirror of something that already existed, so when the extractor can
+    // tell us when that something was CREATED, that is its created_at. Ingest time is only a
+    // stand-in for it, and a poor one: a week of wearable recordings dumped over USB would
+    // otherwise all carry the same minute, which is the minute nobody cares about. Null keeps
+    // the column's now() default, so every other format is untouched.
+    const recordedAt = file.recordedAt ? file.recordedAt.toISOString() : null;
     // A URL's last path segment is not a filename. "https://example.com/post" would
     // basename to "post" and absorb an unrelated uploaded file called "post", so links
     // match on content hash only and never by name, in either direction.
@@ -815,9 +821,11 @@ export class Memloom implements MemoryEngine {
       const converted = convert;
       const absorbed = await this.#storage.tx(async (tx) => {
         await tx.query(
-          `UPDATE context_documents SET path = $2, title = $3, kind = $4, updated_at = now()
+          `UPDATE context_documents
+           SET path = $2, title = $3, kind = $4,
+               created_at = COALESCE($5::timestamptz, created_at), updated_at = now()
            WHERE id = $1`,
-          [converted.id, path, file.title, file.kind],
+          [converted.id, path, file.title, file.kind, recordedAt],
         );
         return absorb(tx);
       });
@@ -917,7 +925,8 @@ export class Memloom implements MemoryEngine {
         // planned fix, matching stored embeddings so names survive a re-ingest.
         await tx.query(
           `UPDATE context_documents
-           SET path = $2, title = $3, kind = $4, content_hash = $5, chunk_count = $6, speakers = $7, updated_at = now()
+           SET path = $2, title = $3, kind = $4, content_hash = $5, chunk_count = $6, speakers = $7,
+               created_at = COALESCE($8::timestamptz, created_at), updated_at = now()
            WHERE id = $1`,
           [
             replaceId,
@@ -927,13 +936,14 @@ export class Memloom implements MemoryEngine {
             file.contentHash,
             chunks.length,
             file.speakers ? JSON.stringify(file.speakers) : null,
+            recordedAt,
           ],
         );
         documentId = replaceId;
       } else {
         const inserted = await tx.query<{ id: string }>(
-          `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count, session_id, speakers)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+          `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count, session_id, speakers, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, now())) RETURNING id`,
           [
             owner,
             path,
@@ -943,6 +953,7 @@ export class Memloom implements MemoryEngine {
             chunks.length,
             sessionId,
             file.speakers ? JSON.stringify(file.speakers) : null,
+            recordedAt,
           ],
         );
         const row = inserted[0];
@@ -964,8 +975,12 @@ export class Memloom implements MemoryEngine {
         const emb = embeddings[embIndex++];
         if (!emb) throw new Error("memloom: embedding count mismatch during ingest");
         await tx.query(
-          `INSERT INTO context_chunks (document_id, owner_id, chunk_index, content, heading_path, page, embedding, session_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8)`,
+          // The chunk carries the recording time too, not just the document. A recalled
+          // context hit reports the CHUNK's created_at as its assertedAt (see mapRecallRow),
+          // so stamping only the document would leave every recalled line still dated the
+          // moment it was ingested.
+          `INSERT INTO context_chunks (document_id, owner_id, chunk_index, content, heading_path, page, embedding, session_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8, COALESCE($9::timestamptz, now()))`,
           [
             documentId,
             owner,
@@ -975,6 +990,7 @@ export class Memloom implements MemoryEngine {
             entry.chunk.page,
             toVectorLiteral(emb),
             sessionId,
+            recordedAt,
           ],
         );
       }
@@ -1102,10 +1118,11 @@ export class Memloom implements MemoryEngine {
     }
 
     await this.#storage.tx(async (tx) => {
-      await tx.query(
-        "UPDATE context_documents SET speakers = $2 WHERE id = $1 AND owner_id = $3",
-        [documentId, rosterJson, ownerId],
-      );
+      await tx.query("UPDATE context_documents SET speakers = $2 WHERE id = $1 AND owner_id = $3", [
+        documentId,
+        rosterJson,
+        ownerId,
+      ]);
       for (let i = 0; i < touched.length; i++) {
         const t = touched[i]!;
         const emb = embeddings[i];

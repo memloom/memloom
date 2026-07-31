@@ -997,6 +997,8 @@ export function recordingHeader(at: RecordingTime | null, audioSeconds: number):
 }
 
 export interface TranscribeFileResult {
+  /** When it was recorded, if anything knew. Null is a real answer, not a missing one. */
+  recordedAt: RecordingTime | null;
   units: ExtractedUnit[];
   contentHash: string;
   audioSeconds: number;
@@ -1244,6 +1246,7 @@ export async function transcribeMedia(
 
   if (hit && hit.diarize.signature === signature) {
     return {
+      recordedAt,
       units: [{ text: render(hit.words, hit.diarize, hit.audioSeconds), page: null }],
       contentHash,
       audioSeconds: hit.audioSeconds,
@@ -1359,6 +1362,7 @@ export async function transcribeMedia(
       });
     }
     return {
+      recordedAt,
       units: [{ text: render(asr.words, diarize, asr.audioSeconds), page: null }],
       contentHash,
       audioSeconds: asr.audioSeconds,

@@ -27,6 +27,14 @@ export interface ExtractedFile {
   units: ExtractedUnit[];
   /** Diarized voices, media extractors only. Stored on the document row, not in chunks. */
   speakers?: SpeakerRoster | null;
+  /**
+   * When the source was CREATED, as opposed to when memloom read it. Media extractors resolve
+   * it from the file name, the container metadata or an old-enough mtime; everything else
+   * leaves it undefined and keeps ingest time. It becomes the document's and its chunks'
+   * created_at, which is what makes a folder of recordings sort and read by when they happened
+   * rather than by the minute they were all copied across.
+   */
+  recordedAt?: Date | null;
 }
 
 /** A file format the context connector can ingest. Register one with registerExtractor(). */
@@ -50,7 +58,12 @@ export interface Extractor {
   extract(
     bytes: Uint8Array,
     path: string,
-  ): Promise<{ title?: string; units: ExtractedUnit[]; speakers?: SpeakerRoster | null }>;
+  ): Promise<{
+    title?: string;
+    units: ExtractedUnit[];
+    speakers?: SpeakerRoster | null;
+    recordedAt?: Date | null;
+  }>;
   /**
    * Optional path-based extraction, for formats too large to hold in memory. `extractFile`
    * prefers this and never reads the file, which is what keeps a multi-gigabyte video from
@@ -65,6 +78,7 @@ export interface Extractor {
     units: ExtractedUnit[];
     contentHash: string;
     speakers?: SpeakerRoster | null;
+    recordedAt?: Date | null;
   }>;
 }
 
@@ -192,7 +206,12 @@ for (const [kind, extensions] of [
         onProgress: opts?.onProgress,
         signal: opts?.signal,
       });
-      return { units: result.units, contentHash: result.contentHash, speakers: result.roster };
+      return {
+        units: result.units,
+        contentHash: result.contentHash,
+        speakers: result.roster,
+        recordedAt: result.recordedAt?.at ?? null,
+      };
     },
     // The upload path, where bytes arrived over HTTP and never touched disk. ffmpeg needs a
     // file, so this spills to a temp file rather than refusing an uploaded recording.
@@ -206,7 +225,13 @@ for (const [kind, extensions] of [
       try {
         await writeFile(file, bytes);
         const result = await transcribeMedia(file, { sha256: async () => "" });
-        return { units: result.units, speakers: result.roster };
+        // The temp file's own mtime is the spill, so recordingTime refuses it; a stamped
+        // upload filename still resolves, because the spill keeps the original basename.
+        return {
+          units: result.units,
+          speakers: result.roster,
+          recordedAt: result.recordedAt?.at ?? null,
+        };
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
@@ -223,7 +248,10 @@ export async function extractFile(
 ): Promise<ExtractedFile> {
   const extractor = registry.get(extname(path).toLowerCase());
   if (extractor?.extractPath) {
-    const { title, units, contentHash, speakers } = await extractor.extractPath(path, opts);
+    const { title, units, contentHash, speakers, recordedAt } = await extractor.extractPath(
+      path,
+      opts,
+    );
     return {
       kind: extractor.kind,
       title: title || basename(path),
@@ -231,6 +259,7 @@ export async function extractFile(
       chunker: extractor.chunker,
       units,
       ...(speakers === undefined ? {} : { speakers }),
+      ...(recordedAt === undefined ? {} : { recordedAt }),
     };
   }
   return extractBytes(new Uint8Array(await readFile(path)), path, hash);
@@ -254,7 +283,7 @@ export async function extractBytes(
   }
   const contentHash =
     extractor.version === 1 ? hash(bytes) : `${hash(bytes)}#p${extractor.version}`;
-  const { title, units, speakers } = await extractor.extract(bytes, path);
+  const { title, units, speakers, recordedAt } = await extractor.extract(bytes, path);
   return {
     kind: extractor.kind,
     title: title || basename(path),
@@ -262,5 +291,6 @@ export async function extractBytes(
     chunker: extractor.chunker,
     units,
     ...(speakers === undefined ? {} : { speakers }),
+    ...(recordedAt === undefined ? {} : { recordedAt }),
   };
 }

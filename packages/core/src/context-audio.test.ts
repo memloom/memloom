@@ -66,6 +66,48 @@ describe.skipIf(!ready)("context connector: audio", () => {
     expect(doc?.kind).toBe("audio");
   }, 120_000);
 
+  it("dates the document by when the recording was made, not when it was ingested", async () => {
+    // The end of the wearable chain, on a real recording: a device stamps its own filename,
+    // the file is copied across days later, and the document still carries the moment it
+    // happened rather than the minute the copy finished.
+    const { copyFile, mkdtemp, rm } = await import("node:fs/promises");
+    const { tmpdir } = await import("node:os");
+    const dir = await mkdtemp(join(tmpdir(), "memloom-stamped-"));
+    cleanups.push(() => rm(dir, { recursive: true, force: true }));
+    const stamped = join(dir, "REC_20260514_093100.wav");
+    await copyFile(sample, stamped);
+
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(256),
+      llm: new NullLLMProvider(),
+      dedup: false,
+    });
+    await memloom.init();
+    const added = await memloom.contextAdd({ path: stamped });
+
+    const rows = await storage.query<{ created_at: string | Date }>(
+      "SELECT created_at FROM context_documents WHERE id = $1",
+      [added.documentId],
+    );
+    const at = new Date(rows[0]?.created_at ?? 0);
+    expect(at.getFullYear()).toBe(2026);
+    expect(at.getMonth()).toBe(4);
+    expect(at.getDate()).toBe(14);
+    expect(at.getHours()).toBe(9);
+    expect(at.getMinutes()).toBe(31);
+
+    // And the transcript says so in words, for anything reading the text rather than the row.
+    const chunks = await storage.query<{ content: string }>(
+      "SELECT content FROM context_chunks WHERE document_id = $1 ORDER BY chunk_index",
+      [added.documentId],
+    );
+    expect(chunks[0]?.content).toContain("2026-05-14 09:31:00");
+    expect(chunks[0]?.content).toContain("file name");
+  }, 180_000);
+
   it("re-adding the same recording is a no-op and does not transcribe twice", async () => {
     const memloom = await fresh();
     const first = await memloom.contextAdd({ path: sample });
