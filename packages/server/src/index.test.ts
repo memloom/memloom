@@ -472,6 +472,18 @@ describe("server", () => {
     const entity = list.entities[0];
     expect(entity).toMatchObject({ name: "Postgres", entityType: "technology", mentions: 1 });
 
+    // The arbitration button's route. Registered ahead of /memory/entities/:id, so it must
+    // answer JSON rather than being read as an entity id, and with nothing queued it makes no
+    // calls at all: this pass costs one per pair and never runs as a side effect.
+    const auto = await server.request("/memory/entities/resolve-auto", { method: "POST" });
+    expect(auto.status).toBe(200);
+    expect((await auto.json()) as { calls: number }).toMatchObject({
+      calls: 0,
+      folded: 0,
+      rejected: 0,
+      unsure: 0,
+    });
+
     const patched = await server.request(`/memory/entities/${entity?.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },

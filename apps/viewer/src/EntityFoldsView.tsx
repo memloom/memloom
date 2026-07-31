@@ -28,6 +28,7 @@ export function EntityFoldsView({ onChanged }: { onChanged: () => void }) {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [autoRunning, setAutoRunning] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
 
   const fetchBoth = useCallback((fresh: boolean) => {
@@ -65,6 +66,31 @@ export function EntityFoldsView({ onChanged }: { onChanged: () => void }) {
     }
   }
 
+  // The model's counterpart to "Find duplicate entities": it only ever sees pairs the rules
+  // already flagged as uncertain, so the worst it can do is answer a question that was going
+  // to be asked anyway. Half its value is saying "these are different", which costs nothing
+  // and is recorded so the pair is never raised again.
+  async function autoResolve() {
+    setAutoRunning(true);
+    setError(null);
+    setSummary(null);
+    try {
+      const r = await api.autoResolveEntities();
+      setSummary(
+        r.calls === 0
+          ? "nothing to decide"
+          : `asked a model about ${r.calls} ${r.calls === 1 ? "pair" : "pairs"}: ` +
+              `folded ${r.folded}, kept ${r.rejected} apart, left ${r.unsure} for you`,
+      );
+      load();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setAutoRunning(false);
+    }
+  }
+
   async function act(id: string, run: () => Promise<unknown>) {
     setBusy(id);
     setError(null);
@@ -94,12 +120,23 @@ export function EntityFoldsView({ onChanged }: { onChanged: () => void }) {
           <button
             type="button"
             className="btn btnPrimary"
-            disabled={running}
+            disabled={running || autoRunning}
             onClick={scan}
             title="Folds spellings that differ only in case or punctuation, and asks you about the rest. Every fold is reversible."
           >
             {running ? "Scanning..." : "Find duplicate entities"}
           </button>
+          {conflicts.length > 0 && (
+            <button
+              type="button"
+              className="btn"
+              disabled={running || autoRunning}
+              onClick={autoResolve}
+              title="A model decides each pair the spelling rules could not. One call per pair. Folds it makes are reversible below, and anything it is unsure about stays here for you."
+            >
+              {autoRunning ? "Deciding..." : "Resolve the obvious ones"}
+            </button>
+          )}
         </div>
         {summary && <div className="notice">{summary}</div>}
 

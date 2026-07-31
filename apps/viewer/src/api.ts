@@ -870,6 +870,8 @@ export const api = {
     json<{ merges: EntityMerge[] }>("/memory/entities/merges").then((r) => r.merges),
   resolveEntities: (dryRun = false) =>
     post<EntityResolutionResult>("/memory/entities/resolve", { dryRun }),
+  // One call per queued pair, so this is only ever triggered by a person clicking it.
+  autoResolveEntities: () => post<ReconcileArbitration>("/memory/entities/resolve-auto"),
   revertEntityMerge: (id: string) =>
     post<{ ok: boolean }>(`/memory/entities/merges/${id}/revert`, {}),
   // Reconciliation. Settings live in the store, not config.env, so a toggle takes effect on the next

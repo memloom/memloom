@@ -4252,6 +4252,18 @@ export class Memloom implements MemoryEngine {
    * A "distinct" verdict is recorded too. Without that the next run asks the same model the same
    * question forever.
    */
+  /**
+   * The same pass, on demand. `memloom conflicts auto` exists for memory contradictions and
+   * this is its counterpart for uncertain folds: the button in the Conflicts tab, and the way
+   * to use a model once without turning the nightly pass on.
+   */
+  async autoResolveEntities(
+    ownerId: string = SENTINEL_OWNER,
+    limit = ENTITY_QUEUE_LIMIT,
+  ): Promise<ReconcileArbitration> {
+    return this.#arbitrateEntities(ownerId, modelNameOf(this.#llm), limit);
+  }
+
   async #arbitrateEntities(owner: string, model: string, limit: number): Promise<ReconcileArbitration> {
     const result: ReconcileArbitration = {
       calls: 0,

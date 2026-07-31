@@ -930,6 +930,13 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     return c.json(await memloom.resolveEntities({ dryRun: body.data.dryRun }));
   });
 
+  // Let a model settle the pairs the lexical rules could not, once, on demand. The same pass
+  // reconciliation runs when llm_entities is on; this is how to use it without turning that on.
+  // Costs one call per queued pair, so it is never a side effect of anything.
+  app.post("/memory/entities/resolve-auto", async (c) =>
+    c.json(await memloom.autoResolveEntities()),
+  );
+
   // "Which people is this person connected to." Query rather than path parameter because the
   // target may be a NAME, and real entity names carry slashes and dots ("@memloom/cli").
   app.get("/memory/entities/related", async (c) => {
