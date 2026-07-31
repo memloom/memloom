@@ -91,6 +91,15 @@ async function entityNames(storage: StorageAdapter): Promise<string[]> {
   return rows.map((r) => r.name);
 }
 
+async function rootOf(storage: StorageAdapter, id: string): Promise<string> {
+  const [row] = await storage.query<{ root_id: string }>(
+    "SELECT root_id FROM memory_objects WHERE id = $1",
+    [id],
+  );
+  if (!row) throw new Error("no such memory");
+  return row.root_id;
+}
+
 async function statusOf(storage: StorageAdapter, id: string): Promise<string> {
   const [row] = await storage.query<{ status: string }>(
     "SELECT status FROM memory_objects WHERE id = $1",
@@ -202,21 +211,72 @@ describe("reconcile", () => {
     expect(await statusOf(storage, duplicate)).toBe("stale");
   });
 
-  it("asks about a lineage with two current versions instead of retiring one", async () => {
+  it("raises a lineage with two current versions into the conflicts queue", async () => {
     const { memloom, storage } = await openStore();
     const first = await memloom.save({ content: "entity extraction runs on the flash model" });
     const second = await seedSecondHead(storage, first.id);
 
     const report = await memloom.reconcile({ mode: "apply" });
 
-    const questions = report.actions.filter((a) => a.kind === "question");
-    expect(questions).toHaveLength(1);
-    expect(questions[0]?.class).toBe("multi_head");
-    expect(questions[0]?.applied).toBe(false);
-    // Judgment calls never change state, even in apply mode.
+    // A question nobody can answer is not worth asking. This is a contradiction, and the
+    // conflicts queue is the surface that already knows how to settle one.
+    const raised = report.actions.filter((a) => a.kind === "conflict");
+    expect(raised).toHaveLength(1);
+    expect(raised[0]?.class).toBe("multi_head");
+    expect(raised[0]?.conflictId).toBeTruthy();
+    const pending = await memloom.conflicts();
+    expect(pending.map((c) => c.id)).toEqual([raised[0]?.conflictId]);
+    expect(pending[0]?.incoming.id).toBe(second);
+    expect(pending[0]?.candidates.map((c) => c.id)).toEqual([first.id]);
+    // Raising is not resolving: both heads are still current until the user answers.
     expect(await statusOf(storage, first.id)).toBe("active");
     expect(await statusOf(storage, second)).toBe("active");
     expect(report.run.retired).toBe(0);
+  });
+
+  it("asks about a lineage once, however many times it runs", async () => {
+    const { memloom, storage } = await openStore();
+    const first = await memloom.save({ content: "entity extraction runs on the flash model" });
+    await seedSecondHead(storage, first.id);
+
+    await memloom.reconcile({ mode: "apply" });
+    await memloom.reconcile({ mode: "apply" });
+    await memloom.reconcile({ mode: "apply" });
+
+    // Keyed on the root, not on the newest row: the newest row changes the moment another
+    // version lands, and keying on it would re-ask forever.
+    expect(await memloom.conflicts()).toHaveLength(1);
+  });
+
+  it("takes back the conflicts it raised when the run is undone", async () => {
+    const { memloom, storage } = await openStore();
+    const first = await memloom.save({ content: "entity extraction runs on the flash model" });
+    await seedSecondHead(storage, first.id);
+
+    const report = await memloom.reconcile({ mode: "apply" });
+    expect(await memloom.conflicts()).toHaveLength(1);
+
+    // Raising a question is a mutation, so undo has to retract it. Otherwise "undo" leaves the
+    // user with questions they never asked for.
+    await memloom.revertReconcile(report.run.id);
+    expect(await memloom.conflicts()).toHaveLength(0);
+  });
+
+  it("leaves a raised conflict alone once it has been answered", async () => {
+    const { memloom, storage } = await openStore();
+    const first = await memloom.save({ content: "entity extraction runs on the flash model" });
+    const second = await seedSecondHead(storage, first.id);
+
+    const report = await memloom.reconcile({ mode: "apply" });
+    const [conflict] = await memloom.conflicts();
+    if (!conflict) throw new Error("expected a raised conflict");
+    await memloom.resolveConflict(conflict.id, { action: "keep_new" });
+
+    // The answer is the user's and outranks the undo, the same way a moved stale_since does.
+    const reverted = await memloom.revertReconcile(report.run.id);
+    expect(reverted.skipped).toBe(1);
+    expect(await statusOf(storage, first.id)).toBe("stale");
+    expect(await statusOf(storage, second)).toBe("active");
   });
 
   it("never retires a memory a pending conflict is already about", async () => {
@@ -237,18 +297,17 @@ describe("reconcile", () => {
 
   it("records findings past the per-run cap without showing them", async () => {
     const { memloom, storage } = await openStore();
-    // Five lineages with two current versions each, against a question cap of 3.
-    for (let i = 0; i < 5; i++) {
+    // Eight lineages with two current versions each, against a conflict cap of 5.
+    for (let i = 0; i < 8; i++) {
       const saved = await memloom.save({ content: `belief number ${i} about the build` });
       await seedSecondHead(storage, saved.id);
     }
 
     const report = await memloom.reconcile();
 
-    const questions = report.actions.filter((a) => a.kind === "question");
-    expect(questions).toHaveLength(5);
-    expect(questions.filter((q) => q.surfaced)).toHaveLength(3);
-    expect(report.heldBack.question).toBe(2);
+    // A preview names the ones a real run would raise, and says how many it is holding back.
+    expect(report.actions.filter((a) => a.kind === "question")).toHaveLength(5);
+    expect(report.heldBack.conflict).toBe(3);
   });
 
   it("gets quieter the longer its findings are ignored", async () => {
@@ -260,32 +319,31 @@ describe("reconcile", () => {
     expect(effectiveCaps(3)).toEqual({ retire: 0, question: 0, conflict: 0, integrity: 10 });
 
     const { memloom, storage } = await openStore();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 8; i++) {
       const saved = await memloom.save({ content: `belief number ${i} about the build` });
       await seedSecondHead(storage, saved.id);
     }
 
     const first = await memloom.reconcile({ mode: "apply" });
-    expect(first.actions.filter((a) => a.surfaced)).toHaveLength(3);
-    // Nobody approved or rejected anything, so the next run says less, then nothing.
+    expect(first.actions.filter((a) => a.kind === "conflict")).toHaveLength(5);
+    // Nobody answered any of them, so the next run asks less, then almost nothing.
     const second = await memloom.reconcile({ mode: "apply" });
-    expect(second.actions.filter((a) => a.surfaced)).toHaveLength(1);
+    expect(second.actions.filter((a) => a.kind === "conflict")).toHaveLength(2);
     const third = await memloom.reconcile({ mode: "apply" });
-    expect(third.actions.filter((a) => a.surfaced)).toHaveLength(0);
+    expect(third.actions.filter((a) => a.kind === "conflict")).toHaveLength(1);
   });
 
   it("never backs off because of dry runs", async () => {
     const { memloom, storage } = await openStore();
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < 8; i++) {
       const saved = await memloom.save({ content: `belief number ${i} about the build` });
       await seedSecondHead(storage, saved.id);
     }
 
-    // Nothing can be approved yet, so a preview that says less every time it is run would be
-    // punishing the user for looking. Dry runs do not count as being ignored.
+    // A preview that says less every time it is run would be punishing the user for looking.
     for (let run = 0; run < 4; run++) {
       const report = await memloom.reconcile();
-      expect(report.actions.filter((a) => a.surfaced)).toHaveLength(3);
+      expect(report.actions.filter((a) => a.kind === "question")).toHaveLength(5);
     }
   });
 
@@ -537,6 +595,79 @@ describe("reconcile", () => {
     expect(report.arbitration).toBeUndefined();
     expect(report.autoResolved).toBeUndefined();
     expect(report.run.llmCalls).toBe(0);
+  });
+
+  it("versions a resolution from the lineage head, not from the candidate", async () => {
+    const { memloom, storage } = await openStore();
+    const first = await memloom.save({ content: "entity extraction runs on the flash model" });
+    // A lineage whose head is 3 while version 2 is stale: what a resolved conflict leaves.
+    await storage.query(
+      `INSERT INTO memory_objects
+         (owner_id, root_id, version, status, stale_since, memory_type, content, content_hash,
+          embedding)
+       SELECT owner_id, root_id, 2, 'stale', now(), memory_type, content || ' (v2)',
+              content_hash || '-2', embedding
+       FROM memory_objects WHERE id = $1`,
+      [first.id],
+    );
+    const head = await seedSecondHead(storage, first.id);
+    await storage.query("UPDATE memory_objects SET version = 3 WHERE id = $1", [head]);
+
+    // Resolving against version 1 used to write version 2, on top of the stale row already
+    // there. The next version has to clear every version the root has ever had.
+    const report = await memloom.reconcile({ mode: "apply" });
+    const [conflict] = await memloom.conflicts();
+    if (!conflict) throw new Error("expected a raised conflict");
+    await memloom.resolveConflict(conflict.id, { action: "keep_new" });
+
+    const versions = await storage.query<{ version: number; id: string }>(
+      "SELECT id, version FROM memory_objects WHERE root_id = $1 ORDER BY version",
+      [await rootOf(storage, first.id)],
+    );
+    expect(versions.map((v) => Number(v.version))).toEqual([1, 2, 4]);
+    expect(report.run.conflictsRaised).toBeGreaterThan(0);
+  });
+
+  it("puts a resolved belief back where it was, not at version 1", async () => {
+    const { memloom, storage } = await openStore();
+    const first = await memloom.save({ content: "entity extraction runs on the flash model" });
+    const second = await seedSecondHead(storage, first.id);
+
+    const report = await memloom.reconcile({ mode: "apply" });
+    const [conflict] = await memloom.conflicts();
+    if (!conflict) throw new Error("expected a raised conflict");
+    await memloom.resolveConflict(conflict.id, { action: "keep_new" });
+    await memloom.revertConflict(conflict.id);
+
+    // The old undo assumed the incoming was a fresh save-time insert and reset it to root=self,
+    // version=1. On a belief that already had a lineage that invented a new orphan root, which
+    // is the multi-head shape this whole class of finding is about.
+    const [row] = await storage.query<{ root_id: string; version: number }>(
+      "SELECT root_id, version FROM memory_objects WHERE id = $1",
+      [second],
+    );
+    expect(row?.root_id).toBe(await rootOf(storage, first.id));
+    expect(Number(row?.version)).toBe(2);
+    expect(await memloom.conflicts()).toHaveLength(1);
+    expect(report.run.id).toBeTruthy();
+  });
+
+  it("stops raising conflicts once the queue is already deep", async () => {
+    const { memloom, storage } = await openStore();
+    for (let i = 0; i < 8; i++) {
+      const saved = await memloom.save({ content: `belief number ${i} about the build` });
+      await seedSecondHead(storage, saved.id);
+    }
+
+    // caps.conflict is 5 per run, so 8 lineages cannot arrive at once. The second run asks
+    // about 2 rather than the remaining 3, because nobody answered the first 5: an ignored
+    // question makes the next run quieter, which is the backoff doing its job on the surface
+    // it now matters most.
+    const first = await memloom.reconcile({ mode: "apply" });
+    expect(first.actions.filter((a) => a.kind === "conflict")).toHaveLength(5);
+    const second = await memloom.reconcile({ mode: "apply" });
+    expect(second.actions.filter((a) => a.kind === "conflict")).toHaveLength(2);
+    expect(await memloom.conflicts()).toHaveLength(7);
   });
 
   it("keeps runs in the log, newest first", async () => {

@@ -84,6 +84,7 @@ describe("cli router", () => {
           surfaced: true,
           decision: null,
           mergeId: null,
+          conflictId: null,
           createdAt: "2026-07-27T10:00:00.000Z",
         },
         {
@@ -98,6 +99,7 @@ describe("cli router", () => {
           surfaced: true,
           decision: null,
           mergeId: null,
+          conflictId: null,
           createdAt: "2026-07-27T10:00:00.000Z",
         },
       ],

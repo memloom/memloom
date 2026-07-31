@@ -22,6 +22,7 @@ import { type Candidate, classify } from "./dedup.js";
 import { type DistilledMemory, distillChunk } from "./distill.js";
 import {
   BACKOFF_SILENT_AFTER,
+  CONFLICT_QUEUE_CEILING,
   capBuckets,
   type ReconcileFinding,
   effectiveCaps,
@@ -31,7 +32,10 @@ import {
   findMultiHeadLineages,
   findOrphanStale,
   findReplacesLeaks,
+  lineageKey,
+  type MultiHeadLineage,
   meanActiveContentChars,
+  raisedLineages,
   recheckWindow,
   retirementBlocklist,
 } from "./reconcile.js";
@@ -3818,10 +3822,22 @@ export class Memloom implements MemoryEngine {
       case "keep_new": {
         // The incoming belief continues the (primary) existing fact's lineage: a resolved
         // contradiction is a version step, so it shows up in that belief's history().
+        //
+        // The next version comes from the lineage's HEAD, not from the candidate's own
+        // version. Those differ whenever the candidate is not the newest row on its root,
+        // which a batch of resolutions against one lineage produces routinely: resolving
+        // against version 2 of a root whose head is 5 used to write version 3, on top of the
+        // stale row already there. That is the colliding (root, version) shape.
         const primary = candidateIds[0];
         if (primary) {
           const lin = await this.#lineageOf(primary);
-          if (lin) await this.#reparent(incoming, lin.rootId, lin.version + 1);
+          const prior = await this.#lineageOf(incoming);
+          if (lin) {
+            const next = (await this.#lineageHead(lin.rootId)) + 1;
+            await this.#reparent(incoming, lin.rootId, next);
+            // Remember where it was, or revert has to guess. See migration 0032.
+            if (prior) await this.#recordPriorLineage(conflictId, prior);
+          }
         }
         await markStale(this.#storage, candidateIds);
         for (const loser of candidateIds)
@@ -3858,7 +3874,15 @@ export class Memloom implements MemoryEngine {
         // The merged belief continues the primary existing fact's lineage.
         const mergePrimary = candidateIds[0] ?? incoming;
         const mergeLin = await this.#lineageOf(mergePrimary);
-        if (mergeLin) await this.#reparent(winner, mergeLin.rootId, mergeLin.version + 1);
+        // Same head rule as keep_new. The winner is a fresh insert, so there is no prior
+        // lineage to remember: revert stales it rather than moving it back.
+        if (mergeLin) {
+          await this.#reparent(
+            winner,
+            mergeLin.rootId,
+            (await this.#lineageHead(mergeLin.rootId)) + 1,
+          );
+        }
         const losers = [incoming, ...candidateIds];
         await markStale(this.#storage, losers);
         for (const loser of losers) await addEdge(this.#storage, owner, winner, loser, "replaces");
@@ -3881,8 +3905,11 @@ export class Memloom implements MemoryEngine {
       resolution_action: string | null;
       resolution_winner_id: string | null;
       resolution_loser_ids: string[] | null;
+      prior_root_id: string | null;
+      prior_version: number | null;
     }>(
-      `SELECT owner_id, incoming_id, candidates, resolution_action, resolution_winner_id, resolution_loser_ids
+      `SELECT owner_id, incoming_id, candidates, resolution_action, resolution_winner_id,
+              resolution_loser_ids, prior_root_id, prior_version
        FROM memory_dedup_decisions WHERE id = $1`,
       [conflictId],
     );
@@ -3897,9 +3924,16 @@ export class Memloom implements MemoryEngine {
       case "supersede": {
         await reactivate(this.#storage, losers);
         await deactivateEdgesTouching(this.#storage, owner, "replaces", losers);
-        // keep_new re-parented the incoming onto the losers' lineage; restore it to its own root.
+        // keep_new re-parented the incoming onto the losers' lineage; put it back where it was.
+        // prior_root_id is NULL on every row written before migration 0032, and on those rows
+        // the incoming was always a fresh save-time insert, so (self, 1) is not a fallback but
+        // the right answer. See the migration's comment.
         if (row.resolution_winner_id === row.incoming_id) {
-          await this.#reparent(row.incoming_id, row.incoming_id, 1);
+          await this.#reparent(
+            row.incoming_id,
+            row.prior_root_id ?? row.incoming_id,
+            row.prior_version ?? 1,
+          );
         }
         break;
       }
@@ -3925,7 +3959,8 @@ export class Memloom implements MemoryEngine {
     await this.#storage.query(
       `UPDATE memory_dedup_decisions
        SET resolution_action = NULL, resolution_winner_id = NULL,
-           resolution_loser_ids = NULL, resolved_at = NULL
+           resolution_loser_ids = NULL, resolved_at = NULL,
+           prior_root_id = NULL, prior_version = NULL
        WHERE id = $1`,
       [conflictId],
     );
@@ -3983,11 +4018,18 @@ export class Memloom implements MemoryEngine {
           retirable.push(finding);
         }
         questions.push(
-          ...(await findMultiHeadLineages(this.#storage, owner)),
           ...(await findOrphanStale(this.#storage, owner)),
           ...(await findEntityInvariants(this.#storage, owner)),
         );
       }
+
+      // Multi-head lineages go to the conflicts queue rather than the reconcile ledger. They are a
+      // contradiction the user has to settle ("which of these is still true"), and the queue is
+      // the surface that already knows how to ask that, resolve it, and undo the answer.
+      const lineages = passes.includes("invariants")
+        ? await this.#lineagesToRaise(owner, caps.conflict)
+        : { take: [], total: 0 };
+      const raised = applying ? await this.#raiseLineageConflicts(owner, lineages.take) : [];
 
       const scanned = await this.#activeMemoryCount(owner);
       const window = await recheckWindow(
@@ -4080,6 +4122,38 @@ export class Memloom implements MemoryEngine {
           mergeId: fold.mergeId,
         });
       }
+      for (const lineage of raised) {
+        rows.push({
+          finding: {
+            kind: "conflict",
+            class: "multi_head",
+            memoryId: lineage.head,
+            reason: lineage.reason,
+          },
+          surfaced: true,
+          applied: true,
+          staledAt: null,
+          mergeId: null,
+          conflictId: lineage.conflictId,
+        });
+      }
+      // A dry run cannot raise anything, so it reports what it would have asked about instead.
+      if (!applying) {
+        for (const lineage of lineages.take) {
+          rows.push({
+            finding: {
+              kind: "question",
+              class: "multi_head",
+              memoryId: lineage.head,
+              reason: lineage.reason,
+            },
+            surfaced: true,
+            applied: false,
+            staledAt: null,
+            mergeId: null,
+          });
+        }
+      }
       // An arbitrated pair is undone through revertConflict, which puts the fold back AND puts
       // the question back in the queue. Reverting the merge alone would leave the conflict row
       // claiming a resolution that no longer exists.
@@ -4135,7 +4209,7 @@ export class Memloom implements MemoryEngine {
           estimate.inputTokens,
           estimate.outputTokens,
           folds.length + (arbitration?.folded ?? 0),
-          entities?.queued ?? 0,
+          raised.length + (entities?.queued ?? 0),
           llmCalls,
         ],
       );
@@ -4148,7 +4222,7 @@ export class Memloom implements MemoryEngine {
         heldBack: {
           retire: surfacedRetire.filter((s) => !s).length,
           question: surfacedQuestions.filter((s) => !s).length,
-          conflict: 0,
+          conflict: Math.max(0, lineages.total - lineages.take.length),
         },
         passes,
         ...(entities ? { entities } : {}),
@@ -4223,6 +4297,73 @@ export class Memloom implements MemoryEngine {
     return result;
   }
 
+  /**
+   * Which multi-head lineages this run may ask about: ones nobody has been asked about yet, up
+   * to this run's cap, and none at all once the queue is already deep. Adding to a backlog
+   * nobody is clearing is noise, which is the whole point of the ceiling.
+   */
+  async #lineagesToRaise(
+    owner: string,
+    cap: number,
+  ): Promise<{ take: MultiHeadLineage[]; total: number }> {
+    const already = await raisedLineages(this.#storage, owner);
+    const fresh = (await findMultiHeadLineages(this.#storage, owner)).filter(
+      (lineage) => !already.has(lineage.rootId),
+    );
+    if (cap <= 0) return { take: [], total: fresh.length };
+    const [pending] = await this.#storage.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM memory_dedup_decisions
+       WHERE owner_id = $1 AND action = 'conflict' AND resolution_action IS NULL`,
+      [owner],
+    );
+    const room = CONFLICT_QUEUE_CEILING - Number(pending?.n ?? 0);
+    if (room <= 0) return { take: [], total: fresh.length };
+    return { take: fresh.slice(0, Math.min(cap, room)), total: fresh.length };
+  }
+
+  /**
+   * Write one conflict row per lineage: the newest live head against the others.
+   *
+   * Safe to resolve any of the four ways now that keep_new versions from the lineage head and
+   * revert restores the incoming's recorded prior lineage. Before those two fixes this was the
+   * exact shape that manufactured more of the bug it is reporting.
+   */
+  async #raiseLineageConflicts(
+    owner: string,
+    lineages: MultiHeadLineage[],
+  ): Promise<Array<MultiHeadLineage & { conflictId: string }>> {
+    const raised: Array<MultiHeadLineage & { conflictId: string }> = [];
+    for (const lineage of lineages) {
+      const rows = await this.#storage.query<{ id: string; content: string; version: number }>(
+        `SELECT id, content, version FROM memory_objects
+         WHERE id = ANY($1::uuid[]) AND owner_id = $2`,
+        [[lineage.head, ...lineage.others], owner],
+      );
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      const head = byId.get(lineage.head);
+      if (!head) continue;
+      const candidates = lineage.others
+        .map((id) => byId.get(id))
+        .filter((row): row is { id: string; content: string; version: number } => Boolean(row))
+        .map((row) => ({
+          id: row.id,
+          canonical: null,
+          content: row.content,
+          relation: "contradictory",
+          reason: `version ${row.version} of the same belief, still current`,
+        }));
+      if (candidates.length === 0) continue;
+      const [created] = await this.#storage.query<{ id: string }>(
+        `INSERT INTO memory_dedup_decisions
+           (owner_id, action, incoming_id, incoming_canonical, incoming_content, candidates)
+         VALUES ($1, 'conflict', $2, $3, $4, $5::jsonb) RETURNING id`,
+        [owner, lineage.head, lineageKey(lineage.rootId), head.content, JSON.stringify(candidates)],
+      );
+      if (created) raised.push({ ...lineage, conflictId: created.id });
+    }
+    return raised;
+  }
+
   /** One line per fold, read back by id so the ledger's reason survives a later rename. */
   async #describeFolds(mergeIds: string[]): Promise<Array<{ mergeId: string; reason: string }>> {
     if (mergeIds.length === 0) return [];
@@ -4273,12 +4414,14 @@ export class Memloom implements MemoryEngine {
     const actions = await this.#storage.query<{
       id: string;
       kind: ReconcileActionKind;
+      class: string;
       memory_id: string | null;
       staled_at: string | null;
       merge_id: string | null;
       conflict_id: string | null;
     }>(
-      `SELECT id, kind, memory_id, staled_at, merge_id, conflict_id FROM memory_reconcile_actions
+      `SELECT id, kind, class, memory_id, staled_at, merge_id, conflict_id
+       FROM memory_reconcile_actions
        WHERE run_id = $1 AND kind IN ('retire', 'fold', 'conflict') AND applied = true
        ORDER BY created_at DESC`,
       [runId],
@@ -4309,6 +4452,7 @@ export class Memloom implements MemoryEngine {
   async #revertReconcileAction(
     action: {
       kind: ReconcileActionKind;
+      class: string;
       memory_id: string | null;
       staled_at: string | null;
       merge_id: string | null;
@@ -4317,16 +4461,34 @@ export class Memloom implements MemoryEngine {
     ownerId: string,
   ): Promise<boolean> {
     if (action.kind === "conflict") {
-      // An arbitrated pair goes back through the conflict path, which undoes the fold AND
-      // returns the question to the queue. Undoing only the fold would leave the decision row
-      // claiming a resolution that nothing backs.
       if (!action.conflict_id) return false;
-      try {
-        await this.revertConflict(action.conflict_id);
+      const [row] = await this.#storage.query<{ resolution_action: string | null }>(
+        "SELECT resolution_action FROM memory_dedup_decisions WHERE id = $1",
+        [action.conflict_id],
+      );
+      // Gone already: nothing to undo, and nothing was left behind.
+      if (!row) return true;
+      // Still pending means this run PUT it in the queue and nobody has answered it. Undoing
+      // the run has to take it back out, or "undo" leaves the user with questions they never
+      // asked for. revertConflict cannot do this: it returns early on an unresolved row.
+      if (!row.resolution_action) {
+        await this.#storage.query("DELETE FROM memory_dedup_decisions WHERE id = $1", [
+          action.conflict_id,
+        ]);
         return true;
-      } catch {
-        return false;
       }
+      // Answered since. The answer is the user's and outranks the undo, exactly as a moved
+      // stale_since outranks a retirement's. The one exception is a fold this run's own model
+      // decided, which nobody else touched, so that goes back through the conflict path.
+      if (action.class.startsWith("llm_entity")) {
+        try {
+          await this.revertConflict(action.conflict_id);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      return false;
     }
     if (action.kind === "fold") {
       if (!action.merge_id) return false;
@@ -4415,10 +4577,11 @@ export class Memloom implements MemoryEngine {
       surfaced: boolean;
       decision: ReconcileDecision | null;
       merge_id: string | null;
+      conflict_id: string | null;
       created_at: string;
     }>(
       `SELECT id, run_id, kind, class, memory_id, reason, applied, staled_at, surfaced,
-              decision, merge_id, created_at
+              decision, merge_id, conflict_id, created_at
        FROM memory_reconcile_actions WHERE run_id = $1 ORDER BY kind, created_at`,
       [runId],
     );
@@ -4434,6 +4597,7 @@ export class Memloom implements MemoryEngine {
       surfaced: Boolean(r.surfaced),
       decision: r.decision,
       mergeId: r.merge_id,
+      conflictId: r.conflict_id,
       createdAt: toIsoTimestamp(r.created_at),
     }));
   }
@@ -4714,6 +4878,27 @@ export class Memloom implements MemoryEngine {
       [id],
     );
     return row ? { rootId: row.root_id, version: Number(row.version) } : null;
+  }
+
+  // The highest version on a lineage, stale rows included. A new version has to clear every
+  // version the root has ever had, not just the one it is superseding, or it lands on top of
+  // a row that already exists.
+  async #lineageHead(rootId: string): Promise<number> {
+    const [row] = await this.#storage.query<{ head: number | null }>(
+      "SELECT max(version) AS head FROM memory_objects WHERE root_id = $1",
+      [rootId],
+    );
+    return Number(row?.head ?? 0);
+  }
+
+  async #recordPriorLineage(
+    conflictId: string,
+    prior: { rootId: string; version: number },
+  ): Promise<void> {
+    await this.#storage.query(
+      `UPDATE memory_dedup_decisions SET prior_root_id = $2, prior_version = $3 WHERE id = $1`,
+      [conflictId, prior.rootId, prior.version],
+    );
   }
 
   // Extract the graph from one source (memory or context chunk): mention edges to each

@@ -1684,6 +1684,30 @@ textarea {
   color: var(--danger);
 }
 
+/* A finding that became a conflict is answerable, so its line goes to the answer. */
+.eventRowLink {
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  padding: 1px 4px;
+  margin: 0 -4px;
+  width: calc(100% + 8px);
+}
+
+.eventRowLink:hover .eventMessage,
+.eventRowLink:focus-visible .eventMessage {
+  color: var(--brand-bright);
+  text-decoration: underline;
+}
+
+/* Where a click from a reconcile run lands. Fades on its own; the mark is a pointer, not a state. */
+.cardFocused {
+  outline: 1px solid var(--brand-bright);
+  outline-offset: 2px;
+}
+
 .spinIcon {
   flex: none;
   color: var(--brand);

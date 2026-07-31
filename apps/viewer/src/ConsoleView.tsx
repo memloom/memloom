@@ -156,7 +156,13 @@ function SessionRow({
   );
 }
 
-export function ConsoleView({ onChanged }: { onChanged: () => void }) {
+export function ConsoleView({
+  onChanged,
+  onOpenConflict,
+}: {
+  onChanged: () => void;
+  onOpenConflict: (conflictId: string) => void;
+}) {
   const [clearArmed, setClearArmed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -264,7 +270,7 @@ export function ConsoleView({ onChanged }: { onChanged: () => void }) {
           )}
         </div>
 
-        <ReconcileRuns onChanged={onChanged} onError={setError} />
+        <ReconcileRuns onChanged={onChanged} onError={setError} onOpenConflict={onOpenConflict} />
       </div>
     </div>
   );
@@ -299,7 +305,13 @@ type ActionsState =
   | { status: "ready"; actions: ReconcileAction[] }
   | { status: "error"; message: string };
 
-function RunActions({ state }: { state: ActionsState | undefined }) {
+function RunActions({
+  state,
+  onOpenConflict,
+}: {
+  state: ActionsState | undefined;
+  onOpenConflict: (conflictId: string) => void;
+}) {
   if (!state || state.status === "loading") return <div className="sessionEmpty">loading…</div>;
   if (state.status === "error") {
     return <div className="sessionEmpty sessionEmptyError">could not load: {state.message}</div>;
@@ -309,13 +321,31 @@ function RunActions({ state }: { state: ActionsState | undefined }) {
   }
   return (
     <>
-      {state.actions.map((a) => (
-        <div key={a.id} className={`eventRow level-${a.applied ? "success" : "info"}`}>
-          <span className="eventMessage">
-            {a.kind}: {a.reason}
-          </span>
-        </div>
-      ))}
+      {state.actions.map((a) => {
+        const level = a.applied ? "success" : "info";
+        // A finding that became a conflict is answerable, so the line is the way to go answer
+        // it. Everything else is a statement of what happened and stays inert.
+        if (a.conflictId) {
+          return (
+            <button
+              key={a.id}
+              type="button"
+              className={`eventRow eventRowLink level-${level}`}
+              onClick={() => onOpenConflict(a.conflictId as string)}
+              title="Open this in the conflicts tab"
+            >
+              <span className="eventMessage">{a.reason}</span>
+            </button>
+          );
+        }
+        return (
+          <div key={a.id} className={`eventRow level-${level}`}>
+            <span className="eventMessage">
+              {a.kind}: {a.reason}
+            </span>
+          </div>
+        );
+      })}
     </>
   );
 }
@@ -327,9 +357,11 @@ function RunActions({ state }: { state: ActionsState | undefined }) {
 function ReconcileRuns({
   onChanged,
   onError,
+  onOpenConflict,
 }: {
   onChanged: () => void;
   onError: (message: string) => void;
+  onOpenConflict: (conflictId: string) => void;
 }) {
   const [runs, setRuns] = useState<ReconcileRun[] | null>(() => cachedData<ReconcileRun[]>("reconcile-runs"));
   const [actionsByRun, setActionsByRun] = useState<Record<string, ActionsState>>({});
@@ -423,7 +455,7 @@ function ReconcileRuns({
                   </div>
                   {expanded[run.id] && (
                     <div className="sessionBody">
-                      <RunActions state={actionsByRun[run.id]} />
+                      <RunActions state={actionsByRun[run.id]} onOpenConflict={onOpenConflict} />
                     </div>
                   )}
                 </div>

@@ -59,6 +59,8 @@ export function App() {
   const [tab, setTab] = useState<Tab>("graph");
   // A node the graph should select/center on next time it opens (set from an assistant source).
   const [graphFocus, setGraphFocus] = useState<string | null>(null);
+  // Same idea for the conflicts tab, set when a reconcile run's log line is clicked.
+  const [conflictFocus, setConflictFocus] = useState<string | null>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
   // Once visited, the graph stays mounted (hidden) across tab switches so the canvas,
   // layout, zoom, and selection survive instead of rebuilding on every return.
@@ -197,11 +199,24 @@ export function App() {
         {tab === "conflicts" && (
           <>
             <EntityFoldsView onChanged={refresh} />
-            <ConflictsView conflicts={conflicts} onChanged={refresh} />
+            <ConflictsView
+              conflicts={conflicts}
+              onChanged={refresh}
+              focus={conflictFocus}
+              onFocusConsumed={() => setConflictFocus(null)}
+            />
           </>
         )}
         {tab === "connectors" && <ConnectorsView onChanged={refresh} />}
-        {tab === "console" && <ConsoleView onChanged={refresh} />}
+        {tab === "console" && (
+          <ConsoleView
+            onChanged={refresh}
+            onOpenConflict={(conflictId) => {
+              setConflictFocus(conflictId);
+              setTab("conflicts");
+            }}
+          />
+        )}
         {tab === "settings" && <SettingsView onChanged={refresh} />}
       </main>
     </div>

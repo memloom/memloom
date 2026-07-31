@@ -1218,5 +1218,24 @@ export function buildMigrations(dims: number): Migration[] {
       ALTER TABLE memory_entity_merges ADD COLUMN IF NOT EXISTS model text;
     `,
     },
+    {
+      // Where a conflict's incoming belief sat BEFORE keep_new moved it onto the winning
+      // lineage, so revert can put it back exactly.
+      //
+      // revertConflict hardcoded root = self, version = 1. That is right for a save-time
+      // incoming, which is always a fresh insert at (self, 1), and wrong for anything else: a
+      // conflict raised between two beliefs that already exist would, on revert, drop a
+      // version-4 belief to version 1 of its own root while versions 1 to 3 still claim that
+      // root. Reconciliation raises exactly that kind of conflict now.
+      //
+      // NULL means "no record", which every row written before this migration is, and every
+      // one of those IS a save-time incoming. So NULL keeps the old behaviour and is correct
+      // rather than merely compatible. Do not "fix" that fallback.
+      id: "0032_conflict_prior_lineage",
+      sql: /* sql */ `
+      ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS prior_root_id uuid;
+      ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS prior_version int;
+    `,
+    },
   ];
 }

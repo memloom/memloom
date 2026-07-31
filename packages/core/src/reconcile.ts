@@ -379,17 +379,17 @@ export async function findEntityInvariants(
 export async function findMultiHeadLineages(
   storage: StorageAdapter,
   ownerId: string,
-): Promise<ReconcileFinding[]> {
+): Promise<MultiHeadLineage[]> {
   const rows = await storage.query<{
     root_id: string;
     heads: number;
     versions: string;
-    head: string;
+    ids: string[];
   }>(
     `SELECT root_id,
             count(*)::int AS heads,
             string_agg(version::text, ', ' ORDER BY version, created_at) AS versions,
-            (array_agg(id ORDER BY version DESC, created_at DESC))[1] AS head
+            array_agg(id ORDER BY version DESC, created_at DESC) AS ids
      FROM memory_objects
      WHERE owner_id = $1 AND status = 'active'
      GROUP BY root_id
@@ -397,14 +397,62 @@ export async function findMultiHeadLineages(
      ORDER BY count(*) DESC, root_id`,
     [ownerId],
   );
-  return rows.map((row) => ({
-    kind: "question" as const,
-    class: "multi_head",
-    memoryId: row.head,
-    reason:
-      `${row.heads} versions of this belief are current at once (versions ${row.versions}). ` +
-      "A belief should have one. Which one is still true?",
-  }));
+  return rows
+    .map((row) => {
+      const [head, ...rest] = row.ids;
+      if (!head || rest.length === 0) return null;
+      return {
+        rootId: row.root_id,
+        head,
+        others: rest,
+        reason:
+          `${row.heads} versions of this belief are current at once (versions ${row.versions}). ` +
+          "A belief should have one. Which one is still true?",
+      };
+    })
+    .filter((row): row is MultiHeadLineage => row !== null);
+}
+
+/** A root with more than one live head: the newest, the rest, and how to say it. */
+export interface MultiHeadLineage {
+  rootId: string;
+  /** The newest live row, which becomes the conflict's incoming side. */
+  head: string;
+  others: string[];
+  reason: string;
+}
+
+/**
+ * Roots reconciliation has already asked about. A lineage is identified by its root, not by its
+ * newest row: the newest row changes the moment another version lands, so keying on it would
+ * re-raise the same question forever. Resolved rows count too, because a question the user has
+ * answered is settled whatever the answer was.
+ */
+export async function raisedLineages(
+  storage: StorageAdapter,
+  ownerId: string,
+): Promise<Set<string>> {
+  const rows = await storage.query<{ incoming_canonical: string | null }>(
+    `SELECT incoming_canonical FROM memory_dedup_decisions
+     WHERE owner_id = $1 AND action = 'conflict' AND incoming_canonical LIKE '${LINEAGE_KEY_PREFIX}%'`,
+    [ownerId],
+  );
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (row.incoming_canonical) seen.add(row.incoming_canonical.slice(LINEAGE_KEY_PREFIX.length));
+  }
+  return seen;
+}
+
+/**
+ * Marks a conflict row as reconcile-raised and names the lineage it is about. `incoming_canonical`
+ * carries the reconciled text on a save-time conflict and is unused on a raised one, which is
+ * the same column the entity path repurposes as its pair key.
+ */
+export const LINEAGE_KEY_PREFIX = "reconcile:lineage:";
+
+export function lineageKey(rootId: string): string {
+  return `${LINEAGE_KEY_PREFIX}${rootId}`;
 }
 
 export interface RecheckWindow {

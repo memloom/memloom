@@ -932,6 +932,8 @@ export interface ReconcileAction {
   decision: ReconcileDecision | null;
   /** Set when kind is 'fold': the memory_entity_merges row revertReconcile undoes. */
   mergeId: string | null;
+  /** Set when kind is 'conflict': the queue row this finding became, so a surface can link it. */
+  conflictId: string | null;
   createdAt: string;
 }
 

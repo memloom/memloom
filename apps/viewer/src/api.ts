@@ -136,6 +136,7 @@ export interface ReconcileAction {
   surfaced: boolean;
   decision: "approved" | "rejected" | "snoozed" | null;
   mergeId: string | null;
+  conflictId: string | null;
   createdAt: string;
 }
 

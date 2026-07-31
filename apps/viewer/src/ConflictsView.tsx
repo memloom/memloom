@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   api,
   type Conflict,
@@ -22,9 +22,14 @@ const RESOLUTION_LABEL: Record<ResolvedConflict["resolution"], string> = {
 export function ConflictsView({
   conflicts,
   onChanged,
+  focus,
+  onFocusConsumed,
 }: {
   conflicts: Conflict[];
   onChanged: () => void;
+  /** A conflict to scroll to and mark, set when arriving from a reconcile run's log. */
+  focus?: string | null;
+  onFocusConsumed?: () => void;
 }) {
   const [resolved, setResolved] = useState<ResolvedConflict[] | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -36,6 +41,15 @@ export function ConflictsView({
   const [autoSummary, setAutoSummary] = useState<string | null>(null);
   const [pendingFilter, setPendingFilter] = useState("");
   const [resolvedFilter, setResolvedFilter] = useState("");
+  // Arriving from a reconcile run's log: scroll the named conflict into view, then let the mark
+  // go so it does not stay highlighted for the rest of the session.
+  const focusRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!focus || !focusRef.current) return;
+    focusRef.current.scrollIntoView({ block: "center", behavior: "smooth" });
+    const timer = setTimeout(() => onFocusConsumed?.(), 2000);
+    return () => clearTimeout(timer);
+  }, [focus, onFocusConsumed]);
 
   const matches = (filter: string) => {
     const needle = filter.trim().toLowerCase();
@@ -160,7 +174,11 @@ export function ConflictsView({
           {visibleConflicts.map((conflict) => {
             const single = conflict.candidates.length === 1 ? conflict.candidates[0] : undefined;
             return (
-              <div key={conflict.id} className="card">
+              <div
+                key={conflict.id}
+                ref={conflict.id === focus ? focusRef : undefined}
+                className={`card ${conflict.id === focus ? "cardFocused" : ""}`}
+              >
                 <div className="cardLabel">new</div>
                 <div className="statement statementNew">{conflict.incoming.content}</div>
                 {conflict.candidates.map((candidate) => (
