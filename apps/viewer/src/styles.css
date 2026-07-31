@@ -2545,3 +2545,12 @@ textarea {
   gap: 8px;
   margin-top: 8px;
 }
+
+/* The queue with nothing in it: centered so it reads as a state of the section, not as a
+   row that lost its styling. */
+.queueEmpty {
+  text-align: center;
+  padding: 18px 0;
+  color: var(--text-faint);
+  font-size: 13px;
+}

@@ -9,6 +9,7 @@ import {
   type QueueSnapshot,
   type SaveResult,
 } from "./api";
+import { cachedData, refetch } from "./prefetch";
 
 // Shared action cards: save a memory, recall, ingest a file, add a link. Used by the Console
 // (save + recall, unfiltered), the Memories tab (save + memory-only recall), and the
@@ -680,7 +681,12 @@ export function AddLinkCard({ onAdded }: { onAdded: () => void }) {
  * costs nothing and avoids a second NDJSON reader with its own reconnect behaviour.
  */
 export function IngestQueueCard({ onChanged }: { onChanged: () => void }) {
-  const [snapshot, setSnapshot] = useState<QueueSnapshot | null>(null);
+  // Seeded from the prefetch cache so the queue paints with its rows on the first frame;
+  // the 1-second poll below is always a fresh read and keeps the cache current for the
+  // next tab visit.
+  const [snapshot, setSnapshot] = useState<QueueSnapshot | null>(() =>
+    cachedData<QueueSnapshot>("queue"),
+  );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   // Held so a finished item can refresh the document list exactly once, rather than on
@@ -689,7 +695,7 @@ export function IngestQueueCard({ onChanged }: { onChanged: () => void }) {
 
   const load = useCallback(async () => {
     try {
-      const next = await api.queue();
+      const next = await refetch("queue", api.queue);
       setSnapshot(next);
       const finished = next.items.filter((i) => i.status === "done").length;
       if (finished !== settled.current) {
@@ -720,7 +726,21 @@ export function IngestQueueCard({ onChanged }: { onChanged: () => void }) {
   }
 
   const items = snapshot?.items ?? [];
-  if (items.length === 0) return null;
+  if (items.length === 0) {
+    // The Queue heading above this card never leaves the page, and a heading with
+    // nothing under it reads as a rendering bug. The empty state holds the space and
+    // says what will appear in it.
+    return (
+      <div className="card">
+        {error && <div className="notice noticeError">{error}</div>}
+        <div className="queueEmpty">
+          {snapshot === null
+            ? "loading…"
+            : "Nothing queued. Recordings you link or upload line up here and process one at a time."}
+        </div>
+      </div>
+    );
+  }
 
   const waiting = items.filter((i) => i.status === "queued").length;
   return (

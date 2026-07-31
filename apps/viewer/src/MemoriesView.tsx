@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, type Memory, type MemoryType } from "./api";
 import { RecallCard, SaveMemoryCard } from "./cards";
+import { cachedData, prefetch, refetch } from "./prefetch";
 
 // Browse every active memory, newest first. The reading counterpart to the Console's
 // query-driven recall. Each memory can be edited (a manual, human action that appends a new
@@ -158,13 +159,24 @@ function MemoryCard({ m, onChanged }: { m: Memory; onChanged: () => void }) {
 }
 
 export function MemoriesView() {
-  const [memories, setMemories] = useState<Memory[] | null>(null);
+  // Seeded from the prefetch cache: a hover on the tab (or an earlier visit) already
+  // fetched, so the first render shows memories instead of "loading" and revalidates
+  // behind them.
+  const [memories, setMemories] = useState<Memory[] | null>(() =>
+    cachedData<Memory[]>("memories"),
+  );
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<MemoryType | "all">("all");
 
   function load() {
-    api
-      .memories()
+    prefetch("memories", api.memories)
+      .then(setMemories)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }
+  // Mutations refetch through the cache-busting path so their refresh can never serve
+  // the pre-edit copy back.
+  function reload() {
+    refetch("memories", api.memories)
       .then(setMemories)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }
@@ -181,7 +193,7 @@ export function MemoriesView() {
     <div className="panel">
       <div className="panelInner">
         <h2 className="sectionTitle">Save a memory</h2>
-        <SaveMemoryCard onSaved={load} />
+        <SaveMemoryCard onSaved={reload} />
 
         <h2 className="sectionTitle">Recall</h2>
         <RecallCard only="memory" />
@@ -221,7 +233,7 @@ export function MemoriesView() {
         )}
 
         {shown.map((m) => (
-          <MemoryCard key={m.id} m={m} onChanged={load} />
+          <MemoryCard key={m.id} m={m} onChanged={reload} />
         ))}
 
         {memories && memories.length > 0 && shown.length === 0 && (
