@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- The daemon no longer dies when the Postgres wire port cannot bind. The wire is a
+  convenience for database tools, so a blocked port now costs you the wire and nothing else:
+  `memloom serve` reports the bind error, keeps the HTTP API and viewer running, and releases
+  the data-dir lock cleanly on exit. This mostly bites on Windows, where Hyper-V, WSL and
+  Docker reserve random port blocks inside the ephemeral range at every boot and one can land
+  on the default 54329
+- Added `MEMLOOM_PG_PORT` to move the Postgres wire off 54329. Set it in
+  `~/.memloom/config.env` (or the environment) to any free port; `memloom serve` and
+  `memloom init` print the live one
+
 ## 0.6.0
 
 - Added entity resolution: memloom now folds the several spellings of one thing

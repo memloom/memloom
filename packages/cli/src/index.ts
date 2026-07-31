@@ -12,9 +12,9 @@ import {
   isHttpUrl,
 } from "@memloom/core";
 import { runAgentMemoryImport } from "./agent-memory.js";
-import { configPath, dataDir, ensureConfig, memloomHome } from "./config.js";
+import { configPath, dataDir, ensureConfig, loadConfigEnv, memloomHome } from "./config.js";
 import { connect } from "./connect.js";
-import { startDaemon } from "./daemon.js";
+import { pgWirePort, startDaemon } from "./daemon.js";
 import {
   ALL_HOOKS,
   claudeSettingsPath,
@@ -129,6 +129,7 @@ Usage: memloom <command> [args]
 The CLI and the MCP talk to the daemon over HTTP, so many clients share one store safely.
 Any command auto-starts the daemon if it isn't running. Inspect the data by pointing Drizzle
 Studio / psql at the daemon's Postgres wire: postgresql://postgres@127.0.0.1:54329/postgres
+(default port; MEMLOOM_PG_PORT moves it, and memloom serve prints the live one)
 
 Configuration lives in ${configPath()} (created by init). Set OPENROUTER_API_KEY there for
 real embeddings + LLM dedup/entities; restart the daemon after changing it.
@@ -141,9 +142,10 @@ const COMMAND_HELP: Record<string, string> = {
   serve: `memloom serve
 
 Run the store daemon in the foreground: HTTP API on 4319, the viewer, and (on the
-embedded tier) the Postgres wire on 54329. With MEMLOOM_PG_URL set, the daemon runs
-on your Postgres server instead and starts no wire bridge. The daemon is the single
-owner of the store; every other command talks to it over HTTP (and auto-starts it
+embedded tier) the Postgres wire on 54329 (MEMLOOM_PG_PORT moves it; if the port will
+not bind the daemon says so and serves on without the wire). With MEMLOOM_PG_URL set,
+the daemon runs on your Postgres server instead and starts no wire bridge. The daemon
+is the single owner of the store; every command talks to it over HTTP (and auto-starts it
 when needed). Ctrl+C to stop.
 
 Reads ${configPath()} at startup; real environment variables win over the file.`,
@@ -456,13 +458,14 @@ export async function run(argv: readonly string[]): Promise<void> {
 
     case "init": {
       const config = ensureConfig(); // create ~/.memloom + config.env template first
+      loadConfigEnv(); // so the wire URL we print reflects a MEMLOOM_PG_PORT override
       await connect(); // starts the daemon if needed
       console.log(`memloom is running. data: ${dataDir()}`);
       console.log(
         `config: ${config}  (set OPENROUTER_API_KEY there, then: memloom stop && memloom reembed && memloom serve)`,
       );
       console.log("HTTP api http://127.0.0.1:4319");
-      console.log("Postgres postgresql://postgres@127.0.0.1:54329/postgres");
+      console.log(`Postgres postgresql://postgres@127.0.0.1:${pgWirePort()}/postgres`);
       return;
     }
 

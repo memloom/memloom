@@ -66,10 +66,11 @@ Studio, psql, or any DB client at:
 postgresql://postgres@127.0.0.1:54329/postgres
 ```
 
-With `MEMLOOM_PG_URL` set there is no bridge; connect those tools to your Postgres server
+54329 is the default port; `MEMLOOM_PG_PORT` moves it, and `memloom serve` prints the live
+one. With `MEMLOOM_PG_URL` set there is no bridge; connect those tools to your Postgres server
 directly.
 
 <Warning>
-PGLite is a single-connection database: while a DB client is connected on 54329, the HTTP
+PGLite is a single-connection database: while a DB client is connected on the wire port, the HTTP
 API answers 503 for memory endpoints. Disconnect the client to resume.
 </Warning>
