@@ -132,6 +132,23 @@ export interface Conflict {
 export interface ResolvedConflict extends Conflict {
   resolution: "keep_new" | "keep_existing" | "keep_both" | "merge";
   resolvedAt: string;
+  /** Who decided. 'human' on everything settled before the provenance columns existed. */
+  decidedBy: "auto" | "llm" | "human";
+  /** Which model, when decidedBy is 'llm'. */
+  model: string | null;
+  /** The decider's own words, when it left any. */
+  reason: string | null;
+}
+
+/** An entity pair a decision settled as two different things, with why. */
+export interface SettledEntityPair {
+  id: string;
+  incomingName: string;
+  candidateName: string;
+  decidedBy: "auto" | "llm" | "human";
+  model: string | null;
+  reason: string | null;
+  resolvedAt: string;
 }
 
 export interface Entity {
@@ -772,6 +789,19 @@ export interface ConflictAutoResult {
   keepBoth: number;
   /** Left pending for a human. */
   unsure: number;
+}
+
+/**
+ * Who settled a conflict and why. Recorded on the decision row itself, which is the only place
+ * a verdict that changed nothing ("these are different things") can be read back from.
+ */
+export interface ResolutionProvenance {
+  decidedBy?: "auto" | "llm" | "human";
+  /** Which model, when decidedBy is 'llm'. */
+  model?: string;
+  score?: number;
+  /** The decider's own words. */
+  reason?: string;
 }
 
 export type ResolveDecision =

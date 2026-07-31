@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type EntityConflict, type EntityMerge } from "./api";
+import { api, type EntityConflict, type EntityMerge, type SettledEntityPair } from "./api";
 import { cachedData, prefetch, refetch } from "./prefetch";
 
 // Who decided a fold. Three answers, not two: reconciliation's LLM pass writes folds with
@@ -9,6 +9,15 @@ function foldedBy(merge: EntityMerge): string {
   if (merge.decidedBy === "auto") return "folded automatically";
   if (merge.decidedBy === "llm") return `folded by ${merge.model ?? "a model"}`;
   return "folded by you";
+}
+
+// Same three answers as a fold, for a decision that changed nothing. This is the only place a
+// "these are different things" verdict can be read back from: it writes no merge row, so
+// without a record it is indistinguishable from never having been asked.
+function decidedByLabel(pair: SettledEntityPair): string {
+  if (pair.decidedBy === "llm") return `kept apart by ${pair.model ?? "a model"}`;
+  if (pair.decidedBy === "auto") return "kept apart automatically";
+  return "kept apart by you";
 }
 
 // Entity resolution shares this tab on purpose: an uncertain fold is a contradiction about
@@ -25,6 +34,7 @@ export function EntityFoldsView({ onChanged }: { onChanged: () => void }) {
   const [merges, setMerges] = useState<EntityMerge[]>(
     () => cachedData<EntityMerge[]>("entity-merges") ?? [],
   );
+  const [settled, setSettled] = useState<SettledEntityPair[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
@@ -36,10 +46,12 @@ export function EntityFoldsView({ onChanged }: { onChanged: () => void }) {
     Promise.all([
       get("entity-conflicts", api.entityConflicts),
       get("entity-merges", api.entityMerges),
+      get("entity-settled", api.settledEntityPairs),
     ])
-      .then(([c, m]) => {
+      .then(([c, m, s]) => {
         setConflicts(c);
         setMerges(m);
+        setSettled(s);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
@@ -202,6 +214,35 @@ export function EntityFoldsView({ onChanged }: { onChanged: () => void }) {
             );
           })}
         </div>
+
+        {settled.length > 0 && (
+          <>
+            <h2 className="sectionTitle">Kept apart; {settled.length}</h2>
+            <div className="conflictList">
+              {settled.map((pair) => (
+                <div key={pair.id} className="card">
+                  <div className="cardLabel">
+                    {decidedByLabel(pair)}; {new Date(pair.resolvedAt).toLocaleString()}
+                  </div>
+                  <div className="statement statementExisting">
+                    "{pair.incomingName}" and "{pair.candidateName}" are different things
+                  </div>
+                  {pair.reason && <div className="reason">{pair.reason}</div>}
+                  <div className="actions">
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy === pair.id}
+                      onClick={() => act(pair.id, () => api.revert(pair.id))}
+                    >
+                      Ask me again
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         {undoable.length > 0 && (
           <>

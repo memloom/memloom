@@ -108,6 +108,17 @@ export interface EntityMerge {
   revertedAt: string | null;
 }
 
+/** An entity pair a decision settled as two different things, and why. */
+export interface SettledEntityPair {
+  id: string;
+  incomingName: string;
+  candidateName: string;
+  decidedBy: "auto" | "llm" | "human";
+  model: string | null;
+  reason: string | null;
+  resolvedAt: string;
+}
+
 export interface EntityResolutionResult {
   examined: number;
   pairs: number;
@@ -866,6 +877,8 @@ export const api = {
   // the fold history are separate.
   entityConflicts: () =>
     json<{ conflicts: EntityConflict[] }>("/memory/entities/conflicts").then((r) => r.conflicts),
+  settledEntityPairs: () =>
+    json<{ settled: SettledEntityPair[] }>("/memory/entities/settled").then((r) => r.settled),
   entityMerges: () =>
     json<{ merges: EntityMerge[] }>("/memory/entities/merges").then((r) => r.merges),
   resolveEntities: (dryRun = false) =>

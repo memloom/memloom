@@ -148,10 +148,12 @@ import type {
   ReembedResult,
   RelatedEntities,
   RelatedEntity,
+  ResolutionProvenance,
   ResolveDecision,
   ResolvedConflict,
   SaveInput,
   SaveResult,
+  SettledEntityPair,
   SpeakerRoster,
   UpdateInput,
   UpdateResult,
@@ -3773,11 +3775,15 @@ export class Memloom implements MemoryEngine {
       candidates: ConflictCandidate[];
       resolution_action: "supersede" | "keep_both" | "merge";
       resolution_winner_id: string | null;
+      resolution_by: "auto" | "llm" | "human" | null;
+      resolution_model: string | null;
+      resolution_reason: string | null;
       resolved_at: string;
       created_at: string;
     }>(
       `SELECT id, incoming_id, incoming_canonical, incoming_content, candidates,
-              resolution_action, resolution_winner_id, resolved_at, created_at
+              resolution_action, resolution_winner_id, resolution_by, resolution_model,
+              resolution_reason, resolved_at, created_at
        FROM memory_dedup_decisions
        WHERE owner_id = $1 AND action = 'conflict' AND resolution_action IS NOT NULL
        ORDER BY resolved_at DESC`,
@@ -3795,15 +3801,63 @@ export class Memloom implements MemoryEngine {
             : "keep_existing"
           : r.resolution_action,
       resolvedAt: r.resolved_at,
+      // NULL predates the provenance columns, and everything settled then was clicked.
+      decidedBy: r.resolution_by ?? "human",
+      model: r.resolution_model,
+      reason: r.resolution_reason,
+    }));
+  }
+
+  /**
+   * Entity pairs a decision settled as two different things, newest first.
+   *
+   * These leave no other trace: a fold writes a memory_entity_merges row, and "keep them apart"
+   * writes nothing but the decision itself. Without this list a model that kept thirty-seven
+   * pairs apart did thirty-seven invisible things.
+   */
+  async settledEntityPairs(
+    ownerId: string = SENTINEL_OWNER,
+    limit = 50,
+  ): Promise<SettledEntityPair[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      incoming_content: string;
+      candidates: EntityConflictCandidate[];
+      resolution_by: "auto" | "llm" | "human" | null;
+      resolution_model: string | null;
+      resolution_reason: string | null;
+      resolved_at: string;
+    }>(
+      `SELECT id, incoming_content, candidates, resolution_by, resolution_model,
+              resolution_reason, resolved_at
+         FROM memory_dedup_decisions
+        WHERE owner_id = $1 AND action = $2 AND resolution_action = 'keep_both'
+        ORDER BY resolved_at DESC LIMIT $3`,
+      [ownerId, ENTITY_MERGE_ACTION, limit],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      incomingName: r.incoming_content,
+      candidateName: r.candidates[0]?.name ?? "(gone)",
+      decidedBy: r.resolution_by ?? "human",
+      model: r.resolution_model,
+      reason: r.resolution_reason,
+      resolvedAt: toIsoTimestamp(r.resolved_at),
     }));
   }
 
   /** Resolve a pending conflict. Every action is reversible via revertConflict. */
-  async resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void> {
+  async resolveConflict(
+    conflictId: string,
+    decision: ResolveDecision,
+    // Who decided. Defaults to the human clicking in the viewer; the auto-resolvers name
+    // themselves so a resolution can be read back as theirs months later.
+    provenance: ResolutionProvenance = {},
+  ): Promise<void> {
     // Entity folds share this table, this method and this revert story, but none of the
     // memory semantics below (nothing goes stale, no lineage moves). Dispatch first.
     if (await this.#isEntityDecision(conflictId)) {
-      await this.#resolveEntityConflict(conflictId, decision);
+      await this.#resolveEntityConflict(conflictId, decision, provenance);
       return;
     }
     const [row] = await this.#storage.query<{
@@ -3842,20 +3896,20 @@ export class Memloom implements MemoryEngine {
         await markStale(this.#storage, candidateIds);
         for (const loser of candidateIds)
           await addEdge(this.#storage, owner, incoming, loser, "replaces");
-        await this.#attachResolution(conflictId, "supersede", incoming, candidateIds);
+        await this.#attachResolution(conflictId, "supersede", incoming, candidateIds, provenance);
         break;
       }
       case "keep_existing": {
         const winner = decision.candidateId;
         await markStale(this.#storage, [incoming]);
         await addEdge(this.#storage, owner, winner, incoming, "replaces");
-        await this.#attachResolution(conflictId, "supersede", winner, [incoming]);
+        await this.#attachResolution(conflictId, "supersede", winner, [incoming], provenance);
         break;
       }
       case "keep_both": {
         for (const cand of candidateIds)
           await addEdge(this.#storage, owner, incoming, cand, "distinct");
-        await this.#attachResolution(conflictId, "keep_both", null, []);
+        await this.#attachResolution(conflictId, "keep_both", null, [], provenance);
         break;
       }
       case "merge": {
@@ -3886,7 +3940,7 @@ export class Memloom implements MemoryEngine {
         const losers = [incoming, ...candidateIds];
         await markStale(this.#storage, losers);
         for (const loser of losers) await addEdge(this.#storage, owner, winner, loser, "replaces");
-        await this.#attachResolution(conflictId, "merge", winner, losers);
+        await this.#attachResolution(conflictId, "merge", winner, losers, provenance);
         break;
       }
     }
@@ -4722,24 +4776,32 @@ export class Memloom implements MemoryEngine {
       );
       result.examined++;
 
+      // The model's own words go on the decision row, or its reasoning would live only in
+      // this progress stream and vanish the moment the run ends.
+      const decided: ResolutionProvenance = {
+        decidedBy: "llm",
+        model: modelNameOf(this.#llm),
+        reason: verdict.reason,
+      };
       if (verdict.verdict === "keep_new") {
-        await this.resolveConflict(conflict.id, { action: "keep_new" });
+        await this.resolveConflict(conflict.id, { action: "keep_new" }, decided);
         result.keepNew++;
         result.resolved++;
       } else if (verdict.verdict === "keep_existing") {
         const winner = conflict.candidates[verdict.candidateIndex] ?? conflict.candidates[0];
         if (winner) {
-          await this.resolveConflict(conflict.id, {
-            action: "keep_existing",
-            candidateId: winner.id,
-          });
+          await this.resolveConflict(
+            conflict.id,
+            { action: "keep_existing", candidateId: winner.id },
+            decided,
+          );
           result.keepExisting++;
           result.resolved++;
         } else {
           result.unsure++;
         }
       } else if (verdict.verdict === "keep_both") {
-        await this.resolveConflict(conflict.id, { action: "keep_both" });
+        await this.resolveConflict(conflict.id, { action: "keep_both" }, decided);
         result.keepBoth++;
         result.resolved++;
       } else {
@@ -6333,7 +6395,7 @@ export class Memloom implements MemoryEngine {
           reason: provenance.reason ?? primary?.reason,
           model: provenance.model,
         });
-        await this.#attachResolution(conflictId, "supersede", target, [mergeId]);
+        await this.#attachResolution(conflictId, "supersede", target, [mergeId], provenance);
         break;
       }
       case "keep_new": {
@@ -6343,13 +6405,14 @@ export class Memloom implements MemoryEngine {
           reason: provenance.reason ?? primary?.reason,
           model: provenance.model,
         });
-        await this.#attachResolution(conflictId, "supersede", incoming, [mergeId]);
+        await this.#attachResolution(conflictId, "supersede", incoming, [mergeId], provenance);
         break;
       }
       case "keep_both": {
-        // No graph change: the point is the record, which #alreadySettled reads so a later
-        // pass does not ask again.
-        await this.#attachResolution(conflictId, "keep_both", null, []);
+        // No graph change, so this row IS the whole record. It is what #alreadySettled reads
+        // so a later pass does not ask again, and with the provenance it is also the only
+        // place a "these are different things" verdict can be read back.
+        await this.#attachResolution(conflictId, "keep_both", null, [], provenance);
         break;
       }
       case "merge":
@@ -6385,18 +6448,38 @@ export class Memloom implements MemoryEngine {
     );
   }
 
+  /**
+   * Stamp a decision as settled, and record who settled it.
+   *
+   * The provenance matters most for the answers that change nothing: a fold leaves a record in
+   * memory_entity_merges, but "these two are different things" leaves only the absence of one.
+   * Without this, a model that decided fifty pairs was auditable for the eleven it folded and
+   * invisible for the thirty-seven it kept apart. Omitting it means a human decided.
+   */
   async #attachResolution(
     conflictId: string,
     action: "supersede" | "keep_both" | "merge",
     winnerId: string | null,
     loserIds: string[],
+    provenance: ResolutionProvenance = {},
   ): Promise<void> {
     await this.#storage.query(
       `UPDATE memory_dedup_decisions
        SET resolution_action = $2, resolution_winner_id = $3,
-           resolution_loser_ids = $4::jsonb, resolved_at = now()
+           resolution_loser_ids = $4::jsonb, resolved_at = now(),
+           resolution_by = $5, resolution_model = $6, resolution_score = $7,
+           resolution_reason = $8
        WHERE id = $1`,
-      [conflictId, action, winnerId, JSON.stringify(loserIds)],
+      [
+        conflictId,
+        action,
+        winnerId,
+        JSON.stringify(loserIds),
+        provenance.decidedBy ?? "human",
+        provenance.model ?? null,
+        provenance.score ?? null,
+        provenance.reason ?? null,
+      ],
     );
   }
 }

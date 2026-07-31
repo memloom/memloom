@@ -1237,5 +1237,24 @@ export function buildMigrations(dims: number): Migration[] {
       ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS prior_version int;
     `,
     },
+    {
+      // Who settled a conflict, and why.
+      //
+      // A fold records this already (memory_entity_merges carries decided_by, score, reason and
+      // model), but only a fold does. A pair the model kept APART writes keep_both and nothing
+      // else, and an auto-resolved memory conflict writes its action and nothing else, so the
+      // model's reasoning existed only in the progress stream and was gone the moment the run
+      // finished. One button press that decided fifty pairs left thirty-seven of them with no
+      // record of what was decided or that a model decided it.
+      //
+      // NULL means a human clicked it, which is what every row written before this migration is.
+      id: "0033_resolution_provenance",
+      sql: /* sql */ `
+      ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS resolution_by text;
+      ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS resolution_model text;
+      ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS resolution_score double precision;
+      ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS resolution_reason text;
+    `,
+    },
   ];
 }

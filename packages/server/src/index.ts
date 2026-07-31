@@ -922,6 +922,12 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     c.json({ conflicts: await memloom.entityConflicts() }),
   );
 
+  // Pairs a decision kept apart. They leave no other trace, so without this route a model's
+  // "these are different things" verdicts are unreadable.
+  app.get("/memory/entities/settled", async (c) =>
+    c.json({ settled: await memloom.settledEntityPairs() }),
+  );
+
   app.get("/memory/entities/merges", async (c) => c.json({ merges: await memloom.entityMerges() }));
 
   app.post("/memory/entities/resolve", async (c) => {

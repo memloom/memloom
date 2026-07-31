@@ -550,6 +550,28 @@ describe("reconcile", () => {
     expect(second.run.llmCalls).toBe(0);
   });
 
+  it("records what the model decided, including the pairs it kept apart", async () => {
+    const verdict = JSON.stringify({
+      verdict: "distinct",
+      confidence: 0.8,
+      reason: "a website and a project are different things",
+    });
+    const { memloom, storage } = await openStore(() => verdict);
+    await seedNameVariants(storage, "memloom.ai", "memloom ui");
+    await memloom.setReconcileSettings({ llm_entities: true });
+
+    await memloom.reconcile({ mode: "apply" });
+
+    // A fold leaves a memory_entity_merges row. Keeping a pair apart leaves nothing but the
+    // decision, so without the provenance on it the verdict is unreadable: a run that decided
+    // fifty pairs would be auditable for the ones it folded and silent about the rest.
+    const [kept] = await memloom.settledEntityPairs();
+    expect(kept).toMatchObject({ decidedBy: "llm" });
+    expect(kept?.reason).toContain("different things");
+    expect(kept?.model).toBeTruthy();
+    expect([kept?.incomingName, kept?.candidateName].sort()).toEqual(["memloom ui", "memloom.ai"]);
+  });
+
   it("leaves a pair pending when the model will not commit", async () => {
     const { memloom, storage } = await openStore(() => "I could not say, sorry");
     await seedNameVariants(storage, "Phasmophobia", "Phasmaphobia");
