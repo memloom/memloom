@@ -46,6 +46,16 @@ Every result from a file says where it came from: `from lecture-notes.pdf › LI
 FUNCTIONS > 2. DEFINITION (p. 1)`. Documents are mirrors: re-adding an unchanged file is a no-op, a
 changed file replaces its chunks. See [Extractors & chunking](/guides/extractors).
 
+## Recordings and web pages, same store
+
+Add a web page by URL and memloom fetches and parses it in-process: no reader service,
+nothing about the page leaves your machine. Add an audio or video file and it is
+transcribed locally (Parakeet under sherpa-onnx), diarized into speakers, and cited by
+timestamp: `from standup.mkv › 12:30 - 14:28, Kostek`. Recordings run through a durable
+queue with per-stage progress and cancel; name a voice once and the voice library
+recognizes it in every later recording, entirely on-device. See
+[Recordings: audio & video](/guides/recordings).
+
 ## One graph over memories and context
 
 `memloom index` extracts entities (people, projects, tools, concepts) from memories and

@@ -48,6 +48,7 @@
             "pages": [
               "guides/agent-setup",
               "guides/extractors",
+              "guides/recordings",
               "guides/configuration",
               "guides/self-hosting"
             ]
