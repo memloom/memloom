@@ -978,6 +978,18 @@ export interface ReconcileOptions {
   passes?: readonly ReconcilePass[];
 }
 
+/** What the model made of the uncertain entity pairs, when pass 3 ran. */
+export interface ReconcileArbitration {
+  /** Pairs sent to the model. One call each; the queue's own limit is the ceiling. */
+  calls: number;
+  folded: number;
+  /** Pairs the model said are different things. Recorded, so it is never asked again. */
+  rejected: number;
+  /** Left pending for a human: the model said unsure, or gave no usable answer. */
+  unsure: number;
+  settled: Array<{ conflictId: string; class: string; reason: string }>;
+}
+
 export interface ReconcileReport {
   run: ReconcileRun;
   /** Every finding, surfaced or held back by a cap. */
@@ -989,6 +1001,10 @@ export interface ReconcileReport {
   passes: ReconcilePass[];
   /** Deterministic entity resolution, present when the 'entities' pass ran. */
   entities?: EntityResolutionResult;
+  /** Model arbitration of uncertain entity pairs, present when the 'llm_entities' pass ran. */
+  arbitration?: ReconcileArbitration;
+  /** The existing conflict auto-resolver, present when the 'llm_conflicts' pass ran. */
+  autoResolved?: ConflictAutoResult;
 }
 
 export interface ReconcileRevertResult {

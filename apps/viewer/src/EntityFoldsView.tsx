@@ -2,6 +2,15 @@ import { useCallback, useEffect, useState } from "react";
 import { api, type EntityConflict, type EntityMerge } from "./api";
 import { cachedData, prefetch, refetch } from "./prefetch";
 
+// Who decided a fold. Three answers, not two: reconciliation's LLM pass writes folds with
+// decidedBy 'llm', and a fold made by a model has to say which model, or a bad one cannot be
+// traced through its decisions six months later.
+function foldedBy(merge: EntityMerge): string {
+  if (merge.decidedBy === "auto") return "folded automatically";
+  if (merge.decidedBy === "llm") return `folded by ${merge.model ?? "a model"}`;
+  return "folded by you";
+}
+
 // Entity resolution shares this tab on purpose: an uncertain fold is a contradiction about
 // identity rather than about content, and routing it to a second queue would mean two places
 // to check. It reads separately because the payload is entity-shaped, but resolve and revert
@@ -164,8 +173,7 @@ export function EntityFoldsView({ onChanged }: { onChanged: () => void }) {
               {undoable.map((m) => (
                 <div key={m.id} className="card">
                   <div className="cardLabel">
-                    {m.decidedBy === "auto" ? "folded automatically" : "folded by you"};{" "}
-                    {new Date(m.createdAt).toLocaleString()}
+                    {foldedBy(m)}; {new Date(m.createdAt).toLocaleString()}
                   </div>
                   <div className="statement statementExisting">
                     "{m.sourceName}" now resolves to "{m.canonicalName}"

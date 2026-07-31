@@ -127,7 +127,13 @@ export {
   CONFLICT_QUEUE_CEILING,
   capBuckets,
   RECONCILE_CAPS,
+  RECONCILE_CATCHUP_HOURS,
+  RECONCILE_CEILING_HOURS,
+  RECONCILE_IDLE_HOURS,
+  RECONCILE_IDLE_QUIET_MS,
   RECONCILE_K,
+  RECONCILE_STARTUP_SETTLE_MS,
+  RECONCILE_TICK_MS,
   effectiveCaps,
   estimateRecheck,
   estimateTokens,
@@ -137,11 +143,24 @@ export {
   findOrphanStale,
   findReplacesLeaks,
   INTEGRITY_CLASSES,
+  idleRunDue,
   isIntegrityFinding,
   PROMPT_OVERHEAD_TOKENS,
   recheckWindow,
+  startupCatchUpDue,
 } from "./reconcile.js";
 export type { MemoryEngine } from "./engine.js";
+// Arbitrating an uncertain fold with a model: the prompt and the parser, both pure.
+export type {
+  EntityArbitrationCase,
+  EntityVerdict,
+  EntityVerdictKind,
+} from "./entity-arbiter.js";
+export {
+  arbitrationCase,
+  buildEntityArbiterPrompt,
+  parseEntityVerdict,
+} from "./entity-arbiter.js";
 // Entity resolution: the pure decision rules behind folding name variants.
 export type { PairJudgement, PairVerdict, ResolvableEntity } from "./entity-resolution.js";
 export {
@@ -298,6 +317,7 @@ export type {
   DocumentSpeaker,
   ReconcileAction,
   ReconcileActionKind,
+  ReconcileArbitration,
   ReconcileDecision,
   ReconcileEstimate,
   ReconcileMode,

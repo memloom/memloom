@@ -102,6 +102,8 @@ export interface EntityMerge {
   decidedBy: "auto" | "llm" | "human";
   score: number | null;
   reason: string | null;
+  /** Which model decided, when decidedBy is 'llm'. Null for every other kind of fold. */
+  model: string | null;
   createdAt: string;
   revertedAt: string | null;
 }
@@ -113,6 +115,72 @@ export interface EntityResolutionResult {
   queued: number;
   deferred: number;
   skipped: number;
+  mergeIds: string[];
+}
+
+// Reconciliation: the consolidation pass. Four passes in cost order; the two that call a model are
+// off until the user turns them on, because reversibility buys autonomy and money buys a prompt.
+export type ReconcilePass = "invariants" | "entities" | "llm_entities" | "llm_conflicts";
+
+export type ReconcileSettings = Record<ReconcilePass, boolean> & { startupCatchUp: boolean };
+
+export interface ReconcileAction {
+  id: string;
+  runId: string;
+  kind: "retire" | "question" | "conflict" | "fold";
+  class: string;
+  memoryId: string | null;
+  reason: string;
+  applied: boolean;
+  staledAt: string | null;
+  surfaced: boolean;
+  decision: "approved" | "rejected" | "snoozed" | null;
+  mergeId: string | null;
+  createdAt: string;
+}
+
+export interface ReconcileRun {
+  id: string;
+  mode: "dry_run" | "apply";
+  trigger: "manual" | "idle" | "startup";
+  status: "running" | "success" | "error" | "aborted";
+  scanned: number;
+  retired: number;
+  folded: number;
+  questions: number;
+  conflictsRaised: number;
+  llmCalls: number;
+  startedAt: string;
+  finishedAt: string | null;
+  revertedAt: string | null;
+}
+
+export interface ReconcileEstimate {
+  window: number;
+  llmCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  model: string;
+  usd: number | null;
+}
+
+export interface ReconcileArbitration {
+  calls: number;
+  folded: number;
+  rejected: number;
+  unsure: number;
+  settled: Array<{ conflictId: string; class: string; reason: string }>;
+}
+
+export interface ReconcileReport {
+  run: ReconcileRun;
+  actions: ReconcileAction[];
+  estimate: ReconcileEstimate;
+  heldBack: { retire: number; question: number; conflict: number };
+  passes: ReconcilePass[];
+  entities?: EntityResolutionResult;
+  arbitration?: ReconcileArbitration;
+  autoResolved?: { examined: number; resolved: number; unsure: number };
 }
 
 export interface GraphDocument {
@@ -786,6 +854,19 @@ export const api = {
     post<EntityResolutionResult>("/memory/entities/resolve", { dryRun }),
   revertEntityMerge: (id: string) =>
     post<{ ok: boolean }>(`/memory/entities/merges/${id}/revert`, {}),
+  // Reconciliation. Settings live in the store, not config.env, so a toggle takes effect on the next
+  // run rather than the next daemon restart.
+  reconcileSettings: () => json<ReconcileSettings>("/memory/reconcile/settings"),
+  setReconcileSettings: (patch: Partial<ReconcileSettings>) =>
+    post<ReconcileSettings>("/memory/reconcile/settings", patch),
+  reconcileRuns: () => json<{ runs: ReconcileRun[] }>("/memory/reconcile/runs").then((r) => r.runs),
+  reconcile: (mode: "dry_run" | "apply" = "apply") =>
+    post<ReconcileReport>("/memory/reconcile", { mode, trigger: "manual" }),
+  revertReconcile: (runId: string) =>
+    post<{ runId: string; restored: number; unfolded: number; skipped: number }>(
+      `/memory/reconcile/${runId}/revert`,
+      {},
+    ),
   /**
    * Walk the graph from one entity. `target` may be a name, an id, or a folded-away spelling;
    * null means nothing matched, which is different from an entity with no neighbours.

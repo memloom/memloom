@@ -1,5 +1,11 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { effectiveCaps, PROMPT_OVERHEAD_TOKENS } from "./reconcile.js";
+import {
+  RECONCILE_IDLE_QUIET_MS,
+  effectiveCaps,
+  idleRunDue,
+  PROMPT_OVERHEAD_TOKENS,
+  startupCatchUpDue,
+} from "./reconcile.js";
 import { HashingEmbeddingProvider, ScriptedLLMProvider } from "./hashing-provider.js";
 import { Memloom, SENTINEL_OWNER } from "./memloom.js";
 import type { StorageAdapter } from "./storage.js";
@@ -16,21 +22,22 @@ afterEach(async () => {
 
 // Everything is complementary: saves land as separate beliefs, no conflicts, no versioning.
 // Reconciliation's detectors are pure SQL, so the classifier only has to stay out of the way.
-function quietLlm() {
-  return new ScriptedLLMProvider((prompt) =>
-    prompt.startsWith("You compare")
+function quietLlm(arbiter?: (prompt: string) => string) {
+  return new ScriptedLLMProvider((prompt) => {
+    if (prompt.startsWith("You decide whether two names")) return arbiter?.(prompt) ?? "";
+    return prompt.startsWith("You compare")
       ? JSON.stringify([{ candidate: 1, relation: "complementary", reason: "unrelated" }])
-      : "[]",
-  );
+      : "[]";
+  });
 }
 
-async function openStore() {
+async function openStore(arbiter?: (prompt: string) => string) {
   const storage = await PgliteFactory.open();
   cleanups.push(() => storage.close());
   const memloom = new Memloom({
     storage,
     embedding: new HashingEmbeddingProvider(1024),
-    llm: quietLlm(),
+    llm: quietLlm(arbiter),
     autoIndexDelayMs: 999_999,
   });
   await memloom.init();
@@ -408,6 +415,128 @@ describe("reconcile", () => {
     const report = await memloom.reconcile({ mode: "apply" });
     expect(report.passes).toEqual(["invariants"]);
     expect(await entityNames(storage)).toEqual(["Claude Code", "claude-code"]);
+  });
+
+  it("prefers idle but falls back to the clock", () => {
+    const now = Date.parse("2026-07-31T12:00:00Z");
+    const hours = (n: number) => now - n * 3_600_000;
+    const quiet = now - RECONCILE_IDLE_QUIET_MS - 1;
+    const base = { now, lastRequestAt: quiet, indexing: false };
+
+    // Too soon after the last run, however quiet the machine is.
+    expect(idleRunDue({ ...base, lastRunAt: hours(19) })).toBe(false);
+    expect(idleRunDue({ ...base, lastRunAt: hours(21) })).toBe(true);
+    // Old enough, but the daemon is still serving: wait for a gap.
+    expect(idleRunDue({ ...base, lastRunAt: hours(21), lastRequestAt: now })).toBe(false);
+    // Past the ceiling, run anyway. Without this an always-busy machine whose daemon never
+    // restarts would never reconcile at all.
+    expect(idleRunDue({ ...base, lastRunAt: hours(49), lastRequestAt: now })).toBe(true);
+    // Never against a live index pass.
+    expect(idleRunDue({ ...base, lastRunAt: hours(49), indexing: true })).toBe(false);
+    // Never run means overdue, not "start counting now".
+    expect(idleRunDue({ ...base, lastRunAt: null })).toBe(true);
+
+    expect(startupCatchUpDue({ now, lastRunAt: hours(37), enabled: true })).toBe(true);
+    expect(startupCatchUpDue({ now, lastRunAt: hours(35), enabled: true })).toBe(false);
+    expect(startupCatchUpDue({ now, lastRunAt: null, enabled: false })).toBe(false);
+  });
+
+  it("lets a model settle the pairs the rules could not, and undoes it", async () => {
+    // A typo pair: one edit apart, so the rules say review rather than auto. This is the case
+    // no score can separate, which is the whole argument for the pass.
+    const verdict = JSON.stringify({
+      verdict: "same",
+      confidence: 0.9,
+      reason: "one is a misspelling of the other",
+    });
+    const { memloom, storage } = await openStore(() => verdict);
+    await seedNameVariants(storage, "Phasmophobia", "Phasmaphobia");
+    await memloom.setReconcileSettings({ llm_entities: true });
+
+    const report = await memloom.reconcile({ mode: "apply" });
+
+    expect(report.entities?.queued).toBe(1);
+    expect(report.arbitration).toMatchObject({ calls: 1, folded: 1, rejected: 0, unsure: 0 });
+    // One survives; which spelling wins is pickCanonical's call, not the model's.
+    expect(await entityNames(storage)).toHaveLength(1);
+    // The fold says a model made it, and which one, so it is not mistaken for the user's.
+    const [merge] = await memloom.entityMerges();
+    expect(merge).toMatchObject({ decidedBy: "llm", score: 0.9 });
+    expect(merge?.reason).toContain("misspelling");
+    // Undo puts back the entity AND the question, so nothing claims a resolution that is gone.
+    const reverted = await memloom.revertReconcile(report.run.id);
+    expect(reverted.unfolded).toBe(1);
+    expect(await entityNames(storage)).toEqual(["Phasmaphobia", "Phasmophobia"]);
+    expect(await memloom.entityConflicts()).toHaveLength(1);
+  });
+
+  it("records a rejection so the same pair is never asked about again", async () => {
+    const verdict = JSON.stringify({
+      verdict: "distinct",
+      confidence: 0.8,
+      reason: "a website and a project are different things",
+    });
+    const { memloom, storage } = await openStore(() => verdict);
+    await seedNameVariants(storage, "memloom.ai", "memloom ui");
+    await memloom.setReconcileSettings({ llm_entities: true });
+
+    const first = await memloom.reconcile({ mode: "apply" });
+    expect(first.arbitration).toMatchObject({ folded: 0, rejected: 1 });
+    expect(await entityNames(storage)).toEqual(["memloom ui", "memloom.ai"]);
+    expect(await memloom.entityConflicts()).toHaveLength(0);
+
+    // Second run: settled means settled. Asking the model again every night is how a cheap
+    // pass turns into a standing bill.
+    const second = await memloom.reconcile({ mode: "apply" });
+    expect(second.arbitration).toBeUndefined();
+    expect(second.run.llmCalls).toBe(0);
+  });
+
+  it("leaves a pair pending when the model will not commit", async () => {
+    const { memloom, storage } = await openStore(() => "I could not say, sorry");
+    await seedNameVariants(storage, "Phasmophobia", "Phasmaphobia");
+    await memloom.setReconcileSettings({ llm_entities: true });
+
+    const report = await memloom.reconcile({ mode: "apply" });
+
+    // An unparseable answer is not a verdict. Defaulting to a fold would be the one mistake
+    // this pass can make that feels irreversible to a user.
+    expect(report.arbitration).toMatchObject({ calls: 1, folded: 0, rejected: 0, unsure: 1 });
+    expect(await entityNames(storage)).toEqual(["Phasmaphobia", "Phasmophobia"]);
+    expect(await memloom.entityConflicts()).toHaveLength(1);
+  });
+
+  it("does not let a paid pass claim the contradiction window", async () => {
+    const verdict = JSON.stringify({ verdict: "same", confidence: 0.9, reason: "a misspelling" });
+    const { memloom, storage } = await openStore(() => verdict);
+    await memloom.save({ content: "the deploy target is fly.io" });
+    await seedNameVariants(storage, "Phasmophobia", "Phasmaphobia");
+    await memloom.setReconcileSettings({ llm_entities: true });
+
+    // This run spends money, on entities. The contradiction re-check is a different pass and
+    // has still never run, so the window must not narrow: llm_calls > 0 is not evidence that
+    // contradictions were looked at.
+    const paid = await memloom.reconcile({ mode: "apply" });
+    expect(paid.run.llmCalls).toBeGreaterThan(0);
+    expect((await memloom.reconcile()).estimate.window).toBe(1);
+  });
+
+  it("never calls a model on a dry run, however it is configured", async () => {
+    let calls = 0;
+    const { memloom, storage } = await openStore(() => {
+      calls++;
+      return JSON.stringify({ verdict: "same", confidence: 1, reason: "same" });
+    });
+    await seedNameVariants(storage, "Phasmophobia", "Phasmaphobia");
+    await memloom.setReconcileSettings({ llm_entities: true, llm_conflicts: true });
+
+    const report = await memloom.reconcile();
+
+    // A preview that spent money would be charging for a report.
+    expect(calls).toBe(0);
+    expect(report.arbitration).toBeUndefined();
+    expect(report.autoResolved).toBeUndefined();
+    expect(report.run.llmCalls).toBe(0);
   });
 
   it("keeps runs in the log, newest first", async () => {

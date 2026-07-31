@@ -10,11 +10,15 @@ import {
   AudioError,
   CATALOG,
   type ContextProgressEvent,
+  RECONCILE_STARTUP_SETTLE_MS,
+  RECONCILE_TICK_MS,
   detectKind,
+  FREE_RECONCILE_PASSES,
   findModel,
   hasFfmpeg,
   type IndexProgressEvent,
   IngestQueue,
+  idleRunDue,
   isChatProvider,
   isHttpUrl,
   LinkExtractionError,
@@ -23,6 +27,7 @@ import {
   modelStatus,
   selectModel,
   setupModels,
+  startupCatchUpDue,
   supportedExtensions,
   uploadStoreDir,
 } from "@memloom/core";
@@ -36,6 +41,11 @@ import { z } from "zod";
 // any HTTP client) can reach the engine. The CLI/MCP route through this when it holds the
 // store, giving one owner of the single PGLite connection (D1). Same request/response shapes
 // as the hosted public API, so clients can point at local or cloud.
+
+/** When the daemon last served anything: the difference between quiet and asleep. */
+export interface DaemonActivity {
+  lastRequestAt: number;
+}
 
 export interface ServerOptions {
   /** Log each request (method, path, status, timing) to stdout. Off by default (tests). */
@@ -51,6 +61,11 @@ export interface ServerOptions {
    * no API route claims are served from it, so the daemon is API + viewer on one port.
    */
   staticDir?: string;
+  /**
+   * When set, every request stamps `lastRequestAt` on it. The reconcile scheduler reads it to tell
+   * an idle daemon from a busy one; `serve` owns the object, tests leave it undefined.
+   */
+  activity?: DaemonActivity;
   /**
    * Opens a file with the OS default application (the viewer's "Open file" button). Defaults
    * to the platform opener; injectable so tests never actually launch anything.
@@ -544,6 +559,18 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       origin: (origin) => (LOCAL_ORIGIN.test(origin) ? origin : null),
     }),
   );
+
+  // The reconcile scheduler's only signal for "is anyone using this daemon". Stamped before the
+  // access-control gate on purpose: a rejected cross-site request is still someone knocking,
+  // and a run that started because the machine looked idle would compete with whatever comes
+  // next. Cheap enough to sit in front of everything.
+  const activity = opts.activity;
+  if (activity) {
+    app.use("*", async (_c, next) => {
+      activity.lastRequestAt = Date.now();
+      await next();
+    });
+  }
 
   // Access-control gate. cors() only sets response headers; it never blocks the request, so
   // without this a cross-site page could still fire a handler's side effects (e.g. a
@@ -1719,7 +1746,79 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 }
 
 /** Start the server on localhost. Returns the underlying node server handle. */
+/**
+ * Run the free reconcile passes on their own: once shortly after startup if it has been long
+ * enough, and thereafter whenever the daemon has been quiet for a while.
+ *
+ * Only the free passes, and never the settings' choice of them. A trigger nobody watched must
+ * not be able to spend money, so what runs here is FREE_RECONCILE_PASSES verbatim rather than
+ * whatever the user has enabled. The paid passes are the user's to start.
+ *
+ * Returns a stop function. Every timer is unref'd, so a pending run never holds the process
+ * open on its own.
+ */
+export function startReconcileScheduler(memloom: Memloom, activity: DaemonActivity): () => void {
+  let running = false;
+  let stopped = false;
+
+  const run = async (trigger: "idle" | "startup") => {
+    if (running || stopped) return;
+    running = true;
+    try {
+      await memloom.reconcile({ mode: "apply", trigger, passes: FREE_RECONCILE_PASSES });
+    } catch (err) {
+      // A background pass that throws must not take the daemon with it. The run row already
+      // records the error, and the next tick tries again.
+      console.error("[reconcile]", err instanceof Error ? err.message : String(err));
+    } finally {
+      running = false;
+    }
+  };
+
+  const lastRunAt = async (): Promise<number | null> => {
+    const iso = await memloom.lastReconcileFinishedAt().catch(() => null);
+    return iso ? new Date(iso).getTime() : null;
+  };
+
+  const startup = setTimeout(async () => {
+    const settings = await memloom.reconcileSettings().catch(() => null);
+    if (!settings) return;
+    if (
+      startupCatchUpDue({
+        now: Date.now(),
+        lastRunAt: await lastRunAt(),
+        enabled: settings.startupCatchUp,
+      })
+    ) {
+      await run("startup");
+    }
+  }, RECONCILE_STARTUP_SETTLE_MS);
+  startup.unref?.();
+
+  const tick = setInterval(async () => {
+    if (
+      idleRunDue({
+        now: Date.now(),
+        lastRunAt: await lastRunAt(),
+        lastRequestAt: activity.lastRequestAt,
+        indexing: memloom.indexing,
+      })
+    ) {
+      await run("idle");
+    }
+  }, RECONCILE_TICK_MS);
+  tick.unref?.();
+
+  return () => {
+    stopped = true;
+    clearTimeout(startup);
+    clearInterval(tick);
+  };
+}
+
 export function serve(memloom: Memloom, port = 4319) {
-  const app = createServer(memloom);
+  const activity: DaemonActivity = { lastRequestAt: Date.now() };
+  const app = createServer(memloom, { activity });
+  startReconcileScheduler(memloom, activity);
   return nodeServe({ fetch: app.fetch, port, hostname: "127.0.0.1" });
 }

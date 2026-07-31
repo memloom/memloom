@@ -690,7 +690,7 @@ describe("server", () => {
     expect(emptied.conflicts).toHaveLength(0);
   });
 
-  it("reconciles as a dry run over HTTP, and refuses to apply without RECONCILE_ENABLED", async () => {
+  it("reconciles over HTTP, and RECONCILE_ENABLED=0 stops it acting", async () => {
     const server = await app();
     await server.request("/memory/save", {
       method: "POST",
@@ -717,15 +717,29 @@ describe("server", () => {
     };
     expect(runs.runs.map((r) => r.id)).toEqual([report.run.id]);
 
-    // The one path that can change beliefs unattended stays shut unless the daemon was told
-    // otherwise. Nothing the CLI sends can open it.
-    delete process.env.RECONCILE_ENABLED;
+    // Which passes run is the user's setting, and the two that spend money start off. A host
+    // that wants the reports and none of the repairs sets the kill switch instead.
+    const settings = (await (await server.request("/memory/reconcile/settings")).json()) as Record<
+      string,
+      boolean
+    >;
+    expect(settings).toMatchObject({ invariants: true, entities: true, llm_entities: false });
+
+    const saved = await server.request("/memory/reconcile/settings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entities: false }),
+    });
+    expect(((await saved.json()) as { entities: boolean }).entities).toBe(false);
+
+    process.env.RECONCILE_ENABLED = "0";
     const applied = await server.request("/memory/reconcile", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ mode: "apply" }),
     });
     expect(applied.status).toBe(403);
+    delete process.env.RECONCILE_ENABLED;
 
     const missing = await server.request(`/memory/reconcile/${randomUUID()}/revert`, {
       method: "POST",

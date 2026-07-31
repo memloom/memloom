@@ -63,6 +63,57 @@ export function capBuckets(findings: ReconcileFinding[], cap: number, integrityC
 /** Above this many pending conflicts, a run raises none: adding to an ignored backlog is noise. */
 export const CONFLICT_QUEUE_CEILING = 20;
 
+// When a run happens on its own. A cron at 3am on a laptop is a run that silently never
+// happens, so idle comes first. But idle alone guarantees nothing on a machine that is never
+// idle and whose daemon never restarts, which is what the ceiling is for: prefer idle, fall
+// back to the clock.
+
+/** Startup catch-up: the daemon started and it has been this long since a run. */
+export const RECONCILE_CATCHUP_HOURS = 36;
+/** Idle: quiet daemon, and it has been this long since a run. */
+export const RECONCILE_IDLE_HOURS = 20;
+/** Ceiling: this long since a run means run anyway, idle or not. */
+export const RECONCILE_CEILING_HOURS = 48;
+/** How long the daemon must have served nothing to count as idle. */
+export const RECONCILE_IDLE_QUIET_MS = 10 * 60_000;
+/** Startup settle: long enough that a catch-up never competes with the ingest queue's load. */
+export const RECONCILE_STARTUP_SETTLE_MS = 2 * 60_000;
+/** How often the daemon asks whether it is time. */
+export const RECONCILE_TICK_MS = 5 * 60_000;
+
+function hoursSince(now: number, then: number | null): number {
+  return then === null ? Number.POSITIVE_INFINITY : (now - then) / 3_600_000;
+}
+
+/**
+ * Is a startup catch-up due? A sleeping laptop means no daemon, which means no run, so the
+ * startup path is what makes "nothing is missed, it is only late" true.
+ */
+export function startupCatchUpDue(opts: {
+  now: number;
+  lastRunAt: number | null;
+  enabled: boolean;
+}): boolean {
+  return opts.enabled && hoursSince(opts.now, opts.lastRunAt) >= RECONCILE_CATCHUP_HOURS;
+}
+
+/**
+ * Is an opportunistic run due? Null means not yet. Never while indexing: two background passes
+ * over the same store is how a laptop gets loud.
+ */
+export function idleRunDue(opts: {
+  now: number;
+  lastRunAt: number | null;
+  lastRequestAt: number;
+  indexing: boolean;
+}): boolean {
+  if (opts.indexing) return false;
+  const age = hoursSince(opts.now, opts.lastRunAt);
+  if (age >= RECONCILE_CEILING_HOURS) return true;
+  if (age < RECONCILE_IDLE_HOURS) return false;
+  return opts.now - opts.lastRequestAt >= RECONCILE_IDLE_QUIET_MS;
+}
+
 /** Consecutive ignored runs after which a run stops surfacing anything at all. */
 export const BACKOFF_SILENT_AFTER = 3;
 

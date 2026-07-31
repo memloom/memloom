@@ -1088,6 +1088,107 @@ textarea {
   background: var(--text);
 }
 
+/* ---------- settings: reconciliation ---------- */
+
+.cardNote {
+  margin: 0 0 14px;
+  max-width: 68ch;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.passList {
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 14px;
+  border: 1px solid var(--border);
+}
+
+.passRow {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 13px;
+  text-align: left;
+}
+
+.passRow:last-child {
+  border-bottom: 0;
+}
+
+/* The startup row is a different kind of choice from the four passes above it. */
+.passRow:nth-last-child(1) {
+  border-top: 1px solid var(--border);
+}
+
+.passRow:hover {
+  background: var(--bg-inset);
+  color: var(--text);
+}
+
+.passRowOn {
+  color: var(--text);
+}
+
+.passRowOn .autoIndexTrack {
+  border-color: var(--text);
+}
+
+.passRowOn .autoIndexKnob {
+  transform: translateX(12px);
+  background: var(--text);
+}
+
+.passLabel {
+  flex: 1;
+}
+
+/* The whole reason the list is not four checkboxes: which ones spend money is the choice. */
+.passCost {
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.passCostPaid {
+  color: var(--warn);
+}
+
+.reconcileReport {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.reconcileGroup {
+  margin-top: 12px;
+}
+
+.reconcileGroupHead {
+  margin-bottom: 4px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.reconcileLine {
+  padding: 2px 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.reconcileLineMuted {
+  color: var(--text-muted);
+}
+
 /* ---------- entity management (schema tab) ---------- */
 
 /* The entities card header doubles as its collapse toggle (collapsed by default so the

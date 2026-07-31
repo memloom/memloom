@@ -99,6 +99,18 @@ export function formatReconcileReport(report: ReconcileReport): string {
     if (deferred > 0) lines.push(`  ${deferred} more are waiting for that queue to drain`);
   }
 
+  // What the paid passes did, when they are on. Their calls are the only thing a run spends,
+  // so the count is part of the report rather than something to go and look up.
+  if (report.arbitration) {
+    const { calls, folded, rejected, unsure } = report.arbitration;
+    lines.push("", `a model settled ${folded + rejected} uncertain pairs in ${calls} calls:`);
+    lines.push(`  ${folded} folded, ${rejected} kept apart, ${unsure} left for you`);
+  }
+  if (report.autoResolved) {
+    const { examined, resolved } = report.autoResolved;
+    lines.push("", `a model re-judged ${examined} pending conflicts and resolved ${resolved}`);
+  }
+
   if (questions.length > 0) {
     lines.push("", "questions:");
     for (const action of questions) {

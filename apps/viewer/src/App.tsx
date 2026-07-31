@@ -11,6 +11,7 @@ import { graphsEqual } from "./graphEquality";
 import { MemoriesView } from "./MemoriesView";
 import { prefetch } from "./prefetch";
 import { SchemaView } from "./SchemaView";
+import { SettingsView } from "./SettingsView";
 import { ThemeToggle } from "./ThemeToggle";
 
 type Tab =
@@ -21,7 +22,8 @@ type Tab =
   | "schema"
   | "conflicts"
   | "connectors"
-  | "console";
+  | "console"
+  | "settings";
 
 // Hovering a tab starts its data fetches before the click lands, and the same keys seed
 // each view's first render (see prefetch.ts), so a switch shows data rather than
@@ -43,6 +45,10 @@ const TAB_PREFETCH: Partial<Record<Tab, () => void>> = {
     void prefetch("entity-merges", api.entityMerges).catch(() => {});
   },
   console: () => void prefetch("index-runs", api.indexRuns).catch(() => {}),
+  settings: () => {
+    void prefetch("reconcile-settings", api.reconcileSettings).catch(() => {});
+    void prefetch("reconcile-runs", api.reconcileRuns).catch(() => {});
+  },
 };
 
 export function App() {
@@ -106,6 +112,7 @@ export function App() {
               "conflicts",
               "connectors",
               "console",
+              "settings",
             ] as const
           ).map((t) => (
             <button
@@ -191,6 +198,7 @@ export function App() {
         )}
         {tab === "connectors" && <ConnectorsView onChanged={refresh} />}
         {tab === "console" && <ConsoleView onChanged={refresh} />}
+        {tab === "settings" && <SettingsView onChanged={refresh} />}
       </main>
     </div>
   );
