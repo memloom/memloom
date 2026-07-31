@@ -717,6 +717,16 @@ describe("server", () => {
     };
     expect(runs.runs.map((r) => r.id)).toEqual([report.run.id]);
 
+    // The Console expands a run by reading its findings back. This has to answer JSON: a path
+    // no route claims falls through to the viewer's index.html, which is a 200 the client
+    // cannot parse, and the row it feeds sits on "loading" forever.
+    const actionsRes = await server.request(`/memory/reconcile/runs/${report.run.id}/actions`);
+    expect(actionsRes.headers.get("content-type")).toContain("application/json");
+    expect((await actionsRes.json()) as { actions: unknown[] }).toHaveProperty("actions");
+    // An unknown id is an empty run, never another owner's ledger.
+    const strangerRes = await server.request(`/memory/reconcile/runs/${randomUUID()}/actions`);
+    expect((await strangerRes.json()) as { actions: unknown[] }).toEqual({ actions: [] });
+
     // Which passes run is the user's setting, and the two that spend money start off. A host
     // that wants the reports and none of the repairs sets the kill switch instead.
     const settings = (await (await server.request("/memory/reconcile/settings")).json()) as Record<

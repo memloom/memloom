@@ -291,6 +291,35 @@ function reconcileRunLevel(run: ReconcileRun): IndexEventLevel {
   return run.revertedAt ? "warning" : "success";
 }
 
+// A run's findings load on expand, and the three states are kept apart on purpose: "no data
+// yet" is not the same as "the request failed", and conflating them is how a broken fetch
+// showed as a spinner that never resolved.
+type ActionsState =
+  | { status: "loading" }
+  | { status: "ready"; actions: ReconcileAction[] }
+  | { status: "error"; message: string };
+
+function RunActions({ state }: { state: ActionsState | undefined }) {
+  if (!state || state.status === "loading") return <div className="sessionEmpty">loading…</div>;
+  if (state.status === "error") {
+    return <div className="sessionEmpty sessionEmptyError">could not load: {state.message}</div>;
+  }
+  if (state.actions.length === 0) {
+    return <div className="sessionEmpty">nothing recorded for this run</div>;
+  }
+  return (
+    <>
+      {state.actions.map((a) => (
+        <div key={a.id} className={`eventRow level-${a.applied ? "success" : "info"}`}>
+          <span className="eventMessage">
+            {a.kind}: {a.reason}
+          </span>
+        </div>
+      ))}
+    </>
+  );
+}
+
 // Reconcile runs, the same collapsible shape as an indexing session: the summary is the header,
 // the findings are the body. No delete, deliberately: a reconcile run IS its undo record, so
 // removing one would quietly make what it did permanent. Indexing sessions are only a log,
@@ -303,7 +332,7 @@ function ReconcileRuns({
   onError: (message: string) => void;
 }) {
   const [runs, setRuns] = useState<ReconcileRun[] | null>(() => cachedData<ReconcileRun[]>("reconcile-runs"));
-  const [actionsByRun, setActionsByRun] = useState<Record<string, ReconcileAction[]>>({});
+  const [actionsByRun, setActionsByRun] = useState<Record<string, ActionsState>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -319,9 +348,16 @@ function ReconcileRuns({
   async function toggle(runId: string) {
     const next = !expanded[runId];
     setExpanded((prev) => ({ ...prev, [runId]: next }));
-    if (next && !actionsByRun[runId]) {
-      const actions = await api.reconcileActions(runId).catch(() => null);
-      if (actions) setActionsByRun((prev) => ({ ...prev, [runId]: actions }));
+    if (!next || actionsByRun[runId]?.status === "ready") return;
+    // Mark it loading first, so a failure below can replace it. Leaving the absence of data
+    // to mean "loading" is what made a dead request look like a slow one.
+    setActionsByRun((prev) => ({ ...prev, [runId]: { status: "loading" } }));
+    try {
+      const actions = await api.reconcileActions(runId);
+      setActionsByRun((prev) => ({ ...prev, [runId]: { status: "ready", actions } }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setActionsByRun((prev) => ({ ...prev, [runId]: { status: "error", message } }));
     }
   }
 
@@ -329,7 +365,7 @@ function ReconcileRuns({
     setBusy(runId);
     try {
       await api.revertReconcile(runId);
-      setActionsByRun((prev) => ({ ...prev, [runId]: [] }));
+      setActionsByRun((prev) => ({ ...prev, [runId]: { status: "ready", actions: [] } }));
       await refresh();
       onChanged();
     } catch (err) {
@@ -387,22 +423,7 @@ function ReconcileRuns({
                   </div>
                   {expanded[run.id] && (
                     <div className="sessionBody">
-                      {!actionsByRun[run.id] ? (
-                        <div className="sessionEmpty">loading…</div>
-                      ) : actionsByRun[run.id]?.length === 0 ? (
-                        <div className="sessionEmpty">nothing recorded for this run</div>
-                      ) : (
-                        actionsByRun[run.id]?.map((a) => (
-                          <div
-                            key={a.id}
-                            className={`eventRow level-${a.applied ? "success" : "info"}`}
-                          >
-                            <span className="eventMessage">
-                              {a.kind}: {a.reason}
-                            </span>
-                          </div>
-                        ))
-                      )}
+                      <RunActions state={actionsByRun[run.id]} />
                     </div>
                   )}
                 </div>

@@ -1543,10 +1543,19 @@ textarea {
   margin-top: 4px;
 }
 
+/* Each history scrolls inside itself. The Console holds two of them, and with a page-level
+   scroll the second one starts below the fold and stays there: reaching Reconciliation meant
+   scrolling past every indexing session. A bounded list keeps both headings on screen and
+   makes the scroll you do inside one of them local to it.
+   The floor matters more than the ceiling: at ~2 sessions the list should not be a stub. */
 .sessionList {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  max-height: clamp(220px, 34vh, 460px);
+  overflow-y: auto;
+  /* Room for the scrollbar so it never sits on top of a session's delete button. */
+  padding-right: 2px;
 }
 
 .session {
@@ -1667,6 +1676,12 @@ textarea {
   font-size: 11.5px;
   color: var(--text-faint);
   padding: 2px 0;
+}
+
+/* A failed load reads as an error, not as an empty result. The level-* rules only style
+   descendants, so this cannot reuse them. */
+.sessionEmptyError {
+  color: var(--danger);
 }
 
 .spinIcon {

@@ -616,8 +616,25 @@ export async function fileToBase64(file: File): Promise<string> {
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
-  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  const text = await res.text();
+  let body: { error?: string } | null = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null;
+  }
   if (!res.ok) throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
+  // A 200 that is not JSON means no API route claimed this path, so the request fell through
+  // to the static handler and got index.html back. Every daemon route answers JSON, so the one
+  // way to see this is a viewer bundle newer than the daemon serving it. Worth saying out loud:
+  // returning null here made every caller crash somewhere unrelated, which is how this was
+  // found (a reconcile run's log stuck on "loading" forever).
+  if (body === null) {
+    throw new Error(
+      `${path} is not available on this daemon. It is probably older than this page: ` +
+        "rebuild and restart it.",
+    );
+  }
   return body as T;
 }
 
