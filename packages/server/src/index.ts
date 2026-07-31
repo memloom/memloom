@@ -1037,6 +1037,10 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     });
   });
 
+  app.get("/memory/reconcile/runs/:id/actions", async (c) =>
+    c.json({ actions: await memloom.reconcileActions(c.req.param("id")) }),
+  );
+
   app.get("/memory/reconcile/settings", async (c) => c.json(await memloom.reconcileSettings()));
 
   app.post("/memory/reconcile/settings", async (c) => {

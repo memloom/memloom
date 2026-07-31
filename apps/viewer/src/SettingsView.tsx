@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ReconcilePass, type ReconcileReport, type ReconcileRun, type ReconcileSettings } from "./api";
 
-// Settings. Reconciliation is the only section today, and its shape is the point: the passes are
-// listed in cost order and labelled by what they cost, because two of them act on their own and
-// two of them spend money. Four identical checkboxes would hide the only distinction that
-// matters.
+// Settings: everything that decides what the engine does to itself on its own, and the buttons
+// that start it doing so. The Console is the other half, and it is read-only apart from undo:
+// this tab answers "what should happen", that one answers "what happened".
+//
+// Reconciliation's shape is the point: the passes are listed in cost order and labelled by what they
+// cost, because two of them act on their own and two of them spend money. Four identical
+// checkboxes would hide the only distinction that matters.
 
 const PASSES: Array<{ pass: ReconcilePass; label: string; cost: string; free: boolean }> = [
   {
@@ -53,6 +56,121 @@ function runSummary(run: ReconcileRun): string {
   if (run.questions > 0) parts.push(`${run.questions} questions`);
   if (parts.length === 0) parts.push("nothing to do");
   return `${ago(run.startedAt)}, ${parts.join(", ")}`;
+}
+
+/**
+ * Indexing. Entity extraction is the other thing memloom does to its own store without being
+ * asked each time, so its switch and its two manual triggers belong next to reconciliation's rather
+ * than in the Console. The history stays in the Console with the reconcile runs.
+ */
+function IndexingSection({
+  onChanged,
+  onError,
+}: {
+  onChanged: () => void;
+  onError: (message: string) => void;
+}) {
+  const [autoIdx, setAutoIdx] = useState<{ enabled: boolean; available: boolean } | null>(null);
+  const [indexing, setIndexing] = useState(false);
+  const [rebuildArmed, setRebuildArmed] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  useEffect(() => {
+    api
+      .autoIndex()
+      .then(setAutoIdx)
+      .catch(() => setAutoIdx(null));
+  }, []);
+
+  async function toggleAutoIndex() {
+    if (!autoIdx?.available) return;
+    const next = !autoIdx.enabled;
+    setAutoIdx({ ...autoIdx, enabled: next }); // optimistic; put it back on failure
+    try {
+      await api.setAutoIndex(next);
+    } catch (err) {
+      setAutoIdx({ ...autoIdx });
+      onError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  async function runIndex(rebuild: boolean) {
+    setIndexing(true);
+    setNotice(null);
+    try {
+      const result = rebuild ? await api.reindex() : await api.index();
+      if (result.indexed === 0 && result.chunksIndexed === 0) {
+        setNotice("everything is already indexed");
+      }
+      onChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIndexing(false);
+    }
+  }
+
+  return (
+    <>
+      <h2 className="sectionTitle">Indexing</h2>
+      <div className="card">
+        <p className="cardNote">
+          Extracting entities and relationships from memories and documents. The run log is in the
+          Console.
+        </p>
+
+        {autoIdx && (
+          <div className="passList">
+            <button
+              type="button"
+              className={`passRow ${autoIdx.enabled ? "passRowOn" : ""}`}
+              disabled={!autoIdx.available}
+              onClick={() => void toggleAutoIndex()}
+            >
+              <span className="autoIndexTrack">
+                <span className="autoIndexKnob" />
+              </span>
+              <span className="passLabel">Index new memories and files automatically</span>
+              <span className="passCost">
+                {autoIdx.available ? "a few seconds after they land" : "needs OPENROUTER_API_KEY"}
+              </span>
+            </button>
+          </div>
+        )}
+
+        <div className="formRow">
+          <button
+            type="button"
+            className="btn"
+            disabled={indexing}
+            onClick={() => {
+              setRebuildArmed(false);
+              void runIndex(false);
+            }}
+          >
+            {indexing ? "Indexing…" : "Extract entities from unindexed memories & context"}
+          </button>
+          <button
+            type="button"
+            className={`btn ${rebuildArmed ? "btnDangerArmed" : ""}`}
+            disabled={indexing}
+            onBlur={() => setRebuildArmed(false)}
+            onClick={() => {
+              if (!rebuildArmed) {
+                setRebuildArmed(true);
+                return;
+              }
+              setRebuildArmed(false);
+              void runIndex(true);
+            }}
+          >
+            {rebuildArmed ? "Confirm: wipe all entities & re-index" : "Re-index from scratch"}
+          </button>
+        </div>
+        {notice && <div className="sessionEmpty">{notice}</div>}
+      </div>
+    </>
+  );
 }
 
 export function SettingsView({ onChanged }: { onChanged: () => void }) {
@@ -117,12 +235,16 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
   }
 
   const lastRun = runs.find((r) => r.mode === "apply" && r.status === "success") ?? null;
-  const undoable = lastRun && !lastRun.revertedAt && lastRun.retired + lastRun.folded > 0;
+  // Undo for the run you just started, where you are already looking. Undo for any older run
+  // lives in the Console next to the rest of the history.
+  const justRan = report?.run.mode === "apply" && report.run.retired + report.run.folded > 0;
 
   return (
     <div className="panel">
       <div className="panelInner">
         {error && <div className="notice noticeError">{error}</div>}
+
+        <IndexingSection onChanged={onChanged} onError={setError} />
 
         <h2 className="sectionTitle">Reconciliation</h2>
         <div className="card">
@@ -182,12 +304,12 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
               Preview only
             </button>
             {lastRun && <span className="cardLabel">last run: {runSummary(lastRun)}</span>}
-            {undoable && (
+            {justRan && report && (
               <button
                 type="button"
                 className="btn btnGhost"
                 disabled={running}
-                onClick={() => void undo(lastRun.id)}
+                onClick={() => void undo(report.run.id)}
               >
                 undo that run
               </button>

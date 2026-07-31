@@ -44,7 +44,11 @@ const TAB_PREFETCH: Partial<Record<Tab, () => void>> = {
     void prefetch("entity-conflicts", api.entityConflicts).catch(() => {});
     void prefetch("entity-merges", api.entityMerges).catch(() => {});
   },
-  console: () => void prefetch("index-runs", api.indexRuns).catch(() => {}),
+  // The Console holds both histories now, so it warms both.
+  console: () => {
+    void prefetch("index-runs", api.indexRuns).catch(() => {});
+    void prefetch("reconcile-runs", api.reconcileRuns).catch(() => {});
+  },
   settings: () => {
     void prefetch("reconcile-settings", api.reconcileSettings).catch(() => {});
     void prefetch("reconcile-runs", api.reconcileRuns).catch(() => {});

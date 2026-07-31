@@ -12,6 +12,7 @@ import type {
   ContextDocument,
   ContextProgressEvent,
   DocumentChunks,
+  ReconcileAction,
   ReconcileOptions,
   ReconcileReport,
   ReconcileRevertResult,
@@ -136,6 +137,8 @@ export interface MemoryEngine {
   revertReconcile(runId: string, ownerId?: string): Promise<ReconcileRevertResult>;
   /** Reconcile runs for the owner, newest first. */
   reconcileRuns(ownerId?: string, limit?: number): Promise<ReconcileRun[]>;
+  /** What one run found and did: the expandable body of a run in the Console. */
+  reconcileActions(runId: string, ownerId?: string): Promise<ReconcileAction[]>;
   /** Which passes a run does, and whether the daemon catches up on startup. */
   reconcileSettings(): Promise<ReconcileSettings>;
   setReconcileSettings(patch: Partial<ReconcileSettings>): Promise<ReconcileSettings>;

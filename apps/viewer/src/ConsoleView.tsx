@@ -9,14 +9,24 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, type IndexEventLevel, type IndexRun, type IndexRunEvent } from "./api";
+import {
+  api,
+  type ReconcileAction,
+  type ReconcileRun,
+  type IndexEventLevel,
+  type IndexRun,
+  type IndexRunEvent,
+} from "./api";
 import { cachedData, refetch } from "./prefetch";
 
-// Console: exercise the engine by hand (save, recall, index) without leaving the viewer.
-// Indexing history is persistent and session-grouped (a production-proven memory_index_runs
-// pattern): the engine writes a run row + per-item events to the store, so the log
-// survives tab switches and page reloads, and CLI runs show up here too. While a run is
-// live the view polls the store. The DB is the single source of truth, no client state.
+// Console: what the engine has been doing to itself. Two histories, both session-grouped and
+// both persistent, because the engine writes a run row + per-item detail to the store: the log
+// survives tab switches and page reloads, and CLI runs show up here too. While a run is live
+// the view polls the store. The DB is the single source of truth, no client state.
+//
+// Read-only apart from undo. The buttons that START work (index, re-index, auto-index, run
+// reconciliation) live in Settings, so this tab answers "what happened" and that one answers "what
+// should happen".
 
 const LEVEL_ICON: Record<IndexEventLevel, typeof Info> = {
   info: Info,
@@ -147,37 +157,13 @@ function SessionRow({
 }
 
 export function ConsoleView({ onChanged }: { onChanged: () => void }) {
-  const [indexing, setIndexing] = useState(false);
-  const [rebuildArmed, setRebuildArmed] = useState(false);
   const [clearArmed, setClearArmed] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Seeded from the prefetch cache so a revisit (or a hover on the tab) renders the
   // session list immediately; the mount refresh below replaces it with a live read.
   const [runs, setRuns] = useState<IndexRun[] | null>(() => cachedData<IndexRun[]>("index-runs"));
   const [eventsByRun, setEventsByRun] = useState<Record<string, IndexRunEvent[]>>({});
-  // Auto-index toggle state; null until loaded, unavailable in offline mode.
-  const [autoIdx, setAutoIdx] = useState<{ enabled: boolean; available: boolean } | null>(null);
-
-  useEffect(() => {
-    api
-      .autoIndex()
-      .then(setAutoIdx)
-      .catch(() => setAutoIdx(null));
-  }, []);
-
-  async function toggleAutoIndex() {
-    if (!autoIdx?.available) return;
-    const next = !autoIdx.enabled;
-    setAutoIdx({ ...autoIdx, enabled: next }); // optimistic; revert on failure
-    try {
-      await api.setAutoIndex(next);
-    } catch (err) {
-      setAutoIdx({ ...autoIdx });
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  }
   // Explicit expand/collapse choices; the newest run is expanded unless overridden.
   const [expandOverride, setExpandOverride] = useState<Record<string, boolean>>({});
 
@@ -214,90 +200,20 @@ export function ConsoleView({ onChanged }: { onChanged: () => void }) {
     // before a tab switch) keeps logging here with no client state handed over.
   }, [refreshSessions]);
 
-  const anyRunning = indexing || (runs?.some((r) => r.status === "running") ?? false);
+  const anyRunning = runs?.some((r) => r.status === "running") ?? false;
   useEffect(() => {
     if (!anyRunning) return;
     const interval = setInterval(() => void refreshSessions(), POLL_MS);
     return () => clearInterval(interval);
   }, [anyRunning, refreshSessions]);
 
-  async function runIndex(rebuild: boolean) {
-    setIndexing(true);
-    setNotice(null);
-    setError(null);
-    try {
-      const result = rebuild ? await api.reindex() : await api.index();
-      if (result.indexed === 0 && result.chunksIndexed === 0) {
-        setNotice("everything is already indexed");
-      }
-      onChanged();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setIndexing(false);
-      await refreshSessions();
-    }
-  }
-
   return (
     <div className="panel">
       <div className="panelInner">
         {error && <div className="notice noticeError">{error}</div>}
 
-        <h2 className="sectionTitle">Index</h2>
+        <h2 className="sectionTitle">Indexing</h2>
         <div className="card">
-          <div className="formRow">
-            <button
-              type="button"
-              className="btn"
-              disabled={indexing || anyRunning}
-              onClick={() => {
-                setRebuildArmed(false);
-                void runIndex(false);
-              }}
-            >
-              {indexing || anyRunning
-                ? "Indexing…"
-                : "Extract entities from unindexed memories & context"}
-            </button>
-            <button
-              type="button"
-              className={`btn ${rebuildArmed ? "btnDangerArmed" : ""}`}
-              disabled={indexing || anyRunning}
-              onBlur={() => setRebuildArmed(false)}
-              onClick={() => {
-                if (!rebuildArmed) {
-                  setRebuildArmed(true);
-                  return;
-                }
-                setRebuildArmed(false);
-                void runIndex(true);
-              }}
-            >
-              {rebuildArmed ? "Confirm: wipe all entities & re-index" : "Re-index from scratch"}
-            </button>
-            {autoIdx && (
-              <button
-                type="button"
-                className={`autoIndexToggle ${autoIdx.enabled ? "autoIndexToggleOn" : ""}`}
-                disabled={!autoIdx.available}
-                title={
-                  autoIdx.available
-                    ? "Index new memories and files automatically, a few seconds after they land"
-                    : "Auto-index needs an LLM; configure OPENROUTER_API_KEY"
-                }
-                onClick={() => void toggleAutoIndex()}
-              >
-                auto-index
-                <span className="autoIndexTrack">
-                  <span className="autoIndexKnob" />
-                </span>
-                {autoIdx.enabled ? "on" : "off"}
-              </button>
-            )}
-          </div>
-          {notice && <div className="sessionEmpty">{notice}</div>}
-
           {runs && runs.length > 0 && (
             <>
               <div className="sessionListHead">
@@ -347,7 +263,158 @@ export function ConsoleView({ onChanged }: { onChanged: () => void }) {
             </div>
           )}
         </div>
+
+        <ReconcileRuns onChanged={onChanged} onError={setError} />
       </div>
     </div>
+  );
+}
+
+function reconcileRunSummary(run: ReconcileRun): string {
+  if (run.status === "running") return "reconciling…";
+  const parts: string[] = [];
+  if (run.retired > 0) parts.push(`${run.retired} retired`);
+  if (run.folded > 0) parts.push(`${run.folded} folded`);
+  if (run.questions > 0)
+    parts.push(`${run.questions} ${run.questions === 1 ? "question" : "questions"}`);
+  const did = parts.length > 0 ? parts.join(", ") : "nothing to do";
+  const prefix =
+    run.mode === "dry_run" ? "preview: " : run.trigger === "manual" ? "" : `${run.trigger}: `;
+  const calls = run.llmCalls > 0 ? `; ${run.llmCalls} LLM calls` : "";
+  return `${prefix}${did}${calls}`;
+}
+
+function reconcileRunLevel(run: ReconcileRun): IndexEventLevel {
+  if (run.status === "error") return "error";
+  if (run.status === "running") return "info";
+  if (run.status === "aborted") return "warning";
+  return run.revertedAt ? "warning" : "success";
+}
+
+// Reconcile runs, the same collapsible shape as an indexing session: the summary is the header,
+// the findings are the body. No delete, deliberately: a reconcile run IS its undo record, so
+// removing one would quietly make what it did permanent. Indexing sessions are only a log,
+// which is why they can be cleared and these cannot.
+function ReconcileRuns({
+  onChanged,
+  onError,
+}: {
+  onChanged: () => void;
+  onError: (message: string) => void;
+}) {
+  const [runs, setRuns] = useState<ReconcileRun[] | null>(() => cachedData<ReconcileRun[]>("reconcile-runs"));
+  const [actionsByRun, setActionsByRun] = useState<Record<string, ReconcileAction[]>>({});
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [busy, setBusy] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    const list = await refetch("reconcile-runs", api.reconcileRuns).catch(() => null);
+    if (list) setRuns(list);
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  async function toggle(runId: string) {
+    const next = !expanded[runId];
+    setExpanded((prev) => ({ ...prev, [runId]: next }));
+    if (next && !actionsByRun[runId]) {
+      const actions = await api.reconcileActions(runId).catch(() => null);
+      if (actions) setActionsByRun((prev) => ({ ...prev, [runId]: actions }));
+    }
+  }
+
+  async function undo(runId: string) {
+    setBusy(runId);
+    try {
+      await api.revertReconcile(runId);
+      setActionsByRun((prev) => ({ ...prev, [runId]: [] }));
+      await refresh();
+      onChanged();
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  return (
+    <>
+      <h2 className="sectionTitle">Reconciliation</h2>
+      <div className="card">
+        {runs && runs.length > 0 ? (
+          <div className="sessionList">
+            {runs.map((run) => {
+              const level = reconcileRunLevel(run);
+              const Icon = LEVEL_ICON[level];
+              const Chevron = expanded[run.id] ? ChevronDown : ChevronRight;
+              const undoable =
+                run.mode === "apply" && !run.revertedAt && run.retired + run.folded > 0;
+              return (
+                <div key={run.id} className="session">
+                  <div className={`sessionHeader level-${level}`}>
+                    <button
+                      type="button"
+                      className="sessionToggle"
+                      onClick={() => void toggle(run.id)}
+                      aria-expanded={Boolean(expanded[run.id])}
+                    >
+                      <Chevron size={13} strokeWidth={1.75} className="sessionChevron" />
+                      {run.status === "running" ? (
+                        <Loader2 size={13} strokeWidth={1.75} className="spinIcon" />
+                      ) : (
+                        <Icon size={13} strokeWidth={1.75} className="levelIcon" />
+                      )}
+                      <span className="sessionSummary">{reconcileRunSummary(run)}</span>
+                    </button>
+                    <span className="sessionMeta">{run.scanned} scanned</span>
+                    <span className="sessionMeta" title={new Date(run.startedAt).toLocaleString()}>
+                      {relativeTime(run.startedAt)}
+                    </span>
+                    {run.revertedAt ? (
+                      <span className="sessionMeta">undone</span>
+                    ) : undoable ? (
+                      <button
+                        type="button"
+                        className="btn btnGhost"
+                        disabled={busy === run.id}
+                        onClick={() => void undo(run.id)}
+                      >
+                        undo
+                      </button>
+                    ) : null}
+                  </div>
+                  {expanded[run.id] && (
+                    <div className="sessionBody">
+                      {!actionsByRun[run.id] ? (
+                        <div className="sessionEmpty">loading…</div>
+                      ) : actionsByRun[run.id]?.length === 0 ? (
+                        <div className="sessionEmpty">nothing recorded for this run</div>
+                      ) : (
+                        actionsByRun[run.id]?.map((a) => (
+                          <div
+                            key={a.id}
+                            className={`eventRow level-${a.applied ? "success" : "info"}`}
+                          >
+                            <span className="eventMessage">
+                              {a.kind}: {a.reason}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="sessionEmpty">
+            no reconcile runs yet. Start one, or turn on the passes, in Settings
+          </div>
+        )}
+      </div>
+    </>
   );
 }

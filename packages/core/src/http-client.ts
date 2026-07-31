@@ -13,6 +13,7 @@ import type {
   ContextDocument,
   ContextProgressEvent,
   DocumentChunks,
+  ReconcileAction,
   ReconcileOptions,
   ReconcileReport,
   ReconcileRevertResult,
@@ -369,6 +370,13 @@ export class HttpMemloomClient implements MemoryEngine {
     const query = limit ? `?limit=${limit}` : "";
     const { runs } = await this.#json<{ runs: ReconcileRun[] }>(`/memory/reconcile/runs${query}`);
     return runs;
+  }
+
+  async reconcileActions(runId: string): Promise<ReconcileAction[]> {
+    const { actions } = await this.#json<{ actions: ReconcileAction[] }>(
+      `/memory/reconcile/runs/${runId}/actions`,
+    );
+    return actions;
   }
 
   contextAdd(

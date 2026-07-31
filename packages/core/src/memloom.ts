@@ -4390,6 +4390,18 @@ export class Memloom implements MemoryEngine {
     return mapReconcileRun(row);
   }
 
+  /**
+   * One run's findings, for the Console's history. Owner-scoped rather than taking the run id
+   * on trust, so a bad id reads as an empty run instead of another owner's ledger.
+   */
+  async reconcileActions(runId: string, ownerId: string = SENTINEL_OWNER): Promise<ReconcileAction[]> {
+    const [run] = await this.#storage.query<{ id: string }>(
+      "SELECT id FROM memory_reconcile_runs WHERE id = $1 AND owner_id = $2",
+      [runId, ownerId],
+    );
+    return run ? this.#reconcileActions(runId) : [];
+  }
+
   async #reconcileActions(runId: string): Promise<ReconcileAction[]> {
     const rows = await this.#storage.query<{
       id: string;

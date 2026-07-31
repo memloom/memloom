@@ -860,6 +860,8 @@ export const api = {
   setReconcileSettings: (patch: Partial<ReconcileSettings>) =>
     post<ReconcileSettings>("/memory/reconcile/settings", patch),
   reconcileRuns: () => json<{ runs: ReconcileRun[] }>("/memory/reconcile/runs").then((r) => r.runs),
+  reconcileActions: (runId: string) =>
+    json<{ actions: ReconcileAction[] }>(`/memory/reconcile/runs/${runId}/actions`).then((r) => r.actions),
   reconcile: (mode: "dry_run" | "apply" = "apply") =>
     post<ReconcileReport>("/memory/reconcile", { mode, trigger: "manual" }),
   revertReconcile: (runId: string) =>
