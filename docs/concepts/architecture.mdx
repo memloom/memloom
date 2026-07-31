@@ -27,7 +27,7 @@ flowchart LR
 
 The daemon exposes the store two ways from one process: the HTTP API on `127.0.0.1:4319`
 (which also serves the viewer bundle at `/`), and, on the embedded tier, the raw Postgres
-wire protocol on `127.0.0.1:54329` for database tools (with `MEMLOOM_PG_URL` set there is
+wire protocol on `127.0.0.1:54329` for database tools (`MEMLOOM_PG_PORT` moves that port; with `MEMLOOM_PG_URL` set there is
 no bridge; point your tools at the server). Any CLI command auto-starts the daemon if it
 isn't running; `memloom stop` shuts it down gracefully and releases the data-dir lock.
 

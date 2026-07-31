@@ -9,9 +9,16 @@ description: "context add, list, remove: ingesting files as searchable context"
 memloom context add <path...>
 ```
 
-Ingest files or folders as searchable context (`.md .txt .pdf`; folders recurse). Chunks are
-embedded into the same recall as memories, and each chunk carries its breadcrumb (file,
-heading path, PDF page), so results always say where they came from.
+Ingest files or folders as searchable context (folders recurse). Text formats (`.md .txt
+.pdf`), web pages (any `http(s)://` URL), and recordings (`.mp3 .m4a .wav .flac .ogg .opus
+.aac .wma .mp4 .mkv .mov .webm .avi .m4v`) all land in the same store. Chunks are embedded
+into the same recall as memories, and each chunk carries its breadcrumb (file, heading
+path, PDF page, or timestamp and speaker for a recording), so results always say where
+they came from.
+
+Recordings are transcribed and diarized on this machine and run through the ingest queue
+with per-stage progress; run `memloom audio setup` once to fetch the models. See
+[Recordings: audio & video](/guides/recordings) and the `audio` commands below.
 
 Documents are mirrors of the files they came from:
 
@@ -41,4 +48,18 @@ List ingested documents with their ids and chunk counts.
 memloom context remove <id>
 ```
 
-Delete a document and its chunks from the store. The file on disk is untouched.
+Delete a document and its chunks from the store. The file on disk is untouched (an
+uploaded recording's snapshot in memloom's own uploads directory is deleted with it).
+
+## audio setup, models, use, status
+
+```bash
+memloom audio setup          # fetch the default speech model + speaker models, once per machine
+memloom audio models         # the catalog: sizes, languages, what's installed
+memloom audio use <id>       # transcribe with a different model from now on
+memloom audio status         # selected model, installed models, speaker models, ffmpeg
+```
+
+Models live in `~/.memloom/models` and are shared across projects. Transcripts are cached
+by file hash and model, so re-adding a recording, or switching back to a model you used
+before, costs nothing.

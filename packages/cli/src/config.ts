@@ -48,6 +48,11 @@ const CONFIG_TEMPLATE = `# memloom configuration. The daemon (\`memloom serve\`)
 # How often the daemon checks Notion for edits (milliseconds, minimum 60000):
 # NOTION_POLL_MS=300000
 
+# Postgres wire port for DB tools (Drizzle Studio, psql), default 54329. On Windows,
+# Hyper-V/WSL/Docker reserve random port blocks at boot and one can land on 54329; the daemon
+# then starts without the wire and says so. Move it to a free port below 49152:
+# MEMLOOM_PG_PORT=45432
+
 # Storage tier. Default is the embedded PGLite store in ~/.memloom/data (zero setup). To run
 # on a real Postgres server instead (local Docker or managed cloud; pgvector must be
 # available), point memloom at it and restart:

@@ -24,6 +24,59 @@ export {
   runAssistantTurn,
   stripInvalidMarkers,
 } from "./assistant.js";
+// Audio and video transcription (ffmpeg + silero VAD + parakeet under sherpa-onnx, local)
+export type {
+  DecodeChunk,
+  RecordingTime,
+  TimedWord,
+  TranscribeFileResult,
+  TranscribeOptions,
+  TranscribeProgress,
+  TranscribeResult,
+  TranscriptSection,
+  VadSegment,
+} from "./audio.js";
+export {
+  AudioError,
+  DECODE_CHUNK_SECONDS,
+  findSuspectChunks,
+  formatTime,
+  hasFfmpeg,
+  hashFile,
+  mediaDurationSeconds,
+  modelDir,
+  packChunks,
+  recordingHeader,
+  recordingTime,
+  SECTION_SECONDS,
+  sectionize,
+  sectionizeTurns,
+  toMarkdown,
+  transcribeMedia,
+  transcribeWav,
+} from "./audio.js";
+export type {
+  CatalogModel,
+  DownloadProgress,
+  ModelArchitecture,
+  ModelStatus,
+  ResolvedModel,
+  SetupOptions,
+  SpeakerModelPaths,
+} from "./audio-models.js";
+export {
+  CATALOG,
+  DEFAULT_MODEL_ID,
+  findModel,
+  modelStatus,
+  requireModels,
+  resolveModel,
+  resolveSpeakerModels,
+  SPEAKER_EMBEDDING_MODEL_ID,
+  selectedModelId,
+  selectModel,
+  setupModels,
+} from "./audio-models.js";
 export type { BenchCorpus, BenchDoc, BenchQuery } from "./benchmark.js";
 // Retrieval benchmark + metrics
 export { runBenchmark } from "./benchmark.js";
@@ -50,6 +103,21 @@ export {
   parseSession,
   QUIET_MS,
 } from "./claude-sessions.js";
+// Speaker diarization (pyannote segmentation + WeSpeaker embeddings under sherpa-onnx, local)
+export type { DiarizeResult, SpeakerTurn } from "./diarize.js";
+export {
+  clusterConfig,
+  DIARIZE_THRESHOLD_DEFAULT,
+  DIARIZE_VERSION,
+  diarizeSignature,
+  diarizeWav,
+  dropJunkClusters,
+  longestSegment,
+  MIN_SPEAKER_SECONDS,
+  mergeTurns,
+  relabelByAppearance,
+  TURN_MERGE_GAP_SECONDS,
+} from "./diarize.js";
 export type { DistilledMemory, DistillOutput } from "./distill.js";
 export { buildDistillPrompt, distillChunk, parseDistillation } from "./distill.js";
 export type { MemoryEngine } from "./engine.js";
@@ -67,7 +135,13 @@ export {
   pickCanonical,
   versionTokens,
 } from "./entity-resolution.js";
-export type { ContextKind, ExtractedFile, ExtractedUnit, Extractor } from "./extract.js";
+export type {
+  ContextKind,
+  ExtractedFile,
+  ExtractedUnit,
+  Extractor,
+  ExtractProgress,
+} from "./extract.js";
 export {
   detectKind,
   extractBytes,
@@ -83,6 +157,16 @@ export {
 } from "./hashing-provider.js";
 export type { FetchLike, HttpResponse } from "./http-client.js";
 export { HttpMemloomClient } from "./http-client.js";
+// Web link ingestion (fetch + defuddle on linkedom, all in-process)
+export type { ExtractedLink, ExtractedPage, ExtractUrlOptions, FetchedPage } from "./link.js";
+export {
+  extractHtml,
+  extractUrl,
+  fetchPage,
+  isHttpUrl,
+  LinkExtractionError,
+  normalizeUrl,
+} from "./link.js";
 export type { ReleaseLock } from "./lock.js";
 export { acquireDataDirLock } from "./lock.js";
 export type { InitOptions, MemloomConfig } from "./memloom.js";
@@ -127,9 +211,10 @@ export type {
   LLMProvider,
 } from "./providers.js";
 export { isChatProvider } from "./providers.js";
+export type { QueueItem, QueueRunner, QueueSnapshot, QueueStatus } from "./queue.js";
+export { IngestQueue, uploadStoreDir } from "./queue.js";
 export type { RedactResult } from "./redact.js";
 export { redact } from "./redact.js";
-
 // The graph schema: the system-tier vocabulary constants (seeded into the memory_schema
 // registry) plus the registry model types.
 export type {
@@ -157,6 +242,8 @@ export {
   PREDICATES,
   PROPOSAL_MIN_OCCURRENCES,
 } from "./schema.js";
+export type { FileStability, StabilityOptions } from "./stability.js";
+export { waitUntilStable } from "./stability.js";
 export type { StorageAdapter } from "./storage.js";
 // Test-only helper, exported for the same reason PgliteAdapter is: the server and MCP test
 // suites build stores too, and reaching into core/src across packages breaks their rootDir.
@@ -175,11 +262,14 @@ export type {
   ContextAddInput,
   ContextAddOutcome,
   ContextAddResult,
+  ContextAddUrlInput,
   ContextAttachInput,
   ContextAttachResult,
   ContextChunk,
   ContextDocument,
+  ContextProgressEvent,
   DocumentChunks,
+  DocumentSpeaker,
   Entity,
   EntityConflict,
   EntityConflictCandidate,
@@ -225,6 +315,7 @@ export type {
   SaveInput,
   SaveOutcome,
   SaveResult,
+  SpeakerRoster,
   UpdateInput,
   UpdateResult,
 } from "./types.js";

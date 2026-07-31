@@ -31,11 +31,13 @@ import {
 } from "./entity-resolution.js";
 import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
 import { NullLLMProvider } from "./hashing-provider.js";
+import { extractUrl, isHttpUrl } from "./link.js";
 import { migrate } from "./migrate.js";
 import type { NotionBlockNode } from "./notion.js";
 import { dataSourceTitle, expandsInline, NotionClient, pageTitle } from "./notion.js";
 import { blocksToMarkdown, rowsToMarkdown } from "./notion-markdown.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
+import { uploadStoreDir } from "./queue.js";
 import { redact } from "./redact.js";
 import {
   addEdge,
@@ -72,9 +74,11 @@ import type {
   ConflictCandidate,
   ContextAddInput,
   ContextAddResult,
+  ContextAddUrlInput,
   ContextAttachInput,
   ContextAttachResult,
   ContextDocument,
+  ContextProgressEvent,
   DocumentChunks,
   Entity,
   EntityConflict,
@@ -113,6 +117,7 @@ import type {
   ResolvedConflict,
   SaveInput,
   SaveResult,
+  SpeakerRoster,
   UpdateInput,
   UpdateResult,
 } from "./types.js";
@@ -121,6 +126,51 @@ import { toVectorLiteral } from "./vector.js";
 // The fixed owner for the single-user embedded tier. Multi-tenant hosts pass a real
 // ownerId per call; the column exists everywhere so the schema is sync/cloud-ready.
 export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
+
+/**
+ * Voice matching: how alike a new voice must be to a stored, named voiceprint before a
+ * recording is auto-labeled with that name.
+ *
+ * Calibrated on a real store, not guessed. Across one user's videos, the same voice
+ * scored 0.73 to 0.95 cosine similarity against their labeled prints, while the OTHER
+ * person in their 1:1 call scored up to 0.779: the distributions overlap on any single
+ * print. Two rules restore the margin: a candidate scores against every stored print of
+ * a name and keeps the best (with two prints, every true match reached 0.805 or higher),
+ * and voices with almost no talk time are never auto-named (a 2 s sliver's embedding is
+ * noise). At 0.8 every decision on that store was correct. Deliberately conservative:
+ * a missed match costs one manual rename, a false match mislabels a stranger's words.
+ */
+export const VOICE_MATCH_THRESHOLD = 0.8;
+const VOICE_MATCH_MIN_SECONDS = 10;
+
+function voiceMatchThreshold(): number {
+  const fromEnv = Number.parseFloat(process.env.MEMLOOM_VOICE_MATCH_THRESHOLD ?? "");
+  return Number.isFinite(fromEnv) ? fromEnv : VOICE_MATCH_THRESHOLD;
+}
+
+/** Both vectors are stored L2-normalized, so the dot product IS the cosine similarity. */
+function cosine(a: number[], b: number[]): number {
+  let sum = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) sum += (a[i] as number) * (b[i] as number);
+  return sum;
+}
+
+/**
+ * A speakers jsonb cell -> the roster, or null. Defensive about the driver: PGLite hands
+ * back parsed objects, pg can hand back strings, and a hand-edited row should degrade to
+ * "no roster" rather than crash every document listing.
+ */
+function parseRoster(cell: unknown): SpeakerRoster | null {
+  try {
+    const value = typeof cell === "string" ? JSON.parse(cell) : cell;
+    if (!value || typeof value !== "object") return null;
+    const roster = value as SpeakerRoster;
+    return Array.isArray(roster.speakers) ? roster : null;
+  } catch {
+    return null;
+  }
+}
 
 // Dedup only considers existing memories at least this similar to the incoming one.
 const CANDIDATE_THRESHOLD = 0.5;
@@ -538,13 +588,34 @@ export class Memloom implements MemoryEngine {
    * MIRRORS of files: no belief pipeline, no conflicts; re-adding a changed file replaces
    * its chunks in one transaction, and an unchanged file (same content hash) is a no-op.
    */
-  async contextAdd(input: ContextAddInput): Promise<ContextAddResult> {
+  async contextAdd(
+    input: ContextAddInput,
+    onProgress?: (event: ContextProgressEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<ContextAddResult> {
     const owner = input.ownerId ?? SENTINEL_OWNER;
-    const file = await extractFile(input.path, (bytes) =>
-      createHash("sha256").update(bytes).digest("hex"),
+    const file = await extractFile(
+      input.path,
+      (bytes) => createHash("sha256").update(bytes).digest("hex"),
+      {
+        // Only slow extractors emit anything, so a markdown file streams nothing and costs
+        // nothing. Transcription emits per decode chunk.
+        onProgress: onProgress && ((event) => onProgress({ path: input.path, ...event })),
+        // Cancelling before this returns leaves nothing behind, because the store is only
+        // touched below.
+        signal,
+      },
     );
     const result = await this.#ingestDocument(owner, input.path, file, null);
     if (result.outcome !== "unchanged") this.#scheduleAutoIndex(owner);
+    // The voice library pass: a fresh roster arrives with numbered speakers, and anyone
+    // the store already knows by voice gets their name before the user ever sees
+    // "Speaker 1". Also run on "unchanged", so re-adding an old recording after labeling
+    // someone picks the name up without re-transcribing anything. Never fatal: a matching
+    // failure costs labels, not the ingest that just succeeded.
+    if (file.speakers?.speakers.some((s) => !s.name)) {
+      await this.autoNameSpeakers(result.documentId, owner).catch(() => {});
+    }
     return result;
   }
 
@@ -606,6 +677,28 @@ export class Memloom implements MemoryEngine {
     return result;
   }
 
+  /**
+   * Ingest a web page as context. memloom fetches and parses it in this process: the URL
+   * never goes to a reader service, so a page stays as private as a file on disk.
+   *
+   * The document's path IS the normalized URL, following the attachment:// and upload://
+   * precedent, so re-adding the same page updates it in place and citations can rebuild a
+   * deep link from path plus heading anchor. `html` lets a caller that already rendered the
+   * page (the browser extension) skip the fetch entirely, which is what makes a
+   * single-page app or a page behind a login savable at all.
+   */
+  async contextAddUrl(input: ContextAddUrlInput): Promise<ContextAddResult> {
+    const owner = input.ownerId ?? SENTINEL_OWNER;
+    const link = await extractUrl(
+      input.url,
+      (bytes) => createHash("sha256").update(bytes).digest("hex"),
+      input.html === undefined ? {} : { html: input.html },
+    );
+    const result = await this.#ingestDocument(owner, link.url, link, null);
+    if (result.outcome !== "unchanged") this.#scheduleAutoIndex(owner);
+    return result;
+  }
+
   /** The files attached to one assistant chat, newest first. */
   async sessionAttachments(
     sessionId: string,
@@ -648,7 +741,18 @@ export class Memloom implements MemoryEngine {
     sessionId: string | null,
   ): Promise<ContextAddResult> {
     const isUpload = path.startsWith("upload://");
+    // A document is a mirror of something that already existed, so when the extractor can
+    // tell us when that something was CREATED, that is its created_at. Ingest time is only a
+    // stand-in for it, and a poor one: a week of wearable recordings dumped over USB would
+    // otherwise all carry the same minute, which is the minute nobody cares about. Null keeps
+    // the column's now() default, so every other format is untouched.
+    const recordedAt = file.recordedAt ? file.recordedAt.toISOString() : null;
+    // A URL's last path segment is not a filename. "https://example.com/post" would
+    // basename to "post" and absorb an unrelated uploaded file called "post", so links
+    // match on content hash only and never by name, in either direction.
     const basenameOf = (p: string) => p.toLowerCase().split(/[/\\]/).pop() ?? "";
+    const nameMatches = (a: string, b: string) =>
+      !isHttpUrl(a) && !isHttpUrl(b) && basenameOf(a) === basenameOf(b);
 
     const existing = await this.#storage.query<{
       id: string;
@@ -678,9 +782,8 @@ export class Memloom implements MemoryEngine {
          ORDER BY created_at`,
         [owner],
       );
-      const base = basenameOf(path);
       const twins = uploads.filter(
-        (u) => u.content_hash === file.contentHash || basenameOf(u.path) === base,
+        (u) => u.content_hash === file.contentHash || nameMatches(u.path, path),
       );
       if (!prior && twins.length > 0) {
         const hashTwin = twins.find((t) => t.content_hash === file.contentHash);
@@ -711,10 +814,9 @@ export class Memloom implements MemoryEngine {
          WHERE owner_id = $1 AND session_id IS NULL ORDER BY created_at`,
         [owner],
       );
-      const base = basenameOf(path);
       const twin =
         globals.find((g) => g.content_hash === file.contentHash) ??
-        globals.find((g) => !g.path.startsWith("upload://") && basenameOf(g.path) === base);
+        globals.find((g) => !g.path.startsWith("upload://") && nameMatches(g.path, path));
       if (twin) {
         return {
           documentId: twin.id,
@@ -756,9 +858,11 @@ export class Memloom implements MemoryEngine {
       const converted = convert;
       const absorbed = await this.#storage.tx(async (tx) => {
         await tx.query(
-          `UPDATE context_documents SET path = $2, title = $3, kind = $4, updated_at = now()
+          `UPDATE context_documents
+           SET path = $2, title = $3, kind = $4,
+               created_at = COALESCE($5::timestamptz, created_at), updated_at = now()
            WHERE id = $1`,
-          [converted.id, path, file.title, file.kind],
+          [converted.id, path, file.title, file.kind, recordedAt],
         );
         return absorb(tx);
       });
@@ -852,18 +956,42 @@ export class Memloom implements MemoryEngine {
             [replaceId],
           );
         }
+        // A fresh roster replaces the old one wholesale, names included: the new chunk text
+        // carries generic labels again, and a kept name pointing at re-clustered voices
+        // would be confidently wrong rather than merely unlabeled. The voice library is the
+        // planned fix, matching stored embeddings so names survive a re-ingest.
         await tx.query(
           `UPDATE context_documents
-           SET path = $2, title = $3, kind = $4, content_hash = $5, chunk_count = $6, updated_at = now()
+           SET path = $2, title = $3, kind = $4, content_hash = $5, chunk_count = $6, speakers = $7,
+               created_at = COALESCE($8::timestamptz, created_at), updated_at = now()
            WHERE id = $1`,
-          [replaceId, path, file.title, file.kind, file.contentHash, chunks.length],
+          [
+            replaceId,
+            path,
+            file.title,
+            file.kind,
+            file.contentHash,
+            chunks.length,
+            file.speakers ? JSON.stringify(file.speakers) : null,
+            recordedAt,
+          ],
         );
         documentId = replaceId;
       } else {
         const inserted = await tx.query<{ id: string }>(
-          `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count, session_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-          [owner, path, file.title, file.kind, file.contentHash, chunks.length, sessionId],
+          `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count, session_id, speakers, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, now())) RETURNING id`,
+          [
+            owner,
+            path,
+            file.title,
+            file.kind,
+            file.contentHash,
+            chunks.length,
+            sessionId,
+            file.speakers ? JSON.stringify(file.speakers) : null,
+            recordedAt,
+          ],
         );
         const row = inserted[0];
         if (!row) throw new Error("memloom: context document insert returned no id");
@@ -884,8 +1012,12 @@ export class Memloom implements MemoryEngine {
         const emb = embeddings[embIndex++];
         if (!emb) throw new Error("memloom: embedding count mismatch during ingest");
         await tx.query(
-          `INSERT INTO context_chunks (document_id, owner_id, chunk_index, content, heading_path, page, embedding, session_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8)`,
+          // The chunk carries the recording time too, not just the document. A recalled
+          // context hit reports the CHUNK's created_at as its assertedAt (see mapRecallRow),
+          // so stamping only the document would leave every recalled line still dated the
+          // moment it was ingested.
+          `INSERT INTO context_chunks (document_id, owner_id, chunk_index, content, heading_path, page, embedding, session_id, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::vector, $8, COALESCE($9::timestamptz, now()))`,
           [
             documentId,
             owner,
@@ -895,6 +1027,7 @@ export class Memloom implements MemoryEngine {
             entry.chunk.page,
             toVectorLiteral(emb),
             sessionId,
+            recordedAt,
           ],
         );
       }
@@ -923,8 +1056,9 @@ export class Memloom implements MemoryEngine {
       kind: string;
       chunk_count: number;
       updated_at: string;
+      speakers: unknown;
     }>(
-      `SELECT id, path, title, kind, chunk_count, updated_at
+      `SELECT id, path, title, kind, chunk_count, updated_at, speakers
        FROM context_documents WHERE owner_id = $1 AND session_id IS NULL
        ORDER BY updated_at DESC`,
       [ownerId],
@@ -936,7 +1070,218 @@ export class Memloom implements MemoryEngine {
       kind: r.kind,
       chunkCount: Number(r.chunk_count),
       updatedAt: r.updated_at,
+      speakers: parseRoster(r.speakers),
     }));
+  }
+
+  /**
+   * Name a diarized voice: "Speaker 2" becomes "Alice" in the roster, in every affected
+   * chunk's breadcrumb, and in every future citation of this document.
+   *
+   * The rewrite touches exactly two places per chunk: the heading_path column and the
+   * breadcrumb line the chunker prepended to content. The spoken words are never edited;
+   * someone SAYING "speaker two" stays said. Because content changes, the touched rows are
+   * re-embedded (the tsvector column regenerates itself); entity mentions already extracted
+   * are left alone, since the words the entities came from did not change.
+   *
+   * A re-ingest of a changed recording regenerates the roster with generic labels and the
+   * names are lost. That is accepted for now: recordings, unlike notes, almost never change
+   * in place, and the stored voice embeddings are the eventual carry-over mechanism.
+   */
+  async renameSpeaker(
+    documentId: string,
+    speakerId: number,
+    name: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<SpeakerRoster> {
+    const trimmed = name.trim().replace(/\s+/g, " ");
+    if (trimmed.length === 0) throw new Error("speaker name must not be empty");
+    if (trimmed.length > 120) throw new Error("speaker name is too long");
+
+    const rows = await this.#storage.query<{ speakers: unknown }>(
+      "SELECT speakers FROM context_documents WHERE id = $1 AND owner_id = $2",
+      [documentId, ownerId],
+    );
+    if (rows.length === 0) throw new Error(`no context document ${documentId}`);
+    const roster = parseRoster(rows[0]?.speakers);
+    if (!roster) throw new Error("this document has no speaker roster");
+    const speaker = roster.speakers.find((s) => s.id === speakerId);
+    if (!speaker) throw new Error(`no speaker ${speakerId} in this document`);
+
+    // The chunk rewrite matches headings by their current display text, so two speakers
+    // sharing one name would make future renames ambiguous. Refusing is honest: if two
+    // voices really are one person, that is a diarization error a rename cannot fix.
+    const clash = roster.speakers.some(
+      (s) => s.id !== speakerId && (s.name ?? s.label) === trimmed,
+    );
+    if (clash) throw new Error(`another speaker is already named "${trimmed}"`);
+
+    const oldDisplay = speaker.name ?? speaker.label;
+    if (oldDisplay === trimmed) return roster;
+    const oldSuffix = `, ${oldDisplay}`;
+    const newSuffix = `, ${trimmed}`;
+
+    const chunks = await this.#storage.query<{
+      id: string;
+      content: string;
+      heading_path: string | null;
+    }>(
+      `SELECT id, content, heading_path FROM context_chunks
+       WHERE document_id = $1 AND owner_id = $2 ORDER BY chunk_index`,
+      [documentId, ownerId],
+    );
+    const touched = chunks
+      .filter((c) => c.heading_path?.endsWith(oldSuffix))
+      .map((c) => {
+        const heading = c.heading_path as string;
+        const newHeading = heading.slice(0, -oldSuffix.length) + newSuffix;
+        // The breadcrumb is the exact heading_path prepended by chunkMarkdown; anything
+        // else in content is transcript and must survive untouched.
+        const content = c.content.startsWith(`${heading}\n\n`)
+          ? newHeading + c.content.slice(heading.length)
+          : c.content;
+        return { id: c.id, content, headingPath: newHeading };
+      });
+
+    speaker.name = trimmed;
+    const rosterJson = JSON.stringify(roster);
+
+    // Embed outside the transaction, mirroring ingest: provider calls are slow and can
+    // fail, and the store swap should stay a short all-or-nothing write.
+    const embeddings =
+      touched.length > 0 ? await this.#embedding.embed(touched.map((t) => t.content)) : [];
+    if (embeddings.length !== touched.length) {
+      throw new Error("memloom: embedding count mismatch during speaker rename");
+    }
+
+    await this.#storage.tx(async (tx) => {
+      await tx.query("UPDATE context_documents SET speakers = $2 WHERE id = $1 AND owner_id = $3", [
+        documentId,
+        rosterJson,
+        ownerId,
+      ]);
+      for (let i = 0; i < touched.length; i++) {
+        const t = touched[i]!;
+        const emb = embeddings[i];
+        if (!emb) throw new Error("memloom: embedding count mismatch during speaker rename");
+        await tx.query(
+          `UPDATE context_chunks SET content = $2, heading_path = $3, embedding = $4::vector
+           WHERE id = $1 AND owner_id = $5`,
+          [t.id, t.content, t.headingPath, toVectorLiteral(emb), ownerId],
+        );
+      }
+    });
+    return roster;
+  }
+
+  /**
+   * Every named voiceprint in the store, keyed by name, restricted to one embedding
+   * model: vectors from different models never compare. A person can hold several prints
+   * (one per recording they were named in), and that plurality is the accuracy mechanism:
+   * candidates score against all of them and keep the best.
+   */
+  async #voicePrints(owner: string, embeddingModel: string): Promise<Map<string, number[][]>> {
+    const rows = await this.#storage.query<{ speakers: unknown }>(
+      "SELECT speakers FROM context_documents WHERE owner_id = $1 AND speakers IS NOT NULL",
+      [owner],
+    );
+    const prints = new Map<string, number[][]>();
+    for (const row of rows) {
+      const roster = parseRoster(row.speakers);
+      if (!roster || roster.embeddingModel !== embeddingModel) continue;
+      for (const s of roster.speakers) {
+        if (!s.name || !s.embedding) continue;
+        const list = prints.get(s.name) ?? [];
+        list.push(s.embedding);
+        prints.set(s.name, list);
+      }
+    }
+    return prints;
+  }
+
+  /**
+   * Label the voices this store already knows: every unnamed speaker in the document is
+   * scored against the named voiceprints, and a match above the threshold gets that name
+   * through the ordinary renameSpeaker path, so headings, breadcrumbs, and embeddings
+   * update exactly as a manual rename would.
+   *
+   * This is what makes labeling amortize. Name yourself once in one recording, and every
+   * later ingest of your voice arrives pre-named; each confirmed recording adds another
+   * print, which widens the margin for the next one. Best-match-first assignment plus
+   * renameSpeaker's duplicate refusal means two similar voices in one recording cannot
+   * both take the same name: the closer one wins, the other stays a numbered speaker.
+   */
+  async autoNameSpeakers(
+    documentId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<Array<{ speakerId: number; name: string; similarity: number }>> {
+    const rows = await this.#storage.query<{ speakers: unknown }>(
+      "SELECT speakers FROM context_documents WHERE id = $1 AND owner_id = $2",
+      [documentId, ownerId],
+    );
+    const roster = parseRoster(rows[0]?.speakers);
+    if (!roster) return [];
+    const unnamed = roster.speakers.filter(
+      (s) => !s.name && s.embedding && s.seconds >= VOICE_MATCH_MIN_SECONDS,
+    );
+    if (unnamed.length === 0) return [];
+    const prints = await this.#voicePrints(ownerId, roster.embeddingModel);
+    if (prints.size === 0) return [];
+
+    const threshold = voiceMatchThreshold();
+    const candidates = unnamed
+      .map((s) => {
+        let best: { name: string; similarity: number } | null = null;
+        for (const [name, vectors] of prints) {
+          for (const v of vectors) {
+            const similarity = cosine(s.embedding as number[], v);
+            if (!best || similarity > best.similarity) best = { name, similarity };
+          }
+        }
+        return best && best.similarity >= threshold ? { speaker: s, ...best } : null;
+      })
+      .filter((c): c is NonNullable<typeof c> => c !== null)
+      .sort((a, b) => b.similarity - a.similarity);
+
+    const named: Array<{ speakerId: number; name: string; similarity: number }> = [];
+    const taken = new Set(roster.speakers.map((s) => s.name).filter((n) => n !== null));
+    for (const c of candidates) {
+      if (taken.has(c.name)) continue;
+      try {
+        await this.renameSpeaker(documentId, c.speaker.id, c.name, ownerId);
+        taken.add(c.name);
+        named.push({ speakerId: c.speaker.id, name: c.name, similarity: c.similarity });
+      } catch {
+        // A single failed rename (a race, a concurrent edit) must not fail the others.
+      }
+    }
+    return named;
+  }
+
+  /**
+   * The catch-up sweep: run the matcher over every document that still has unnamed
+   * voices. This is how recordings ingested BEFORE a person was labeled pick up the
+   * name, without re-ingesting anything.
+   */
+  async autoNameAllSpeakers(ownerId: string = SENTINEL_OWNER): Promise<{
+    scanned: number;
+    named: Array<{ documentId: string; title: string; speakerId: number; name: string }>;
+  }> {
+    const rows = await this.#storage.query<{ id: string; title: string; speakers: unknown }>(
+      "SELECT id, title, speakers FROM context_documents WHERE owner_id = $1 AND speakers IS NOT NULL",
+      [ownerId],
+    );
+    const named: Array<{ documentId: string; title: string; speakerId: number; name: string }> = [];
+    let scanned = 0;
+    for (const row of rows) {
+      const roster = parseRoster(row.speakers);
+      if (!roster || !roster.speakers.some((s) => !s.name && s.embedding)) continue;
+      scanned++;
+      for (const hit of await this.autoNameSpeakers(row.id, ownerId)) {
+        named.push({ documentId: row.id, title: row.title, ...hit });
+      }
+    }
+    return { scanned, named };
   }
 
   /**
@@ -1020,16 +1365,31 @@ export class Memloom implements MemoryEngine {
   }
 
   async contextRemove(documentId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    let removedPath: string | null = null;
     await this.#storage.tx(async (tx) => {
       // Chunks + their mention edges go together (owner-scoped: this runs before the ownership
       // check on the document row itself). The document delete then removes only the doc row.
       await this.#deleteDocumentChunks(tx, documentId, ownerId);
-      const deleted = await tx.query<{ id: string }>(
-        "DELETE FROM context_documents WHERE id = $1 AND owner_id = $2 RETURNING id",
+      const deleted = await tx.query<{ id: string; path: string }>(
+        "DELETE FROM context_documents WHERE id = $1 AND owner_id = $2 RETURNING id, path",
         [documentId, ownerId],
       );
       if (deleted.length === 0) throw new Error(`no context document ${documentId}`);
+      removedPath = deleted[0]?.path ?? null;
     });
+    // An uploaded recording's bytes live in the store's own uploads dir and belong to this
+    // document alone: removing the mirror removes the snapshot. Anything outside that dir
+    // is the user's file and is never touched. After the transaction, best effort: a file
+    // already gone (or held open) must not fail the remove that just succeeded.
+    if (removedPath !== null) {
+      const { resolve, dirname, sep } = await import("node:path");
+      const root = resolve(uploadStoreDir());
+      const full = resolve(removedPath);
+      if (full.startsWith(root + sep)) {
+        const { rm } = await import("node:fs/promises");
+        await rm(dirname(full), { recursive: true, force: true }).catch(() => {});
+      }
+    }
   }
 
   /**

@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { assemblePageText, type PdfTextItem } from "./pdf-layout.js";
+import type { SpeakerRoster } from "./types.js";
 
 // File → text units for the context connector, behind a pluggable extractor registry.
 // Built-ins are local-first, text-layer only: .md/.txt read directly, PDF via unpdf
@@ -24,6 +25,16 @@ export interface ExtractedFile {
   /** Section strategy the chunker applies before size-splitting. */
   chunker: "markdown" | "outline";
   units: ExtractedUnit[];
+  /** Diarized voices, media extractors only. Stored on the document row, not in chunks. */
+  speakers?: SpeakerRoster | null;
+  /**
+   * When the source was CREATED, as opposed to when memloom read it. Media extractors resolve
+   * it from the file name, the container metadata or an old-enough mtime; everything else
+   * leaves it undefined and keeps ingest time. It becomes the document's and its chunks'
+   * created_at, which is what makes a folder of recordings sort and read by when they happened
+   * rather than by the minute they were all copied across.
+   */
+  recordedAt?: Date | null;
 }
 
 /** A file format the context connector can ingest. Register one with registerExtractor(). */
@@ -44,7 +55,55 @@ export interface Extractor {
   version: number;
   /** How chunks are sectioned: markdown headings, or outline (ALL-CAPS titles + numbered points). */
   chunker: "markdown" | "outline";
-  extract(bytes: Uint8Array, path: string): Promise<{ title?: string; units: ExtractedUnit[] }>;
+  extract(
+    bytes: Uint8Array,
+    path: string,
+  ): Promise<{
+    title?: string;
+    units: ExtractedUnit[];
+    speakers?: SpeakerRoster | null;
+    recordedAt?: Date | null;
+  }>;
+  /**
+   * Optional path-based extraction, for formats too large to hold in memory. `extractFile`
+   * prefers this and never reads the file, which is what keeps a multi-gigabyte video from
+   * being buffered just to hash it. Returns its own content hash because such an extractor
+   * streams the bytes past a digest itself rather than being handed them.
+   */
+  extractPath?(
+    path: string,
+    opts?: ExtractPathOptions,
+  ): Promise<{
+    title?: string;
+    units: ExtractedUnit[];
+    contentHash: string;
+    speakers?: SpeakerRoster | null;
+    recordedAt?: Date | null;
+  }>;
+}
+
+/**
+ * Progress from an extractor slow enough to need it. Only the media path emits this today:
+ * transcribing an hour of audio takes 8 to 11 minutes, and a silent CLI for that long reads
+ * as a hang.
+ */
+export interface ExtractProgress {
+  stage: string;
+  done: number;
+  total: number;
+  seconds: number;
+  audioSeconds: number;
+}
+
+/** What a path-based extractor accepts beyond the path itself. */
+export interface ExtractPathOptions {
+  onProgress?: (event: ExtractProgress) => void;
+  /**
+   * Stops a slow extraction early. Only the media path honours it, and only between decode
+   * chunks, so the worst-case wait after a cancel is one chunk. Nothing is stored when an
+   * extraction is cancelled, because the document is written only after it returns.
+   */
+  signal?: AbortSignal;
 }
 
 const registry = new Map<string, Extractor>();
@@ -117,12 +176,96 @@ registerExtractor({
   },
 });
 
+// Audio and video. Both are the same job (get a WAV, run ASR, keep the timestamps) and
+// differ only in the kind stored on the document, which is worth keeping distinct so a
+// recording and a screencast do not look identical in `context list`.
+//
+// These declare `chunker: "markdown"` because the transcript IS markdown: each section is a
+// heading holding its time range, so chunkMarkdown makes one chunk per span and the existing
+// citation formatter renders "from talk.mp4 > 12:30 - 14:28" with no new machinery.
+for (const [kind, extensions] of [
+  ["audio", [".mp3", ".m4a", ".wav", ".flac", ".ogg", ".opus", ".aac", ".wma"]],
+  ["video", [".mp4", ".mkv", ".mov", ".webm", ".avi", ".m4v"]],
+] as const) {
+  registerExtractor({
+    kind,
+    extensions: [...extensions],
+    // v2 = speaker diarization: sections break on speaker turns and multi-voice headings
+    // carry labels, so already-ingested recordings re-ingest on their next add.
+    // v3 = calibrated clustering (threshold 0.7 + junk-cluster absorption), so recordings
+    // labeled by the over-splitting v2 defaults re-ingest with a sane roster.
+    // v4 = the transcript opens with when the recording was made, so already-ingested
+    // recordings pick up a date. Cheap to re-ingest: the words are cached by hash and model,
+    // and the diarization signature is stored separately, so neither pass runs again.
+    // v5 = clustering threshold 0.6 (full-length recordings merged two voices at 0.7).
+    // A diarization change MUST bump this too: the transcript cache re-diarizes on its own
+    // version, but without the hash salt changing, ingest compares source hashes, answers
+    // "unchanged", and throws the corrected roster away. Verified the hard way.
+    version: 5,
+    chunker: "markdown",
+    async extractPath(path, opts) {
+      const { transcribeMedia, hashFile } = await import("./audio.js");
+      const result = await transcribeMedia(path, {
+        sha256: hashFile,
+        onProgress: opts?.onProgress,
+        signal: opts?.signal,
+      });
+      return {
+        units: result.units,
+        contentHash: result.contentHash,
+        speakers: result.roster,
+        recordedAt: result.recordedAt?.at ?? null,
+      };
+    },
+    // The upload path, where bytes arrived over HTTP and never touched disk. ffmpeg needs a
+    // file, so this spills to a temp file rather than refusing an uploaded recording.
+    async extract(bytes, path) {
+      const { transcribeMedia } = await import("./audio.js");
+      const { mkdtemp, writeFile, rm } = await import("node:fs/promises");
+      const { tmpdir } = await import("node:os");
+      const { join } = await import("node:path");
+      const dir = await mkdtemp(join(tmpdir(), "memloom-upload-"));
+      const file = join(dir, basename(path));
+      try {
+        await writeFile(file, bytes);
+        const result = await transcribeMedia(file, { sha256: async () => "" });
+        // The temp file's own mtime is the spill, so recordingTime refuses it; a stamped
+        // upload filename still resolves, because the spill keeps the original basename.
+        return {
+          units: result.units,
+          speakers: result.roster,
+          recordedAt: result.recordedAt?.at ?? null,
+        };
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    },
+  });
+}
+
 // -----------------------------------------------------------------------------------------
 
 export async function extractFile(
   path: string,
   hash: (bytes: Uint8Array) => string,
+  opts?: ExtractPathOptions,
 ): Promise<ExtractedFile> {
+  const extractor = registry.get(extname(path).toLowerCase());
+  if (extractor?.extractPath) {
+    const { title, units, contentHash, speakers, recordedAt } = await extractor.extractPath(
+      path,
+      opts,
+    );
+    return {
+      kind: extractor.kind,
+      title: title || basename(path),
+      contentHash: extractor.version === 1 ? contentHash : `${contentHash}#p${extractor.version}`,
+      chunker: extractor.chunker,
+      units,
+      ...(speakers === undefined ? {} : { speakers }),
+      ...(recordedAt === undefined ? {} : { recordedAt }),
+    };
+  }
   return extractBytes(new Uint8Array(await readFile(path)), path, hash);
 }
 
@@ -144,12 +287,14 @@ export async function extractBytes(
   }
   const contentHash =
     extractor.version === 1 ? hash(bytes) : `${hash(bytes)}#p${extractor.version}`;
-  const { title, units } = await extractor.extract(bytes, path);
+  const { title, units, speakers, recordedAt } = await extractor.extract(bytes, path);
   return {
     kind: extractor.kind,
     title: title || basename(path),
     contentHash,
     chunker: extractor.chunker,
     units,
+    ...(speakers === undefined ? {} : { speakers }),
+    ...(recordedAt === undefined ? {} : { recordedAt }),
   };
 }

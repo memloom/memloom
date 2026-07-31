@@ -1,6 +1,6 @@
 {
   "name": "@memloom/core",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "type": "module",
   "description": "The memloom memory engine: storage adapter, providers, write path, retrieval.",
   "license": "Apache-2.0",
@@ -43,11 +43,15 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.4.6",
+    "defuddle": "^0.19.2",
+    "linkedom": "^0.18.13",
     "proper-lockfile": "^4.1.2",
+    "turndown": "^7.2.4",
     "unpdf": "^1.6.2"
   },
   "optionalDependencies": {
-    "pg": "^8.13.0"
+    "pg": "^8.13.0",
+    "sherpa-onnx-node": "^1.13.4"
   },
   "devDependencies": {
     "@notionhq/client": "^5.23.2",

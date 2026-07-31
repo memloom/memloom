@@ -13,7 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
 import { AssistantView } from "./AssistantView";
 import { api, type ContextChunk, type DocumentChunks, type Graph } from "./api";
-import { AddFileCard } from "./cards";
+import { AddFileCard, AddLinkCard } from "./cards";
 import { GraphControlsPanel } from "./GraphControlsPanel";
 import {
   cloneGraphConfig,
@@ -1272,6 +1272,8 @@ export function GraphView({
               <div className="graphDockScroll">
                 <h2 className="sectionTitle">Add a file/folder</h2>
                 <AddFileCard onAdded={() => onChanged?.()} />
+                <h2 className="sectionTitle">Add a link</h2>
+                <AddLinkCard onAdded={() => onChanged?.()} />
               </div>
             )}
           </div>

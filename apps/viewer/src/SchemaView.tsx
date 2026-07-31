@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { api, type EntityDetail, type SchemaEntry, type SchemaInfo } from "./api";
+import { cachedData, prefetch, refetch } from "./prefetch";
 
 // The graph schema registry: what the indexer is allowed to extract. System defaults,
 // user-added entries, and the LLM proposal review queue (approve promotes a name into the
@@ -79,7 +80,9 @@ function EntitiesSection({
   activeTypes: string[];
   onChanged: () => void;
 }) {
-  const [entities, setEntities] = useState<EntityDetail[] | null>(null);
+  const [entities, setEntities] = useState<EntityDetail[] | null>(() =>
+    cachedData<EntityDetail[]>("entities"),
+  );
   // Collapsed by default: the schema (types + predicates) is this tab's main content;
   // the instance list can be hundreds of rows and must never push it below the fold.
   const [open, setOpen] = useState(false);
@@ -91,13 +94,17 @@ function EntitiesSection({
   const [armedId, setArmedId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  // Renames and merges call load, so it busts the cache; mount only revalidates.
   const load = useCallback(() => {
-    api
-      .entities()
+    refetch("entities", api.entities)
       .then(setEntities)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
-  useEffect(load, [load]);
+  useEffect(() => {
+    prefetch("entities", api.entities)
+      .then(setEntities)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, []);
 
   async function act(fn: () => Promise<unknown>) {
     setBusy(true);
@@ -122,7 +129,17 @@ function EntitiesSection({
     );
   }, [entities, filter]);
 
-  if (!entities) return null;
+  // The section exists from the first frame: two thousand rows take seconds to arrive,
+  // and a section that pops in later reads as the page assembling itself. The count and
+  // the toggle appear when the data does; until then the card says what it is doing.
+  if (!entities) {
+    return (
+      <div className="card">
+        <div className="cardLabel">entities</div>
+        <div className="spin">loading…</div>
+      </div>
+    );
+  }
 
   return (
     <div className="card">
@@ -275,7 +292,9 @@ function EntitiesSection({
 }
 
 export function SchemaView({ onChanged }: { onChanged: () => void }) {
-  const [schema, setSchema] = useState<SchemaInfo | null>(null);
+  // Seeded from the prefetch cache (tab hover fetched already); mount revalidates, and
+  // mutations reload through the cache-busting path so edits are never read back stale.
+  const [schema, setSchema] = useState<SchemaInfo | null>(() => cachedData<SchemaInfo>("schema"));
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState<"entity_type" | "predicate">("entity_type");
   const [name, setName] = useState("");
@@ -283,12 +302,15 @@ export function SchemaView({ onChanged }: { onChanged: () => void }) {
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(() => {
-    api
-      .schema()
+    refetch("schema", api.schema)
       .then(setSchema)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
-  useEffect(load, [load]);
+  useEffect(() => {
+    prefetch("schema", api.schema)
+      .then(setSchema)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, []);
 
   async function act(fn: () => Promise<unknown>) {
     setBusy(true);

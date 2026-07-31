@@ -162,7 +162,7 @@ One daemon (`memloom serve`) owns the store; everything else is a client:
 | MCP | `@memloom/mcp`: Claude Desktop, Claude Code, Cursor, any MCP client |
 | HTTP API | `http://127.0.0.1:4319`: full [API reference](./docs), localhost-only by design |
 | Viewer | `memloom ui`: memory graph, assistant chat, memories, documents, schema review, conflicts, indexing console |
-| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres`: psql, Drizzle Studio, TablePlus (embedded tier; with `MEMLOOM_PG_URL` set, inspect your Postgres directly) |
+| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres`: psql, Drizzle Studio, TablePlus (default port, `MEMLOOM_PG_PORT` moves it; embedded tier; with `MEMLOOM_PG_URL` set, inspect your Postgres directly) |
 
 ## Extending: add a file format
 

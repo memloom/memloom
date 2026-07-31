@@ -32,6 +32,15 @@ replaces its chunks.
 | `md` | `.md`, `.markdown` | markdown | Title from the first `#` heading |
 | `txt` | `.txt` | outline | |
 | `pdf` | `.pdf` | outline | Text layer via unpdf (pure JS); no OCR |
+| `link` | any `http(s)://` URL | markdown | Fetched and parsed locally; the URL is the document's path |
+| `audio` | `.mp3` `.m4a` `.wav` `.flac` `.ogg` `.opus` `.aac` `.wma` | markdown | Transcribed on this machine; sections carry time ranges and speakers |
+| `video` | `.mp4` `.mkv` `.mov` `.webm` `.avi` `.m4v` | markdown | The audio track is transcribed; every track is mixed in |
+
+Recordings deserve their own page: transcription models, the ingest queue, speaker
+diarization, and the voice library are covered in
+[Recordings: audio & video](/guides/recordings). Web pages are fetched and parsed
+in-process (no reader service); pages that build themselves in the browser are refused
+with advice rather than stored empty.
 
 PDF text is rebuilt from **glyph geometry** instead of stream order: equation-heavy PDFs (Word or
 LaTeX math) come out in reading order, and 2-up print layouts (the same content twice, side

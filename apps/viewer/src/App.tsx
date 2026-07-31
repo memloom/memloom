@@ -9,6 +9,7 @@ import { EntityFoldsView } from "./EntityFoldsView";
 import { GraphView } from "./GraphView";
 import { graphsEqual } from "./graphEquality";
 import { MemoriesView } from "./MemoriesView";
+import { prefetch } from "./prefetch";
 import { SchemaView } from "./SchemaView";
 import { ThemeToggle } from "./ThemeToggle";
 
@@ -21,6 +22,28 @@ type Tab =
   | "conflicts"
   | "connectors"
   | "console";
+
+// Hovering a tab starts its data fetches before the click lands, and the same keys seed
+// each view's first render (see prefetch.ts), so a switch shows data rather than
+// "loading". Keys must match what the views prefetch on mount, or the two would race as
+// separate requests instead of sharing one.
+const TAB_PREFETCH: Partial<Record<Tab, () => void>> = {
+  memories: () => void prefetch("memories", api.memories).catch(() => {}),
+  documents: () => {
+    void prefetch("documents", api.documents).catch(() => {});
+    void prefetch("queue", api.queue).catch(() => {});
+  },
+  schema: () => {
+    void prefetch("schema", api.schema).catch(() => {});
+    void prefetch("entities", api.entities).catch(() => {});
+  },
+  conflicts: () => {
+    // The memory conflicts themselves live in App's poll already; the folds do not.
+    void prefetch("entity-conflicts", api.entityConflicts).catch(() => {});
+    void prefetch("entity-merges", api.entityMerges).catch(() => {});
+  },
+  console: () => void prefetch("index-runs", api.indexRuns).catch(() => {}),
+};
 
 export function App() {
   const [tab, setTab] = useState<Tab>("graph");
@@ -54,6 +77,16 @@ export function App() {
     return () => clearInterval(interval);
   }, [refresh]);
 
+  // Warm every tab's cache once, shortly after first paint: hover-prefetch covers a mouse,
+  // but the first keyboard or touch visit to a tab deserves data too. A handful of small
+  // GETs against a localhost daemon, delayed so they never compete with the initial graph.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      for (const warm of Object.values(TAB_PREFETCH)) warm();
+    }, 500);
+    return () => clearTimeout(timer);
+  }, []);
+
   useEffect(() => {
     if (tab === "graph") setGraphMounted(true);
   }, [tab]);
@@ -79,7 +112,12 @@ export function App() {
               key={t}
               type="button"
               className={`tab ${tab === t ? "tabActive" : ""}`}
-              onClick={() => setTab(t)}
+              onMouseEnter={TAB_PREFETCH[t]}
+              onFocus={TAB_PREFETCH[t]}
+              onClick={() => {
+                TAB_PREFETCH[t]?.();
+                setTab(t);
+              }}
             >
               {t}
               {t === "conflicts" && conflicts.length > 0 && (

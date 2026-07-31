@@ -293,6 +293,23 @@ export interface IndexResult {
   chunksIndexed: number;
 }
 
+/**
+ * One step of a slow context ingest, streamed as NDJSON while `context add` runs.
+ * Only extractors that take minutes emit these; a markdown file streams nothing.
+ */
+export interface ContextProgressEvent {
+  /** The file being ingested, so a batch of several stays legible. */
+  path: string;
+  /** For media: "decoding" | "transcribing" | "checking" | "repairing". */
+  stage: string;
+  /** 1-based position within the stage; 0 when the stage has no countable units. */
+  done: number;
+  total: number;
+  /** How far into the recording this step reached. */
+  seconds: number;
+  audioSeconds: number;
+}
+
 /** One item finished during an index run: the real-time progress signal. */
 export interface IndexProgressEvent {
   kind: "memory" | "chunk";
@@ -435,6 +452,18 @@ export interface ContextAddInput {
   ownerId?: string;
 }
 
+export interface ContextAddUrlInput {
+  /** http(s) URL. Stored normalized (tracking params and fragment stripped) as the path. */
+  url: string;
+  /**
+   * Rendered HTML from a caller that already loaded the page, so the daemon skips the
+   * fetch. This is how a browser extension saves a single-page app or a page behind a
+   * login: the DOM it hands over is the one the user was looking at.
+   */
+  html?: string;
+  ownerId?: string;
+}
+
 /**
  * "converted": an upload:// snapshot became this linked document (a link is the stronger
  * identity: it can refresh from disk). "exists": an upload was skipped because the same
@@ -455,6 +484,39 @@ export interface ContextAddResult {
   absorbed?: number;
 }
 
+/**
+ * One voice diarization found in a recording. Stored as jsonb on the document row, because
+ * a roster is per-recording metadata, not content: renaming a speaker must not look like
+ * the file changed.
+ */
+export interface DocumentSpeaker {
+  /** 1-based, ordered by first appearance: the first voice heard is speaker 1. */
+  id: number;
+  /** The generated transcript label, "Speaker 1". Never changes once stored. */
+  label: string;
+  /** What the user named this voice; null until they do. */
+  name: string | null;
+  /** Total talk time in seconds, so a UI can put the host before a one-line guest. */
+  seconds: number;
+  /** A clean stretch of this voice alone, for "play a sample" in a labeling UI. */
+  sampleStart: number;
+  sampleEnd: number;
+  /**
+   * L2-normalized voice embedding from this recording's clearest segment. Stored now so a
+   * future voice library can match "is this Alice again?" across recordings without
+   * re-running diarization. Null when embedding extraction failed.
+   */
+  embedding: number[] | null;
+}
+
+/** The roster plus what produced it: embeddings from different models never compare. */
+export interface SpeakerRoster {
+  version: 1;
+  /** Which embedding model the vectors came from, e.g. "wespeaker-en-voxceleb-resnet34-lm". */
+  embeddingModel: string;
+  speakers: DocumentSpeaker[];
+}
+
 export interface ContextDocument {
   id: string;
   path: string;
@@ -462,6 +524,8 @@ export interface ContextDocument {
   kind: string;
   chunkCount: number;
   updatedAt: string;
+  /** Present on diarized recordings; absent on text documents and pre-diarization ingests. */
+  speakers?: SpeakerRoster | null;
 }
 
 // ---- Chat attachments (files uploaded into one assistant session's scope) ----

@@ -9,7 +9,9 @@ import type {
   ConflictAutoResult,
   ContextAddInput,
   ContextAddResult,
+  ContextAddUrlInput,
   ContextDocument,
+  ContextProgressEvent,
   DocumentChunks,
   Graph,
   ImportCaptureScope,
@@ -253,6 +255,11 @@ export class HttpMemloomClient implements MemoryEngine {
         onItem?.(item as TItem);
       } else if (event.type === "done") {
         const { type: _type, ...done } = event;
+        // A stream cannot revise its status code once it has begun, so a run that failed
+        // reports the reason in its done payload. Raising it here means the caller sees
+        // that reason rather than crashing on whichever field it expected to find.
+        const failure = (done as { error?: unknown }).error;
+        if (typeof failure === "string") throw new Error(failure);
         result = done as TDone;
       } else if (event.type === "error") {
         throw new Error(event.error ?? "memloom: stream error");
@@ -334,8 +341,23 @@ export class HttpMemloomClient implements MemoryEngine {
     await this.#post(`/memory/conflicts/${conflictId}/revert`, {});
   }
 
-  contextAdd(input: ContextAddInput): Promise<ContextAddResult> {
-    return this.#post<ContextAddResult>("/context/add", input);
+  contextAdd(
+    input: ContextAddInput,
+    onProgress?: (event: ContextProgressEvent) => void,
+    _signal?: AbortSignal,
+  ): Promise<ContextAddResult> {
+    // Without a callback this stays a plain request, so every non-media format keeps the
+    // simpler path and the response shape it already had.
+    if (!onProgress) return this.#post<ContextAddResult>("/context/add", input);
+    return this.#streamNdjson<ContextProgressEvent, ContextAddResult>(
+      "/context/add/stream",
+      input,
+      onProgress,
+    );
+  }
+
+  contextAddUrl(input: ContextAddUrlInput): Promise<ContextAddResult> {
+    return this.#post<ContextAddResult>("/context/url", input);
   }
 
   async contextList(): Promise<ContextDocument[]> {

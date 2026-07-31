@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type EntityConflict, type EntityMerge } from "./api";
+import { cachedData, prefetch, refetch } from "./prefetch";
 
 // Entity resolution shares this tab on purpose: an uncertain fold is a contradiction about
 // identity rather than about content, and routing it to a second queue would mean two places
@@ -7,23 +8,34 @@ import { api, type EntityConflict, type EntityMerge } from "./api";
 // go through the same calls, so a fold lands in the same reversible history as everything
 // else the pipeline decides.
 export function EntityFoldsView({ onChanged }: { onChanged: () => void }) {
-  const [conflicts, setConflicts] = useState<EntityConflict[]>([]);
-  const [merges, setMerges] = useState<EntityMerge[]>([]);
+  // Seeded from the prefetch cache (hover on the conflicts tab already fetched), then
+  // revalidated on mount. Mutations reload through the cache-busting path below.
+  const [conflicts, setConflicts] = useState<EntityConflict[]>(
+    () => cachedData<EntityConflict[]>("entity-conflicts") ?? [],
+  );
+  const [merges, setMerges] = useState<EntityMerge[]>(
+    () => cachedData<EntityMerge[]>("entity-merges") ?? [],
+  );
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [summary, setSummary] = useState<string | null>(null);
 
-  const load = useCallback(() => {
-    Promise.all([api.entityConflicts(), api.entityMerges()])
+  const fetchBoth = useCallback((fresh: boolean) => {
+    const get = fresh ? refetch : prefetch;
+    Promise.all([
+      get("entity-conflicts", api.entityConflicts),
+      get("entity-merges", api.entityMerges),
+    ])
       .then(([c, m]) => {
         setConflicts(c);
         setMerges(m);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
+  const load = useCallback(() => fetchBoth(true), [fetchBoth]);
 
-  useEffect(load, [load]);
+  useEffect(() => fetchBoth(false), [fetchBoth]);
 
   async function scan() {
     setRunning(true);
