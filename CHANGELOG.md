@@ -1,5 +1,66 @@
 # Changelog
 
+## 0.7.0
+
+- Added web pages as context: `memloom context add https://…` (or the viewer's Add link
+  card) fetches and parses the page in-process, so nothing about it reaches a reader
+  service. Pages that build themselves in the browser are refused with advice instead of
+  stored empty, and re-adding a link refreshes it
+- Added audio and video as context: recordings are transcribed on this machine (Parakeet
+  under sherpa-onnx; `memloom audio setup` fetches the models once) and cited by timestamp,
+  so recall answers `from standup.mkv › 12:30 - 14:28`. Every audio track is mixed in, the
+  transcript opens with when the recording was made, and transcripts are cached by file
+  hash so a re-add never transcribes twice
+  ([docs](https://docs.memloom.dev/guides/recordings))
+- Recordings tell you who is speaking. Multi-voice recordings are diarized locally,
+  sections break where the speaker changes, and headings carry the label. Rename
+  `Speaker 2` to a real name from the viewer (each voice has a playable sample), and the
+  voice library remembers it: later recordings of a voice you have named arrive
+  pre-labeled, entirely on-device
+- Slow ingests run through a durable queue: link one recording or fifty, watch per-file
+  progress with a live percentage for every stage, cancel or resume, and the queue
+  survives a daemon restart. Transcription and diarization run in a worker thread, so the
+  daemon stays responsive throughout
+- Uploads from the browser are capped at ~512 MB with a clear pointer to Link file, and
+  uploaded recordings now live in memloom's own uploads directory instead of the OS temp
+  dir, so playback and samples keep working after Windows cleans up
+- The viewer feels faster: tab data is prefetched on hover and cached, so switching tabs
+  shows data instead of a loading message; the queue and entities sections render
+  immediately with honest empty and loading states
+- The daemon no longer dies when the Postgres wire port cannot bind. The wire is a
+  convenience for database tools, so a blocked port now costs you the wire and nothing else:
+  `memloom serve` reports the bind error, keeps the HTTP API and viewer running, and releases
+  the data-dir lock cleanly on exit. This mostly bites on Windows, where Hyper-V, WSL and
+  Docker reserve random port blocks inside the ephemeral range at every boot and one can land
+  on the default 54329
+- Added `MEMLOOM_PG_PORT` to move the Postgres wire off 54329. Set it in
+  `~/.memloom/config.env` (or the environment) to any free port; `memloom serve` and
+  `memloom init` print the live one
+
+## 0.6.0
+
+- Added entity resolution: memloom now folds the several spellings of one thing
+  (`Claude Opus 4.8` and `Opus 4.8`, `Postgres` and `PostgreSQL`) into one entity. Spellings
+  that differ only in case and punctuation fold automatically; anything less certain is
+  queued in the Conflicts tab for you to decide. Every fold is reversible, and the absorbed
+  spelling keeps resolving to the survivor, so new memories using the old name land in the
+  right place ([docs](https://docs.memloom.dev/concepts/entity-resolution))
+- Recall now follows folded spellings. The entity arm anchors on alias vectors as well as
+  entity vectors, so a query using a name that was folded away still reaches everything the
+  surviving entity is attached to. This matters because duplicate spellings compete for the
+  arm's ten anchor slots, so folding them is a retrieval improvement, not just tidiness
+- Added graph traversal: walk from one entity to see who and what it is connected to,
+  filtered by entity type. Accepts a name, an id, or a folded-away spelling, and reports
+  which one it matched. Relationships extraction actually stated are listed separately from
+  entities that merely appear in the same memories. Available as a **traverse** panel on the
+  viewer's Graph tab, where searching an entity dims the canvas to its neighbourhood and
+  clicking a neighbour follows it, plus `GET /memory/entities/related` and the
+  `related_entities` MCP tool
+- Added `agent` as a built-in entity type, for a named AI model or assistant that does work
+- `DELETE /memory/entities/{id}` now refuses while an unreverted fold points at the entity.
+  It used to take the alias row with it, which made the fold permanent and swept the absorbed
+  entity's mentions along with it
+
 ## 0.5.0
 
 - Added prompt-time recall to `memloom connect claude-code`: a second hook injects the

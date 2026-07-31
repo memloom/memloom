@@ -45,12 +45,100 @@ export interface EntityDetail extends Entity {
   mentions: number;
   memories: number;
   documents: number;
+  /** Folded-in spellings that still resolve to this entity. */
+  aliases: string[];
+}
+
+/** One stated relationship between two entities, seen from the entity being asked about. */
+export interface EntityLink {
+  relation: string;
+  direction: "out" | "in";
+  confidence: number | null;
+}
+
+/** One entity connected to the entity being asked about, and how. */
+export interface RelatedEntity extends Entity {
+  mentions: number;
+  aliases: string[];
+  /** Empty means the connection is co-mention only: nothing stated how they relate. */
+  links: EntityLink[];
+  sharedSources: number;
+}
+
+/** The neighbourhood of one entity. `matchedAlias` is set when a folded spelling was asked for. */
+export interface RelatedEntities {
+  entity: EntityDetail;
+  matchedAlias: string | null;
+  related: RelatedEntity[];
+  truncated: number;
+}
+
+/** A canonical an uncertain fold could go to. */
+export interface EntityConflictCandidate {
+  id: string;
+  name: string;
+  entityType: string;
+  mentions: number;
+  score: number;
+  reason: string;
+}
+
+/** An uncertain entity fold awaiting arbitration, on the same surface as memory conflicts. */
+export interface EntityConflict {
+  id: string;
+  createdAt: string;
+  incoming: { id: string; name: string; entityType: string; mentions: number };
+  candidates: EntityConflictCandidate[];
+}
+
+/** One reversible fold of a name variant into a canonical entity. */
+export interface EntityMerge {
+  id: string;
+  canonicalId: string;
+  canonicalName: string;
+  sourceId: string;
+  sourceName: string;
+  sourceType: string;
+  decidedBy: "auto" | "llm" | "human";
+  score: number | null;
+  reason: string | null;
+  createdAt: string;
+  revertedAt: string | null;
+}
+
+export interface EntityResolutionResult {
+  examined: number;
+  pairs: number;
+  merged: number;
+  queued: number;
+  deferred: number;
+  skipped: number;
 }
 
 export interface GraphDocument {
   id: string;
   title: string;
   path: string;
+}
+
+/** One diarized voice in a recording, mirrored from the core type. */
+export interface DocumentSpeaker {
+  id: number;
+  /** The generated transcript label, "Speaker 1". */
+  label: string;
+  /** What the user named this voice; null until they do. */
+  name: string | null;
+  /** Total talk time in seconds. */
+  seconds: number;
+  /** A clean solo stretch of this voice, for the "play a sample" button. */
+  sampleStart: number;
+  sampleEnd: number;
+}
+
+export interface SpeakerRoster {
+  version: 1;
+  embeddingModel: string;
+  speakers: DocumentSpeaker[];
 }
 
 export interface ContextDocument {
@@ -60,6 +148,8 @@ export interface ContextDocument {
   kind: string;
   chunkCount: number;
   updatedAt: string;
+  /** Present on diarized recordings; absent on text documents and older ingests. */
+  speakers?: SpeakerRoster | null;
 }
 
 export interface ContextChunk {
@@ -74,6 +164,90 @@ export interface ContextChunk {
 export interface DocumentChunks {
   chunks: ContextChunk[];
   edges: GraphEdge[];
+}
+
+/** Why a page could not be turned into a document. Stable, so the UI can branch on it. */
+export type LinkErrorCode =
+  | "not_html"
+  | "too_large"
+  | "too_many_redirects"
+  | "http_error"
+  | "empty"
+  | "likely_rendered";
+
+/**
+ * A refused page. The code is carried rather than flattened into the message, because the
+ * difference between "try another way" and "this is broken" is the whole point of showing
+ * the failure at all.
+ */
+export class LinkIngestError extends Error {
+  constructor(
+    message: string,
+    readonly code: LinkErrorCode | null,
+    readonly url: string,
+  ) {
+    super(message);
+    this.name = "LinkIngestError";
+  }
+}
+
+/**
+ * One step of a slow ingest. Only media emits these: transcribing an hour of audio takes
+ * minutes, and every other format finishes before it would emit anything.
+ */
+export interface ContextProgress {
+  path: string;
+  /**
+   * "hashing" | "decoding" | "detecting" | "loading" | "transcribing" | "checking" |
+   * "repairing". An open set on purpose: a newer daemon naming a stage this viewer has not
+   * heard of falls through to showing the raw name rather than showing nothing at all.
+   */
+  stage: string;
+  /** Bytes during "hashing", chunks during "transcribing"; both 0 when there is nothing to count. */
+  done: number;
+  total: number;
+  /** How far into the recording this step reached, and how long the recording runs. */
+  seconds: number;
+  audioSeconds: number;
+}
+
+/** One file waiting for, or undergoing, ingestion. Survives a daemon restart. */
+export interface QueueItem {
+  id: string;
+  path: string;
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  addedAt: string;
+  /** Last progress seen, so a viewer opened mid-run renders the real state. */
+  stage?: string;
+  done?: number;
+  total?: number;
+  seconds?: number;
+  audioSeconds?: number;
+  outcome?: string;
+  chunks?: number;
+  error?: string;
+}
+
+export interface QueueSnapshot {
+  items: QueueItem[];
+  running: boolean;
+}
+/** One file finished inside a streamed ingest, so a folder reports as it goes. */
+export interface ContextFileDone {
+  stage: "file";
+  path: string;
+  outcome: string;
+  chunks: number;
+}
+
+export type ContextStreamEvent = ContextProgress | ContextFileDone;
+
+/** The streamed ingest's summary: the same totals /context/add reports for a folder. */
+export interface ContextAddStreamResult {
+  documents: number;
+  unchanged: number;
+  chunks: number;
+  errors?: string[];
 }
 
 export interface GraphEdge {
@@ -387,6 +561,61 @@ function post<T>(path: string, body?: unknown): Promise<T> {
   });
 }
 
+/**
+ * Read one of the daemon's NDJSON progress streams. Every line is a JSON object with a
+ * `type`: "item" per step, one "done" carrying the summary, "error" for a failure that
+ * happened after the headers went out, and "ping" keepalives. Unknown types are skipped, so
+ * a newer daemon never breaks an older viewer.
+ */
+async function readNdjson<TItem, TDone>(
+  path: string,
+  body: unknown,
+  onItem: (item: TItem) => void,
+  signal?: AbortSignal,
+): Promise<TDone> {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body ?? {}),
+    signal,
+  });
+  if (!res.ok || !res.body) {
+    const failure = (await res.json().catch(() => null)) as { error?: string } | null;
+    throw new Error(failure?.error ?? `${res.status} ${res.statusText}`);
+  }
+  let done: TDone | null = null;
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  const handleLine = (line: string) => {
+    if (!line.trim()) return;
+    const event = JSON.parse(line) as { type: string; error?: string };
+    if (event.type === "error") throw new Error(event.error ?? "stream error");
+    if (event.type === "done") {
+      const { type: _t, ...result } = event;
+      done = result as unknown as TDone;
+      return;
+    }
+    if (event.type !== "item") return;
+    const { type: _t, ...item } = event;
+    onItem(item as unknown as TItem);
+  };
+  for (;;) {
+    const { done: eof, value } = await reader.read();
+    if (eof) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline = buffer.indexOf("\n");
+    while (newline >= 0) {
+      handleLine(buffer.slice(0, newline));
+      buffer = buffer.slice(newline + 1);
+      newline = buffer.indexOf("\n");
+    }
+  }
+  if (buffer.trim()) handleLine(buffer);
+  if (!done) throw new Error("the stream ended without a result");
+  return done;
+}
+
 export const api = {
   graph: () => json<Graph>("/memory/graph"),
   memories: () => json<{ memories: Memory[] }>("/memory/list").then((r) => r.memories),
@@ -395,6 +624,20 @@ export const api = {
   documentChunks: (id: string) => json<DocumentChunks>(`/context/documents/${id}/chunks`),
   openDocument: (id: string) =>
     json<{ ok: boolean }>(`/context/documents/${id}/open`, { method: "POST" }),
+  // The recording's bytes, Range-capable: hand this straight to an <audio>/<video> src.
+  documentMediaUrl: (id: string) => `/context/documents/${id}/media`,
+  // A daemon-cut clip of the recording as a small WAV: plays in every browser regardless
+  // of what container the source file is in (Chromium cannot decode Matroska).
+  documentSampleUrl: (id: string, start: number, end: number) =>
+    `/context/documents/${id}/sample?start=${start}&end=${end}`,
+  // Name a diarized voice. The rename rewrites that speaker's chunk breadcrumbs in place
+  // and returns the updated roster, so the caller re-renders without a second request.
+  renameSpeaker: (id: string, speakerId: number, name: string) =>
+    json<{ ok: boolean; speakers: SpeakerRoster }>(`/context/documents/${id}/speakers`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ speakerId, name }),
+    }),
   removeDocument: (id: string) =>
     json<{ ok: boolean }>(`/context/documents/${id}`, { method: "DELETE" }),
   contextAdd: (path: string) =>
@@ -412,6 +655,56 @@ export const api = {
       unchanged?: number;
       errors?: string[];
     }>("/context/add", { path }),
+  // The same ingest, streamed. Media transcribes for minutes, which is far past what a plain
+  // request can hold open without looking hung, so the media and folder paths report as they
+  // go. Progress events and per-file completions both arrive here; `stage` tells them apart.
+  // The durable ingest queue. Polled rather than streamed: it changes on the order of once
+  // per chunk, and a poll is far less machinery than a second NDJSON reader.
+  queue: () => json<QueueSnapshot>("/queue"),
+  queueAdd: (paths: string[]) => post<QueueSnapshot & { added: number }>("/queue", { paths }),
+  queueCancel: (id: string) => post<QueueSnapshot>(`/queue/${id}/cancel`, {}),
+  queueResume: (id: string) => post<QueueSnapshot>(`/queue/${id}/resume`, {}),
+  queueRemove: (id: string) => json<QueueSnapshot>(`/queue/${id}`, { method: "DELETE" }),
+  queueClear: () => post<QueueSnapshot & { removed: number }>("/queue/clear", {}),
+  contextAddStream: (
+    path: string,
+    onProgress: (event: ContextStreamEvent) => void,
+    signal?: AbortSignal,
+  ) =>
+    readNdjson<ContextStreamEvent, ContextAddStreamResult>(
+      "/context/add/stream",
+      { path },
+      onProgress,
+      signal,
+    ),
+  // Ingest a web page. The daemon fetches and parses it in its own process, so the URL never
+  // reaches a third party. Not json(): a refusal answers 400 with a stable code, and losing
+  // that code would leave the UI with nothing but prose to act on.
+  contextAddUrl: async (url: string) => {
+    const res = await fetch("/context/url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url }),
+    });
+    const body = (await res.json().catch(() => null)) as {
+      error?: string;
+      code?: LinkErrorCode;
+      url?: string;
+    } | null;
+    if (!res.ok) {
+      throw new LinkIngestError(
+        body?.error ?? `${res.status} ${res.statusText}`,
+        body?.code ?? null,
+        body?.url ?? url,
+      );
+    }
+    return body as unknown as {
+      documentId?: string;
+      outcome: "added" | "updated" | "unchanged" | "converted";
+      title: string;
+      chunks: number;
+    };
+  },
   // Opens the OS-native picker on the daemon's desktop; resolves when the user picks or
   // cancels ([] = cancelled). 501 when the platform has no picker. Picks return absolute
   // paths, so linked documents stay openable and change-trackable (the sync roadmap).
@@ -482,6 +775,33 @@ export const api = {
     post<{ ok: boolean }>(`/memory/entities/${id}/merge`, { into }),
   deleteEntity: (id: string) =>
     json<{ ok: boolean }>(`/memory/entities/${id}`, { method: "DELETE" }),
+  // Entity resolution. Uncertain folds are resolved through the same resolve/revert calls as
+  // memory conflicts (the daemon dispatches on the decision's kind), so only the reads and
+  // the fold history are separate.
+  entityConflicts: () =>
+    json<{ conflicts: EntityConflict[] }>("/memory/entities/conflicts").then((r) => r.conflicts),
+  entityMerges: () =>
+    json<{ merges: EntityMerge[] }>("/memory/entities/merges").then((r) => r.merges),
+  resolveEntities: (dryRun = false) =>
+    post<EntityResolutionResult>("/memory/entities/resolve", { dryRun }),
+  revertEntityMerge: (id: string) =>
+    post<{ ok: boolean }>(`/memory/entities/merges/${id}/revert`, {}),
+  /**
+   * Walk the graph from one entity. `target` may be a name, an id, or a folded-away spelling;
+   * null means nothing matched, which is different from an entity with no neighbours.
+   */
+  relatedEntities: async (target: string, entityType?: string): Promise<RelatedEntities | null> => {
+    const params = new URLSearchParams({ q: target });
+    if (entityType) params.set("type", entityType);
+    // Not json(): a 404 here means "no such entity", which is an answer rather than a failure.
+    const res = await fetch(`/memory/entities/related?${params}`);
+    if (res.status === 404) return null;
+    const body = (await res.json().catch(() => null)) as
+      | ({ error?: string } & RelatedEntities)
+      | null;
+    if (!res.ok) throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
+    return body as RelatedEntities;
+  },
   assistantSessions: () =>
     json<{ sessions: AssistantSession[] }>("/assistant/sessions").then((r) => r.sessions),
   assistantSearch: (q: string) =>

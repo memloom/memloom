@@ -87,6 +87,19 @@ as edges (`replaces`, `distinct`) that can be deactivated. `revert` on a resolve
 You can resolve a conflict, change your mind a week later, revert it, and resolve it the
 other way.
 
+## Duplicate entities use the same queue
+
+Two spellings of one thing is the same shape of question as two contradicting memories:
+something is inconsistent and only you can settle it. So uncertain entity folds land in the
+same decision log, the same Conflicts tab, and the same revertable history. The actions read
+slightly differently (there is no reconciled *name* for an agent to author, so `merge` does
+not apply), and they are described in
+[Entity resolution](/concepts/entity-resolution#uncertain-folds-go-to-the-conflicts-queue).
+
+Entity folds never appear in `memloom conflicts` or `list_conflicts`. Those are scoped to
+memory contradictions, so an agent asking about pending conflicts is never handed a question
+about spelling.
+
 <Note>
 Conflict detection requires the LLM, so it's off in offline mode (no `OPENROUTER_API_KEY`).
 Offline saves skip the belief pipeline entirely and always report `added`.

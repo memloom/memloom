@@ -17,8 +17,15 @@ import { configPath, dataDir, ensureConfig, loadConfigEnv } from "./config.js";
 import { buildEngineDeps } from "./engine-config.js";
 
 export const HTTP_PORT = 4319;
-// A distinctive port so it never collides with a local Postgres on 5432.
+// A distinctive port so it never collides with a local Postgres on 5432. It sits in the
+// Windows ephemeral range, where Hyper-V/WSL2/Docker reserve random 100-port blocks at every
+// boot, so a bind here can fail with EACCES through no fault of ours: MEMLOOM_PG_PORT moves it.
 export const PG_PORT = 54329;
+
+// Call only after loadConfigEnv(), so a port set in ~/.memloom/config.env is visible.
+export function pgWirePort(): number {
+  return Number(process.env.MEMLOOM_PG_PORT) || PG_PORT;
+}
 
 // `memloom serve`: the single owner of the store. Holds the one PGLite connection (lock, D1)
 // and exposes it two ways from one process: the HTTP API (CLI + MCP route here) and the
@@ -40,7 +47,7 @@ async function alreadyServing(httpPort: number): Promise<boolean> {
   }
 }
 
-export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promise<void> {
+export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promise<void> {
   // Fail fast and clearly if a daemon already owns the port, instead of a silent bind error.
   if (await alreadyServing(httpPort)) {
     console.log(`memloom is already serving on http://127.0.0.1:${httpPort}.`);
@@ -51,6 +58,10 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   // regardless of which process spawned the daemon. Real env vars win over the file.
   ensureConfig();
   loadConfigEnv();
+
+  // Resolved after loadConfigEnv so MEMLOOM_PG_PORT works from ~/.memloom/config.env too,
+  // not just a real env var. An explicit argument still wins.
+  const wirePort = pgPort ?? pgWirePort();
 
   const deps = buildEngineDeps();
   const { apiKey, embedModel, embedDims, embedProvider, llmModel, chatModel, autoIndex, pgUrl } =
@@ -134,8 +145,9 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   // The wire socket is a PGLite-only concern: it exists so DB tools can inspect the embedded
   // store. On an external Postgres, tools connect to the server directly.
   let pgServer: PGLiteSocketServer | undefined;
+  let wireError: string | undefined;
   if (db) {
-    pgServer = new PGLiteSocketServer({ db, port: pgPort, host: "127.0.0.1" });
+    pgServer = new PGLiteSocketServer({ db, port: wirePort, host: "127.0.0.1" });
     // PGLite is single-connection: while a wire client (Drizzle Studio, psql) is attached it holds
     // an exclusive lock, and every HTTP API call silently queues behind it. Warn loudly, because
     // from the outside this looks like memloom hanging.
@@ -151,7 +163,15 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
           "The HTTP API (Claude/MCP/CLI saves + recalls) is PAUSED until it disconnects; close Drizzle Studio/psql when done inspecting.",
       );
     });
-    await pgServer.start();
+    // The wire socket is a convenience for DB tools, not the product. A port that is taken or
+    // blocked (on Windows, Hyper-V/WSL reserve blocks inside the ephemeral range) must not take
+    // the HTTP API down with it, and must not strand the data-dir lock we already hold.
+    try {
+      await pgServer.start();
+    } catch (err) {
+      wireError = err instanceof Error ? err.message : String(err);
+      pgServer = undefined;
+    }
   }
 
   console.log("memloom serving:");
@@ -159,10 +179,14 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort = PG_PORT): Promi
   if (staticDir) {
     console.log(`  Viewer     http://127.0.0.1:${httpPort}          (\`memloom ui\` opens it)`);
   }
-  if (db) {
+  if (db && pgServer) {
     console.log(
-      `  Postgres   postgresql://postgres@127.0.0.1:${pgPort}/postgres   (Drizzle Studio, psql)`,
+      `  Postgres   postgresql://postgres@127.0.0.1:${wirePort}/postgres   (Drizzle Studio, psql)`,
     );
+    console.log(`  data       ${dir}`);
+  } else if (db) {
+    console.log(`  Postgres   OFF, port ${wirePort} would not bind: ${wireError}`);
+    console.log("             Set MEMLOOM_PG_PORT to a free port and restart to get it back.");
     console.log(`  data       ${dir}`);
   } else {
     console.log(

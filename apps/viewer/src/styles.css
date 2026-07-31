@@ -1119,6 +1119,50 @@ textarea {
   margin-top: 4px;
 }
 
+/* Traverse panel: the graph-tab dock that walks entity to entity. */
+.traverseForm {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.traverseType {
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12px;
+  outline: none;
+}
+
+.traverseType:focus {
+  border-color: var(--text);
+}
+
+/* A neighbour card is a button: the whole card is the hop target, so it has to lose the
+   button chrome and keep the card's left-aligned block layout. */
+.traverseCard {
+  width: 100%;
+  gap: 6px;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.traverseCard:hover {
+  border-color: var(--border-strong);
+}
+
+.traverseLink {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 8px;
+  font-family: var(--mono);
+}
+
 .entityFilter {
   width: 100%;
   margin: 6px 0 8px;
@@ -1236,6 +1280,24 @@ textarea {
   overflow-wrap: anywhere;
 }
 
+/* A link's path is the page itself, so it is the one path worth clicking. */
+.docPathLink {
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.docPathLink:hover {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+/* An anchor wearing the button's clothes: same box, no underline, centred label. */
+.btnLink {
+  display: inline-flex;
+  align-items: center;
+  text-decoration: none;
+}
+
 .btnDanger:hover:not(:disabled),
 .btnDangerArmed {
   border-color: var(--danger);
@@ -1259,6 +1321,81 @@ textarea {
   margin-bottom: 4px;
 }
 
+/* The speaker half of a timecode breadcrumb: same chip, but text-colored rather than the
+   citation green, so "who" reads apart from "when" without inventing a data color. */
+.chunkSpeaker {
+  color: var(--text);
+  border-left: 1px solid var(--border);
+  padding-left: 5px;
+}
+
+/* The diarized voices of one recording: one row per voice, playable sample, inline rename. */
+.speakerPanel {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.speakerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The name doubles as the rename affordance; a real button for focus order, styled as text. */
+.speakerName {
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  padding: 2px 0;
+  cursor: pointer;
+  text-decoration: underline dotted var(--border-strong);
+  text-underline-offset: 3px;
+}
+
+.speakerName:hover,
+.speakerName:focus-visible {
+  text-decoration-color: var(--text);
+}
+
+.speakerInput {
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 13px;
+  padding: 2px 6px;
+  width: 180px;
+}
+
+/* Square sample button: the icon is the label. */
+.btnIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  line-height: 0;
+}
+
+/* A recording's passage is cited by clock range, not by heading: read it as a timecode. */
+.chunkTime {
+  display: flex;
+  width: fit-content;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--ok);
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  padding: 1px 7px;
+  margin-bottom: 6px;
+}
+
 .notice {
   border: 1px solid var(--border);
   border-left: 3px solid var(--ok);
@@ -1268,6 +1405,21 @@ textarea {
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+/* Advice on the first line, the daemon's own words under it. */
+.noticeStacked {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  line-height: 1.5;
+}
+
+.noticeDetail {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
 }
 
 .noticeError {
@@ -2316,4 +2468,89 @@ textarea {
 
 .attachChipX:hover {
   color: var(--danger);
+}
+
+/* The ingest queue: one row per file, with its stage, a bar, and its own controls. */
+.queueHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.queueRow {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.queueRow:first-of-type {
+  border-top: none;
+}
+.queueRowHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.queueName {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queueStatus {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.queueRow-running .queueStatus {
+  color: var(--ok);
+}
+.queueRow-failed .queueStatus {
+  color: var(--danger);
+}
+/* A cancelled row is a choice the user made, not a fault: it stays quiet, not red. */
+.queueRow-cancelled .queueName,
+.queueRow-done .queueName {
+  color: var(--text-muted);
+}
+/* Track and fill mirror the retired in-card ingest bar: border-grey rail, document-green
+   fill, sharp corners (DESIGN.md). The old rules named variables this theme never defined
+   (--inset, --accent), which resolved to nothing and drew the whole bar invisible. */
+.queueBar {
+  height: 3px;
+  margin-top: 8px;
+  background: var(--border);
+  overflow: hidden;
+}
+.queueBarFill {
+  height: 100%;
+  background: var(--ok);
+  transition: width 0.3s ease;
+}
+/* Stages that cannot report a percentage still need to look alive rather than stuck at 0. */
+.queueBarBusy {
+  width: 30%;
+  animation: queueTravel 1.4s ease-in-out infinite;
+}
+@keyframes queueTravel {
+  0% { margin-left: 0; }
+  50% { margin-left: 70%; }
+  100% { margin-left: 0; }
+}
+.queueActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+/* The queue with nothing in it: centered so it reads as a state of the section, not as a
+   row that lost its styling. */
+.queueEmpty {
+  text-align: center;
+  padding: 18px 0;
+  color: var(--text-faint);
+  font-size: 13px;
 }

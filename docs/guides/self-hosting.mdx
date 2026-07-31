@@ -60,7 +60,7 @@ PGLite folder, and the first `init()` creates the full schema on an empty databa
 is no separate provisioning step. Everything else (CLI, MCP, viewer, `memloom reembed`) reads
 the same config and follows. Two differences from the embedded tier: the data-dir lock is not
 used (the Postgres server handles concurrency), and the daemon does not start the wire-protocol
-bridge on 54329 (inspect the server directly with any Postgres client).
+bridge at all (inspect the server directly with any Postgres client).
 
 **Embedding memloom as a library instead?** The same tier is one constructor argument:
 
@@ -86,8 +86,9 @@ resolved conflicts don't come along. For a store that's mostly ingested document
 usually all you need: documents are mirrors, and re-ingesting reproduces them exactly.
 
 **Copy the rows (full fidelity).** The daemon speaks the Postgres wire protocol on
-`127.0.0.1:54329`, so with the daemon running you can pull data out with standard tools and
-load it into the Docker database:
+`127.0.0.1:54329` by default (`memloom serve` prints the live port, which `MEMLOOM_PG_PORT`
+can move), so with the daemon running you can pull data out with standard tools and load it
+into the Docker database:
 
 ```bash
 pg_dump -h 127.0.0.1 -p 54329 -U postgres -d postgres --data-only \

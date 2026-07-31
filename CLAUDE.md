@@ -6,6 +6,10 @@ Local-first memory engine for AI agents.
 
 When the user's request matches an available skill, invoke it via the Skill tool. When in doubt, invoke the skill.
 
+When shipping (any /ship run), verify docs freshness before committing: if the diff
+changes CLI commands, routes, supported formats, env vars, or user-facing workflows,
+the pages under docs/ that describe them must be updated in the same PR.
+
 Key routing rules:
 - Product ideas/brainstorming → invoke /office-hours
 - Strategy/scope → invoke /plan-ceo-review

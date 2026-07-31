@@ -1,16 +1,30 @@
 import { execFile, spawn } from "node:child_process";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { homedir } from "node:os";
+import { createReadStream } from "node:fs";
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import { serve as nodeServe } from "@hono/node-server";
 import {
+  AudioError,
+  CATALOG,
+  type ContextProgressEvent,
   detectKind,
+  findModel,
+  hasFfmpeg,
   type IndexProgressEvent,
+  IngestQueue,
   isChatProvider,
+  isHttpUrl,
+  LinkExtractionError,
   MEMORY_TYPES,
   type Memloom,
+  modelStatus,
+  selectModel,
+  setupModels,
   supportedExtensions,
+  uploadStoreDir,
 } from "@memloom/core";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -190,6 +204,74 @@ const MIME: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
+// Separate from the static-bundle MIME map on purpose: these are served by the media route
+// with Range support, and folding them into MIME would quietly let the SPA fallback serve a
+// video without ranges, which Safari refuses to play at all.
+const MEDIA_MIME: Record<string, string> = {
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".wav": "audio/wav",
+  ".flac": "audio/flac",
+  ".ogg": "audio/ogg",
+  ".opus": "audio/ogg",
+  ".aac": "audio/aac",
+  ".wma": "audio/x-ms-wma",
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".mkv": "video/x-matroska",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+  ".avi": "video/x-msvideo",
+};
+
+/**
+ * Cut [start, start+duration) out of any media file as 16 kHz mono WAV bytes. -ss before
+ * -i seeks by container index rather than decoding from zero, so cutting 8 seconds out of
+ * hour two of a video costs milliseconds, not a decode of hour one. windowsHide for the
+ * same reason as every other spawn here: the daemon has no console to inherit.
+ */
+function cutSampleWav(path: string, start: number, duration: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "ffmpeg",
+      [
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-ss",
+        String(start),
+        "-t",
+        String(duration),
+        "-i",
+        path,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
+        "-f",
+        "wav",
+        "pipe:1",
+      ],
+      { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+    );
+    const chunks: Buffer[] = [];
+    let stderr = "";
+    child.stdout.on("data", (d: Buffer) => chunks.push(d));
+    child.stderr.on("data", (d) => {
+      stderr += String(d);
+    });
+    child.on("error", reject);
+    child.on("close", (code) =>
+      code === 0
+        ? resolve(Buffer.concat(chunks))
+        : reject(new Error(stderr.trim() || `ffmpeg exited with ${code}`)),
+    );
+  });
+}
+
 // How long the store probe waits before declaring the store locked. `select 1` on a free store
 // answers in single-digit milliseconds; anything slower means something is holding the lock.
 const STORE_PROBE_TIMEOUT_MS = 1_500;
@@ -218,6 +300,27 @@ const contextAddSchema = z.object({
   ownerId: z.string().uuid().optional(),
 });
 
+// The html field is capped well under the page fetcher own 10 MB limit: a rendered DOM
+// arrives as JSON here, and an unbounded string would be a memory hole on a local port.
+const contextUrlSchema = z.object({
+  url: z.string().refine(isHttpUrl, "url must start with http:// or https://"),
+  html: z.string().max(10_000_000).optional(),
+  ownerId: z.string().uuid().optional(),
+});
+
+const audioSelectSchema = z.object({
+  id: z.string().min(1, "id must be a non-empty string"),
+});
+
+const speakerRenameSchema = z.object({
+  speakerId: z.number().int().positive(),
+  name: z.string().min(1, "name must be a non-empty string").max(120),
+});
+
+const audioSetupSchema = z.object({
+  id: z.string().min(1).optional(),
+});
+
 const schemaEntrySchema = z.object({
   kind: z.enum(["entity_type", "predicate"]),
   name: z.string().min(2, "name must be at least 2 characters"),
@@ -239,6 +342,10 @@ const entityPatchSchema = z
 
 const entityMergeSchema = z.object({
   into: z.string().uuid(),
+});
+
+const entityResolveSchema = z.object({
+  dryRun: z.boolean().optional(),
 });
 
 const autoIndexSchema = z.object({
@@ -372,6 +479,37 @@ async function parseBody<S extends z.ZodTypeAny>(
   return { ok: true, data: parsed.data };
 }
 
+/**
+ * The speech-model catalog with everything a picker needs to render it in one call: which
+ * models are on disk, which one transcription would use, and whether ffmpeg is there to feed
+ * them. Shaped this way because a list where each row needs its own request is a list that
+ * renders wrong while it loads.
+ */
+async function audioCatalog() {
+  const status = await modelStatus();
+  return {
+    dir: status.dir,
+    ffmpeg: await hasFfmpeg(),
+    selected: status.selected.id,
+    installed: status.installed,
+    models: CATALOG.map((m) => ({
+      ...m,
+      installed: status.installedIds.includes(m.id),
+      selected: m.id === status.selected.id,
+    })),
+  };
+}
+
+/**
+ * An AudioError is the caller's problem to act on (download the model, install ffmpeg), so it
+ * answers 400 with its stable code, the same contract /context/url gives extraction failures.
+ * A model nobody has downloaded yet is not a server fault.
+ */
+function audioFailure(c: Context, err: unknown): Response {
+  if (err instanceof AudioError) return c.json({ error: err.message, code: err.code }, 400);
+  throw err;
+}
+
 // A local browser Origin: the viewer served from the daemon, or a dev viewer on another
 // localhost port. Anything else is a cross-site caller.
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
@@ -428,6 +566,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         c.req.path.startsWith("/memory") ||
         c.req.path.startsWith("/context") ||
         c.req.path.startsWith("/assistant") ||
+        c.req.path.startsWith("/audio") ||
         c.req.path.startsWith("/import") ||
         c.req.path.startsWith("/notion") ||
         c.req.path.startsWith("/admin");
@@ -546,7 +685,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   const STREAM_HEARTBEAT_MS = 15_000;
   const streamNdjson = <TEvent>(
     c: Context,
-    run: (emit: (event: TEvent) => void) => Promise<object>,
+    run: (emit: (event: TEvent) => void, signal: AbortSignal) => Promise<object>,
   ) => {
     c.header("content-type", "application/x-ndjson");
     return stream(c, async (s) => {
@@ -557,9 +696,15 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
           await s.write(`${JSON.stringify(payload)}\n`);
         });
       };
+      // The client hanging up means "stop", and a long run must honour that rather than
+      // burn a core for minutes with nobody listening. This comes from the stream rather
+      // than from c.req.raw.signal, which does not fire on disconnect under the Node
+      // adapter: verified by watching a cancelled transcription keep running.
+      const cancel = new AbortController();
+      s.onAbort(() => cancel.abort());
       const heartbeat = setInterval(() => write({ type: "ping" }), STREAM_HEARTBEAT_MS);
       try {
-        const result = await run((event) => write({ type: "item", ...event }));
+        const result = await run((event) => write({ type: "item", ...event }), cancel.signal);
         write({ type: "done", ...result });
       } catch (err) {
         // Mid-stream failures can't become an HTTP error status: surface them in-band.
@@ -732,6 +877,44 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   // Entity instances (the schema tab's management list): rename/retype, merge, delete.
   app.get("/memory/entities", async (c) => c.json({ entities: await memloom.listEntities() }));
+
+  // Entity resolution. These sit ABOVE the /:id routes on purpose: Hono matches in
+  // registration order, so "conflicts" would otherwise be read as an entity id.
+  app.get("/memory/entities/conflicts", async (c) =>
+    c.json({ conflicts: await memloom.entityConflicts() }),
+  );
+
+  app.get("/memory/entities/merges", async (c) => c.json({ merges: await memloom.entityMerges() }));
+
+  app.post("/memory/entities/resolve", async (c) => {
+    const body = await parseBody(c, entityResolveSchema);
+    if (!body.ok) return body.res;
+    return c.json(await memloom.resolveEntities({ dryRun: body.data.dryRun }));
+  });
+
+  // "Which people is this person connected to." Query rather than path parameter because the
+  // target may be a NAME, and real entity names carry slashes and dots ("@memloom/cli").
+  app.get("/memory/entities/related", async (c) => {
+    const target = c.req.query("q");
+    if (!target) return c.json({ error: "q is required (an entity id, name, or alias)" }, 400);
+    const limit = Number(c.req.query("limit") ?? 50);
+    const result = await memloom.relatedEntities(target, {
+      ...(c.req.query("type") ? { entityType: c.req.query("type") as string } : {}),
+      ...(Number.isFinite(limit) ? { limit } : {}),
+    });
+    if (!result) return c.json({ error: `no entity matching "${target}"` }, 404);
+    return c.json(result);
+  });
+
+  app.post("/memory/entities/merges/:id/revert", async (c) => {
+    try {
+      await memloom.revertEntityMerge(c.req.param("id"));
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no entity merge/.test(message) ? 404 : 400);
+    }
+  });
 
   app.patch("/memory/entities/:id", async (c) => {
     const body = await parseBody(c, entityPatchSchema);
@@ -983,17 +1166,86 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   // Ingest bytes uploaded from the browser's own file dialog (the viewer's Browse/Folder
   // buttons) as a global document. Same shape as the chat-attach upload, session-free.
+  // The durable ingest queue. Transcribing an hour costs 8 to 11 minutes, so queueing is
+  // what makes "point it at a folder of recordings and walk away" possible, and the queue
+  // outlives the daemon because a run that long routinely spans a restart.
+  const queue = new IngestQueue({
+    ingest: async (path, onProgress, signal) => {
+      const result = await memloom.contextAdd({ path }, (event) => onProgress(event), signal);
+      return { outcome: result.outcome, chunks: result.chunks };
+    },
+  });
+  void queue.load();
+
+  app.get("/queue", async (c) => {
+    await queue.load();
+    return c.json(queue.snapshot());
+  });
+
+  app.post("/queue", async (c) => {
+    const body = await parseBody(c, z.object({ paths: z.array(z.string().min(1)).min(1) }));
+    if (!body.ok) return body.res;
+
+    // A folder is expanded here rather than queued whole, so the list shows one row per
+    // recording with its own progress and its own cancel, instead of one opaque row.
+    const paths: string[] = [];
+    for (const raw of body.data.paths) {
+      const target = resolve(raw);
+      const info = await stat(target).catch(() => null);
+      if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
+      if (info.isDirectory()) paths.push(...(await collectSupportedFiles(target)));
+      else paths.push(target);
+    }
+    if (paths.length === 0) {
+      return c.json({ error: `no supported files (${supportedExtensions().join(", ")})` }, 400);
+    }
+    const added = await queue.add(paths);
+    return c.json({ added: added.length, ...queue.snapshot() });
+  });
+
+  app.post("/queue/:id/cancel", async (c) => {
+    const ok = await queue.cancel(c.req.param("id"));
+    return ok ? c.json(queue.snapshot()) : c.json({ error: "not cancellable" }, 404);
+  });
+
+  app.post("/queue/:id/resume", async (c) => {
+    const ok = await queue.resume(c.req.param("id"));
+    return ok ? c.json(queue.snapshot()) : c.json({ error: "not resumable" }, 404);
+  });
+
+  app.delete("/queue/:id", async (c) => {
+    const ok = await queue.remove(c.req.param("id"));
+    return ok ? c.json(queue.snapshot()) : c.json({ error: "no such item" }, 404);
+  });
+
+  app.post("/queue/clear", async (c) => {
+    const removed = await queue.clearFinished();
+    return c.json({ removed, ...queue.snapshot() });
+  });
+
   app.post(
     "/context/upload",
     bodyLimit({
-      maxSize: 48 * 1024 * 1024, // base64 inflates 4/3: ~36MB of real file
-      onError: (c) => c.json({ error: "file too large (max ~36MB)" }, 413),
+      // Raised so a recording can be uploaded at all. Media is minutes of transcription, so
+      // the browser dialog is a legitimate way in even though linking is better: an upload
+      // is a one-time snapshot and cannot be re-scanned from disk later.
+      maxSize: 700 * 1024 * 1024, // base64 inflates 4/3: ~512MB of real file
+      onError: (c) =>
+        c.json(
+          {
+            error:
+              "file too large to upload (about 512 MB). Use Link file instead, which reads it " +
+              "from disk and never copies it.",
+          },
+          413,
+        ),
     }),
     async (c) => {
       const body = await parseBody(c, contextUploadSchema);
       if (!body.ok) return body.res;
       const filename = body.data.filename.replace(/[/\\]/g, "_");
-      if (!detectKind(filename)) {
+      const kind = detectKind(filename);
+      if (!kind) {
         return c.json(
           { error: `unsupported file type (supported: ${supportedExtensions().join(", ")})` },
           400,
@@ -1001,9 +1253,51 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       }
       const bytes = new Uint8Array(Buffer.from(body.data.contentBase64, "base64"));
       if (bytes.length === 0) return c.json({ error: "empty file" }, 400);
-      return c.json(await memloom.contextUpload({ filename, bytes }));
+
+      // Media goes to the queue rather than being transcribed inside this request. The
+      // upload carries no progress of its own, so doing the work here would be the silent
+      // multi-minute wait the streaming path exists to avoid; queued, it reports like any
+      // other recording. The bytes land in the store's own uploads dir, NOT the OS temp
+      // dir: the document keeps this path for playback, samples, and "open file", and
+      // %TEMP% is cleared on a schedule nobody controls. Cleanup is ownership-shaped:
+      // the queue discards files of rows that never became documents, and contextRemove
+      // discards a removed document's snapshot.
+      if (kind === "audio" || kind === "video") {
+        await mkdir(uploadStoreDir(), { recursive: true });
+        const dir = await mkdtemp(join(uploadStoreDir(), "u-"));
+        const file = join(dir, filename);
+        await writeFile(file, bytes);
+        const [item] = await queue.add([file], { uploaded: true });
+        return c.json({ outcome: "queued", title: filename, chunks: 0, queueId: item?.id });
+      }
+
+      try {
+        return c.json(await memloom.contextUpload({ filename, bytes }));
+      } catch (err) {
+        // An uploaded recording transcribes too, so it hits the same setup wall.
+        return audioFailure(c, err);
+      }
     },
   );
+
+  // Ingest a web page. The daemon fetches and parses it locally, so nothing about the page
+  // reaches a third party. `html` lets a caller that already rendered the page hand over
+  // its DOM instead, which is what a browser extension would send: no fetch, and pages
+  // behind a login or built as single-page apps work because the caller was signed in.
+  app.post("/context/url", async (c) => {
+    const body = await parseBody(c, contextUrlSchema);
+    if (!body.ok) return body.res;
+    try {
+      return c.json(await memloom.contextAddUrl(body.data));
+    } catch (err) {
+      // Extraction failures are the caller's problem to act on (try the extension, the page
+      // is a PDF, the site blocked us), so they answer 400 with a stable code, not a 500.
+      if (err instanceof LinkExtractionError) {
+        return c.json({ error: err.message, code: err.code, url: err.url }, 400);
+      }
+      throw err;
+    }
+  });
 
   // Ingest a file, or a whole folder: directories are walked (bounded depth, hidden and
   // node_modules-style dirs skipped) and every supported file is added.
@@ -1013,7 +1307,16 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const target = resolve(body.data.path);
     const info = await stat(target).catch(() => null);
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
-    if (!info.isDirectory()) return c.json(await memloom.contextAdd({ path: target }));
+    if (!info.isDirectory()) {
+      try {
+        return c.json(await memloom.contextAdd({ path: target }));
+      } catch (err) {
+        // A recording whose model was never downloaded, or a machine without ffmpeg, is a
+        // setup step the caller has to take, so it answers 400 with its code like
+        // /context/url does. The folder branch below already collects per-file failures.
+        return audioFailure(c, err);
+      }
+    }
 
     const files = await collectSupportedFiles(target);
     if (files.length === 0) {
@@ -1046,6 +1349,76 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       chunks,
       ...(absorbed > 0 ? { absorbed } : {}),
       ...(errors.length > 0 ? { errors } : {}),
+    });
+  });
+
+  // The same ingest, streamed. Transcribing an hour of audio takes 8 to 11 minutes, which
+  // is far past what a plain request can hold open without looking hung, so the media path
+  // reports per decode chunk. Every other format finishes before it emits anything, which
+  // is why this is an additional route rather than a replacement for /context/add.
+  app.post("/context/add/stream", async (c) => {
+    const body = await parseBody(c, contextAddSchema);
+    if (!body.ok) return body.res;
+    const target = resolve(body.data.path);
+    const info = await stat(target).catch(() => null);
+    if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
+    const files = info.isDirectory() ? await collectSupportedFiles(target) : [target];
+    if (files.length === 0) {
+      return c.json(
+        { error: `no supported files (${supportedExtensions().join(", ")}) under ${target}` },
+        400,
+      );
+    }
+
+    // Both event shapes carry `stage`, so a consumer discriminates on one field instead of
+    // guessing from which properties happen to be present.
+    type FileDone = { stage: "file"; path: string; outcome: string; chunks: number };
+
+    // One file in, one ContextAddResult out, exactly as /context/add answers. Clients type
+    // this route's result as ContextAddResult, so returning only folder-shaped totals left
+    // them holding an undefined `outcome`. A directory still reports totals, because there
+    // is no single result to report.
+    const single = !info.isDirectory();
+
+    // Closing the stream cancels the work. Transcribing an hour takes 8 to 11 minutes, and
+    // the common reason to stop is having picked the wrong file.
+    return streamNdjson<ContextProgressEvent | FileDone>(c, async (emit, signal) => {
+      let added = 0;
+      let unchanged = 0;
+      let chunks = 0;
+      let lastResult: Awaited<ReturnType<typeof memloom.contextAdd>> | null = null;
+      const errors: string[] = [];
+      for (const file of files) {
+        if (signal.aborted) break;
+        try {
+          const r = await memloom.contextAdd({ path: file }, emit, signal);
+          lastResult = r;
+          chunks += r.chunks;
+          if (r.outcome === "unchanged") unchanged += 1;
+          else added += 1;
+          // A per-file completion line, so a folder of recordings reports as it goes
+          // rather than only at the end.
+          emit({ stage: "file", path: file, outcome: r.outcome, chunks: r.chunks });
+        } catch (err) {
+          errors.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+      // A single file that failed has only its failure to report, and a stream cannot go
+      // back and change its status code, so it travels in band.
+      //
+      // On success the payload is a superset: the file's own ContextAddResult, which the CLI
+      // reads `outcome` and `title` from, plus the same totals a folder reports, which the
+      // viewer counts. One shape satisfying both beats making each caller guess which it got.
+      if (single) {
+        if (!lastResult) return { error: errors[0] ?? `could not ingest ${target}` };
+        return { ...lastResult, documents: added, unchanged, chunks };
+      }
+      return {
+        documents: added,
+        unchanged,
+        chunks,
+        ...(errors.length > 0 ? { errors } : {}),
+      };
     });
   });
 
@@ -1110,9 +1483,182 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     return c.json({ ok: true });
   });
 
+  // The recording's bytes, for the viewer's speaker-labeling playback. Same gate as /open:
+  // the id lookup is the whole authorization, so no caller-supplied path ever reaches the
+  // filesystem, and only linked audio/video documents qualify. Range requests are honoured
+  // because <audio> seeking sends them, and Safari refuses media from servers that don't.
+  app.get("/context/documents/:id/media", async (c) => {
+    const id = c.req.param("id");
+    const doc = (await memloom.contextList()).find((d) => d.id === id);
+    if (!doc) return c.json({ error: `no context document ${id}` }, 404);
+    if (doc.kind !== "audio" && doc.kind !== "video") {
+      return c.json({ error: "not a media document" }, 400);
+    }
+    const mime = MEDIA_MIME[extname(doc.path).toLowerCase()];
+    if (doc.path.startsWith("upload://") || isHttpUrl(doc.path) || !mime) {
+      return c.json({ error: "this document has no playable file on disk" }, 400);
+    }
+    let size: number;
+    try {
+      size = (await stat(doc.path)).size;
+    } catch {
+      return c.json({ error: `the source file is no longer at ${doc.path}` }, 404);
+    }
+
+    // One satisfiable form is enough for media elements: "bytes=start-" or
+    // "bytes=start-end". Anything else falls back to the whole file, which is valid
+    // per RFC 9110 (Range is advisory).
+    const range = /^bytes=(\d+)-(\d*)$/.exec(c.req.header("range") ?? "");
+    const start = range ? Number(range[1]) : 0;
+    const end = range?.[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (start >= size || start > end) {
+      return c.body(null, 416, { "content-range": `bytes */${size}` });
+    }
+    const body = Readable.toWeb(
+      createReadStream(doc.path, { start, end }),
+    ) as ReadableStream<Uint8Array>;
+    const headers: Record<string, string> = {
+      "content-type": mime,
+      "content-length": String(end - start + 1),
+      "accept-ranges": "bytes",
+    };
+    if (range) headers["content-range"] = `bytes ${start}-${end}/${size}`;
+    return c.body(body, range ? 206 : 200, headers);
+  });
+
+  // A playable sample of one voice. The browser cannot decode every container the daemon
+  // ingests (Chromium refuses Matroska in a media element outright), and pulling a
+  // 30-minute video over HTTP to hear 8 seconds is absurd either way, so the daemon cuts
+  // the range itself with ffmpeg (which it has by construction: the file was transcribed)
+  // and serves a small mono WAV every browser plays.
+  app.get("/context/documents/:id/sample", async (c) => {
+    const id = c.req.param("id");
+    const start = Number.parseFloat(c.req.query("start") ?? "");
+    const end = Number.parseFloat(c.req.query("end") ?? "");
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+      return c.json({ error: "start and end must be seconds with 0 <= start < end" }, 400);
+    }
+    // The cap bounds the buffered WAV (30 s of 16 kHz mono is under 1 MB), and no voice
+    // sample legitimately needs more.
+    if (end - start > 30) return c.json({ error: "a sample is at most 30 seconds" }, 400);
+    const doc = (await memloom.contextList()).find((d) => d.id === id);
+    if (!doc) return c.json({ error: `no context document ${id}` }, 404);
+    if (doc.kind !== "audio" && doc.kind !== "video") {
+      return c.json({ error: "not a media document" }, 400);
+    }
+    if (doc.path.startsWith("upload://") || isHttpUrl(doc.path)) {
+      return c.json({ error: "this document has no playable file on disk" }, 400);
+    }
+    try {
+      const wav = await cutSampleWav(doc.path, start, end - start);
+      return c.body(new Uint8Array(wav).buffer as ArrayBuffer, 200, {
+        "content-type": "audio/wav",
+        "cache-control": "no-store",
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    }
+  });
+
+  // Name a diarized voice. Follows the entities PATCH shape: partial body, id in the path,
+  // the updated roster back so the client re-renders without a second request.
+  app.patch("/context/documents/:id/speakers", async (c) => {
+    const body = await parseBody(c, speakerRenameSchema);
+    if (!body.ok) return body.res;
+    try {
+      const roster = await memloom.renameSpeaker(
+        c.req.param("id"),
+        body.data.speakerId,
+        body.data.name,
+      );
+      return c.json({ ok: true, speakers: roster });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, message.startsWith("no context document") ? 404 : 400);
+    }
+  });
+
+  // Run the voice matcher over every document that still has numbered speakers: how
+  // recordings ingested before a person was labeled catch up, without re-ingesting.
+  app.post("/context/speakers/match", async (c) => {
+    return c.json(await memloom.autoNameAllSpeakers());
+  });
+
   app.delete("/context/documents/:id", async (c) => {
     await memloom.contextRemove(c.req.param("id"));
     return c.json({ ok: true });
+  });
+
+  // Speech models. Outside the store probe on purpose: transcription is set up before
+  // anything has been ingested, and a locked store has no bearing on a download.
+  app.get("/audio/models", async (c) => {
+    try {
+      return c.json(await audioCatalog());
+    } catch (err) {
+      // MEMLOOM_ASR_MODEL can pin an id that is no longer in the catalog, which is a
+      // configuration mistake to report rather than an outage.
+      return audioFailure(c, err);
+    }
+  });
+
+  app.post("/audio/select", async (c) => {
+    const body = await parseBody(c, audioSelectSchema);
+    if (!body.ok) return body.res;
+    try {
+      const model = await selectModel(body.data.id);
+      const status = await modelStatus();
+      return c.json({ ok: true, selected: model.id, installed: status.installed });
+    } catch (err) {
+      return audioFailure(c, err);
+    }
+  });
+
+  // The default model is a 465 MB download, so this streams rather than holding a request
+  // open in silence: a line per stage, and a line per whole percent while bytes arrive.
+  app.post("/audio/setup/stream", async (c) => {
+    const body = await parseBody(c, audioSetupSchema);
+    if (!body.ok) return body.res;
+    const id = body.data.id;
+    // Checked BEFORE the stream opens. Once the response is a 200 stream, every failure can
+    // only be an in-band error line, and an unknown id deserves a real status code.
+    if (id !== undefined) {
+      try {
+        findModel(id);
+      } catch (err) {
+        return audioFailure(c, err);
+      }
+    }
+    // Both shapes carry `stage`, so a consumer discriminates on one field rather than
+    // guessing from which properties happen to be present.
+    type StageEvent = { stage: "stage"; message: string };
+    type DownloadEvent = {
+      stage: "download";
+      file: string;
+      receivedBytes: number;
+      totalBytes: number | null;
+      percent: number | null;
+    };
+    return streamNdjson<StageEvent | DownloadEvent>(c, async (emit) => {
+      // 465 MB arrives as thousands of chunks and a progress bar can only use whole
+      // percents, so anything finer is bytes on the wire for nothing. When the server
+      // declares no length there is no percent to throttle on, so one line per 5 MB keeps
+      // the bar moving instead of freezing after the first event.
+      let last = "";
+      await setupModels({
+        ...(id ? { modelId: id } : {}),
+        onStage: (message) => emit({ stage: "stage", message }),
+        onProgress: ({ file, receivedBytes, totalBytes }) => {
+          const percent = totalBytes ? Math.floor((receivedBytes / totalBytes) * 100) : null;
+          const key = `${file}:${percent ?? Math.floor(receivedBytes / 5_000_000)}`;
+          if (key === last) return;
+          last = key;
+          emit({ stage: "download", file, receivedBytes, totalBytes, percent });
+        },
+      });
+      // The same payload GET /audio/models serves, so a client re-renders its picker from
+      // the done event instead of following up with another request.
+      return audioCatalog();
+    });
   });
 
   // The viewer bundle, mounted last so every API route wins first. Unknown paths fall back to

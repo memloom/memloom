@@ -98,7 +98,7 @@ a weighted document → entity edge), so a 300-page PDF stays one node.
 | Surface | Where |
 | --- | --- |
 | HTTP API | `http://127.0.0.1:4319`: what the CLI, MCP, and this docs playground call |
-| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres`: for Drizzle Studio, psql, TablePlus (embedded tier only) |
+| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres`: for Drizzle Studio, psql, TablePlus (default port, `MEMLOOM_PG_PORT` moves it; embedded tier only) |
 | Data | `~/.memloom/data` |
 | Config | `~/.memloom/config.env` |
 
@@ -106,7 +106,7 @@ Any CLI command auto-starts the daemon if it isn't running. Stop it cleanly with
 
 <Warning>
 **The Postgres wire pauses the API.** PGLite is a single-connection database: while a DB client
-(Drizzle Studio, psql, an IDE database panel) is connected on port 54329, it holds an exclusive
+(Drizzle Studio, psql, an IDE database panel) is connected on the wire port, it holds an exclusive
 lock. Memory endpoints detect this and answer **503 "store is locked by a connected Postgres wire
 client"** instead of hanging; the `serve` terminal also warns when a wire client connects.
 Disconnect the DB client to resume.

@@ -46,6 +46,16 @@ Every result from a file says where it came from: `from lecture-notes.pdf › LI
 FUNCTIONS > 2. DEFINITION (p. 1)`. Documents are mirrors: re-adding an unchanged file is a no-op, a
 changed file replaces its chunks. See [Extractors & chunking](/guides/extractors).
 
+## Recordings and web pages, same store
+
+Add a web page by URL and memloom fetches and parses it in-process: no reader service,
+nothing about the page leaves your machine. Add an audio or video file and it is
+transcribed locally (Parakeet under sherpa-onnx), diarized into speakers, and cited by
+timestamp: `from standup.mkv › 12:30 - 14:28, Kostek`. Recordings run through a durable
+queue with per-stage progress and cancel; name a voice once and the voice library
+recognizes it in every later recording, entirely on-device. See
+[Recordings: audio & video](/guides/recordings).
+
 ## One graph over memories and context
 
 `memloom index` extracts entities (people, projects, tools, concepts) from memories and
@@ -57,6 +67,18 @@ edge.
 The graph is yours to correct: the extraction vocabulary is a registry you can extend,
 review, and prune, and every entity can be renamed, retyped, merged into another, or
 deleted from the schema tab. See [The graph](/concepts/graph).
+
+Duplicate spellings get folded for you. A graph naturally accumulates `Claude Opus 4.8` and
+`Opus 4.8`, `Postgres` and `PostgreSQL`, and each one quietly costs recall quality by
+competing for the entity arm's ten anchor slots. memloom folds the ones that are obviously
+the same, asks you about the rest in the Conflicts tab, keeps every fold reversible, and
+teaches recall to follow the spellings it folded away. See
+[Entity resolution](/concepts/entity-resolution).
+
+Once identity is settled you can ask the graph about connections rather than content: which
+people are related to this person, what this project uses. The Graph tab's **traverse** panel
+dims the canvas to one entity's neighbourhood and lets you follow it hop by hop. See
+[Asking who is connected to what](/concepts/graph#asking-who-is-connected-to-what).
 
 ## Version history for every belief
 
@@ -90,7 +112,7 @@ months ago. See [Session distillation](/concepts/distillation) and [Import](/cli
 | **MCP** | Claude Desktop, Claude Code, Cursor: agents that save and recall as they work |
 | **Viewer** (`memloom ui`) | Browsing: graph, assistant, memories, documents, schema, conflicts, console |
 | **HTTP API** (`127.0.0.1:4319`) | Anything else: scripts, editors, your own tools |
-| **Postgres wire** (`127.0.0.1:54329`) | Inspecting the raw data with Drizzle Studio or psql (embedded tier; on `MEMLOOM_PG_URL` inspect your server directly) |
+| **Postgres wire** (`127.0.0.1:54329`, `MEMLOOM_PG_PORT` moves it) | Inspecting the raw data with Drizzle Studio or psql (embedded tier; on `MEMLOOM_PG_URL` inspect your server directly) |
 
 All of them talk to one daemon that owns one store, so an agent's save is instantly visible
 in the viewer and your CLI recall sees what the agent ingested. See

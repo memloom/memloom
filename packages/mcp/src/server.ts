@@ -2,11 +2,16 @@ import { MEMORY_TYPES, type MemoryEngine } from "@memloom/core";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import {
+  addFile,
+  addLink,
   deleteSchemaEntry,
   listConflicts,
+  listDocuments,
+  MAX_INLINE_MEDIA_SECONDS,
   memoryHistory,
   readPassage,
   recallMemory,
+  relatedEntities,
   resolveConflict,
   saveMemory,
   setSchemaEntryStatus,
@@ -50,6 +55,66 @@ export function buildServer(memloom: MemoryEngine): McpServer {
       "a result ended with a truncation marker and the answer may be in the cut part.",
     { id: z.string() },
     async (args) => ({ content: [{ type: "text", text: await readPassage(memloom, args) }] }),
+  );
+
+  server.tool(
+    "add_link",
+    "Save a web page into memloom permanently, as a CONTEXT DOCUMENT rather than a memory: " +
+      "the page's own text, chunked and citable, kept next to the user's memories and " +
+      "returned by recall_memory with the URL and section it came from. Reach for this the " +
+      "moment a page is worth more than this conversation (documentation you just read, an " +
+      "article the user shared, a spec you will need again), instead of pasting it into your " +
+      "own notes. The daemon fetches and parses the page itself, so nothing about it reaches " +
+      "a third party. Documents are versioned by content hash: re-adding an unchanged page " +
+      "costs nothing and creates no duplicate, so calling this again is always safe. A page " +
+      "that renders in the browser or sits behind a login answers with the reason instead of " +
+      "a document; relay it rather than retrying.",
+    { url: z.string() },
+    async (args) => ({ content: [{ type: "text", text: await addLink(memloom, args) }] }),
+  );
+
+  server.tool(
+    "add_file",
+    "Ingest a file from the machine running memloom as a CONTEXT DOCUMENT (source material, " +
+      "citable, chunked), not as a memory. Takes an absolute path. Handles markdown, text, " +
+      "PDF, and audio or video, which is transcribed locally with timestamps so a recalled " +
+      "line cites the moment it was said. Like add_link, documents are versioned by content " +
+      "hash: re-adding an unchanged file is a cheap no-op, and an edited file replaces its " +
+      "own chunks rather than piling up a second copy. Recordings longer than " +
+      `${MAX_INLINE_MEDIA_SECONDS / 60} minutes are REFUSED with an instruction to relay, ` +
+      "because transcribing an hour of audio takes 8 to 11 minutes and no tool call should " +
+      "block that long. Whole folders are a CLI job (memloom context add <folder>).",
+    { path: z.string() },
+    async (args) => ({ content: [{ type: "text", text: await addFile(memloom, args) }] }),
+  );
+
+  server.tool(
+    "list_documents",
+    "The context documents already ingested: title, kind, chunk count and the path or URL " +
+      "each came from. Call it before add_link or add_file when you want to know whether a " +
+      "source is already in (re-adding is harmless, so this is for answering the user, not " +
+      "for guarding the call), and to see what source material recall_memory can draw on. " +
+      "`filter` matches a substring of the title or path; `limit` defaults to 50.",
+    { filter: z.string().optional(), limit: z.number().optional() },
+    async (args) => ({ content: [{ type: "text", text: await listDocuments(memloom, args) }] }),
+  );
+
+  server.tool(
+    "related_entities",
+    "Walk the memory GRAPH from one entity: who and what it is connected to. Use for " +
+      'questions about connections rather than content ("which people are related to X", ' +
+      '"what does X work on"), where recall_memory would return prose you still have to ' +
+      "read. `entity` is a name, an id, or a known alias, matched exactly rather than by " +
+      "meaning; a folded-away spelling resolves to its canonical entity and the answer says " +
+      "so. Filter with `type` (person, organization, project, tool, technology, agent, " +
+      "place, event, concept). Relationships the graph actually asserted are listed " +
+      "separately from entities that merely appear in the same memories.",
+    {
+      entity: z.string(),
+      type: z.string().optional(),
+      limit: z.number().optional(),
+    },
+    async (args) => ({ content: [{ type: "text", text: await relatedEntities(memloom, args) }] }),
   );
 
   server.tool(

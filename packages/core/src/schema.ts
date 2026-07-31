@@ -11,9 +11,11 @@ export interface EntityTypeDef {
   readonly description: string;
 }
 
-// The 8 entity types. "thing" is gone on purpose: a sink type is where garbage
+// The 9 entity types. "thing" is gone on purpose: a sink type is where garbage
 // accumulates (487 of the 492 noise entities in the motivating corpus would have needed
 // one). An extraction with a type outside this list is DROPPED, never coerced.
+// New types added here reach existing stores through #ensureSchemaSeed, which is
+// insert-if-absent on every extraction run: no migration needed.
 export const ENTITY_TYPES: readonly EntityTypeDef[] = [
   {
     name: "person",
@@ -37,6 +39,11 @@ export const ENTITY_TYPES: readonly EntityTypeDef[] = [
     name: "technology",
     description:
       'A named language, framework, library, protocol, or database ("TypeScript", "PGLite").',
+  },
+  {
+    name: "agent",
+    description:
+      'A named AI agent, model, or assistant that does work ("Claude Opus 4.8", "GitHub Copilot"). Use for the actor itself, not the company that made it.',
   },
   {
     name: "place",

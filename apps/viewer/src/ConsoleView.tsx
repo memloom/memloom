@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type IndexEventLevel, type IndexRun, type IndexRunEvent } from "./api";
+import { cachedData, refetch } from "./prefetch";
 
 // Console: exercise the engine by hand (save, recall, index) without leaving the viewer.
 // Indexing history is persistent and session-grouped (a production-proven memory_index_runs
@@ -152,7 +153,9 @@ export function ConsoleView({ onChanged }: { onChanged: () => void }) {
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const [runs, setRuns] = useState<IndexRun[] | null>(null);
+  // Seeded from the prefetch cache so a revisit (or a hover on the tab) renders the
+  // session list immediately; the mount refresh below replaces it with a live read.
+  const [runs, setRuns] = useState<IndexRun[] | null>(() => cachedData<IndexRun[]>("index-runs"));
   const [eventsByRun, setEventsByRun] = useState<Record<string, IndexRunEvent[]>>({});
   // Auto-index toggle state; null until loaded, unavailable in offline mode.
   const [autoIdx, setAutoIdx] = useState<{ enabled: boolean; available: boolean } | null>(null);
@@ -192,7 +195,9 @@ export function ConsoleView({ onChanged }: { onChanged: () => void }) {
   // One refresh: the runs list, plus the events of every expanded session. The store is
   // the source of truth, so this is also what keeps a live run's log growing.
   const refreshSessions = useCallback(async () => {
-    const list = await api.indexRuns().catch(() => null);
+    // Always a fresh read (this also polls while a run is live), written through the
+    // cache so the next tab visit seeds instantly from it.
+    const list = await refetch("index-runs", api.indexRuns).catch(() => null);
     if (!list) return;
     setRuns(list);
     const newest = list[0]?.id ?? null;

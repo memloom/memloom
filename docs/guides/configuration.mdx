@@ -88,7 +88,13 @@ contrast, can be changed freely; it doesn't touch the vector space.
 | What | Where | Change |
 | --- | --- | --- |
 | HTTP API + viewer | `http://127.0.0.1:4319` | fixed (localhost-only by design) |
-| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres` | fixed; distinctive port so it never collides with a local Postgres on 5432. Embedded tier only: with `MEMLOOM_PG_URL` set there is no bridge, inspect your server directly |
+| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres` | `MEMLOOM_PG_PORT`; a distinctive default so it never collides with a local Postgres on 5432. Embedded tier only: with `MEMLOOM_PG_URL` set there is no bridge, inspect your server directly |
+
+On Windows, Hyper-V, WSL and Docker reserve random 100-port blocks inside the ephemeral range
+at every boot, and one can land on 54329. The daemon then starts without the wire and prints
+why, so the HTTP API and viewer keep working. Set `MEMLOOM_PG_PORT` to a free port below
+49152 (`MEMLOOM_PG_PORT=45432`) and restart to get the wire back. `netsh interface ipv4 show
+excludedportrange protocol=tcp` lists the blocked ranges.
 
 Both bind to `127.0.0.1` only, and the API's CORS policy allows only localhost origins, so a
 public web page can't drive your daemon.

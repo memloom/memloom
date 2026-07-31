@@ -960,6 +960,153 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/EntityDetail"
+  /memory/entities/related:
+    get:
+      summary: Walk the graph from one entity
+      description: |
+        Everything connected to one entity. The target may be an id, a name, or a spelling
+        that was folded away; an alias resolves to its canonical entity and `matchedAlias`
+        reports which spelling was asked for.
+
+        Two kinds of connection come back separately and are never blended into one score.
+        Stated links are typed predicate edges extraction asserted, with their direction from
+        the asked-about end. Co-mention is entities named by the same sources, which is weaker
+        evidence and never outranks a stated link.
+
+        The target is matched exactly, not by meaning. This is a graph lookup, not a search.
+      operationId: relatedEntities
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+          description: An entity id, name, or known alias.
+          example: Bob
+        - name: type
+          in: query
+          schema:
+            type: string
+          description: Only return neighbours of this entity type.
+          example: person
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 50
+      responses:
+        "200":
+          description: The entity and its neighbourhood.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RelatedEntities"
+        "400":
+          description: q is missing.
+        "404":
+          description: No entity matches the target.
+  /memory/entities/resolve:
+    post:
+      summary: Find and fold duplicate entity spellings
+      description: |
+        One resolution pass over the entity table. Spellings that are identical apart from
+        case and punctuation are folded without asking; uncertain pairs are written to the
+        conflicts queue for review. Idempotent and safe to re-run.
+
+        The queue is capped so entity folds cannot bury memory conflicts. Questions that did
+        not fit are reported as `deferred` rather than dropped silently, and a later pass
+        picks them up as answers come in.
+      operationId: resolveEntities
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dryRun:
+                  type: boolean
+                  default: false
+                  description: Report the plan without changing anything.
+      responses:
+        "200":
+          description: What the pass did.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EntityResolutionResult"
+  /memory/entities/conflicts:
+    get:
+      summary: List uncertain entity folds awaiting review
+      description: |
+        Pairs the resolver was not confident enough to fold. Resolve them through
+        POST /memory/conflicts/{id}/resolve like a memory conflict: `keep_existing` folds the
+        queued spelling into the candidate, `keep_new` folds the other way, `keep_both`
+        settles them as different things. `merge` does not apply to entities.
+
+        These never appear in GET /memory/conflicts, which is scoped to memory
+        contradictions.
+      operationId: listEntityConflicts
+      responses:
+        "200":
+          description: The pending folds.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  conflicts:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EntityConflict"
+  /memory/entities/merges:
+    get:
+      summary: List entity folds
+      description: |
+        Every fold, newest first, including reverted ones (`revertedAt` is set). `decidedBy`
+        says what applied it: `auto` for a deterministic spelling match, `human` for a fold
+        you applied, `llm` for a future arbitration tier.
+      operationId: listEntityMerges
+      responses:
+        "200":
+          description: The folds.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  merges:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/EntityMerge"
+  /memory/entities/merges/{id}/revert:
+    post:
+      summary: Undo an entity fold
+      description: |
+        Restores the absorbed entity with its original id, type, vector and creation time,
+        repoints exactly the edges the fold moved, reactivates exactly the edges it
+        deactivated, and removes the alias. The original id matters because deactivated edges
+        still point at it.
+      operationId: revertEntityMerge
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Reverted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        "400":
+          description: The fold was already reverted.
+        "404":
+          description: No such fold.
   /memory/entities/{id}:
     patch:
       summary: Rename or retype an entity
@@ -1008,6 +1155,10 @@ paths:
         Remove the entity and every edge touching it (mentions pointing at it, typed
         relationships from or to it). The memories and documents that mentioned it are
         untouched.
+
+        Refused with 400 while an unreverted fold points at this entity: the alias row carries
+        the absorbed entity's id and vector, so deleting would make that fold permanent.
+        Revert the fold first.
       operationId: deleteEntity
       parameters:
         - name: id
@@ -1031,9 +1182,13 @@ paths:
       summary: Merge an entity into another
       description: |
         Fold this entity into a surviving one: every mention and typed relationship is
-        repointed to the target (would-be duplicates and self-loops are dropped), then this
-        entity is deleted. The survivor keeps its own name and type. Use it for
-        near-duplicates that automatic resolution could not fold.
+        repointed to the target (would-be duplicates and self-loops are dropped) and the
+        absorbed spelling is kept as an alias, so later mentions of it resolve to the
+        survivor. The survivor keeps its own name and type.
+
+        The fold is recorded and revertable through /memory/entities/merges. No lexical rule
+        is applied here, so this is also the way to declare that two entities are the same
+        when nothing about their spelling says so, like a nickname and a full name.
       operationId: mergeEntity
       parameters:
         - name: id
@@ -2206,6 +2361,166 @@ components:
         documents:
           type: integer
           description: Distinct context documents whose chunks mention it.
+        aliases:
+          type: array
+          description: Spellings folded into this entity. Empty when nothing was merged in.
+          items:
+            type: string
+          example: ["Opus 4.8"]
+    RelatedEntity:
+      type: object
+      description: One entity connected to the entity being asked about, and how.
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          example: memloom
+        entityType:
+          type: string
+          example: project
+        mentions:
+          type: integer
+          description: Active mention edges pointing at this entity, so you can weigh it.
+        aliases:
+          type: array
+          items:
+            type: string
+        links:
+          type: array
+          description: >-
+            Stated relationships between the two. Empty means the connection is co-mention
+            only: they turn up in the same memories without the graph asserting how they
+            relate.
+          items:
+            type: object
+            properties:
+              relation:
+                type: string
+                example: works_on
+              direction:
+                type: string
+                enum: [out, in]
+                description: out when the asked-about entity is the subject, in when it is the object.
+              confidence:
+                type: number
+                nullable: true
+        sharedSources:
+          type: integer
+          description: Distinct memories and chunks that mention both.
+    RelatedEntities:
+      type: object
+      properties:
+        entity:
+          $ref: "#/components/schemas/EntityDetail"
+        matchedAlias:
+          type: string
+          nullable: true
+          description: The spelling asked for, when it was an alias rather than the entity's name.
+          example: Bob
+        related:
+          type: array
+          items:
+            $ref: "#/components/schemas/RelatedEntity"
+        truncated:
+          type: integer
+          description: Neighbours beyond limit, so a cut answer never reads as a complete one.
+    EntityMerge:
+      type: object
+      description: One reversible fold. The absorbed row is gone from the entity table but fully recoverable from here.
+      properties:
+        id:
+          type: string
+          format: uuid
+        canonicalId:
+          type: string
+          format: uuid
+        canonicalName:
+          type: string
+          example: Claude Opus 4.8
+        sourceId:
+          type: string
+          format: uuid
+          description: The absorbed entity's original id, restored verbatim on revert.
+        sourceName:
+          type: string
+          example: Opus 4.8
+        sourceType:
+          type: string
+          example: agent
+        decidedBy:
+          type: string
+          enum: [auto, llm, human]
+        score:
+          type: number
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+          example: identical apart from case and punctuation ("Claude Code" / "claude-code")
+        createdAt:
+          type: string
+          format: date-time
+        revertedAt:
+          type: string
+          format: date-time
+          nullable: true
+    EntityConflict:
+      type: object
+      description: An uncertain fold awaiting your decision.
+      properties:
+        id:
+          type: string
+          format: uuid
+        createdAt:
+          type: string
+          format: date-time
+        incoming:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            name: { type: string, example: PostgreSQL }
+            entityType: { type: string, example: technology }
+            mentions: { type: integer }
+        candidates:
+          type: array
+          items:
+            type: object
+            properties:
+              id: { type: string, format: uuid }
+              name: { type: string, example: Postgres }
+              entityType: { type: string, example: technology }
+              mentions: { type: integer }
+              score: { type: number, example: 0.71 }
+              reason:
+                type: string
+                example: spelling variant, 2 character edits apart ("Postgres" / "PostgreSQL")
+    EntityResolutionResult:
+      type: object
+      description: What one resolution pass did.
+      properties:
+        examined:
+          type: integer
+          description: Entities considered.
+        pairs:
+          type: integer
+          description: Pairs that survived bucketing and were judged.
+        merged:
+          type: integer
+          description: Folds applied without asking.
+        queued:
+          type: integer
+          description: Uncertain folds written to the conflicts queue.
+        deferred:
+          type: integer
+          description: >-
+            Uncertain folds not written because the queue is already full. Reported rather
+            than dropped silently, so "nothing queued" never hides "there was more to ask
+            about". A later pass picks them up.
+        skipped:
+          type: integer
+          description: Pairs already merged, queued, or settled as distinct.
     AssistantSession:
       type: object
       properties:

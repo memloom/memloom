@@ -8,7 +8,9 @@ import type {
   ConflictAutoResult,
   ContextAddInput,
   ContextAddResult,
+  ContextAddUrlInput,
   ContextDocument,
+  ContextProgressEvent,
   DocumentChunks,
   ReconcileOptions,
   ReconcileReport,
@@ -30,6 +32,7 @@ import type {
   NotionSyncOptions,
   NotionSyncResult,
   RecallOptions,
+  RelatedEntities,
   ResolveDecision,
   ResolvedConflict,
   SaveInput,
@@ -100,6 +103,15 @@ export interface MemoryEngine {
   /** Wipe all extracted entities/edges and re-run indexing from scratch (recovery path). */
   reindex(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
   graph(ownerId?: string): Promise<Graph>;
+  /**
+   * The graph neighbourhood of one entity, by id, name, or a folded-away spelling. Null when
+   * nothing matches. On the engine contract rather than Memloom-only because the MCP server
+   * talks to the daemon over HTTP: this is the surface that answers "who is X connected to".
+   */
+  relatedEntities(
+    target: string,
+    opts?: { ownerId?: string; entityType?: string; limit?: number },
+  ): Promise<RelatedEntities | null>;
   conflicts(ownerId?: string): Promise<Conflict[]>;
   /** Resolved conflicts, newest first: the revertable history behind the pending queue. */
   resolvedConflicts(ownerId?: string): Promise<ResolvedConflict[]>;
@@ -123,8 +135,18 @@ export interface MemoryEngine {
   revertReconcile(runId: string, ownerId?: string): Promise<ReconcileRevertResult>;
   /** Reconcile runs for the owner, newest first. */
   reconcileRuns(ownerId?: string, limit?: number): Promise<ReconcileRun[]>;
-  /** Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors; re-add replaces. */
-  contextAdd(input: ContextAddInput): Promise<ContextAddResult>;
+  /**
+   * Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors; re-add replaces.
+   * `onProgress` only fires for extractors slow enough to need it, which today means audio
+   * and video; every other format finishes before it would emit anything.
+   */
+  contextAdd(
+    input: ContextAddInput,
+    onProgress?: (event: ContextProgressEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<ContextAddResult>;
+  /** Ingest a web page as context. Fetched and parsed locally; the URL becomes the path. */
+  contextAddUrl(input: ContextAddUrlInput): Promise<ContextAddResult>;
   contextList(ownerId?: string): Promise<ContextDocument[]>;
   /** One document at chunk granularity: chunks in order + their chunk -> entity edges. */
   contextChunks(documentId: string, ownerId?: string): Promise<DocumentChunks>;

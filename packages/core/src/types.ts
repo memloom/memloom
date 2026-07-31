@@ -148,6 +148,109 @@ export interface EntityDetail extends Entity {
   memories: number;
   /** Distinct context documents whose chunks mention it. */
   documents: number;
+  /** Folded-in spellings that still resolve here. Empty for an entity nothing merged into. */
+  aliases: string[];
+}
+
+/**
+ * One reversible fold: the record that a variant spelling was absorbed into a canonical
+ * entity. The absorbed row is gone from memory_entities but fully recoverable from here.
+ */
+export interface EntityMerge {
+  id: string;
+  canonicalId: string;
+  canonicalName: string;
+  /** The absorbed entity's original id, restored verbatim on revert. */
+  sourceId: string;
+  sourceName: string;
+  sourceType: string;
+  decidedBy: "auto" | "llm" | "human";
+  score: number | null;
+  reason: string | null;
+  createdAt: string;
+  revertedAt: string | null;
+}
+
+/** A candidate canonical an uncertain fold could go to. */
+export interface EntityConflictCandidate {
+  id: string;
+  name: string;
+  entityType: string;
+  mentions: number;
+  score: number;
+  reason: string;
+}
+
+/**
+ * An uncertain fold awaiting arbitration. Lives in the same memory_dedup_decisions table
+ * with the same revert semantics as a memory conflict, under action = 'entity_merge'; it is
+ * read separately because its shape is entity-shaped, not memory-shaped.
+ */
+export interface EntityConflict {
+  id: string;
+  createdAt: string;
+  incoming: { id: string; name: string; entityType: string; mentions: number };
+  candidates: EntityConflictCandidate[];
+}
+
+/** What one resolution pass over the entity table did. */
+export interface EntityResolutionResult {
+  /** Entities considered. */
+  examined: number;
+  /** Pairs that survived blocking and were judged. */
+  pairs: number;
+  /** Folds applied without asking (deterministic orthographic matches). */
+  merged: number;
+  /** Uncertain folds written to the conflicts surface. */
+  queued: number;
+  /**
+   * Uncertain folds not written because the queue is already as deep as it is allowed to
+   * get. They are the lowest-impact ones (fewest mentions on the weaker side) and a later
+   * pass picks them up as waiting questions get answered. Reported rather than dropped
+   * silently, so "nothing queued" never hides "there was more to ask about".
+   */
+  deferred: number;
+  /** Pairs skipped because they were already merged, queued, or settled as distinct. */
+  skipped: number;
+}
+
+/** One stated relationship between two entities, as seen from the entity being asked about. */
+export interface EntityLink {
+  /** The predicate the extractor recorded ("works_on", "uses", "part_of"). */
+  relation: string;
+  /** "out" when the asked-about entity is the subject, "in" when it is the object. */
+  direction: "out" | "in";
+  confidence: number | null;
+}
+
+/** One entity connected to the entity being asked about, and how. */
+export interface RelatedEntity extends Entity {
+  /** Total active mention edges pointing at this entity, for weighing how central it is. */
+  mentions: number;
+  /** Folded-in spellings that resolve here. */
+  aliases: string[];
+  /**
+   * Stated relationships between the two, if the extractor recorded any. Empty means the
+   * connection is co-mention only: they turn up in the same memories without the graph ever
+   * having asserted how they relate.
+   */
+  links: EntityLink[];
+  /** Distinct sources (memories and chunks) that mention both. */
+  sharedSources: number;
+}
+
+/**
+ * The neighbourhood of one entity. Answers "who is connected to X", where X may be given by
+ * id, by name, or by a folded-away spelling: an alias resolves to its canonical, and
+ * `matchedAlias` says so, because being told "Bob is Robert" is part of the answer.
+ */
+export interface RelatedEntities {
+  entity: EntityDetail;
+  /** The spelling asked for, when it was an alias rather than the canonical name. */
+  matchedAlias: string | null;
+  related: RelatedEntity[];
+  /** Neighbours beyond `limit`, so a truncated answer never reads as a complete one. */
+  truncated: number;
 }
 
 export interface GraphMemory {
@@ -188,6 +291,23 @@ export interface IndexResult {
   indexed: number;
   /** Context chunks processed this run; same extraction, edges roll up per document. */
   chunksIndexed: number;
+}
+
+/**
+ * One step of a slow context ingest, streamed as NDJSON while `context add` runs.
+ * Only extractors that take minutes emit these; a markdown file streams nothing.
+ */
+export interface ContextProgressEvent {
+  /** The file being ingested, so a batch of several stays legible. */
+  path: string;
+  /** For media: "decoding" | "transcribing" | "checking" | "repairing". */
+  stage: string;
+  /** 1-based position within the stage; 0 when the stage has no countable units. */
+  done: number;
+  total: number;
+  /** How far into the recording this step reached. */
+  seconds: number;
+  audioSeconds: number;
 }
 
 /** One item finished during an index run: the real-time progress signal. */
@@ -332,6 +452,18 @@ export interface ContextAddInput {
   ownerId?: string;
 }
 
+export interface ContextAddUrlInput {
+  /** http(s) URL. Stored normalized (tracking params and fragment stripped) as the path. */
+  url: string;
+  /**
+   * Rendered HTML from a caller that already loaded the page, so the daemon skips the
+   * fetch. This is how a browser extension saves a single-page app or a page behind a
+   * login: the DOM it hands over is the one the user was looking at.
+   */
+  html?: string;
+  ownerId?: string;
+}
+
 /**
  * "converted": an upload:// snapshot became this linked document (a link is the stronger
  * identity: it can refresh from disk). "exists": an upload was skipped because the same
@@ -352,6 +484,39 @@ export interface ContextAddResult {
   absorbed?: number;
 }
 
+/**
+ * One voice diarization found in a recording. Stored as jsonb on the document row, because
+ * a roster is per-recording metadata, not content: renaming a speaker must not look like
+ * the file changed.
+ */
+export interface DocumentSpeaker {
+  /** 1-based, ordered by first appearance: the first voice heard is speaker 1. */
+  id: number;
+  /** The generated transcript label, "Speaker 1". Never changes once stored. */
+  label: string;
+  /** What the user named this voice; null until they do. */
+  name: string | null;
+  /** Total talk time in seconds, so a UI can put the host before a one-line guest. */
+  seconds: number;
+  /** A clean stretch of this voice alone, for "play a sample" in a labeling UI. */
+  sampleStart: number;
+  sampleEnd: number;
+  /**
+   * L2-normalized voice embedding from this recording's clearest segment. Stored now so a
+   * future voice library can match "is this Alice again?" across recordings without
+   * re-running diarization. Null when embedding extraction failed.
+   */
+  embedding: number[] | null;
+}
+
+/** The roster plus what produced it: embeddings from different models never compare. */
+export interface SpeakerRoster {
+  version: 1;
+  /** Which embedding model the vectors came from, e.g. "wespeaker-en-voxceleb-resnet34-lm". */
+  embeddingModel: string;
+  speakers: DocumentSpeaker[];
+}
+
 export interface ContextDocument {
   id: string;
   path: string;
@@ -359,6 +524,8 @@ export interface ContextDocument {
   kind: string;
   chunkCount: number;
   updatedAt: string;
+  /** Present on diarized recordings; absent on text documents and pre-diarization ingests. */
+  speakers?: SpeakerRoster | null;
 }
 
 // ---- Chat attachments (files uploaded into one assistant session's scope) ----

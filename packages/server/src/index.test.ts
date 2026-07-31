@@ -2,15 +2,20 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import type { StorageAdapter } from "@memloom/core";
 import {
+  CATALOG,
   type ChatProvider,
+  findModel,
   HashingEmbeddingProvider,
   type LLMProvider,
   Memloom,
   PgliteAdapter,
+  registerExtractor,
   ScriptedLLMProvider,
+  truncateAll,
 } from "@memloom/core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createServer } from "./index.js";
 
 // Exercise the HTTP surface end-to-end via Hono's request helper (no network needed).
@@ -23,6 +28,17 @@ const extractor = new ScriptedLLMProvider((prompt) =>
     : "[]",
 );
 
+// One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
+// costs about six seconds and the tests themselves cost milliseconds, so a store per test
+// spends effectively all of its wall clock on Postgres startup.
+let storage: StorageAdapter;
+beforeAll(async () => {
+  storage = await PgliteAdapter.open();
+});
+afterAll(async () => {
+  await storage.close();
+});
+
 describe("server", () => {
   const cleanups: Array<() => Promise<void>> = [];
   afterEach(async () => {
@@ -30,8 +46,7 @@ describe("server", () => {
   });
 
   async function app() {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -199,8 +214,7 @@ describe("server", () => {
       chat: async () => ({ content: "It is Sunday.", toolCalls: [] }),
       chatStream: async () => "unused",
     };
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -244,8 +258,7 @@ describe("server", () => {
   });
 
   it("pick route returns the native picker's paths, 501 when unavailable", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -303,6 +316,78 @@ describe("server", () => {
     expect(docs.documents).toHaveLength(3);
   });
 
+  // The streaming variant exists because transcribing an hour of audio takes 8 to 11
+  // minutes, far past what a plain request can hold open without looking hung. Markdown
+  // emits no progress of its own, so this asserts the envelope rather than the events.
+  it("context add streams NDJSON and ends with a done line", async () => {
+    const server = await app();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-ctx-stream-"));
+    writeFileSync(join(dir, "a.md"), "# A\nthe staging database is Postgres");
+    writeFileSync(join(dir, "b.md"), "# B\nmore notes here");
+
+    const res = await server.request("/context/add/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: dir }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/x-ndjson");
+
+    const lines = (await res.text())
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as { type: string; stage?: string; documents?: number });
+
+    // One completion line per file as it lands, so a folder of recordings reports as it goes
+    // rather than only at the end.
+    expect(lines.filter((l) => l.type === "item" && l.stage === "file")).toHaveLength(2);
+
+    const done = lines.at(-1);
+    expect(done?.type).toBe("done");
+    expect(done?.documents).toBe(2);
+  });
+
+  // A single file must come back as a ContextAddResult, the same shape /context/add returns.
+  // This route answered folder-shaped totals for every request, so a caller reading
+  // `outcome` got undefined and crashed on it.
+  it("context add stream returns a single file's own result, not folder totals", async () => {
+    const server = await app();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-ctx-one-"));
+    const file = join(dir, "solo.md");
+    writeFileSync(file, "# Solo\nthe staging database is Postgres");
+
+    const res = await server.request("/context/add/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: file }),
+    });
+    expect(res.status).toBe(200);
+
+    const done = (await res.text())
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .map((l) => JSON.parse(l) as Record<string, unknown>)
+      .at(-1);
+
+    expect(done?.type).toBe("done");
+    expect(done?.outcome).toBe("added");
+    expect(done?.title).toBeTruthy();
+    expect(done?.documentId).toBeTruthy();
+    expect(done?.chunks).toBeGreaterThan(0);
+  });
+
+  it("context add stream rejects a missing path up front, not mid-stream", async () => {
+    const server = await app();
+    const res = await server.request("/context/add/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: join(tmpdir(), "memloom-does-not-exist-12345") }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   it("schema endpoint reports vocabularies with live counts", async () => {
     const server = await app();
     await server.request("/memory/save", {
@@ -344,8 +429,7 @@ describe("server", () => {
 
     // A daemon-like engine (flag passed) can toggle, and the choice survives a "restart"
     // (a second engine on the same storage reads the persisted value in init).
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const config = {
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -414,6 +498,32 @@ describe("server", () => {
     expect(gone.status).toBe(404);
   });
 
+  it("related route: resolves by name, filters by type, and 404s on an unknown target", async () => {
+    // Registered ABOVE /memory/entities/:id, so the first thing this proves is that "related"
+    // is not being read as an entity id by the router.
+    const server = await app();
+    await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "the staging database runs on Postgres" }),
+    });
+    await server.request("/memory/index", { method: "POST" });
+
+    const ok = await server.request("/memory/entities/related?q=Postgres");
+    expect(ok.status).toBe(200);
+    const body = (await ok.json()) as { entity: { name: string }; related: unknown[] };
+    expect(body.entity.name).toBe("Postgres");
+    expect(Array.isArray(body.related)).toBe(true);
+
+    const filtered = await server.request("/memory/entities/related?q=Postgres&type=person");
+    expect(filtered.status).toBe(200);
+    expect(((await filtered.json()) as { related: unknown[] }).related).toEqual([]);
+
+    expect((await server.request("/memory/entities/related?q=Nobody")).status).toBe(404);
+    // A missing target is a bad request, not an empty answer about nothing.
+    expect((await server.request("/memory/entities/related")).status).toBe(400);
+  });
+
   it("schema delete: disabled user entries only, guards mapped to 409/404", async () => {
     const server = await app();
     const added = (await (
@@ -459,8 +569,7 @@ describe("server", () => {
   });
 
   it("shutdown endpoint acks then invokes the hook", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -529,8 +638,7 @@ describe("server", () => {
   });
 
   it("conflict round trip over HTTP: resolve, list resolved history, revert re-queues", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const contradictory = new ScriptedLLMProvider((prompt) =>
       prompt.includes("classify how each existing")
         ? '[{"candidate": 1, "relation": "contradictory", "reason": "different value"}]'
@@ -703,8 +811,7 @@ describe("server", () => {
   });
 
   it("responds 503 fast when the store is locked instead of hanging", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -726,8 +833,7 @@ describe("server", () => {
   });
 
   it("engine errors surface as JSON 500, not bare text", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -751,8 +857,7 @@ describe("server", () => {
   });
 
   it("serves the viewer bundle without shadowing the API", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -843,9 +948,53 @@ describe("server", () => {
     expect(bad.status).toBe(400);
   });
 
+  it("context/url ingests caller-supplied html, so no test ever hits the network", async () => {
+    const server = await app();
+    const html =
+      "<html><head><title>Deploy Guide</title></head><body><article>" +
+      "<h1>Deploy Guide</h1><h2>Database</h2>" +
+      "<p>the staging database runs postgres seventeen with pgvector enabled for recall</p>" +
+      "<p>checkpoints are written by the ingest worker every thirty seconds without fail</p>" +
+      "</article></body></html>";
+
+    const added = await server.request("/context/url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "https://example.com/deploy?utm_source=x#top", html }),
+    });
+    expect(added.status).toBe(200);
+    const result = (await added.json()) as { outcome: string; documentId: string };
+    expect(result.outcome).toBe("added");
+
+    // Stored under the normalized URL: tracking parameters and the fragment are gone.
+    const listed = await server.request("/context/documents");
+    const { documents } = (await listed.json()) as { documents: Array<{ path: string }> };
+    expect(documents).toHaveLength(1);
+    expect(documents[0]?.path).toBe("https://example.com/deploy");
+
+    // An extraction failure answers 400 with a stable code, not a 500.
+    const thin = await server.request("/context/url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        url: "https://example.com/spa",
+        html: "<html><body><div id='root'></div></body></html>",
+      }),
+    });
+    expect(thin.status).toBe(400);
+    expect((await thin.json()) as { code: string }).toMatchObject({ code: "empty" });
+
+    // A non-URL is refused by validation before anything is fetched.
+    const bad = await server.request("/context/url", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ url: "/etc/passwd" }),
+    });
+    expect(bad.status).toBe(400);
+  });
+
   it("open route launches the injected opener for known documents only", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -993,8 +1142,7 @@ describe("server", () => {
   });
 
   it("models route shapes and caches the OpenRouter catalog", async () => {
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -1063,8 +1211,7 @@ describe("server", () => {
       },
       chatStream: async () => "unused",
     };
-    const storage = await PgliteAdapter.open();
-    cleanups.push(() => storage.close());
+    await truncateAll(storage);
     const memloom = new Memloom({
       storage,
       embedding: new HashingEmbeddingProvider(1024),
@@ -1082,5 +1229,374 @@ describe("server", () => {
     expect(res.status).toBe(200);
     await res.text(); // drain the SSE stream so the turn completes
     expect(seenModels).toEqual(["anthropic/claude-sonnet-5"]);
+  });
+});
+
+// The speech-model routes. MEMLOOM_MODEL_DIR points at a throwaway directory for every test
+// here, so nothing reads a real install, overwrites a real selection, or downloads 465 MB.
+describe("speech models over HTTP", () => {
+  let dir: string;
+  const originalDir = process.env.MEMLOOM_MODEL_DIR;
+  const originalModel = process.env.MEMLOOM_ASR_MODEL;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "memloom-server-models-"));
+    process.env.MEMLOOM_MODEL_DIR = dir;
+    delete process.env.MEMLOOM_ASR_MODEL;
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+    if (originalDir === undefined) delete process.env.MEMLOOM_MODEL_DIR;
+    else process.env.MEMLOOM_MODEL_DIR = originalDir;
+    if (originalModel === undefined) delete process.env.MEMLOOM_ASR_MODEL;
+    else process.env.MEMLOOM_ASR_MODEL = originalModel;
+  });
+
+  /** Lay down the files an unpacked model would have, without downloading one. */
+  function fakeInstall(id: string, files: string[]) {
+    const modelDir = join(dir, findModel(id).archive);
+    mkdirSync(modelDir, { recursive: true });
+    for (const f of [...files, "tokens.txt"]) writeFileSync(join(modelDir, f), "x");
+  }
+
+  const PARAKEET_FILES = ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx"];
+
+  async function app() {
+    await truncateAll(storage);
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+    });
+    await memloom.init();
+    return createServer(memloom);
+  }
+
+  it("lists the whole catalog with install and selection state in one call", async () => {
+    fakeInstall("sense-voice", ["model.int8.onnx"]);
+    const res = await (await app()).request("/audio/models");
+    expect(res.status).toBe(200);
+    const payload = (await res.json()) as {
+      dir: string;
+      ffmpeg: boolean;
+      selected: string;
+      installed: boolean;
+      models: Array<{ id: string; downloadMb: number; installed: boolean; selected: boolean }>;
+    };
+    expect(payload.dir).toBe(dir);
+    expect(typeof payload.ffmpeg).toBe("boolean");
+    // Every catalog row is present, so a picker renders the un-downloaded ones too.
+    expect(payload.models).toHaveLength(CATALOG.length);
+    expect(payload.models.find((m) => m.id === "sense-voice")).toMatchObject({ installed: true });
+    expect(payload.models.find((m) => m.id === "parakeet-v3")).toMatchObject({
+      installed: false,
+      selected: true,
+      downloadMb: 465,
+    });
+    // The default is selected but not on disk: the state the viewer must offer setup for.
+    expect(payload.selected).toBe("parakeet-v3");
+    expect(payload.installed).toBe(false);
+  });
+
+  it("select switches the model transcription would use", async () => {
+    fakeInstall("sense-voice", ["model.int8.onnx"]);
+    const server = await app();
+    const res = await server.request("/audio/select", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "sense-voice" }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, selected: "sense-voice", installed: true });
+
+    const after = (await (await server.request("/audio/models")).json()) as { selected: string };
+    expect(after.selected).toBe("sense-voice");
+  });
+
+  it("select answers an unknown model with a 400 and its code, never a 500", async () => {
+    const server = await app();
+    const res = await server.request("/audio/select", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "gpt-voice" }),
+    });
+    expect(res.status).toBe(400);
+    const body = (await res.json()) as { error: string; code: string };
+    expect(body.code).toBe("no_model");
+    expect(body.error).toMatch(/unknown speech model/);
+
+    const empty = await server.request("/audio/select", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(empty.status).toBe(400);
+  });
+
+  it("setup/stream rejects an unknown id before it opens the stream", async () => {
+    const res = await (await app()).request("/audio/setup/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ id: "gpt-voice" }),
+    });
+    // A 200 here would mean the failure could only arrive as an in-band error line.
+    expect(res.status).toBe(400);
+    expect((await res.json()) as { code: string }).toMatchObject({ code: "no_model" });
+  });
+
+  // The requirement with the most reach: /context/add is where a missing model or a missing
+  // ffmpeg actually surfaces, and without the mapping it would be an opaque 500.
+  it("context/add answers 400 with a code when a recording cannot be transcribed", async () => {
+    const files = mkdtempSync(join(tmpdir(), "memloom-server-media-"));
+    const recording = join(files, "interview.mp3");
+    writeFileSync(recording, "not really audio");
+    try {
+      const res = await (await app()).request("/context/add", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ path: recording }),
+      });
+      expect(res.status).toBe(400);
+      const body = (await res.json()) as { error: string; code: string };
+      // No model in the throwaway dir, and the bytes are not decodable either, so which
+      // wall it hits depends on the machine. What matters is that it is a coded 400.
+      expect(["no_model", "no_ffmpeg", "no_asr", "decode_failed"]).toContain(body.code);
+      expect(body.error.length).toBeGreaterThan(0);
+    } finally {
+      rmSync(files, { recursive: true, force: true });
+    }
+  });
+
+  it("setup/stream streams a done event and downloads nothing when everything is present", async () => {
+    // Setup is idempotent, so with the model, the VAD, and the diarization pair already on
+    // disk it must reach done without touching the network. This is also the only way to
+    // exercise the stream contract without a 465 MB download.
+    fakeInstall("parakeet-v3", PARAKEET_FILES);
+    writeFileSync(join(dir, "silero_vad.onnx"), "x");
+    mkdirSync(join(dir, "sherpa-onnx-pyannote-segmentation-3-0"), { recursive: true });
+    writeFileSync(join(dir, "sherpa-onnx-pyannote-segmentation-3-0", "model.onnx"), "x");
+    writeFileSync(join(dir, "wespeaker_en_voxceleb_resnet34_LM.onnx"), "x");
+
+    const res = await (await app()).request("/audio/setup/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toBe("application/x-ndjson");
+    const lines = (await res.text())
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.some((l) => l.type === "error")).toBe(false);
+    expect(lines.some((l) => l.stage === "download")).toBe(false);
+    expect(lines.at(-1)).toMatchObject({
+      type: "done",
+      selected: "parakeet-v3",
+      installed: true,
+    });
+  });
+});
+
+// ----------------------------------------------------------------------------------------
+// The speaker routes: media bytes for the labeling UI, and the rename PATCH. A fake .wav
+// extractor stands in for the ASR pipeline (the same trick as core's speakers.test.ts): it
+// emits exactly the markdown shape transcribeMedia produces plus a roster, so these tests
+// exercise the HTTP surface without models, ffmpeg, or a real recording. Registered for
+// .wav only; the coded-400 media test above uses .mp3 and still hits the real extractor.
+// ----------------------------------------------------------------------------------------
+
+const SPEAKER_TRANSCRIPT = [
+  "## 0:00 - 0:05, Speaker 1",
+  "",
+  "Hello and welcome.",
+  "## 0:05 - 0:12, Speaker 2",
+  "",
+  "Glad to be here.",
+].join("\n");
+
+registerExtractor({
+  kind: "audio",
+  extensions: [".wav"],
+  version: 1,
+  chunker: "markdown",
+  async extract() {
+    return {
+      units: [{ text: SPEAKER_TRANSCRIPT, page: null }],
+      speakers: {
+        version: 1 as const,
+        embeddingModel: "test",
+        speakers: [
+          {
+            id: 1,
+            label: "Speaker 1",
+            name: null,
+            seconds: 5,
+            sampleStart: 0,
+            sampleEnd: 5,
+            embedding: null,
+          },
+          {
+            id: 2,
+            label: "Speaker 2",
+            name: null,
+            seconds: 7,
+            sampleStart: 5,
+            sampleEnd: 12,
+            embedding: null,
+          },
+        ],
+      },
+    };
+  },
+});
+
+describe("speaker routes", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "memloom-server-speakers-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function appWithRecording() {
+    await truncateAll(storage);
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+    });
+    await memloom.init();
+    const server = createServer(memloom);
+    const path = join(dir, "standup.wav");
+    writeFileSync(path, "RIFF-not-really-audio-but-bytes-all-the-same");
+    const added = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    expect(added.status).toBe(200);
+    const { documentId } = (await added.json()) as { documentId: string };
+    return { server, documentId, path };
+  }
+
+  it("lists the roster on the document", async () => {
+    const { server } = await appWithRecording();
+    const res = await server.request("/context/documents");
+    const { documents } = (await res.json()) as {
+      documents: Array<{ kind: string; speakers?: { speakers: unknown[] } | null }>;
+    };
+    expect(documents[0]?.kind).toBe("audio");
+    expect(documents[0]?.speakers?.speakers).toHaveLength(2);
+  });
+
+  it("serves the recording's bytes with Range support", async () => {
+    const { server, documentId } = await appWithRecording();
+
+    const whole = await server.request(`/context/documents/${documentId}/media`);
+    expect(whole.status).toBe(200);
+    expect(whole.headers.get("content-type")).toBe("audio/wav");
+    expect(whole.headers.get("accept-ranges")).toBe("bytes");
+    expect(await whole.text()).toBe("RIFF-not-really-audio-but-bytes-all-the-same");
+
+    const part = await server.request(`/context/documents/${documentId}/media`, {
+      headers: { range: "bytes=5-8" },
+    });
+    expect(part.status).toBe(206);
+    expect(part.headers.get("content-range")).toBe("bytes 5-8/44");
+    expect(await part.text()).toBe("not-");
+
+    const past = await server.request(`/context/documents/${documentId}/media`, {
+      headers: { range: "bytes=999999-" },
+    });
+    expect(past.status).toBe(416);
+  });
+
+  it("refuses media for a document that is not a recording", async () => {
+    const { server } = await appWithRecording();
+    const md = join(dir, "notes.md");
+    writeFileSync(md, "# hello");
+    const added = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: md }),
+    });
+    const { documentId } = (await added.json()) as { documentId: string };
+    const res = await server.request(`/context/documents/${documentId}/media`);
+    expect(res.status).toBe(400);
+  });
+
+  it("renames a speaker and the chunk breadcrumbs follow", async () => {
+    const { server, documentId } = await appWithRecording();
+    const res = await server.request(`/context/documents/${documentId}/speakers`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ speakerId: 2, name: "Alice" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      speakers: { speakers: Array<{ id: number; name: string | null }> };
+    };
+    expect(body.speakers.speakers.find((s) => s.id === 2)?.name).toBe("Alice");
+
+    const chunks = await server.request(`/context/documents/${documentId}/chunks`);
+    const { chunks: rows } = (await chunks.json()) as {
+      chunks: Array<{ headingPath: string | null }>;
+    };
+    expect(rows.map((r) => r.headingPath)).toEqual([
+      "0:00 - 0:05, Speaker 1",
+      "0:05 - 0:12, Alice",
+    ]);
+  });
+
+  it("validates sample ranges before touching ffmpeg", async () => {
+    const { server, documentId } = await appWithRecording();
+    const bad = async (qs: string) =>
+      (await server.request(`/context/documents/${documentId}/sample?${qs}`)).status;
+    expect(await bad("start=5&end=2")).toBe(400);
+    expect(await bad("start=abc&end=9")).toBe(400);
+    expect(await bad("start=0&end=99")).toBe(400);
+    // The fixture's bytes are not real audio, so a valid range reaches ffmpeg and fails
+    // there: a coded 500, not a hang and not a 200 with garbage.
+    const res = await server.request(`/context/documents/${documentId}/sample?start=0&end=4`);
+    expect(res.status).toBe(500);
+  });
+
+  it("refuses a sample for a document that is not a recording", async () => {
+    const { server } = await appWithRecording();
+    const md = join(dir, "sample-notes.md");
+    writeFileSync(md, "# hello");
+    const added = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: md }),
+    });
+    const { documentId } = (await added.json()) as { documentId: string };
+    const res = await server.request(`/context/documents/${documentId}/sample?start=0&end=4`);
+    expect(res.status).toBe(400);
+  });
+
+  it("answers 400 for an unknown speaker and 404 for an unknown document", async () => {
+    const { server, documentId } = await appWithRecording();
+    const unknown = await server.request(`/context/documents/${documentId}/speakers`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ speakerId: 9, name: "Bob" }),
+    });
+    expect(unknown.status).toBe(400);
+    const missing = await server.request(
+      "/context/documents/00000000-0000-0000-0000-000000000001/speakers",
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ speakerId: 1, name: "Bob" }),
+      },
+    );
+    expect(missing.status).toBe(404);
   });
 });

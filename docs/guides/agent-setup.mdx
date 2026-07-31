@@ -154,7 +154,8 @@ Expect: daemon running, both hooks installed, the capture scope the human chose.
 | --- | --- |
 | `memloom: command not found` after install | Node is older than 20, so npm skipped the package. Upgrade Node, reinstall. |
 | Daemon not reachable | Run `memloom init`. Any CLI command auto-starts it except the hooks, which never do. |
-| API answers 503 "store is locked" | A Postgres client (psql, Drizzle Studio) is connected on port 54329 and holds the single-connection lock. Close it. |
+| API answers 503 "store is locked" | A Postgres client (psql, Drizzle Studio) is connected on the wire port and holds the single-connection lock. Close it. |
 | Daemon refuses to start over an embedding mismatch | The store's vectors do not match the configured provider. `memloom stop`, `memloom reembed`, `memloom init`. |
 | Port 4319 already in use | Another memloom daemon is already running. That is fine; every client shares it. |
+| Daemon starts but says the Postgres wire is OFF | Port 54329 will not bind. On Windows, Hyper-V/WSL/Docker reserve port blocks at boot (`netsh interface ipv4 show excludedportrange protocol=tcp`). Set `MEMLOOM_PG_PORT` to a free port below 49152 and restart. The API and viewer work either way. |
 | `import sessions` refuses to run | Offline mode: distillation needs the LLM, so `OPENROUTER_API_KEY` must be set. |

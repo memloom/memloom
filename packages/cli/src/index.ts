@@ -1,19 +1,21 @@
 import { spawn } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import {
+  type ContextProgressEvent,
   type ReconcileReport,
   detectKind,
   type ImportStatus,
+  isHttpUrl,
   MEMORY_TYPES,
   type Memory,
   type MemoryType,
   supportedExtensions,
 } from "@memloom/core";
 import { runAgentMemoryImport } from "./agent-memory.js";
-import { configPath, dataDir, ensureConfig, memloomHome } from "./config.js";
+import { configPath, dataDir, ensureConfig, loadConfigEnv, memloomHome } from "./config.js";
 import { connect } from "./connect.js";
-import { startDaemon } from "./daemon.js";
+import { pgWirePort, startDaemon } from "./daemon.js";
 import {
   ALL_HOOKS,
   claudeSettingsPath,
@@ -35,6 +37,16 @@ import {
 } from "./notion.js";
 import { promptRecall } from "./recall-hook.js";
 import { runReembed } from "./reembed.js";
+
+/** "12:30" for a progress line, so a long transcription reads against the recording. */
+function formatClock(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+  return `${h > 0 ? `${h}:` : ""}${mm}:${String(s).padStart(2, "0")}`;
+}
 
 /** "from setup.md › Guide > Postgres (p. 3)" for context-chunk recall results. */
 function describeSource(m: Memory): string | null {
@@ -150,9 +162,14 @@ Usage: memloom <command> [args]
   notion sync          sync the selected Notion pages now (--dry-run | --force)
   notion status        Notion token, selection, last sync, synced documents
   notion disconnect    stop syncing Notion (synced documents stay)
-  context add <path>   ingest files (or a directory) as context: ${supportedExtensions().join(" ")}
+  context add <target> ingest files, a directory, or a web page URL as context:
+                       ${supportedExtensions().join(" ")} and http(s) links
   context list         list ingested context documents
   context remove <id>  remove a context document and its chunks
+  audio models         the speech models you can transcribe with, and their sizes
+  audio setup [id]     download a speech model, once per machine (default: 465 MB)
+  audio use <id>       transcribe with a different model from now on
+  audio status         which model is selected, what is installed, whether ffmpeg is found
   schema               show the graph vocabulary (entity types + predicates, usage, status)
   schema disable <entity_type|predicate> <name>
                        stop using an entry for future extraction (built-ins too)
@@ -166,6 +183,7 @@ Usage: memloom <command> [args]
 The CLI and the MCP talk to the daemon over HTTP, so many clients share one store safely.
 Any command auto-starts the daemon if it isn't running. Inspect the data by pointing Drizzle
 Studio / psql at the daemon's Postgres wire: postgresql://postgres@127.0.0.1:54329/postgres
+(default port; MEMLOOM_PG_PORT moves it, and memloom serve prints the live one)
 
 Configuration lives in ${configPath()} (created by init). Set OPENROUTER_API_KEY there for
 real embeddings + LLM dedup/entities; restart the daemon after changing it.
@@ -178,9 +196,10 @@ const COMMAND_HELP: Record<string, string> = {
   serve: `memloom serve
 
 Run the store daemon in the foreground: HTTP API on 4319, the viewer, and (on the
-embedded tier) the Postgres wire on 54329. With MEMLOOM_PG_URL set, the daemon runs
-on your Postgres server instead and starts no wire bridge. The daemon is the single
-owner of the store; every other command talks to it over HTTP (and auto-starts it
+embedded tier) the Postgres wire on 54329 (MEMLOOM_PG_PORT moves it; if the port will
+not bind the daemon says so and serves on without the wire). With MEMLOOM_PG_URL set,
+the daemon runs on your Postgres server instead and starts no wire bridge. The daemon
+is the single owner of the store; every command talks to it over HTTP (and auto-starts it
 when needed). Ctrl+C to stop.
 
 Reads ${configPath()} at startup; real environment variables win over the file.`,
@@ -409,12 +428,19 @@ config and a daemon restart. No command exposes that yet.`,
 
   context: `memloom context <add|list|remove>
 
-  add <path...>   ingest files or folders as searchable context
-                  (${supportedExtensions().join(" ")}; folders recurse)
+  add <target...> ingest files, folders, or web pages as searchable context
+                  (${supportedExtensions().join(" ")}; folders recurse; http(s) URLs are fetched)
   list            ingested documents with ids and chunk counts
   remove <id>     delete a document and its chunks (the file on disk is untouched)
 
-Re-adding an unchanged file is a no-op; a changed file replaces its chunks.`,
+  memloom context add ./notes ./spec.pdf https://example.com/post
+
+A page is fetched and parsed on this machine, never through a reader service, and is
+stored under its own URL so citations link back to the heading they came from. A page
+that renders in the browser (a single-page app, or anything behind a login) yields
+little to a plain fetch and is reported rather than saved half-empty.
+
+Re-adding unchanged content is a no-op; changed content replaces its chunks.`,
 
   schema: `memloom schema [list|disable|enable|delete]
 
@@ -431,6 +457,24 @@ Re-adding an unchanged file is a no-op; a changed file replaces its chunks.`,
                                      entry. Built-ins can only be disabled, and
                                      an active entry must be disabled first
                                      (schema disable).`,
+
+  audio: `memloom audio <models|setup|use|status>
+
+Local speech-to-text for audio and video files. Everything runs on this machine:
+ffmpeg normalizes the audio, silero finds the speech, and the selected model
+transcribes it. Nothing is uploaded.
+
+  memloom audio models          what you can choose from, with sizes and languages
+  memloom audio setup           download the default (Parakeet v3, 465 MB)
+  memloom audio setup <id>      download a specific one
+  memloom audio use <id>        transcribe with it from now on
+  memloom audio status          selected model, what is installed, ffmpeg
+
+Models are shared across projects in ~/.memloom/models. Transcripts are cached by
+file hash, so re-adding a recording costs nothing.
+
+An hour of audio takes roughly 8 to 11 minutes on a recent laptop CPU. Progress
+streams while "context add" runs. MEMLOOM_ASR_MODEL pins a model for one run.`,
 
   "auto-index": `memloom auto-index [on|off]
 
@@ -490,13 +534,14 @@ export async function run(argv: readonly string[]): Promise<void> {
 
     case "init": {
       const config = ensureConfig(); // create ~/.memloom + config.env template first
+      loadConfigEnv(); // so the wire URL we print reflects a MEMLOOM_PG_PORT override
       await connect(); // starts the daemon if needed
       console.log(`memloom is running. data: ${dataDir()}`);
       console.log(
         `config: ${config}  (set OPENROUTER_API_KEY there, then: memloom stop && memloom reembed && memloom serve)`,
       );
       console.log("HTTP api http://127.0.0.1:4319");
-      console.log("Postgres postgresql://postgres@127.0.0.1:54329/postgres");
+      console.log(`Postgres postgresql://postgres@127.0.0.1:${pgWirePort()}/postgres`);
       return;
     }
 
@@ -569,15 +614,85 @@ export async function run(argv: readonly string[]): Promise<void> {
       const engine = await connect();
 
       if (sub === "add") {
-        const targets = args.map((a) => resolve(a));
-        if (targets.length === 0) throw new Error("usage: memloom context add <path...>");
+        if (args.length === 0) throw new Error("usage: memloom context add <path-or-url...>");
+        // A URL is not a path: it never touches resolve() or the directory walk.
+        const urls = args.filter(isHttpUrl);
+        const targets = args.filter((a) => !isHttpUrl(a)).map((a) => resolve(a));
+
+        for (const url of urls) {
+          try {
+            const result = await engine.contextAddUrl({ url });
+            console.log(
+              `${result.outcome.padEnd(9)}  ${result.title}  (${result.chunks} chunks)\n  ${url}`,
+            );
+          } catch (err) {
+            // One bad URL should not abandon the rest of the batch.
+            console.error(`failed     ${url}\n  ${err instanceof Error ? err.message : err}`);
+          }
+        }
+
         const files = targets.flatMap(collectContextFiles);
         if (files.length === 0) {
-          console.log(`no ingestible files found (${supportedExtensions().join(", ")}).`);
+          if (urls.length === 0) {
+            console.log(`no ingestible files found (${supportedExtensions().join(", ")}).`);
+          }
           return;
         }
         for (const file of files) {
-          const result = await engine.contextAdd({ path: file });
+          // Only media gets the streaming path. Everything else finishes before it would
+          // emit anything, and asking for a stream would just add a second round trip.
+          const kind = detectKind(file);
+          const isMedia = kind === "audio" || kind === "video";
+          let progress: ((event: ContextProgressEvent) => void) | undefined;
+
+          if (isMedia) {
+            const { modelStatus } = await import("@memloom/core");
+            const status = await modelStatus();
+            if (!status.installed) {
+              console.error(
+                `skipped    ${basename(file)}\n  ${status.selected.label} is not installed. ` +
+                  "Run: memloom audio setup",
+              );
+              continue;
+            }
+            // Every stage prints, not only transcription. On a large recording the work
+            // before the first word is minutes long, and a blank terminal for that stretch
+            // is indistinguishable from a hang.
+            progress = (event) => {
+              const show = (line: string) =>
+                process.stderr.write(`\r  ${basename(file)}: ${line}${" ".repeat(12)}`);
+              const pct = () =>
+                event.total > 0 ? ` ${Math.round((event.done / event.total) * 100)}%` : "";
+              switch (event.stage) {
+                case "hashing":
+                  return show(
+                    `reading the file${event.total > 0 ? ` (${Math.round(event.total / 1048576)} MB)` : ""}${pct()}`,
+                  );
+                case "decoding":
+                  return show("extracting the audio track...");
+                case "detecting":
+                  return show(`finding speech${pct()}`);
+                case "loading":
+                  return show("loading the speech model...");
+                case "diarizing":
+                  return show(`telling the voices apart${pct()}`);
+                case "checking":
+                  return show("checking the transcript...");
+                case "repairing":
+                  return show(`re-checking a rough stretch at ${formatClock(event.seconds)}`);
+                case "transcribing":
+                  return show(
+                    `transcribing ${formatClock(event.seconds)} of ${formatClock(event.audioSeconds)}${pct()}`,
+                  );
+                default:
+                  return show(event.stage);
+              }
+            };
+          }
+
+          const result = await engine.contextAdd({ path: file }, progress);
+          // Clear the progress line so the result is not printed onto it.
+          if (isMedia) process.stderr.write(`\r${" ".repeat(72)}\r`);
           const extras = [
             result.outcome === "converted"
               ? result.rechunked
@@ -616,6 +731,78 @@ export async function run(argv: readonly string[]): Promise<void> {
       }
 
       throw new Error("usage: memloom context <add|list|remove>");
+    }
+
+    // Model management only, so it deliberately does not connect to the daemon: setting up
+    // transcription should work before anything is running.
+    case "audio": {
+      const [sub, arg] = rest;
+      const { CATALOG, hasFfmpeg, modelStatus, selectModel, setupModels } = await import(
+        "@memloom/core"
+      );
+
+      if (sub === "models") {
+        const status = await modelStatus();
+        for (const m of CATALOG) {
+          const marks = [
+            m.id === status.selected.id ? "selected" : "",
+            status.installedIds.includes(m.id) ? "installed" : `${m.downloadMb} MB download`,
+          ].filter(Boolean);
+          console.log(`${m.id.padEnd(15)} ${m.label}  [${marks.join(", ")}]`);
+          console.log(`${" ".repeat(16)}${m.languages}`);
+          console.log(`${" ".repeat(16)}${m.note}\n`);
+        }
+        console.log("memloom audio setup <id>   download one");
+        console.log("memloom audio use <id>     transcribe with it from now on");
+        return;
+      }
+
+      if (sub === "status") {
+        const status = await modelStatus();
+        console.log(`models     ${status.dir}`);
+        console.log(`selected   ${status.selected.label} (${status.selected.id})`);
+        console.log(`state      ${status.installed ? "installed" : "NOT installed"}`);
+        console.log(`installed  ${status.installedIds.join(", ") || "(none)"}`);
+        console.log(
+          `speakers   ${status.speakersInstalled ? "installed (transcripts label who is speaking)" : "not installed; run: memloom audio setup"}`,
+        );
+        console.log(`ffmpeg     ${(await hasFfmpeg()) ? "found" : "NOT FOUND, install it first"}`);
+        return;
+      }
+
+      if (sub === "use") {
+        if (!arg) throw new Error("usage: memloom audio use <model-id>");
+        const model = await selectModel(arg);
+        const status = await modelStatus();
+        console.log(`selected ${model.label}`);
+        if (!status.installed) console.log(`not downloaded yet. Run: memloom audio setup ${arg}`);
+        return;
+      }
+
+      if (sub === "setup") {
+        let lastPercent = -1;
+        const status = await setupModels({
+          modelId: arg,
+          onStage: (stage) => {
+            process.stderr.write("\r          \r");
+            console.log(stage);
+            lastPercent = -1;
+          },
+          onProgress: ({ receivedBytes, totalBytes }) => {
+            if (!totalBytes) return;
+            const percent = Math.floor((receivedBytes / totalBytes) * 100);
+            // Redrawing every chunk would flood a piped log; every whole percent is enough.
+            if (percent === lastPercent) return;
+            lastPercent = percent;
+            process.stderr.write(`\r  ${percent}%`);
+          },
+        });
+        process.stderr.write("\r          \r");
+        console.log(`ready: ${status.selected.label} in ${status.dir}`);
+        return;
+      }
+
+      throw new Error("usage: memloom audio <models|setup|use|status>");
     }
 
     case "notion": {

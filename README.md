@@ -90,9 +90,10 @@ Cursor, add:
 }
 ```
 
-Your agent gets eight tools: `save_memory`, `recall_memory` (memories *and* your ingested
-files, with sources), full-passage reading, version history, conflict listing/resolution,
-and schema management, so the agent uses the memory and you keep control of the vocabulary.
+Your agent gets nine tools: `save_memory`, `recall_memory` (memories *and* your ingested
+files, with sources), `related_entities` (walk the graph from one entity: who is connected to
+whom), full-passage reading, version history, conflict listing/resolution, and schema
+management, so the agent uses the memory and you keep control of the vocabulary.
 
 For a full list of MCP clients, see [docs/setup.mdx](./docs/mcp/setup.mdx).
 
@@ -161,7 +162,7 @@ One daemon (`memloom serve`) owns the store; everything else is a client:
 | MCP | `@memloom/mcp`: Claude Desktop, Claude Code, Cursor, any MCP client |
 | HTTP API | `http://127.0.0.1:4319`: full [API reference](./docs), localhost-only by design |
 | Viewer | `memloom ui`: memory graph, assistant chat, memories, documents, schema review, conflicts, indexing console |
-| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres`: psql, Drizzle Studio, TablePlus (embedded tier; with `MEMLOOM_PG_URL` set, inspect your Postgres directly) |
+| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres`: psql, Drizzle Studio, TablePlus (default port, `MEMLOOM_PG_PORT` moves it; embedded tier; with `MEMLOOM_PG_URL` set, inspect your Postgres directly) |
 
 ## Extending: add a file format
 

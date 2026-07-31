@@ -9,7 +9,9 @@ import type {
   ConflictAutoResult,
   ContextAddInput,
   ContextAddResult,
+  ContextAddUrlInput,
   ContextDocument,
+  ContextProgressEvent,
   DocumentChunks,
   ReconcileOptions,
   ReconcileReport,
@@ -31,6 +33,7 @@ import type {
   NotionSyncOptions,
   NotionSyncResult,
   RecallOptions,
+  RelatedEntities,
   ResolveDecision,
   ResolvedConflict,
   SaveInput,
@@ -120,6 +123,19 @@ export class HttpMemloomClient implements MemoryEngine {
     if (!res.ok) throw new Error(`memloom server ${res.status}: ${await res.text()}`);
     const { content } = (await res.json()) as { content: string };
     return content;
+  }
+
+  async relatedEntities(
+    target: string,
+    opts: { entityType?: string; limit?: number } = {},
+  ): Promise<RelatedEntities | null> {
+    const params = new URLSearchParams({ q: target });
+    if (opts.entityType) params.set("type", opts.entityType);
+    if (opts.limit != null) params.set("limit", String(opts.limit));
+    const res = await this.#fetch(`${this.#baseUrl}/memory/entities/related?${params}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`memloom server ${res.status}: ${await res.text()}`);
+    return (await res.json()) as RelatedEntities;
   }
 
   importSessions(
@@ -243,6 +259,11 @@ export class HttpMemloomClient implements MemoryEngine {
         onItem?.(item as TItem);
       } else if (event.type === "done") {
         const { type: _type, ...done } = event;
+        // A stream cannot revise its status code once it has begun, so a run that failed
+        // reports the reason in its done payload. Raising it here means the caller sees
+        // that reason rather than crashing on whichever field it expected to find.
+        const failure = (done as { error?: unknown }).error;
+        if (typeof failure === "string") throw new Error(failure);
         result = done as TDone;
       } else if (event.type === "error") {
         throw new Error(event.error ?? "memloom: stream error");
@@ -341,8 +362,23 @@ export class HttpMemloomClient implements MemoryEngine {
     return runs;
   }
 
-  contextAdd(input: ContextAddInput): Promise<ContextAddResult> {
-    return this.#post<ContextAddResult>("/context/add", input);
+  contextAdd(
+    input: ContextAddInput,
+    onProgress?: (event: ContextProgressEvent) => void,
+    _signal?: AbortSignal,
+  ): Promise<ContextAddResult> {
+    // Without a callback this stays a plain request, so every non-media format keeps the
+    // simpler path and the response shape it already had.
+    if (!onProgress) return this.#post<ContextAddResult>("/context/add", input);
+    return this.#streamNdjson<ContextProgressEvent, ContextAddResult>(
+      "/context/add/stream",
+      input,
+      onProgress,
+    );
+  }
+
+  contextAddUrl(input: ContextAddUrlInput): Promise<ContextAddResult> {
+    return this.#post<ContextAddResult>("/context/url", input);
   }
 
   async contextList(): Promise<ContextDocument[]> {
