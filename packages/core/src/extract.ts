@@ -197,7 +197,11 @@ for (const [kind, extensions] of [
     // v4 = the transcript opens with when the recording was made, so already-ingested
     // recordings pick up a date. Cheap to re-ingest: the words are cached by hash and model,
     // and the diarization signature is stored separately, so neither pass runs again.
-    version: 4,
+    // v5 = clustering threshold 0.6 (full-length recordings merged two voices at 0.7).
+    // A diarization change MUST bump this too: the transcript cache re-diarizes on its own
+    // version, but without the hash salt changing, ingest compares source hashes, answers
+    // "unchanged", and throws the corrected roster away. Verified the hard way.
+    version: 5,
     chunker: "markdown",
     async extractPath(path, opts) {
       const { transcribeMedia, hashFile } = await import("./audio.js");
