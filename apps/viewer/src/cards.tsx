@@ -1,13 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
-  type ContextFileDone,
   type ContextProgress,
-  type ContextStreamEvent,
   fileToBase64,
   type LinkErrorCode,
   LinkIngestError,
   type Memory,
+  type QueueSnapshot,
   type SaveResult,
 } from "./api";
 
@@ -167,12 +166,6 @@ export function RecallCard({ only }: { only?: "memory" | "context" }) {
   );
 }
 
-// Upload (the browser dialog) sends bytes over HTTP and cannot report progress, so media
-// stays off this list on purpose: a recording uploaded that way would be the silent
-// multi-minute wait the streaming path exists to avoid. Link a recording instead.
-const SUPPORTED_EXTENSIONS = [".md", ".markdown", ".txt", ".pdf"];
-const MAX_UPLOAD_FILES = 200;
-
 // The formats the daemon transcribes. Kept here so the add card can choose the streaming
 // route from the path alone, before the daemon has looked at anything.
 const MEDIA_EXTENSIONS = [
@@ -191,6 +184,21 @@ const MEDIA_EXTENSIONS = [
   ".avi",
   ".m4v",
 ];
+// Media is uploadable now because an uploaded recording is queued rather than transcribed
+// inside the request: the queue reports its progress, so the silent multi-minute wait that
+// kept media off this list is gone. Linking is still better for a large file, since an
+// upload is a one-time snapshot that cannot be re-scanned from disk later.
+const SUPPORTED_EXTENSIONS = [".md", ".markdown", ".txt", ".pdf", ...MEDIA_EXTENSIONS];
+const MAX_UPLOAD_FILES = 200;
+
+/**
+ * Mirrors the daemon's /context/upload bodyLimit (~512 MB of real file before base64).
+ * Checked BEFORE encoding, not just to save a round trip: base64 of a file much past this
+ * needs a JavaScript string longer than V8 allows at all, so oversized files die in
+ * fileToBase64 with a bare "Invalid string length" and the daemon's own friendly 413 is
+ * never even reached. Keep in sync with packages/server (maxSize: 700 MB of base64).
+ */
+const MAX_UPLOAD_BYTES = 512 * 1024 * 1024;
 
 function isSupported(name: string): boolean {
   const lower = name.toLowerCase();
@@ -225,22 +233,6 @@ function clock(seconds: number): string {
   return `${hours > 0 ? `${hours}:` : ""}${mm}:${String(rest).padStart(2, "0")}`;
 }
 
-/** What the card says while one file is being ingested. */
-interface IngestStatus {
-  path: string;
-  line: string;
-  /** 0 to 1, or null when the stage has nothing to count. */
-  fraction: number | null;
-  /** Files finished so far in this run. */
-  files: number;
-}
-
-// Both stream shapes carry `stage`, and the progress one holds an open set of stage names,
-// so the split is a guard rather than a discriminated union.
-function isFileDone(event: ContextStreamEvent): event is ContextFileDone {
-  return event.stage === "file";
-}
-
 /** Bytes as "1.4 GB": the hashing stage counts a file, not a clock. */
 function bytes(n: number): string {
   if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
@@ -264,6 +256,18 @@ function describeStage(event: ContextProgress): { line: string; fraction: number
       fraction: event.total > 0 ? event.done / event.total : null,
     };
   }
+  if (event.stage === "waiting") {
+    // The queue is holding a file that is still growing rather than reading half of it.
+    // Naming this matters more than most stages: nothing is happening, and an unlabelled
+    // pause here looks exactly like a stall.
+    return {
+      line:
+        event.done > 0
+          ? `waiting for the file to finish copying; ${event.done}s`
+          : "waiting for the file to finish copying",
+      fraction: null,
+    };
+  }
   if (event.stage === "decoding") return { line: "extracting the audio track", fraction: null };
   if (event.stage === "detecting") {
     return {
@@ -272,6 +276,12 @@ function describeStage(event: ContextProgress): { line: string; fraction: number
     };
   }
   if (event.stage === "loading") return { line: "loading the speech model", fraction: null };
+  if (event.stage === "diarizing") {
+    return {
+      line: "telling the voices apart",
+      fraction: event.total > 0 ? event.done / event.total : null,
+    };
+  }
   if (event.stage === "checking") return { line: "checking the transcript", fraction: null };
   if (event.stage === "repairing") {
     return { line: `re-reading a rough stretch at ${clock(event.seconds)}`, fraction: null };
@@ -285,44 +295,14 @@ function describeStage(event: ContextProgress): { line: string; fraction: number
   return { line: event.stage, fraction: null };
 }
 
-/** Live progress under the add card: which file, which stage, how far in. */
-function IngestStatusBar({ status }: { status: IngestStatus }) {
-  const percent = status.fraction === null ? null : Math.round(status.fraction * 100);
-  return (
-    <div className="ingestStatus">
-      <div className="ingestStatusHead">
-        <span className="ingestStatusFile">{fileName(status.path)}</span>
-        <span className="ingestStatusStage">
-          {status.line}
-          {percent === null ? "" : `; ${percent}%`}
-        </span>
-      </div>
-      <div className="ingestBar">
-        <div
-          className={percent === null ? "ingestBarFill ingestBarSlide" : "ingestBarFill"}
-          style={percent === null ? undefined : { width: `${percent}%` }}
-        />
-      </div>
-      {status.files > 0 && (
-        <div className="ingestStatusCount">
-          {status.files} {status.files === 1 ? "file" : "files"} done
-        </div>
-      )}
-    </div>
-  );
-}
-
 export function AddFileCard({ onAdded }: { onAdded: () => void }) {
   const [path, setPath] = useState("");
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [status, setStatus] = useState<IngestStatus | null>(null);
   // With auto-index on, "run index" would be stale advice: extraction is already queued.
   const [autoIndexOn, setAutoIndexOn] = useState(false);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  // Held so the Stop button can abort a transcription that is already under way.
-  const abortRef = useRef<AbortController | null>(null);
   const indexHint = autoIndexOn
     ? "Entities are being extracted in the background."
     : "Run index to extract entities.";
@@ -338,9 +318,11 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
   // the document keeps a real path: "open file" works, re-adding detects changes, and
   // the planned file-sync watcher can follow it. Upload (below) is the snapshot flow.
   async function ingest(target: string) {
-    // A recording, or a folder that may hold one, goes through the streaming ingest so the
-    // card can say what is happening. Text and PDFs answer before a bar would ever move.
-    if (wantsProgress(target)) return ingestStreaming([target]);
+    // A recording, or a folder that may hold one, goes to the queue like any batch: one
+    // path or ten is the same flow, so a single linked video does not silently take a
+    // different (and blocking) road than two would. Text and PDFs answer inline before a
+    // progress row would even render.
+    if (wantsProgress(target)) return ingestMany([target]);
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -372,72 +354,32 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
     }
   }
 
-  // One streamed ingest per target. Progress arrives per decode chunk while a recording
-  // transcribes, and once more per file when one finishes, so a folder of recordings moves
-  // visibly instead of sitting on a spinner for the length of the whole batch.
-  async function ingestStreaming(targets: string[]) {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    setStatus(null);
-    // Aborting the request is what stops the work: the daemon watches the request's signal
-    // and gives up at the next chunk boundary. Choosing the wrong recording should not cost
-    // ten minutes of waiting for a result nobody wants.
-    const controller = new AbortController();
-    abortRef.current = controller;
-    let files = 0;
-    let unchanged = 0;
-    let chunks = 0;
-    const failures: string[] = [];
-    try {
-      for (const target of targets) {
-        const result = await api.contextAddStream(
-          target,
-          (event) => {
-            setStatus((prev) => {
-              const done = prev?.files ?? 0;
-              if (isFileDone(event)) {
-                return {
-                  path: event.path,
-                  line: `${event.outcome}; ${event.chunks} chunks`,
-                  fraction: 1,
-                  files: done + 1,
-                };
-              }
-              return { path: event.path, ...describeStage(event), files: done };
-            });
-          },
-          controller.signal,
-        );
-        files += result.documents;
-        unchanged += result.unchanged;
-        chunks += result.chunks;
-        if (result.errors) failures.push(...result.errors);
-      }
-      setNotice(
-        `ingested ${files} ${files === 1 ? "file" : "files"}` +
-          `${unchanged ? ` (${unchanged} unchanged)` : ""}; ${chunks} chunks. ` +
-          indexHint,
-      );
-      if (failures.length > 0) setError(failures.join("; "));
-      setPath("");
-      onAdded();
-    } catch (err) {
-      // A cancel is not a failure, and reporting it in red as one reads like something broke.
-      if (controller.signal.aborted) {
-        setNotice("stopped. Nothing was saved for the file that was still being read.");
-      } else {
-        setError(err instanceof Error ? err.message : String(err));
-      }
-    } finally {
-      abortRef.current = null;
-      setStatus(null);
-      setBusy(false);
-    }
-  }
-
   async function ingestMany(targets: string[]) {
-    if (targets.some(wantsProgress)) return ingestStreaming(targets);
+    // Anything slow goes to the queue rather than running inside this request. That is what
+    // lets you keep adding while one is transcribing, and it is also the only safe answer:
+    // each recognizer holds about 1.1 GB, so two concurrent transcriptions would double the
+    // memory for very little speed, given ONNX Runtime already keeps four cores busy inside
+    // a single decode. The queue deliberately runs one at a time.
+    if (targets.some(wantsProgress)) {
+      setBusy(true);
+      setError(null);
+      setNotice(null);
+      try {
+        const result = await api.queueAdd(targets);
+        setNotice(
+          result.added === 0
+            ? "already queued"
+            : `queued ${result.added} ${result.added === 1 ? "file" : "files"}; progress is below`,
+        );
+        setPath("");
+        onAdded();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -494,6 +436,21 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
       setError(`no supported files picked (${SUPPORTED_EXTENSIONS.join(", ")})`);
       return;
     }
+    const failures: string[] = [];
+    const fits = supported.filter((f) => {
+      if (f.size <= MAX_UPLOAD_BYTES) return true;
+      failures.push(
+        `${f.name} is ${bytes(f.size)}, over the ~512 MB upload limit. ` +
+          "Use Link file instead: the daemon reads it from disk, nothing is copied, " +
+          "and big recordings transcribe with progress either way.",
+      );
+      return false;
+    });
+    if (fits.length === 0) {
+      setNotice(null);
+      setError(failures.join("; "));
+      return;
+    }
     setBusy(true);
     setError(null);
     setNotice(null);
@@ -501,8 +458,7 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
     let unchanged = 0;
     let chunks = 0;
     let existsNote: string | null = null;
-    const failures: string[] = [];
-    for (const file of supported) {
+    for (const file of fits) {
       try {
         const r = await api.contextUpload(file.name, await fileToBase64(file));
         chunks += r.chunks;
@@ -520,14 +476,18 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
         failures.push(`${file.name}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    setNotice(
-      supported.length === 1 && existsNote
-        ? existsNote
-        : `uploaded ${added} ${added === 1 ? "file" : "files"}` +
-            `${unchanged ? ` (${unchanged} already here)` : ""}` +
-            `${skipped ? ` (${skipped} unsupported skipped)` : ""}; ${chunks} chunks. ` +
-            indexHint,
-    );
+    // A summary only when something actually happened: "uploaded 0 files" next to a red
+    // failure reads as the system contradicting itself.
+    if (added + unchanged > 0) {
+      setNotice(
+        fits.length === 1 && existsNote
+          ? existsNote
+          : `uploaded ${added} ${added === 1 ? "file" : "files"}` +
+              `${unchanged ? ` (${unchanged} already here)` : ""}` +
+              `${skipped ? ` (${skipped} unsupported skipped)` : ""}; ${chunks} chunks. ` +
+              indexHint,
+      );
+    }
     if (failures.length > 0) setError(failures.join("; "));
     setBusy(false);
     onAdded();
@@ -596,23 +556,11 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
               Upload…
             </button>
           </div>
-          {busy && abortRef.current ? (
-            <button
-              type="button"
-              className="btn"
-              onClick={() => abortRef.current?.abort()}
-            >
-              Stop
-            </button>
-          ) : (
-            <button
-              type="submit"
-              className="btn btnPrimary"
-              disabled={busy || path.trim() === ""}
-            >
-              {busy ? "Ingesting…" : "Add"}
-            </button>
-          )}
+          {/* No Stop here anymore: a recording lives in the queue below, where its own
+              row carries Cancel. This button only ever covers the fast inline formats. */}
+          <button type="submit" className="btn btnPrimary" disabled={busy || path.trim() === ""}>
+            {busy ? "Ingesting…" : "Add"}
+          </button>
         </div>
       </form>
       <p className="addFileHint">
@@ -623,7 +571,6 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
         rather than uploading them, so you can watch the progress.
       </p>
 
-      {status && <IngestStatusBar status={status} />}
       {notice && <div className="resultOutcome outcome-added">{notice}</div>}
     </div>
   );
@@ -718,6 +665,160 @@ export function AddLinkCard({ onAdded }: { onAdded: () => void }) {
       </p>
 
       {notice && <div className="resultOutcome outcome-added">{notice}</div>}
+    </div>
+  );
+}
+
+/**
+ * The ingest queue: what is waiting, what is running, what stopped and why.
+ *
+ * Rendered as its own section rather than folded into the add card, because the queue
+ * outlives any one add: it survives a daemon restart, and you can keep adding to it while
+ * something is already transcribing.
+ *
+ * Polled rather than streamed. It changes about once per decode chunk, so a one-second poll
+ * costs nothing and avoids a second NDJSON reader with its own reconnect behaviour.
+ */
+export function IngestQueueCard({ onChanged }: { onChanged: () => void }) {
+  const [snapshot, setSnapshot] = useState<QueueSnapshot | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  // Held so a finished item can refresh the document list exactly once, rather than on
+  // every poll while it sits there in its done state.
+  const settled = useRef(0);
+
+  const load = useCallback(async () => {
+    try {
+      const next = await api.queue();
+      setSnapshot(next);
+      const finished = next.items.filter((i) => i.status === "done").length;
+      if (finished !== settled.current) {
+        settled.current = finished;
+        onChanged();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }, [onChanged]);
+
+  useEffect(() => {
+    void load();
+    const timer = setInterval(load, 1000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  async function act(id: string, fn: (id: string) => Promise<QueueSnapshot>) {
+    setBusy(id);
+    setError(null);
+    try {
+      setSnapshot(await fn(id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const items = snapshot?.items ?? [];
+  if (items.length === 0) return null;
+
+  const waiting = items.filter((i) => i.status === "queued").length;
+  return (
+    <div className="card">
+      {error && <div className="notice noticeError">{error}</div>}
+      <div className="queueHead">
+        <span>
+          {waiting > 0 ? `${waiting} waiting` : snapshot?.running ? "working" : "nothing waiting"}
+        </span>
+        {items.some((i) => i.status !== "queued" && i.status !== "running") && (
+          <button
+            type="button"
+            className="btn btnGhost"
+            onClick={async () => {
+              await api.queueClear();
+              await load();
+            }}
+          >
+            Clear finished
+          </button>
+        )}
+      </div>
+      {items.map((item) => {
+        const progress =
+          item.status === "running" && item.stage
+            ? describeStage({
+                path: item.path,
+                stage: item.stage,
+                done: item.done ?? 0,
+                total: item.total ?? 0,
+                seconds: item.seconds ?? 0,
+                audioSeconds: item.audioSeconds ?? 0,
+              })
+            : null;
+        return (
+          <div key={item.id} className={`queueRow queueRow-${item.status}`}>
+            <div className="queueRowHead">
+              <span className="queueName">{fileName(item.path)}</span>
+              <span className="queueStatus">
+                {item.status === "running" && progress
+                  ? progress.line +
+                    (progress.fraction === null ? "" : `; ${Math.round(progress.fraction * 100)}%`)
+                  : item.status === "done"
+                    ? `${item.outcome ?? "done"}; ${item.chunks ?? 0} chunks`
+                    : item.status === "failed"
+                      ? (item.error ?? "failed")
+                      : item.status}
+              </span>
+            </div>
+            {item.status === "running" && (
+              <div className="queueBar">
+                <div
+                  className={
+                    progress?.fraction === null ? "queueBarFill queueBarBusy" : "queueBarFill"
+                  }
+                  style={
+                    progress?.fraction == null
+                      ? undefined
+                      : { width: `${progress.fraction * 100}%` }
+                  }
+                />
+              </div>
+            )}
+            <div className="queueActions">
+              {(item.status === "queued" || item.status === "running") && (
+                <button
+                  type="button"
+                  className="btn btnGhost"
+                  disabled={busy === item.id}
+                  onClick={() => act(item.id, api.queueCancel)}
+                >
+                  Cancel
+                </button>
+              )}
+              {(item.status === "cancelled" || item.status === "failed") && (
+                <button
+                  type="button"
+                  className="btn btnGhost"
+                  disabled={busy === item.id}
+                  onClick={() => act(item.id, api.queueResume)}
+                >
+                  Resume
+                </button>
+              )}
+              {item.status !== "running" && (
+                <button
+                  type="button"
+                  className="btn btnGhost"
+                  disabled={busy === item.id}
+                  onClick={() => act(item.id, api.queueRemove)}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

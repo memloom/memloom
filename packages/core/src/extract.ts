@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { assemblePageText, type PdfTextItem } from "./pdf-layout.js";
+import type { SpeakerRoster } from "./types.js";
 
 // File → text units for the context connector, behind a pluggable extractor registry.
 // Built-ins are local-first, text-layer only: .md/.txt read directly, PDF via unpdf
@@ -24,6 +25,8 @@ export interface ExtractedFile {
   /** Section strategy the chunker applies before size-splitting. */
   chunker: "markdown" | "outline";
   units: ExtractedUnit[];
+  /** Diarized voices, media extractors only. Stored on the document row, not in chunks. */
+  speakers?: SpeakerRoster | null;
 }
 
 /** A file format the context connector can ingest. Register one with registerExtractor(). */
@@ -44,7 +47,10 @@ export interface Extractor {
   version: number;
   /** How chunks are sectioned: markdown headings, or outline (ALL-CAPS titles + numbered points). */
   chunker: "markdown" | "outline";
-  extract(bytes: Uint8Array, path: string): Promise<{ title?: string; units: ExtractedUnit[] }>;
+  extract(
+    bytes: Uint8Array,
+    path: string,
+  ): Promise<{ title?: string; units: ExtractedUnit[]; speakers?: SpeakerRoster | null }>;
   /**
    * Optional path-based extraction, for formats too large to hold in memory. `extractFile`
    * prefers this and never reads the file, which is what keeps a multi-gigabyte video from
@@ -54,7 +60,12 @@ export interface Extractor {
   extractPath?(
     path: string,
     opts?: ExtractPathOptions,
-  ): Promise<{ title?: string; units: ExtractedUnit[]; contentHash: string }>;
+  ): Promise<{
+    title?: string;
+    units: ExtractedUnit[];
+    contentHash: string;
+    speakers?: SpeakerRoster | null;
+  }>;
 }
 
 /**
@@ -165,7 +176,14 @@ for (const [kind, extensions] of [
   registerExtractor({
     kind,
     extensions: [...extensions],
-    version: 1,
+    // v2 = speaker diarization: sections break on speaker turns and multi-voice headings
+    // carry labels, so already-ingested recordings re-ingest on their next add.
+    // v3 = calibrated clustering (threshold 0.7 + junk-cluster absorption), so recordings
+    // labeled by the over-splitting v2 defaults re-ingest with a sane roster.
+    // v4 = the transcript opens with when the recording was made, so already-ingested
+    // recordings pick up a date. Cheap to re-ingest: the words are cached by hash and model,
+    // and the diarization signature is stored separately, so neither pass runs again.
+    version: 4,
     chunker: "markdown",
     async extractPath(path, opts) {
       const { transcribeMedia, hashFile } = await import("./audio.js");
@@ -174,7 +192,7 @@ for (const [kind, extensions] of [
         onProgress: opts?.onProgress,
         signal: opts?.signal,
       });
-      return { units: result.units, contentHash: result.contentHash };
+      return { units: result.units, contentHash: result.contentHash, speakers: result.roster };
     },
     // The upload path, where bytes arrived over HTTP and never touched disk. ffmpeg needs a
     // file, so this spills to a temp file rather than refusing an uploaded recording.
@@ -188,7 +206,7 @@ for (const [kind, extensions] of [
       try {
         await writeFile(file, bytes);
         const result = await transcribeMedia(file, { sha256: async () => "" });
-        return { units: result.units };
+        return { units: result.units, speakers: result.roster };
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
@@ -205,14 +223,14 @@ export async function extractFile(
 ): Promise<ExtractedFile> {
   const extractor = registry.get(extname(path).toLowerCase());
   if (extractor?.extractPath) {
-    const { title, units, contentHash } = await extractor.extractPath(path, opts);
+    const { title, units, contentHash, speakers } = await extractor.extractPath(path, opts);
     return {
       kind: extractor.kind,
       title: title || basename(path),
-      contentHash:
-        extractor.version === 1 ? contentHash : `${contentHash}#p${extractor.version}`,
+      contentHash: extractor.version === 1 ? contentHash : `${contentHash}#p${extractor.version}`,
       chunker: extractor.chunker,
       units,
+      ...(speakers === undefined ? {} : { speakers }),
     };
   }
   return extractBytes(new Uint8Array(await readFile(path)), path, hash);
@@ -236,12 +254,13 @@ export async function extractBytes(
   }
   const contentHash =
     extractor.version === 1 ? hash(bytes) : `${hash(bytes)}#p${extractor.version}`;
-  const { title, units } = await extractor.extract(bytes, path);
+  const { title, units, speakers } = await extractor.extract(bytes, path);
   return {
     kind: extractor.kind,
     title: title || basename(path),
     contentHash,
     chunker: extractor.chunker,
     units,
+    ...(speakers === undefined ? {} : { speakers }),
   };
 }

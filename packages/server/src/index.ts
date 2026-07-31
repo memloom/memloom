@@ -1,7 +1,9 @@
 import { execFile, spawn } from "node:child_process";
-import { readdir, readFile, stat } from "node:fs/promises";
-import { homedir } from "node:os";
+import { createReadStream } from "node:fs";
+import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
+import { Readable } from "node:stream";
 import { promisify } from "node:util";
 import { serve as nodeServe } from "@hono/node-server";
 import {
@@ -12,6 +14,7 @@ import {
   findModel,
   hasFfmpeg,
   type IndexProgressEvent,
+  IngestQueue,
   isChatProvider,
   isHttpUrl,
   LinkExtractionError,
@@ -21,6 +24,7 @@ import {
   selectModel,
   setupModels,
   supportedExtensions,
+  uploadStoreDir,
 } from "@memloom/core";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -200,6 +204,74 @@ const MIME: Record<string, string> = {
   ".woff2": "font/woff2",
 };
 
+// Separate from the static-bundle MIME map on purpose: these are served by the media route
+// with Range support, and folding them into MIME would quietly let the SPA fallback serve a
+// video without ranges, which Safari refuses to play at all.
+const MEDIA_MIME: Record<string, string> = {
+  ".mp3": "audio/mpeg",
+  ".m4a": "audio/mp4",
+  ".wav": "audio/wav",
+  ".flac": "audio/flac",
+  ".ogg": "audio/ogg",
+  ".opus": "audio/ogg",
+  ".aac": "audio/aac",
+  ".wma": "audio/x-ms-wma",
+  ".mp4": "video/mp4",
+  ".m4v": "video/mp4",
+  ".mkv": "video/x-matroska",
+  ".mov": "video/quicktime",
+  ".webm": "video/webm",
+  ".avi": "video/x-msvideo",
+};
+
+/**
+ * Cut [start, start+duration) out of any media file as 16 kHz mono WAV bytes. -ss before
+ * -i seeks by container index rather than decoding from zero, so cutting 8 seconds out of
+ * hour two of a video costs milliseconds, not a decode of hour one. windowsHide for the
+ * same reason as every other spawn here: the daemon has no console to inherit.
+ */
+function cutSampleWav(path: string, start: number, duration: number): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn(
+      "ffmpeg",
+      [
+        "-nostdin",
+        "-loglevel",
+        "error",
+        "-ss",
+        String(start),
+        "-t",
+        String(duration),
+        "-i",
+        path,
+        "-vn",
+        "-ac",
+        "1",
+        "-ar",
+        "16000",
+        "-c:a",
+        "pcm_s16le",
+        "-f",
+        "wav",
+        "pipe:1",
+      ],
+      { stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+    );
+    const chunks: Buffer[] = [];
+    let stderr = "";
+    child.stdout.on("data", (d: Buffer) => chunks.push(d));
+    child.stderr.on("data", (d) => {
+      stderr += String(d);
+    });
+    child.on("error", reject);
+    child.on("close", (code) =>
+      code === 0
+        ? resolve(Buffer.concat(chunks))
+        : reject(new Error(stderr.trim() || `ffmpeg exited with ${code}`)),
+    );
+  });
+}
+
 // How long the store probe waits before declaring the store locked. `select 1` on a free store
 // answers in single-digit milliseconds; anything slower means something is holding the lock.
 const STORE_PROBE_TIMEOUT_MS = 1_500;
@@ -238,6 +310,11 @@ const contextUrlSchema = z.object({
 
 const audioSelectSchema = z.object({
   id: z.string().min(1, "id must be a non-empty string"),
+});
+
+const speakerRenameSchema = z.object({
+  speakerId: z.number().int().positive(),
+  name: z.string().min(1, "name must be a non-empty string").max(120),
 });
 
 const audioSetupSchema = z.object({
@@ -1049,17 +1126,86 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   // Ingest bytes uploaded from the browser's own file dialog (the viewer's Browse/Folder
   // buttons) as a global document. Same shape as the chat-attach upload, session-free.
+  // The durable ingest queue. Transcribing an hour costs 8 to 11 minutes, so queueing is
+  // what makes "point it at a folder of recordings and walk away" possible, and the queue
+  // outlives the daemon because a run that long routinely spans a restart.
+  const queue = new IngestQueue({
+    ingest: async (path, onProgress, signal) => {
+      const result = await memloom.contextAdd({ path }, (event) => onProgress(event), signal);
+      return { outcome: result.outcome, chunks: result.chunks };
+    },
+  });
+  void queue.load();
+
+  app.get("/queue", async (c) => {
+    await queue.load();
+    return c.json(queue.snapshot());
+  });
+
+  app.post("/queue", async (c) => {
+    const body = await parseBody(c, z.object({ paths: z.array(z.string().min(1)).min(1) }));
+    if (!body.ok) return body.res;
+
+    // A folder is expanded here rather than queued whole, so the list shows one row per
+    // recording with its own progress and its own cancel, instead of one opaque row.
+    const paths: string[] = [];
+    for (const raw of body.data.paths) {
+      const target = resolve(raw);
+      const info = await stat(target).catch(() => null);
+      if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
+      if (info.isDirectory()) paths.push(...(await collectSupportedFiles(target)));
+      else paths.push(target);
+    }
+    if (paths.length === 0) {
+      return c.json({ error: `no supported files (${supportedExtensions().join(", ")})` }, 400);
+    }
+    const added = await queue.add(paths);
+    return c.json({ added: added.length, ...queue.snapshot() });
+  });
+
+  app.post("/queue/:id/cancel", async (c) => {
+    const ok = await queue.cancel(c.req.param("id"));
+    return ok ? c.json(queue.snapshot()) : c.json({ error: "not cancellable" }, 404);
+  });
+
+  app.post("/queue/:id/resume", async (c) => {
+    const ok = await queue.resume(c.req.param("id"));
+    return ok ? c.json(queue.snapshot()) : c.json({ error: "not resumable" }, 404);
+  });
+
+  app.delete("/queue/:id", async (c) => {
+    const ok = await queue.remove(c.req.param("id"));
+    return ok ? c.json(queue.snapshot()) : c.json({ error: "no such item" }, 404);
+  });
+
+  app.post("/queue/clear", async (c) => {
+    const removed = await queue.clearFinished();
+    return c.json({ removed, ...queue.snapshot() });
+  });
+
   app.post(
     "/context/upload",
     bodyLimit({
-      maxSize: 48 * 1024 * 1024, // base64 inflates 4/3: ~36MB of real file
-      onError: (c) => c.json({ error: "file too large (max ~36MB)" }, 413),
+      // Raised so a recording can be uploaded at all. Media is minutes of transcription, so
+      // the browser dialog is a legitimate way in even though linking is better: an upload
+      // is a one-time snapshot and cannot be re-scanned from disk later.
+      maxSize: 700 * 1024 * 1024, // base64 inflates 4/3: ~512MB of real file
+      onError: (c) =>
+        c.json(
+          {
+            error:
+              "file too large to upload (about 512 MB). Use Link file instead, which reads it " +
+              "from disk and never copies it.",
+          },
+          413,
+        ),
     }),
     async (c) => {
       const body = await parseBody(c, contextUploadSchema);
       if (!body.ok) return body.res;
       const filename = body.data.filename.replace(/[/\\]/g, "_");
-      if (!detectKind(filename)) {
+      const kind = detectKind(filename);
+      if (!kind) {
         return c.json(
           { error: `unsupported file type (supported: ${supportedExtensions().join(", ")})` },
           400,
@@ -1067,6 +1213,24 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       }
       const bytes = new Uint8Array(Buffer.from(body.data.contentBase64, "base64"));
       if (bytes.length === 0) return c.json({ error: "empty file" }, 400);
+
+      // Media goes to the queue rather than being transcribed inside this request. The
+      // upload carries no progress of its own, so doing the work here would be the silent
+      // multi-minute wait the streaming path exists to avoid; queued, it reports like any
+      // other recording. The bytes land in the store's own uploads dir, NOT the OS temp
+      // dir: the document keeps this path for playback, samples, and "open file", and
+      // %TEMP% is cleared on a schedule nobody controls. Cleanup is ownership-shaped:
+      // the queue discards files of rows that never became documents, and contextRemove
+      // discards a removed document's snapshot.
+      if (kind === "audio" || kind === "video") {
+        await mkdir(uploadStoreDir(), { recursive: true });
+        const dir = await mkdtemp(join(uploadStoreDir(), "u-"));
+        const file = join(dir, filename);
+        await writeFile(file, bytes);
+        const [item] = await queue.add([file], { uploaded: true });
+        return c.json({ outcome: "queued", title: filename, chunks: 0, queueId: item?.id });
+      }
+
       try {
         return c.json(await memloom.contextUpload({ filename, bytes }));
       } catch (err) {
@@ -1277,6 +1441,101 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     }
     openPath(doc.path);
     return c.json({ ok: true });
+  });
+
+  // The recording's bytes, for the viewer's speaker-labeling playback. Same gate as /open:
+  // the id lookup is the whole authorization, so no caller-supplied path ever reaches the
+  // filesystem, and only linked audio/video documents qualify. Range requests are honoured
+  // because <audio> seeking sends them, and Safari refuses media from servers that don't.
+  app.get("/context/documents/:id/media", async (c) => {
+    const id = c.req.param("id");
+    const doc = (await memloom.contextList()).find((d) => d.id === id);
+    if (!doc) return c.json({ error: `no context document ${id}` }, 404);
+    if (doc.kind !== "audio" && doc.kind !== "video") {
+      return c.json({ error: "not a media document" }, 400);
+    }
+    const mime = MEDIA_MIME[extname(doc.path).toLowerCase()];
+    if (doc.path.startsWith("upload://") || isHttpUrl(doc.path) || !mime) {
+      return c.json({ error: "this document has no playable file on disk" }, 400);
+    }
+    let size: number;
+    try {
+      size = (await stat(doc.path)).size;
+    } catch {
+      return c.json({ error: `the source file is no longer at ${doc.path}` }, 404);
+    }
+
+    // One satisfiable form is enough for media elements: "bytes=start-" or
+    // "bytes=start-end". Anything else falls back to the whole file, which is valid
+    // per RFC 9110 (Range is advisory).
+    const range = /^bytes=(\d+)-(\d*)$/.exec(c.req.header("range") ?? "");
+    const start = range ? Number(range[1]) : 0;
+    const end = range?.[2] ? Math.min(Number(range[2]), size - 1) : size - 1;
+    if (start >= size || start > end) {
+      return c.body(null, 416, { "content-range": `bytes */${size}` });
+    }
+    const body = Readable.toWeb(
+      createReadStream(doc.path, { start, end }),
+    ) as ReadableStream<Uint8Array>;
+    const headers: Record<string, string> = {
+      "content-type": mime,
+      "content-length": String(end - start + 1),
+      "accept-ranges": "bytes",
+    };
+    if (range) headers["content-range"] = `bytes ${start}-${end}/${size}`;
+    return c.body(body, range ? 206 : 200, headers);
+  });
+
+  // A playable sample of one voice. The browser cannot decode every container the daemon
+  // ingests (Chromium refuses Matroska in a media element outright), and pulling a
+  // 30-minute video over HTTP to hear 8 seconds is absurd either way, so the daemon cuts
+  // the range itself with ffmpeg (which it has by construction: the file was transcribed)
+  // and serves a small mono WAV every browser plays.
+  app.get("/context/documents/:id/sample", async (c) => {
+    const id = c.req.param("id");
+    const start = Number.parseFloat(c.req.query("start") ?? "");
+    const end = Number.parseFloat(c.req.query("end") ?? "");
+    if (!Number.isFinite(start) || !Number.isFinite(end) || start < 0 || end <= start) {
+      return c.json({ error: "start and end must be seconds with 0 <= start < end" }, 400);
+    }
+    // The cap bounds the buffered WAV (30 s of 16 kHz mono is under 1 MB), and no voice
+    // sample legitimately needs more.
+    if (end - start > 30) return c.json({ error: "a sample is at most 30 seconds" }, 400);
+    const doc = (await memloom.contextList()).find((d) => d.id === id);
+    if (!doc) return c.json({ error: `no context document ${id}` }, 404);
+    if (doc.kind !== "audio" && doc.kind !== "video") {
+      return c.json({ error: "not a media document" }, 400);
+    }
+    if (doc.path.startsWith("upload://") || isHttpUrl(doc.path)) {
+      return c.json({ error: "this document has no playable file on disk" }, 400);
+    }
+    try {
+      const wav = await cutSampleWav(doc.path, start, end - start);
+      return c.body(new Uint8Array(wav).buffer as ArrayBuffer, 200, {
+        "content-type": "audio/wav",
+        "cache-control": "no-store",
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 500);
+    }
+  });
+
+  // Name a diarized voice. Follows the entities PATCH shape: partial body, id in the path,
+  // the updated roster back so the client re-renders without a second request.
+  app.patch("/context/documents/:id/speakers", async (c) => {
+    const body = await parseBody(c, speakerRenameSchema);
+    if (!body.ok) return body.res;
+    try {
+      const roster = await memloom.renameSpeaker(
+        c.req.param("id"),
+        body.data.speakerId,
+        body.data.name,
+      );
+      return c.json({ ok: true, speakers: roster });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, message.startsWith("no context document") ? 404 : 400);
+    }
   });
 
   app.delete("/context/documents/:id", async (c) => {

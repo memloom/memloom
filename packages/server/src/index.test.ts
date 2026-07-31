@@ -10,6 +10,7 @@ import {
   type LLMProvider,
   Memloom,
   PgliteAdapter,
+  registerExtractor,
   ScriptedLLMProvider,
   truncateAll,
 } from "@memloom/core";
@@ -1325,11 +1326,14 @@ describe("speech models over HTTP", () => {
   });
 
   it("setup/stream streams a done event and downloads nothing when everything is present", async () => {
-    // Setup is idempotent, so with the model and the VAD already on disk it must reach done
-    // without touching the network. This is also the only way to exercise the stream
-    // contract without a 465 MB download.
+    // Setup is idempotent, so with the model, the VAD, and the diarization pair already on
+    // disk it must reach done without touching the network. This is also the only way to
+    // exercise the stream contract without a 465 MB download.
     fakeInstall("parakeet-v3", PARAKEET_FILES);
     writeFileSync(join(dir, "silero_vad.onnx"), "x");
+    mkdirSync(join(dir, "sherpa-onnx-pyannote-segmentation-3-0"), { recursive: true });
+    writeFileSync(join(dir, "sherpa-onnx-pyannote-segmentation-3-0", "model.onnx"), "x");
+    writeFileSync(join(dir, "wespeaker_en_voxceleb_resnet34_LM.onnx"), "x");
 
     const res = await (await app()).request("/audio/setup/stream", {
       method: "POST",
@@ -1349,5 +1353,206 @@ describe("speech models over HTTP", () => {
       selected: "parakeet-v3",
       installed: true,
     });
+  });
+});
+
+// ----------------------------------------------------------------------------------------
+// The speaker routes: media bytes for the labeling UI, and the rename PATCH. A fake .wav
+// extractor stands in for the ASR pipeline (the same trick as core's speakers.test.ts): it
+// emits exactly the markdown shape transcribeMedia produces plus a roster, so these tests
+// exercise the HTTP surface without models, ffmpeg, or a real recording. Registered for
+// .wav only; the coded-400 media test above uses .mp3 and still hits the real extractor.
+// ----------------------------------------------------------------------------------------
+
+const SPEAKER_TRANSCRIPT = [
+  "## 0:00 - 0:05, Speaker 1",
+  "",
+  "Hello and welcome.",
+  "## 0:05 - 0:12, Speaker 2",
+  "",
+  "Glad to be here.",
+].join("\n");
+
+registerExtractor({
+  kind: "audio",
+  extensions: [".wav"],
+  version: 1,
+  chunker: "markdown",
+  async extract() {
+    return {
+      units: [{ text: SPEAKER_TRANSCRIPT, page: null }],
+      speakers: {
+        version: 1 as const,
+        embeddingModel: "test",
+        speakers: [
+          {
+            id: 1,
+            label: "Speaker 1",
+            name: null,
+            seconds: 5,
+            sampleStart: 0,
+            sampleEnd: 5,
+            embedding: null,
+          },
+          {
+            id: 2,
+            label: "Speaker 2",
+            name: null,
+            seconds: 7,
+            sampleStart: 5,
+            sampleEnd: 12,
+            embedding: null,
+          },
+        ],
+      },
+    };
+  },
+});
+
+describe("speaker routes", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "memloom-server-speakers-"));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  async function appWithRecording() {
+    await truncateAll(storage);
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: extractor,
+      dedup: false,
+    });
+    await memloom.init();
+    const server = createServer(memloom);
+    const path = join(dir, "standup.wav");
+    writeFileSync(path, "RIFF-not-really-audio-but-bytes-all-the-same");
+    const added = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path }),
+    });
+    expect(added.status).toBe(200);
+    const { documentId } = (await added.json()) as { documentId: string };
+    return { server, documentId, path };
+  }
+
+  it("lists the roster on the document", async () => {
+    const { server } = await appWithRecording();
+    const res = await server.request("/context/documents");
+    const { documents } = (await res.json()) as {
+      documents: Array<{ kind: string; speakers?: { speakers: unknown[] } | null }>;
+    };
+    expect(documents[0]?.kind).toBe("audio");
+    expect(documents[0]?.speakers?.speakers).toHaveLength(2);
+  });
+
+  it("serves the recording's bytes with Range support", async () => {
+    const { server, documentId } = await appWithRecording();
+
+    const whole = await server.request(`/context/documents/${documentId}/media`);
+    expect(whole.status).toBe(200);
+    expect(whole.headers.get("content-type")).toBe("audio/wav");
+    expect(whole.headers.get("accept-ranges")).toBe("bytes");
+    expect(await whole.text()).toBe("RIFF-not-really-audio-but-bytes-all-the-same");
+
+    const part = await server.request(`/context/documents/${documentId}/media`, {
+      headers: { range: "bytes=5-8" },
+    });
+    expect(part.status).toBe(206);
+    expect(part.headers.get("content-range")).toBe("bytes 5-8/44");
+    expect(await part.text()).toBe("not-");
+
+    const past = await server.request(`/context/documents/${documentId}/media`, {
+      headers: { range: "bytes=999999-" },
+    });
+    expect(past.status).toBe(416);
+  });
+
+  it("refuses media for a document that is not a recording", async () => {
+    const { server } = await appWithRecording();
+    const md = join(dir, "notes.md");
+    writeFileSync(md, "# hello");
+    const added = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: md }),
+    });
+    const { documentId } = (await added.json()) as { documentId: string };
+    const res = await server.request(`/context/documents/${documentId}/media`);
+    expect(res.status).toBe(400);
+  });
+
+  it("renames a speaker and the chunk breadcrumbs follow", async () => {
+    const { server, documentId } = await appWithRecording();
+    const res = await server.request(`/context/documents/${documentId}/speakers`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ speakerId: 2, name: "Alice" }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      ok: boolean;
+      speakers: { speakers: Array<{ id: number; name: string | null }> };
+    };
+    expect(body.speakers.speakers.find((s) => s.id === 2)?.name).toBe("Alice");
+
+    const chunks = await server.request(`/context/documents/${documentId}/chunks`);
+    const { chunks: rows } = (await chunks.json()) as {
+      chunks: Array<{ headingPath: string | null }>;
+    };
+    expect(rows.map((r) => r.headingPath)).toEqual([
+      "0:00 - 0:05, Speaker 1",
+      "0:05 - 0:12, Alice",
+    ]);
+  });
+
+  it("validates sample ranges before touching ffmpeg", async () => {
+    const { server, documentId } = await appWithRecording();
+    const bad = async (qs: string) =>
+      (await server.request(`/context/documents/${documentId}/sample?${qs}`)).status;
+    expect(await bad("start=5&end=2")).toBe(400);
+    expect(await bad("start=abc&end=9")).toBe(400);
+    expect(await bad("start=0&end=99")).toBe(400);
+    // The fixture's bytes are not real audio, so a valid range reaches ffmpeg and fails
+    // there: a coded 500, not a hang and not a 200 with garbage.
+    const res = await server.request(`/context/documents/${documentId}/sample?start=0&end=4`);
+    expect(res.status).toBe(500);
+  });
+
+  it("refuses a sample for a document that is not a recording", async () => {
+    const { server } = await appWithRecording();
+    const md = join(dir, "sample-notes.md");
+    writeFileSync(md, "# hello");
+    const added = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: md }),
+    });
+    const { documentId } = (await added.json()) as { documentId: string };
+    const res = await server.request(`/context/documents/${documentId}/sample?start=0&end=4`);
+    expect(res.status).toBe(400);
+  });
+
+  it("answers 400 for an unknown speaker and 404 for an unknown document", async () => {
+    const { server, documentId } = await appWithRecording();
+    const unknown = await server.request(`/context/documents/${documentId}/speakers`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ speakerId: 9, name: "Bob" }),
+    });
+    expect(unknown.status).toBe(400);
+    const missing = await server.request(
+      "/context/documents/00000000-0000-0000-0000-000000000001/speakers",
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ speakerId: 1, name: "Bob" }),
+      },
+    );
+    expect(missing.status).toBe(404);
   });
 });

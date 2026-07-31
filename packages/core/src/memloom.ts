@@ -116,14 +116,32 @@ import type {
   ResolvedConflict,
   SaveInput,
   SaveResult,
+  SpeakerRoster,
   UpdateInput,
   UpdateResult,
 } from "./types.js";
+import { uploadStoreDir } from "./queue.js";
 import { toVectorLiteral } from "./vector.js";
 
 // The fixed owner for the single-user embedded tier. Multi-tenant hosts pass a real
 // ownerId per call; the column exists everywhere so the schema is sync/cloud-ready.
 export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
+
+/**
+ * A speakers jsonb cell -> the roster, or null. Defensive about the driver: PGLite hands
+ * back parsed objects, pg can hand back strings, and a hand-edited row should degrade to
+ * "no roster" rather than crash every document listing.
+ */
+function parseRoster(cell: unknown): SpeakerRoster | null {
+  try {
+    const value = typeof cell === "string" ? JSON.parse(cell) : cell;
+    if (!value || typeof value !== "object") return null;
+    const roster = value as SpeakerRoster;
+    return Array.isArray(roster.speakers) ? roster : null;
+  } catch {
+    return null;
+  }
+}
 
 // Dedup only considers existing memories at least this similar to the incoming one.
 const CANDIDATE_THRESHOLD = 0.5;
@@ -893,18 +911,39 @@ export class Memloom implements MemoryEngine {
             [replaceId],
           );
         }
+        // A fresh roster replaces the old one wholesale, names included: the new chunk text
+        // carries generic labels again, and a kept name pointing at re-clustered voices
+        // would be confidently wrong rather than merely unlabeled. The voice library is the
+        // planned fix, matching stored embeddings so names survive a re-ingest.
         await tx.query(
           `UPDATE context_documents
-           SET path = $2, title = $3, kind = $4, content_hash = $5, chunk_count = $6, updated_at = now()
+           SET path = $2, title = $3, kind = $4, content_hash = $5, chunk_count = $6, speakers = $7, updated_at = now()
            WHERE id = $1`,
-          [replaceId, path, file.title, file.kind, file.contentHash, chunks.length],
+          [
+            replaceId,
+            path,
+            file.title,
+            file.kind,
+            file.contentHash,
+            chunks.length,
+            file.speakers ? JSON.stringify(file.speakers) : null,
+          ],
         );
         documentId = replaceId;
       } else {
         const inserted = await tx.query<{ id: string }>(
-          `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count, session_id)
-           VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-          [owner, path, file.title, file.kind, file.contentHash, chunks.length, sessionId],
+          `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count, session_id, speakers)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+          [
+            owner,
+            path,
+            file.title,
+            file.kind,
+            file.contentHash,
+            chunks.length,
+            sessionId,
+            file.speakers ? JSON.stringify(file.speakers) : null,
+          ],
         );
         const row = inserted[0];
         if (!row) throw new Error("memloom: context document insert returned no id");
@@ -964,8 +1003,9 @@ export class Memloom implements MemoryEngine {
       kind: string;
       chunk_count: number;
       updated_at: string;
+      speakers: unknown;
     }>(
-      `SELECT id, path, title, kind, chunk_count, updated_at
+      `SELECT id, path, title, kind, chunk_count, updated_at, speakers
        FROM context_documents WHERE owner_id = $1 AND session_id IS NULL
        ORDER BY updated_at DESC`,
       [ownerId],
@@ -977,7 +1017,107 @@ export class Memloom implements MemoryEngine {
       kind: r.kind,
       chunkCount: Number(r.chunk_count),
       updatedAt: r.updated_at,
+      speakers: parseRoster(r.speakers),
     }));
+  }
+
+  /**
+   * Name a diarized voice: "Speaker 2" becomes "Alice" in the roster, in every affected
+   * chunk's breadcrumb, and in every future citation of this document.
+   *
+   * The rewrite touches exactly two places per chunk: the heading_path column and the
+   * breadcrumb line the chunker prepended to content. The spoken words are never edited;
+   * someone SAYING "speaker two" stays said. Because content changes, the touched rows are
+   * re-embedded (the tsvector column regenerates itself); entity mentions already extracted
+   * are left alone, since the words the entities came from did not change.
+   *
+   * A re-ingest of a changed recording regenerates the roster with generic labels and the
+   * names are lost. That is accepted for now: recordings, unlike notes, almost never change
+   * in place, and the stored voice embeddings are the eventual carry-over mechanism.
+   */
+  async renameSpeaker(
+    documentId: string,
+    speakerId: number,
+    name: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<SpeakerRoster> {
+    const trimmed = name.trim().replace(/\s+/g, " ");
+    if (trimmed.length === 0) throw new Error("speaker name must not be empty");
+    if (trimmed.length > 120) throw new Error("speaker name is too long");
+
+    const rows = await this.#storage.query<{ speakers: unknown }>(
+      "SELECT speakers FROM context_documents WHERE id = $1 AND owner_id = $2",
+      [documentId, ownerId],
+    );
+    if (rows.length === 0) throw new Error(`no context document ${documentId}`);
+    const roster = parseRoster(rows[0]?.speakers);
+    if (!roster) throw new Error("this document has no speaker roster");
+    const speaker = roster.speakers.find((s) => s.id === speakerId);
+    if (!speaker) throw new Error(`no speaker ${speakerId} in this document`);
+
+    // The chunk rewrite matches headings by their current display text, so two speakers
+    // sharing one name would make future renames ambiguous. Refusing is honest: if two
+    // voices really are one person, that is a diarization error a rename cannot fix.
+    const clash = roster.speakers.some(
+      (s) => s.id !== speakerId && (s.name ?? s.label) === trimmed,
+    );
+    if (clash) throw new Error(`another speaker is already named "${trimmed}"`);
+
+    const oldDisplay = speaker.name ?? speaker.label;
+    if (oldDisplay === trimmed) return roster;
+    const oldSuffix = `, ${oldDisplay}`;
+    const newSuffix = `, ${trimmed}`;
+
+    const chunks = await this.#storage.query<{
+      id: string;
+      content: string;
+      heading_path: string | null;
+    }>(
+      `SELECT id, content, heading_path FROM context_chunks
+       WHERE document_id = $1 AND owner_id = $2 ORDER BY chunk_index`,
+      [documentId, ownerId],
+    );
+    const touched = chunks
+      .filter((c) => c.heading_path?.endsWith(oldSuffix))
+      .map((c) => {
+        const heading = c.heading_path as string;
+        const newHeading = heading.slice(0, -oldSuffix.length) + newSuffix;
+        // The breadcrumb is the exact heading_path prepended by chunkMarkdown; anything
+        // else in content is transcript and must survive untouched.
+        const content = c.content.startsWith(`${heading}\n\n`)
+          ? newHeading + c.content.slice(heading.length)
+          : c.content;
+        return { id: c.id, content, headingPath: newHeading };
+      });
+
+    speaker.name = trimmed;
+    const rosterJson = JSON.stringify(roster);
+
+    // Embed outside the transaction, mirroring ingest: provider calls are slow and can
+    // fail, and the store swap should stay a short all-or-nothing write.
+    const embeddings =
+      touched.length > 0 ? await this.#embedding.embed(touched.map((t) => t.content)) : [];
+    if (embeddings.length !== touched.length) {
+      throw new Error("memloom: embedding count mismatch during speaker rename");
+    }
+
+    await this.#storage.tx(async (tx) => {
+      await tx.query(
+        "UPDATE context_documents SET speakers = $2 WHERE id = $1 AND owner_id = $3",
+        [documentId, rosterJson, ownerId],
+      );
+      for (let i = 0; i < touched.length; i++) {
+        const t = touched[i]!;
+        const emb = embeddings[i];
+        if (!emb) throw new Error("memloom: embedding count mismatch during speaker rename");
+        await tx.query(
+          `UPDATE context_chunks SET content = $2, heading_path = $3, embedding = $4::vector
+           WHERE id = $1 AND owner_id = $5`,
+          [t.id, t.content, t.headingPath, toVectorLiteral(emb), ownerId],
+        );
+      }
+    });
+    return roster;
   }
 
   /**
@@ -1061,16 +1201,31 @@ export class Memloom implements MemoryEngine {
   }
 
   async contextRemove(documentId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    let removedPath: string | null = null;
     await this.#storage.tx(async (tx) => {
       // Chunks + their mention edges go together (owner-scoped: this runs before the ownership
       // check on the document row itself). The document delete then removes only the doc row.
       await this.#deleteDocumentChunks(tx, documentId, ownerId);
-      const deleted = await tx.query<{ id: string }>(
-        "DELETE FROM context_documents WHERE id = $1 AND owner_id = $2 RETURNING id",
+      const deleted = await tx.query<{ id: string; path: string }>(
+        "DELETE FROM context_documents WHERE id = $1 AND owner_id = $2 RETURNING id, path",
         [documentId, ownerId],
       );
       if (deleted.length === 0) throw new Error(`no context document ${documentId}`);
+      removedPath = deleted[0]?.path ?? null;
     });
+    // An uploaded recording's bytes live in the store's own uploads dir and belong to this
+    // document alone: removing the mirror removes the snapshot. Anything outside that dir
+    // is the user's file and is never touched. After the transaction, best effort: a file
+    // already gone (or held open) must not fail the remove that just succeeded.
+    if (removedPath !== null) {
+      const { resolve, dirname, sep } = await import("node:path");
+      const root = resolve(uploadStoreDir());
+      const full = resolve(removedPath);
+      if (full.startsWith(root + sep)) {
+        const { rm } = await import("node:fs/promises");
+        await rm(dirname(full), { recursive: true, force: true }).catch(() => {});
+      }
+    }
   }
 
   /**

@@ -121,6 +121,26 @@ export interface GraphDocument {
   path: string;
 }
 
+/** One diarized voice in a recording, mirrored from the core type. */
+export interface DocumentSpeaker {
+  id: number;
+  /** The generated transcript label, "Speaker 1". */
+  label: string;
+  /** What the user named this voice; null until they do. */
+  name: string | null;
+  /** Total talk time in seconds. */
+  seconds: number;
+  /** A clean solo stretch of this voice, for the "play a sample" button. */
+  sampleStart: number;
+  sampleEnd: number;
+}
+
+export interface SpeakerRoster {
+  version: 1;
+  embeddingModel: string;
+  speakers: DocumentSpeaker[];
+}
+
 export interface ContextDocument {
   id: string;
   path: string;
@@ -128,6 +148,8 @@ export interface ContextDocument {
   kind: string;
   chunkCount: number;
   updatedAt: string;
+  /** Present on diarized recordings; absent on text documents and older ingests. */
+  speakers?: SpeakerRoster | null;
 }
 
 export interface ContextChunk {
@@ -189,6 +211,27 @@ export interface ContextProgress {
   audioSeconds: number;
 }
 
+/** One file waiting for, or undergoing, ingestion. Survives a daemon restart. */
+export interface QueueItem {
+  id: string;
+  path: string;
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  addedAt: string;
+  /** Last progress seen, so a viewer opened mid-run renders the real state. */
+  stage?: string;
+  done?: number;
+  total?: number;
+  seconds?: number;
+  audioSeconds?: number;
+  outcome?: string;
+  chunks?: number;
+  error?: string;
+}
+
+export interface QueueSnapshot {
+  items: QueueItem[];
+  running: boolean;
+}
 /** One file finished inside a streamed ingest, so a folder reports as it goes. */
 export interface ContextFileDone {
   stage: "file";
@@ -581,6 +624,20 @@ export const api = {
   documentChunks: (id: string) => json<DocumentChunks>(`/context/documents/${id}/chunks`),
   openDocument: (id: string) =>
     json<{ ok: boolean }>(`/context/documents/${id}/open`, { method: "POST" }),
+  // The recording's bytes, Range-capable: hand this straight to an <audio>/<video> src.
+  documentMediaUrl: (id: string) => `/context/documents/${id}/media`,
+  // A daemon-cut clip of the recording as a small WAV: plays in every browser regardless
+  // of what container the source file is in (Chromium cannot decode Matroska).
+  documentSampleUrl: (id: string, start: number, end: number) =>
+    `/context/documents/${id}/sample?start=${start}&end=${end}`,
+  // Name a diarized voice. The rename rewrites that speaker's chunk breadcrumbs in place
+  // and returns the updated roster, so the caller re-renders without a second request.
+  renameSpeaker: (id: string, speakerId: number, name: string) =>
+    json<{ ok: boolean; speakers: SpeakerRoster }>(`/context/documents/${id}/speakers`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ speakerId, name }),
+    }),
   removeDocument: (id: string) =>
     json<{ ok: boolean }>(`/context/documents/${id}`, { method: "DELETE" }),
   contextAdd: (path: string) =>
@@ -601,6 +658,14 @@ export const api = {
   // The same ingest, streamed. Media transcribes for minutes, which is far past what a plain
   // request can hold open without looking hung, so the media and folder paths report as they
   // go. Progress events and per-file completions both arrive here; `stage` tells them apart.
+  // The durable ingest queue. Polled rather than streamed: it changes on the order of once
+  // per chunk, and a poll is far less machinery than a second NDJSON reader.
+  queue: () => json<QueueSnapshot>("/queue"),
+  queueAdd: (paths: string[]) => post<QueueSnapshot & { added: number }>("/queue", { paths }),
+  queueCancel: (id: string) => post<QueueSnapshot>(`/queue/${id}/cancel`, {}),
+  queueResume: (id: string) => post<QueueSnapshot>(`/queue/${id}/resume`, {}),
+  queueRemove: (id: string) => json<QueueSnapshot>(`/queue/${id}`, { method: "DELETE" }),
+  queueClear: () => post<QueueSnapshot & { removed: number }>("/queue/clear", {}),
   contextAddStream: (
     path: string,
     onProgress: (event: ContextStreamEvent) => void,

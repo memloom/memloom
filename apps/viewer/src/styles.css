@@ -974,67 +974,6 @@ textarea {
   flex-wrap: wrap;
 }
 
-/* Live ingest progress. Transcription runs for minutes, so the card says which file, which
-   stage, and how far into the recording, rather than spinning in silence. */
-.ingestStatus {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-
-.ingestStatusHead {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
-  flex-wrap: wrap;
-  font-family: var(--mono);
-  font-size: 11px;
-}
-
-.ingestStatusFile {
-  color: var(--text-muted);
-  overflow-wrap: anywhere;
-}
-
-.ingestStatusStage {
-  color: var(--ok);
-}
-
-.ingestStatusCount {
-  font-family: var(--mono);
-  font-size: 11px;
-  color: var(--text-faint);
-}
-
-.ingestBar {
-  height: 3px;
-  background: var(--border);
-  overflow: hidden;
-}
-
-.ingestBarFill {
-  height: 100%;
-  background: var(--ok);
-  transition: width 150ms linear;
-}
-
-/* Decoding and repair report no countable units, so the bar travels instead of standing
-   at zero, which would read as stalled. */
-.ingestBarSlide {
-  width: 30%;
-  animation: ingestSlide 1.2s ease-in-out infinite;
-}
-
-@keyframes ingestSlide {
-  from {
-    transform: translateX(-100%);
-  }
-  to {
-    transform: translateX(333%);
-  }
-}
-
 .schemaKindSelect {
   background: var(--bg-inset);
   border: 1px solid var(--border-strong);
@@ -1380,6 +1319,65 @@ textarea {
   font-size: 11px;
   color: var(--ok);
   margin-bottom: 4px;
+}
+
+/* The speaker half of a timecode breadcrumb: same chip, but text-colored rather than the
+   citation green, so "who" reads apart from "when" without inventing a data color. */
+.chunkSpeaker {
+  color: var(--text);
+  border-left: 1px solid var(--border);
+  padding-left: 5px;
+}
+
+/* The diarized voices of one recording: one row per voice, playable sample, inline rename. */
+.speakerPanel {
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.speakerRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The name doubles as the rename affordance; a real button for focus order, styled as text. */
+.speakerName {
+  border: none;
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+  padding: 2px 0;
+  cursor: pointer;
+  text-decoration: underline dotted var(--border-strong);
+  text-underline-offset: 3px;
+}
+
+.speakerName:hover,
+.speakerName:focus-visible {
+  text-decoration-color: var(--text);
+}
+
+.speakerInput {
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 13px;
+  padding: 2px 6px;
+  width: 180px;
+}
+
+/* Square sample button: the icon is the label. */
+.btnIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 5px;
+  line-height: 0;
 }
 
 /* A recording's passage is cited by clock range, not by heading: read it as a timecode. */
@@ -2470,4 +2468,80 @@ textarea {
 
 .attachChipX:hover {
   color: var(--danger);
+}
+
+/* The ingest queue: one row per file, with its stage, a bar, and its own controls. */
+.queueHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+.queueRow {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.queueRow:first-of-type {
+  border-top: none;
+}
+.queueRowHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+}
+.queueName {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.queueStatus {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.queueRow-running .queueStatus {
+  color: var(--ok);
+}
+.queueRow-failed .queueStatus {
+  color: var(--danger);
+}
+/* A cancelled row is a choice the user made, not a fault: it stays quiet, not red. */
+.queueRow-cancelled .queueName,
+.queueRow-done .queueName {
+  color: var(--text-muted);
+}
+/* Track and fill mirror the retired in-card ingest bar: border-grey rail, document-green
+   fill, sharp corners (DESIGN.md). The old rules named variables this theme never defined
+   (--inset, --accent), which resolved to nothing and drew the whole bar invisible. */
+.queueBar {
+  height: 3px;
+  margin-top: 8px;
+  background: var(--border);
+  overflow: hidden;
+}
+.queueBarFill {
+  height: 100%;
+  background: var(--ok);
+  transition: width 0.3s ease;
+}
+/* Stages that cannot report a percentage still need to look alive rather than stuck at 0. */
+.queueBarBusy {
+  width: 30%;
+  animation: queueTravel 1.4s ease-in-out infinite;
+}
+@keyframes queueTravel {
+  0% { margin-left: 0; }
+  50% { margin-left: 70%; }
+  100% { margin-left: 0; }
+}
+.queueActions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }

@@ -1,15 +1,20 @@
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   DECODE_CHUNK_SECONDS,
+  type DecodeChunk,
   findSuspectChunks,
   formatTime,
   MAX_DECODE_CHUNK_SECONDS,
   packChunks,
+  recordingHeader,
+  recordingTime,
   SAMPLE_RATE,
   sectionize,
-  toMarkdown,
-  type DecodeChunk,
   type TimedWord,
+  toMarkdown,
   type VadSegment,
 } from "./audio.js";
 
@@ -198,5 +203,100 @@ describe("toMarkdown", () => {
 describe("constants", () => {
   it("keeps the decode chunk inside the encoder's limit", () => {
     expect(DECODE_CHUNK_SECONDS).toBeLessThanOrEqual(MAX_DECODE_CHUNK_SECONDS);
+  });
+});
+
+describe("recordingTime", () => {
+  const stamped = async (name: string) => {
+    const dir = await mkdtemp(join(tmpdir(), "memloom-rt-"));
+    const path = join(dir, name);
+    await writeFile(path, "x");
+    try {
+      return await recordingTime(path);
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  };
+
+  // Every separator style a recorder actually emits, read as the local clock the person
+  // was living in when the device wrote the name.
+  it.each([
+    ["REC_20260731_142207.wav", 14, 22, 7],
+    ["2026-07-31_14-22-07.opus", 14, 22, 7],
+    ["2026-07-31 14.22.07.m4a", 14, 22, 7],
+    ["meeting-2026-07-31T14-22-07.mp4", 14, 22, 7],
+    ["20260731142207.wav", 14, 22, 7],
+    ["2026-07-31.wav", 0, 0, 0],
+  ])("reads %s", async (name, hour, minute, second) => {
+    const found = await stamped(name);
+    expect(found?.source).toBe("filename");
+    expect(found?.at.getFullYear()).toBe(2026);
+    expect(found?.at.getMonth()).toBe(6);
+    expect(found?.at.getDate()).toBe(31);
+    expect(found?.at.getHours()).toBe(hour);
+    expect(found?.at.getMinutes()).toBe(minute);
+    expect(found?.at.getSeconds()).toBe(second);
+  });
+
+  it("does not read a digit run that is not a date", async () => {
+    // No 20xx year, so a serial number cannot be mistaken for a recording date.
+    expect(await stamped("clip600.wav")).toBeNull();
+    expect(await stamped("track_19940231_990000.wav")).toBeNull();
+  });
+
+  it("refuses an impossible date", async () => {
+    expect(await stamped("2026-13-31_142207.wav")).toBeNull();
+    expect(await stamped("2026-07-31_997700.wav")).toBeNull();
+  });
+
+  it("will not pass a just-written file's mtime off as a recording time", async () => {
+    // A file modified seconds ago was created by the copy happening right now, so its
+    // mtime is ingest time wearing a disguise.
+    expect(await stamped("voice.wav")).toBeNull();
+  });
+
+  it("uses mtime once the file is old enough to be evidence", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "memloom-rt-"));
+    const path = join(dir, "voice.wav");
+    await writeFile(path, "x");
+    const then = new Date(Date.now() - 3 * 86_400_000);
+    await utimes(path, then, then);
+    const found = await recordingTime(path);
+    expect(found?.source).toBe("mtime");
+    expect(Math.abs(found!.at.getTime() - then.getTime())).toBeLessThan(2000);
+    await rm(dir, { recursive: true, force: true });
+  });
+});
+
+describe("recordingHeader", () => {
+  const at = new Date(2026, 6, 31, 14, 22, 7);
+
+  it("names the day, the clock time and where the time came from", () => {
+    const line = recordingHeader({ at, source: "filename" }, 2647);
+    expect(line).toContain("Friday 2026-07-31 14:22:07");
+    expect(line).toContain("file name");
+    expect(line).toContain("Length 44:07");
+  });
+
+  it("admits when the timestamp is only the file's own", () => {
+    expect(recordingHeader({ at, source: "mtime" }, 60)).toContain("copied rather than recorded");
+  });
+
+  it("says so plainly when nothing knows the time", () => {
+    expect(recordingHeader(null, 60)).toContain("Recording time unknown");
+  });
+
+  it("survives chunking as its own chunk, ahead of the first time range", async () => {
+    const { chunkMarkdown } = await import("./chunker.js");
+    const md = `${recordingHeader({ at, source: "filename" }, 240)}\n\n${toMarkdown([
+      { start: 0, end: 120, text: "one" },
+      { start: 120, end: 240, text: "two" },
+    ])}`;
+    const chunks = chunkMarkdown(md);
+    // The header is why this matters: chunkMarkdown keeps everything before the first
+    // heading, so the date is stored and searchable rather than dropped on the floor.
+    expect(chunks[0]?.headingPath).toBeNull();
+    expect(chunks[0]?.content).toContain("2026-07-31");
+    expect(chunks[1]?.headingPath).toBe("0:00 - 2:00");
   });
 });

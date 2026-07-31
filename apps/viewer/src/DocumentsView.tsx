@@ -1,7 +1,13 @@
-import { Clock } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
-import { api, type ContextDocument, type DocumentChunks } from "./api";
-import { AddFileCard, AddLinkCard, RecallCard } from "./cards";
+import { Clock, Play, Square } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  api,
+  type ContextDocument,
+  type DocumentChunks,
+  type DocumentSpeaker,
+  type SpeakerRoster,
+} from "./api";
+import { AddFileCard, AddLinkCard, IngestQueueCard, RecallCard } from "./cards";
 
 // Ingested context documents: what's mirrored, how it was chunked, and the drill-down to the
 // chunks themselves. Removal is two-step (arm, then confirm) with no modal, matching the rest of
@@ -31,6 +37,142 @@ function stripLeadingCrumb(content: string, headingPath: string | null): string 
   return content.startsWith(crumb) ? content.slice(crumb.length) : content;
 }
 
+/** "12:30" for a sample offset; recordings under an hour never need the hour digit here. */
+function sampleClock(seconds: number): string {
+  const total = Math.max(0, Math.floor(seconds));
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
+  return `${h > 0 ? `${h}:` : ""}${mm}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * The diarized voices of one recording: who talked, for how long, a playable sample of each
+ * voice, and an inline rename. The Descript pattern, without the wizard: every speaker is a
+ * row, the sample answers "who is this?", and naming one rewrites its transcript labels.
+ *
+ * Playback asks the daemon to CUT the sample (ffmpeg -> small mono WAV) rather than
+ * streaming the original file: the browser cannot decode every container the daemon can
+ * ingest (Chromium refuses Matroska in a media element), and a clip is a few hundred KB
+ * where the recording is gigabytes. One hidden <audio> is reused across speakers.
+ */
+function SpeakerPanel({
+  doc,
+  canPlay,
+  onRoster,
+  onError,
+}: {
+  doc: ContextDocument;
+  canPlay: boolean;
+  onRoster: (documentId: string, roster: SpeakerRoster) => void;
+  onError: (message: string) => void;
+}) {
+  const speakers = doc.speakers?.speakers ?? [];
+  const [playing, setPlaying] = useState<number | null>(null);
+  const [editing, setEditing] = useState<number | null>(null);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  const stop = () => {
+    audioRef.current?.pause();
+    setPlaying(null);
+  };
+
+  async function play(s: DocumentSpeaker) {
+    if (playing === s.id) {
+      stop();
+      return;
+    }
+    const el = audioRef.current;
+    if (!el) return;
+    try {
+      // The clip is exactly the sample range, so there is nothing to seek or stop early;
+      // it plays through and onEnded clears the state.
+      el.src = api.documentSampleUrl(doc.id, s.sampleStart, s.sampleEnd);
+      await el.play();
+      setPlaying(s.id);
+    } catch {
+      onError("could not load a voice sample for this recording");
+    }
+  }
+
+  async function save(s: DocumentSpeaker) {
+    const name = draft.trim();
+    setEditing(null);
+    if (name.length === 0 || name === (s.name ?? s.label)) return;
+    setSaving(s.id);
+    try {
+      const res = await api.renameSpeaker(doc.id, s.id, name);
+      onRoster(doc.id, res.speakers);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(null);
+    }
+  }
+
+  return (
+    <div className="speakerPanel">
+      <div className="chunkCrumb">speakers</div>
+      {canPlay && (
+        // biome-ignore lint/a11y/useMediaCaption: a voice-sample player has no captions to offer
+        <audio ref={audioRef} preload="none" onEnded={() => setPlaying(null)} />
+      )}
+      {speakers.map((s) => (
+        <div key={s.id} className="speakerRow">
+          {canPlay && (
+            <button
+              type="button"
+              className="btn btnIcon"
+              title={`play a sample of this voice (${sampleClock(s.sampleStart)})`}
+              onClick={() => play(s)}
+            >
+              {playing === s.id ? (
+                <Square size={12} strokeWidth={1.75} />
+              ) : (
+                <Play size={12} strokeWidth={1.75} />
+              )}
+            </button>
+          )}
+          {editing === s.id ? (
+            <input
+              className="speakerInput"
+              value={draft}
+              autoFocus
+              placeholder={s.label}
+              onChange={(e) => setDraft(e.target.value)}
+              onBlur={() => save(s)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") save(s);
+                if (e.key === "Escape") setEditing(null);
+              }}
+            />
+          ) : (
+            <button
+              type="button"
+              className="speakerName"
+              disabled={saving === s.id}
+              title="rename this speaker"
+              onClick={() => {
+                setDraft(s.name ?? "");
+                setEditing(s.id);
+              }}
+            >
+              {s.name ?? s.label}
+            </button>
+          )}
+          <span className="docMeta">
+            {s.name ? `was ${s.label}; ` : ""}
+            {sampleClock(s.seconds)} of talk
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export function DocumentsView({ onChanged }: { onChanged: () => void }) {
   const [docs, setDocs] = useState<ContextDocument[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -45,6 +187,22 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
   useEffect(load, [load]);
+
+  // A rename changed the roster and rewrote chunk breadcrumbs on the daemon: patch the
+  // roster in place and refetch the chunks if they are on screen, so both tell one story.
+  const onRoster = useCallback((documentId: string, roster: SpeakerRoster) => {
+    setDocs((prev) =>
+      prev ? prev.map((d) => (d.id === documentId ? { ...d, speakers: roster } : d)) : prev,
+    );
+    setOpen((prev) => {
+      if (!prev.has(documentId)) return prev;
+      api
+        .documentChunks(documentId)
+        .then((dc) => setOpen((cur) => new Map(cur).set(documentId, dc)))
+        .catch(() => {});
+      return prev;
+    });
+  }, []);
 
   async function toggleChunks(id: string) {
     if (open.has(id)) {
@@ -87,6 +245,14 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
         <h2 className="sectionTitle">Add a file/folder</h2>
         <AddFileCard
           onAdded={() => {
+            load();
+            onChanged();
+          }}
+        />
+
+        <h2 className="sectionTitle">Queue</h2>
+        <IngestQueueCard
+          onChanged={() => {
             load();
             onChanged();
           }}
@@ -171,6 +337,14 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
                   {arming === d.id ? "Confirm remove" : "Remove"}
                 </button>
               </div>
+              {timed && (d.speakers?.speakers.length ?? 0) > 0 && (
+                <SpeakerPanel
+                  doc={d}
+                  canPlay={!d.path.startsWith("upload://")}
+                  onRoster={onRoster}
+                  onError={setError}
+                />
+              )}
               {chunks && (
                 <div className="chunkList">
                   {chunks.chunks.map((c) => (
@@ -178,7 +352,18 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
                       {timed && c.headingPath ? (
                         <div className="chunkTime">
                           <Clock size={12} strokeWidth={1.75} />
-                          {c.headingPath}
+                          {/* "12:30 - 14:28, Alice": the range never contains a comma, so
+                              the first ", " splits time from speaker reliably. */}
+                          {c.headingPath.includes(", ") ? (
+                            <>
+                              {c.headingPath.slice(0, c.headingPath.indexOf(", "))}
+                              <span className="chunkSpeaker">
+                                {c.headingPath.slice(c.headingPath.indexOf(", ") + 2)}
+                              </span>
+                            </>
+                          ) : (
+                            c.headingPath
+                          )}
                         </div>
                       ) : (
                         <div className="chunkCrumb">

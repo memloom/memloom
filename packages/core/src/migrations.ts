@@ -1126,5 +1126,16 @@ export function buildMigrations(dims: number): Migration[] {
       $fn$;
     `,
     },
+    {
+      // The diarized voice roster for a recording: labels, talk time, a playable sample
+      // range, and one voice embedding per speaker. jsonb on the document rather than a
+      // column per chunk, because the roster is per-recording metadata: renaming a speaker
+      // edits this and the affected chunks' text, never the document's content hash, so a
+      // rename can never look like the file changed. Text documents leave it NULL.
+      id: "0022_speaker_roster",
+      sql: /* sql */ `
+      ALTER TABLE context_documents ADD COLUMN IF NOT EXISTS speakers jsonb;
+    `,
+    },
   ];
 }

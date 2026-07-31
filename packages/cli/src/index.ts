@@ -598,6 +598,8 @@ export async function run(argv: readonly string[]): Promise<void> {
                   return show(`finding speech${pct()}`);
                 case "loading":
                   return show("loading the speech model...");
+                case "diarizing":
+                  return show(`telling the voices apart${pct()}`);
                 case "checking":
                   return show("checking the transcript...");
                 case "repairing":
@@ -685,6 +687,9 @@ export async function run(argv: readonly string[]): Promise<void> {
         console.log(`selected   ${status.selected.label} (${status.selected.id})`);
         console.log(`state      ${status.installed ? "installed" : "NOT installed"}`);
         console.log(`installed  ${status.installedIds.join(", ") || "(none)"}`);
+        console.log(
+          `speakers   ${status.speakersInstalled ? "installed (transcripts label who is speaking)" : "not installed; run: memloom audio setup"}`,
+        );
         console.log(`ffmpeg     ${(await hasFfmpeg()) ? "found" : "NOT FOUND, install it first"}`);
         return;
       }

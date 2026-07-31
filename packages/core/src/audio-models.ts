@@ -17,6 +17,30 @@ import { AudioError, modelDir } from "./audio.js";
 
 const RELEASE = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models";
 
+// Speaker models live under two other release tags of the same project. The second tag
+// really is spelled "recongition" upstream; correcting the typo would 404.
+const SEGMENTATION_RELEASE =
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-segmentation-models";
+const RECOGNITION_RELEASE =
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/speaker-recongition-models";
+
+/**
+ * The two files diarization needs: pyannote segmentation finds where voices start and stop,
+ * and the embedding model turns each stretch into a vector so stretches can be grouped into
+ * "same voice". Not per-language the way ASR models are: voice identity is mostly
+ * language-independent, so one pair serves every catalog model. WeSpeaker ResNet34 was
+ * picked over the 3D-Speaker models because it is trained on VoxCeleb rather than
+ * Mandarin-centric data, and over TitaNet because it is 14 MB smaller at similar quality.
+ *
+ * Sizes verified against the GitHub releases on 2026-07-30.
+ */
+export const SPEAKER_SEGMENTATION_ARCHIVE = "sherpa-onnx-pyannote-segmentation-3-0";
+export const SPEAKER_EMBEDDING_FILE = "wespeaker_en_voxceleb_resnet34_LM.onnx";
+/** Names the roster's vectors, so a future model swap cannot mix incomparable embeddings. */
+export const SPEAKER_EMBEDDING_MODEL_ID = "wespeaker-en-voxceleb-resnet34-lm";
+const SPEAKER_SEGMENTATION_MB = 7;
+const SPEAKER_EMBEDDING_MB = 27;
+
 /**
  * How a model's files are wired into the recognizer. sherpa-onnx takes a different config
  * key per architecture, and passing the wrong one fails at construction rather than
@@ -239,6 +263,33 @@ export async function resolveModel(id?: string): Promise<ResolvedModel> {
 }
 
 // ---------------------------------------------------------------------------------------
+// Speaker models
+// ---------------------------------------------------------------------------------------
+
+export interface SpeakerModelPaths {
+  segmentation: string;
+  embedding: string;
+}
+
+/**
+ * The installed speaker model files, or null when either is missing. Diarization is
+ * optional by design: a missing model skips speaker labels rather than failing the
+ * ingest, so this returns null instead of throwing the way `resolveModel` does.
+ */
+export async function resolveSpeakerModels(): Promise<SpeakerModelPaths | null> {
+  const segmentationDir = join(modelDir(), SPEAKER_SEGMENTATION_ARCHIVE);
+  // The archive ships model.onnx and model.int8.onnx; fp32 is preferred because the
+  // segmentation model is 6 MB either way and int8 was not what upstream benchmarks.
+  const segmentation =
+    (await findOnnx(segmentationDir, [/^model\.onnx$/i, /model/i])) ?? null;
+  const embedding = join(modelDir(), SPEAKER_EMBEDDING_FILE);
+  const haveEmbedding = await stat(embedding)
+    .then((s) => s.size > 0)
+    .catch(() => false);
+  return segmentation && haveEmbedding ? { segmentation, embedding } : null;
+}
+
+// ---------------------------------------------------------------------------------------
 // Install
 // ---------------------------------------------------------------------------------------
 
@@ -249,6 +300,8 @@ export interface ModelStatus {
   installed: boolean;
   /** Every catalog model already on disk, so a user can switch without re-downloading. */
   installedIds: string[];
+  /** True when the diarization pair is on disk, so ingests will label speakers. */
+  speakersInstalled: boolean;
 }
 
 async function isInstalled(model: CatalogModel): Promise<boolean> {
@@ -279,6 +332,7 @@ export async function modelStatus(): Promise<ModelStatus> {
     selected,
     installed: installedIds.includes(selected.id),
     installedIds,
+    speakersInstalled: (await resolveSpeakerModels()) !== null,
   };
 }
 
@@ -352,6 +406,27 @@ export async function setupModels(options: SetupOptions = {}): Promise<ModelStat
     options.onStage?.(`unpacking ${model.label}`);
     await extractTarBz2(archive, dir);
     await rm(archive, { force: true });
+  }
+
+  // The diarization pair rides along with every setup: 34 MB next to a 465 MB recognizer,
+  // and its absence silently downgrades every transcript to unlabeled speakers.
+  if ((await resolveSpeakerModels()) === null) {
+    options.onStage?.(`downloading speaker segmentation model (${SPEAKER_SEGMENTATION_MB} MB)`);
+    const archive = join(dir, `${SPEAKER_SEGMENTATION_ARCHIVE}.tar.bz2`);
+    await download(
+      `${SEGMENTATION_RELEASE}/${SPEAKER_SEGMENTATION_ARCHIVE}.tar.bz2`,
+      archive,
+      options.onProgress,
+    );
+    options.onStage?.("unpacking speaker segmentation model");
+    await extractTarBz2(archive, dir);
+    await rm(archive, { force: true });
+    options.onStage?.(`downloading voice embedding model (${SPEAKER_EMBEDDING_MB} MB)`);
+    await download(
+      `${RECOGNITION_RELEASE}/${SPEAKER_EMBEDDING_FILE}`,
+      join(dir, SPEAKER_EMBEDDING_FILE),
+      options.onProgress,
+    );
   }
 
   if (!(await isInstalled(model))) {
