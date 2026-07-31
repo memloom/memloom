@@ -38,14 +38,17 @@ export const TURN_MERGE_GAP_SECONDS = 2;
 /**
  * Clustering distance cutoff: smaller splits voices apart, larger merges them together.
  *
- * Calibrated on a real 1:1 screen recording (compressed Opus call audio), not guessed:
- * sherpa's demo default of 0.5 fragmented two people into five clusters over ten minutes
- * (ten over thirty), 0.7 found exactly the two voices plus one junk cluster, and 0.8
- * already merged the two humans into one while a noise cluster survived. The working
- * window is narrow, which is why the junk filter below exists rather than pushing the
- * threshold higher.
+ * Calibrated on real recordings, twice. The first pass landed on 0.7: sherpa's demo 0.5
+ * fragmented a 1:1 call into raw slivers and 0.8 merged its two humans. Then a second
+ * 1:1 recording merged its two voices AT 0.7 over its full 21 minutes while separating
+ * fine on an 8-minute cut: cluster distances grow with recording length, so a threshold
+ * tuned on one file's window can sit outside another's. 0.6 separated both 1:1s
+ * (identical splits to their best runs), kept a solo recording at one speaker, and the
+ * junk filter below absorbs the extra slivers that a tighter cutoff splits off, which is
+ * what made the old 0.5-fragmentation argument obsolete. Very short clips (seconds per
+ * voice) can still merge: their embeddings are too noisy for any threshold.
  */
-export const DIARIZE_THRESHOLD_DEFAULT = 0.7;
+export const DIARIZE_THRESHOLD_DEFAULT = 0.6;
 
 /**
  * Bump when anything that changes diarization OUTPUT changes: the threshold default, the
@@ -53,8 +56,10 @@ export const DIARIZE_THRESHOLD_DEFAULT = 0.7;
  * cached transcripts without re-running ASR.
  *
  * v3: the junk floor scales with total speech, and segmentation is multi-threaded.
+ *
+ * v4: threshold 0.6, after a full-length recording merged two voices at 0.7.
  */
-export const DIARIZE_VERSION = 3;
+export const DIARIZE_VERSION = 4;
 
 /**
  * A cluster below both floors is not a person, it is a notification sound, a laugh, or a
