@@ -16,6 +16,7 @@ import type {
   ReconcileReport,
   ReconcileRevertResult,
   ReconcileRun,
+  ReconcileSettings,
   Graph,
   ImportCaptureScope,
   ImportOptions,
@@ -126,15 +127,18 @@ export interface MemoryEngine {
     onProgress?: (event: ConflictAutoEvent) => void,
   ): Promise<ConflictAutoResult>;
   /**
-   * The consolidation pass. Retires only what SQL can prove obsolete, raises everything that
-   * needs judgment as a question, and prices the contradiction re-check without spending it.
-   * Defaults to 'dry_run', which leaves memories untouched.
+   * The consolidation pass. Repairs what SQL proves is wrong, folds duplicate entities, raises
+   * everything that needs judgment as a question, and prices the contradiction re-check without
+   * spending it. Defaults to 'dry_run', which changes nothing.
    */
   reconcile(opts?: ReconcileOptions): Promise<ReconcileReport>;
-  /** Undo one reconcile run, skipping any retirement whose memory was staled again since. */
+  /** Undo one reconcile run, skipping anything the store has moved on from since. */
   revertReconcile(runId: string, ownerId?: string): Promise<ReconcileRevertResult>;
   /** Reconcile runs for the owner, newest first. */
   reconcileRuns(ownerId?: string, limit?: number): Promise<ReconcileRun[]>;
+  /** Which passes a run does, and whether the daemon catches up on startup. */
+  reconcileSettings(): Promise<ReconcileSettings>;
+  setReconcileSettings(patch: Partial<ReconcileSettings>): Promise<ReconcileSettings>;
   /**
    * Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors; re-add replaces.
    * `onProgress` only fires for extractors slow enough to need it, which today means audio

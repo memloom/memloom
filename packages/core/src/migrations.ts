@@ -1159,6 +1159,9 @@ export function buildMigrations(dims: number): Migration[] {
                             CHECK (status IN ('running', 'success', 'error', 'aborted')),
         scanned           int NOT NULL DEFAULT 0,
         retired           int NOT NULL DEFAULT 0,
+        -- Entities folded. Counted apart from retired because they are undone by a different
+        -- mechanism: revertEntityMerge rather than reactivating a staled row.
+        folded            int NOT NULL DEFAULT 0,
         questions         int NOT NULL DEFAULT 0,
         conflicts_raised  int NOT NULL DEFAULT 0,
         llm_calls         int NOT NULL DEFAULT 0,
@@ -1180,7 +1183,7 @@ export function buildMigrations(dims: number): Migration[] {
         id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         owner_id    uuid NOT NULL,
         run_id      uuid NOT NULL REFERENCES memory_reconcile_runs (id) ON DELETE CASCADE,
-        kind        text NOT NULL CHECK (kind IN ('retire', 'question', 'conflict')),
+        kind        text NOT NULL CHECK (kind IN ('retire', 'question', 'conflict', 'fold')),
         class       text NOT NULL,
         memory_id   uuid,
         reason      text NOT NULL DEFAULT '',
@@ -1193,11 +1196,26 @@ export function buildMigrations(dims: number): Migration[] {
         decision    text CHECK (decision IN ('approved', 'rejected', 'snoozed')),
         decided_at  timestamptz,
         conflict_id uuid,
+        -- Set when kind='fold': the memory_entity_merges row revertReconcile hands to
+        -- revertEntityMerge. Without it a run's entity folds are not undoable, and being
+        -- undoable is the whole reason the fold pass is allowed to act unasked.
+        merge_id    uuid,
         created_at  timestamptz NOT NULL DEFAULT now()
       );
       CREATE INDEX memory_reconcile_actions_run_idx ON memory_reconcile_actions (run_id, created_at);
       CREATE INDEX memory_reconcile_actions_class_idx
         ON memory_reconcile_actions (owner_id, class, decision);
+    `,
+    },
+    {
+      // Which model decided a fold. memory_entity_merges already records decided_by
+      // ('auto' | 'llm' | 'human'), the score and the reason, but not who the model was, and
+      // 'llm' had no writer until reconciliation got one. Without this a fold made six months ago is
+      // unattributable and a bad model cannot be traced through its decisions.
+      //
+      id: "0031_entity_merge_model",
+      sql: /* sql */ `
+      ALTER TABLE memory_entity_merges ADD COLUMN IF NOT EXISTS model text;
     `,
     },
   ];

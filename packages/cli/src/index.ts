@@ -62,19 +62,22 @@ function tokens(n: number): string {
 }
 
 /**
- * The dry run's report. Retirements first (the only thing a run acts on), then the questions,
- * then what a real run would have spent. The last line is unconditional: a dry run touches no
- * memories, and the reader should never have to infer that.
+ * A run's report. Repairs first (what the run acted on), then folds, then the questions, then
+ * what the contradiction pass would have spent. The last line says whether anything changed and
+ * names the run, so undoing it never requires going and looking the id up.
  */
 export function formatReconcileReport(report: ReconcileReport): string {
+  const dry = report.run.mode === "dry_run";
+  const would = dry ? "would " : "";
   const retire = report.actions.filter((a) => a.kind === "retire");
+  const folds = report.actions.filter((a) => a.kind === "fold");
   const questions = report.actions.filter((a) => a.kind === "question" && a.surfaced);
   const lines: string[] = [];
 
-  lines.push(report.run.mode === "dry_run" ? "reconcile (dry run)" : "reconcile");
+  lines.push(dry ? "reconcile (dry run)" : "reconcile");
   lines.push(`scanned ${report.run.scanned} active memories`, "");
 
-  lines.push(retire.length === 0 ? "nothing to retire" : `would retire ${retire.length}:`);
+  lines.push(retire.length === 0 ? "nothing to retire" : `${would}retire ${retire.length}:`);
   for (const action of retire.filter((a) => a.surfaced)) {
     lines.push(`  ${action.memoryId?.slice(0, 8)}  ${action.reason}`);
   }
@@ -82,10 +85,25 @@ export function formatReconcileReport(report: ReconcileReport): string {
     lines.push(`  ...and ${report.heldBack.retire} more, held back by this run's cap`);
   }
 
+  // The entity pass reports counts on a dry run (nothing was folded, so there is nothing to
+  // name) and one line per fold once it has actually run.
+  if (report.entities) {
+    const { merged, queued, deferred } = report.entities;
+    lines.push("", "entities:");
+    if (merged === 0 && queued === 0) lines.push("  no duplicate names found");
+    if (merged > 0 && dry) lines.push(`  would fold ${merged} name variants (certain)`);
+    for (const fold of folds) lines.push(`  ${fold.reason}`);
+    if (queued > 0) {
+      lines.push(`  ${queued} uncertain pairs ${dry ? "would go" : "went"} to the conflicts tab`);
+    }
+    if (deferred > 0) lines.push(`  ${deferred} more are waiting for that queue to drain`);
+  }
+
   if (questions.length > 0) {
     lines.push("", "questions:");
     for (const action of questions) {
-      lines.push(`  ${action.memoryId?.slice(0, 8)}  ${action.reason}`);
+      const id = action.memoryId ? `${action.memoryId.slice(0, 8)}  ` : "";
+      lines.push(`  ${id}${action.reason}`);
     }
     if (report.heldBack.question > 0) {
       lines.push(`  ...and ${report.heldBack.question} more, held back so this stays readable`);
@@ -104,7 +122,13 @@ export function formatReconcileReport(report: ReconcileReport): string {
     );
   }
 
-  lines.push("", `no memory was changed. this run is logged as ${report.run.id}`);
+  const changed = report.run.retired + report.run.folded;
+  lines.push(
+    "",
+    dry || changed === 0
+      ? `no memory was changed. this run is logged as ${report.run.id}`
+      : `changed ${changed}. undo it all with: memloom reconcile undo ${report.run.id}`,
+  );
   return lines.join("\n");
 }
 
@@ -149,7 +173,7 @@ Usage: memloom <command> [args]
                        provider (run after switching providers; daemon must be stopped)
   auto-index [on|off]  show or set background entity extraction after saves/ingests
   conflicts [auto]     list pending conflicts; auto resolves the obvious ones with the LLM
-  reconcile --dry-run      consolidation pass: what memloom would retire and ask about,
+  reconcile                consolidation pass: repair, fold, and ask about the rest,
                        changing no memories and spending nothing
   import sessions      distill recent agent sessions into memories (--dry-run first)
   import agent-memory  bring in memories your agents already saved on disk (Claude Code
@@ -404,27 +428,33 @@ resolution is reversible.
          verdicts are applied (one LLM call per conflict, all revertable);
          anything the model is unsure about stays pending for you.`,
 
-  reconcile: `memloom reconcile --dry-run
+  reconcile: `memloom reconcile [--dry-run]
+       memloom reconcile undo <run id>
+       memloom reconcile settings
 
-The consolidation pass: memloom goes over its own store, reports what it believes
-has gone obsolete, and asks about what it cannot decide alone.
+The consolidation pass: memloom goes over its own store, repairs what it can
+prove is wrong, folds duplicate entity names, and asks about the rest.
 
-Only --dry-run runs today. It changes no memories and makes no LLM calls: it
-reports the classes it can prove with a query, counts what a real run would send
-to the model, and prices it. The run itself is recorded in the reconcile log so a
-later run knows whether you acted on this one.
+  --dry-run   report everything and change nothing
+  undo        put back exactly what one run did, and only that run
+  settings    print which passes are on
 
-What it looks at:
-  duplicate content   two identical active memories (the older one would be kept)
+What it repairs on its own, because SQL proves it and the undo is exact:
+  duplicate content   two identical active memories (the older one is kept)
+  superseded, live    a memory something replaced that is still being recalled
+  entity variants     "Claude Code" and "claude-code" as two entities
+
+What it only asks about, because the fix is a judgment call:
   live heads          one belief with more than one current version
-  re-check window     memories saved since the last run, which a real run would
-                      re-check for contradictions that only emerged later
+  retired, no trail   a memory that is stale with nothing recording why
+  entity invariants   folds the store half-applied
 
 Retiring a memory means status 'stale', never deletion: it stops showing up in
-recall, stays in its version history, and one command puts it back.
+recall, stays in its version history, and undo puts it back.
 
-Letting a run actually retire something needs RECONCILE_ENABLED=1 in your memloom
-config and a daemon restart. No command exposes that yet.`,
+Two passes can use a model to resolve uncertain entity pairs and pending
+contradictions. They cost money and are off until you turn them on in the
+viewer's Settings tab. Set RECONCILE_ENABLED=0 to stop any run from acting at all.`,
 
   context: `memloom context <add|list|remove>
 
@@ -1052,17 +1082,27 @@ export async function run(argv: readonly string[]): Promise<void> {
     }
 
     case "reconcile": {
-      // Dry run is the only mode the CLI offers. The apply path exists on the engine and is
-      // tested there, but nothing a user can type changes a belief unattended yet.
-      if (!rest.includes("--dry-run")) {
+      const engine = await connect();
+      // `undo` first: it takes a run id, so it must not be mistaken for a mode flag.
+      if (rest[0] === "undo") {
+        const runId = rest[1];
+        if (!runId) {
+          console.log("usage: memloom reconcile undo <run id>");
+          return;
+        }
+        const result = await engine.revertReconcile(runId);
         console.log(
-          "memloom reconcile only runs as a dry run today: memloom reconcile --dry-run\n" +
-            "It reports what it would retire and ask about, and changes nothing.",
+          `restored ${result.restored} memories, unfolded ${result.unfolded} entities` +
+            (result.skipped > 0 ? `, skipped ${result.skipped} the store moved on from` : ""),
         );
         return;
       }
-      const engine = await connect();
-      console.log(formatReconcileReport(await engine.reconcile({ mode: "dry_run", trigger: "manual" })));
+      if (rest[0] === "settings") {
+        console.log(JSON.stringify(await engine.reconcileSettings(), null, 2));
+        return;
+      }
+      const mode = rest.includes("--dry-run") ? "dry_run" : "apply";
+      console.log(formatReconcileReport(await engine.reconcile({ mode, trigger: "manual" })));
       return;
     }
 

@@ -26,7 +26,39 @@ export const RECONCILE_K = 5;
  * so the caps are part of the design rather than a setting somebody remembers to lower. Findings
  * past a cap are still recorded (surfaced = false): held back, not lost.
  */
-export const RECONCILE_CAPS = { retire: 10, question: 3, conflict: 5 } as const;
+export const RECONCILE_CAPS = { retire: 10, question: 3, conflict: 5, integrity: 10 } as const;
+
+/**
+ * Classes where the store contradicts itself rather than where reconciliation has an opinion. SQL
+ * proves each of these is wrong, so on a healthy store they are all empty and finding one means
+ * a bug shipped. They keep their own cap and the backoff never touches it: quieting an opinion
+ * nobody answered is right, quieting an alarm is not.
+ */
+export const INTEGRITY_CLASSES = new Set([
+  "replaces_leak",
+  "stale_without_edge",
+  "entity_alias_orphan",
+  "entity_alias_shadow",
+  "entity_merge_incomplete",
+  "entity_edge_stranded",
+]);
+
+export function isIntegrityFinding(finding: ReconcileFinding): boolean {
+  return INTEGRITY_CLASSES.has(finding.class);
+}
+
+/**
+ * Decide which findings a run shows, counting integrity findings against their own cap. Returns
+ * one flag per finding, positionally, so the caller can keep the original order in the ledger:
+ * held back is recorded, not lost.
+ */
+export function capBuckets(findings: ReconcileFinding[], cap: number, integrityCap: number): boolean[] {
+  let normal = 0;
+  let integrity = 0;
+  return findings.map((finding) =>
+    isIntegrityFinding(finding) ? integrity++ < integrityCap : normal++ < cap,
+  );
+}
 
 /** Above this many pending conflicts, a run raises none: adding to an ignored backlog is noise. */
 export const CONFLICT_QUEUE_CEILING = 20;
@@ -34,20 +66,31 @@ export const CONFLICT_QUEUE_CEILING = 20;
 /** Consecutive ignored runs after which a run stops surfacing anything at all. */
 export const BACKOFF_SILENT_AFTER = 3;
 
-export type ReconcileCaps = { retire: number; question: number; conflict: number };
+export type ReconcileCaps = {
+  retire: number;
+  question: number;
+  conflict: number;
+  integrity: number;
+};
 
 /**
  * Back off when nobody is listening. Each consecutive run whose surfaced findings drew no
  * approve/reject halves the next run's caps, and after BACKOFF_SILENT_AFTER of them a run keeps
  * scanning and stops talking. Ignoring reconciliation makes it quieter, not louder.
+ *
+ * The integrity cap is deliberately outside the division. See INTEGRITY_CLASSES.
  */
 export function effectiveCaps(unactionedRuns: number): ReconcileCaps {
-  if (unactionedRuns >= BACKOFF_SILENT_AFTER) return { retire: 0, question: 0, conflict: 0 };
+  const integrity = RECONCILE_CAPS.integrity;
+  if (unactionedRuns >= BACKOFF_SILENT_AFTER) {
+    return { retire: 0, question: 0, conflict: 0, integrity };
+  }
   const divisor = 2 ** unactionedRuns;
   return {
     retire: Math.floor(RECONCILE_CAPS.retire / divisor),
     question: Math.floor(RECONCILE_CAPS.question / divisor),
     conflict: Math.floor(RECONCILE_CAPS.conflict / divisor),
+    integrity,
   };
 }
 
@@ -118,6 +161,162 @@ export async function findDuplicateContent(
       reason: `identical content to ${kept}, which is older and stays active`,
     });
   }
+  return findings;
+}
+
+/**
+ * An active belief that an active `replaces` edge points at: the save or resolve path meant to
+ * stale it and did not. SQL proves the store contradicts itself and the fix is forced (there is
+ * exactly one thing "superseded but still current" can mean), so this retires without asking.
+ *
+ * 0 rows on a healthy store. A non-zero count is a bug in whatever wrote the edge.
+ */
+export async function findReplacesLeaks(
+  storage: StorageAdapter,
+  ownerId: string,
+): Promise<ReconcileFinding[]> {
+  const rows = await storage.query<{ id: string; by: string }>(
+    `SELECT DISTINCT m.id AS id, e.from_id AS by
+     FROM memory_objects m
+     JOIN memory_edges e ON e.to_id = m.id AND e.relation = 'replaces' AND e.active
+                        AND e.owner_id = m.owner_id
+     WHERE m.owner_id = $1 AND m.status = 'active'
+     ORDER BY m.id`,
+    [ownerId],
+  );
+  return rows.map((row) => ({
+    kind: "retire" as const,
+    class: "replaces_leak",
+    memoryId: row.id,
+    reason: `${row.by} replaced this belief but it is still current, so both are being recalled`,
+  }));
+}
+
+/**
+ * The other direction: a stale belief with no `replaces` edge explaining it. There is nothing to
+ * fix here. The row is already stale, and SQL cannot invent the missing edge or say who wrote
+ * the status, so this is reported and never acted on. It is the loudest thing a run can print,
+ * because it means something staled a memory without recording why.
+ */
+export async function findOrphanStale(
+  storage: StorageAdapter,
+  ownerId: string,
+): Promise<ReconcileFinding[]> {
+  const rows = await storage.query<{ id: string }>(
+    `SELECT m.id FROM memory_objects m
+     WHERE m.owner_id = $1 AND m.status = 'stale'
+       AND NOT EXISTS (
+         SELECT 1 FROM memory_edges e
+         WHERE e.owner_id = m.owner_id AND e.to_id = m.id
+           AND e.relation = 'replaces' AND e.active
+       )
+     ORDER BY m.stale_since DESC NULLS LAST, m.id`,
+    [ownerId],
+  );
+  return rows.map((row) => ({
+    kind: "question" as const,
+    class: "stale_without_edge",
+    memoryId: row.id,
+    reason:
+      "this belief is retired but nothing records what replaced it. " +
+      "Something staled it without leaving a trail",
+  }));
+}
+
+/**
+ * Entity folding has its own invariants, and nothing checks them. Same character as the class
+ * above: SQL proves the store is inconsistent, but the fix is not forced, so all four are
+ * reported and none is repaired. A repair that guessed would be worse than a loud report, and a
+ * non-zero count belongs to whoever owns entity resolution rather than in a reconciliation workaround.
+ */
+export async function findEntityInvariants(
+  storage: StorageAdapter,
+  ownerId: string,
+): Promise<ReconcileFinding[]> {
+  const findings: ReconcileFinding[] = [];
+
+  // E1: the spelling resolves to a canonical row that is gone, so every future mention of it
+  // mints a fresh entity instead. Folded-away canonicals are the likely cause, which is why the
+  // reason names the chain when there is one.
+  const orphans = await storage.query<{ name: string; chained: boolean }>(
+    `SELECT a.name,
+            EXISTS (SELECT 1 FROM memory_entity_merges m
+                     WHERE m.owner_id = a.owner_id AND m.source_id = a.canonical_id
+                       AND m.reverted_at IS NULL) AS chained
+     FROM memory_entity_aliases a
+     WHERE a.owner_id = $1
+       AND NOT EXISTS (SELECT 1 FROM memory_entities e
+                        WHERE e.id = a.canonical_id AND e.owner_id = a.owner_id)
+     ORDER BY a.name`,
+    [ownerId],
+  );
+  for (const row of orphans) {
+    findings.push({
+      kind: "question",
+      class: "entity_alias_orphan",
+      memoryId: null,
+      reason: row.chained
+        ? `"${row.name}" points at an entity that was itself folded away, so the chain is broken`
+        : `"${row.name}" points at an entity that no longer exists`,
+    });
+  }
+
+  // E2: the absorbed row was never removed, so one name resolves two ways depending on which
+  // lookup runs first. #resolveEntity checks memory_entities before memory_entity_aliases.
+  const shadows = await storage.query<{ name: string }>(
+    `SELECT a.name FROM memory_entity_aliases a
+     JOIN memory_entities e ON e.id = a.entity_id AND e.owner_id = a.owner_id
+     WHERE a.owner_id = $1 AND a.entity_id IS NOT NULL
+     ORDER BY a.name`,
+    [ownerId],
+  );
+  for (const row of shadows) {
+    findings.push({
+      kind: "question",
+      class: "entity_alias_shadow",
+      memoryId: null,
+      reason: `"${row.name}" is recorded as folded away but its own entity row is still live`,
+    });
+  }
+
+  // E3: the fold record says absorbed, the entity table says otherwise.
+  const incomplete = await storage.query<{ source_name: string }>(
+    `SELECT m.source_name FROM memory_entity_merges m
+     JOIN memory_entities e ON e.id = m.source_id AND e.owner_id = m.owner_id
+     WHERE m.owner_id = $1 AND m.reverted_at IS NULL
+     ORDER BY m.source_name`,
+    [ownerId],
+  );
+  for (const row of incomplete) {
+    findings.push({
+      kind: "question",
+      class: "entity_merge_incomplete",
+      memoryId: null,
+      reason: `the fold of "${row.source_name}" was recorded but the entity was never absorbed`,
+    });
+  }
+
+  // E5: edges the fold should have repointed. They still name a row nothing can reach, so the
+  // mentions they carry are invisible to recall.
+  const stranded = await storage.query<{ source_name: string; edges: number }>(
+    `SELECT m.source_name, count(DISTINCT e.id)::int AS edges
+     FROM memory_entity_merges m
+     JOIN memory_edges e ON e.owner_id = m.owner_id AND e.active
+                        AND (e.from_id = m.source_id OR e.to_id = m.source_id)
+     WHERE m.owner_id = $1 AND m.reverted_at IS NULL
+     GROUP BY m.source_name
+     ORDER BY m.source_name`,
+    [ownerId],
+  );
+  for (const row of stranded) {
+    findings.push({
+      kind: "question",
+      class: "entity_edge_stranded",
+      memoryId: null,
+      reason: `${row.edges} active edges still point at "${row.source_name}", which was folded away`,
+    });
+  }
+
   return findings;
 }
 
@@ -223,9 +422,13 @@ export function estimateRecheck(
 }
 
 /**
- * Memories a run must not retire even when a detector names them: something else is already
- * deciding their fate. A pending conflict names them, or an active 'replaces' edge points at
- * them (in which case they are stale already and the retirement is a no-op at best).
+ * Memories a run must not retire even when a detector names them: a pending conflict is already
+ * deciding their fate, and reconciliation does not get to pre-empt an answer the user owes.
+ *
+ * This used to also block anything an active `replaces` edge points at, on the grounds that such
+ * a row is stale already. That was true of a healthy store and wrong as a rule: when the row is
+ * still active, it is a leak and retiring it is exactly the fix. findReplacesLeaks owns that set
+ * now, and this one is only about the conflict queue.
  */
 export async function retirementBlocklist(
   storage: StorageAdapter,
@@ -248,11 +451,5 @@ export async function retirementBlocklist(
     const list = typeof row.candidates === "string" ? JSON.parse(row.candidates) : row.candidates;
     for (const candidate of list ?? []) if (candidate?.id) blocked.add(candidate.id);
   }
-  const superseded = await storage.query<{ to_id: string }>(
-    `SELECT DISTINCT to_id FROM memory_edges
-     WHERE owner_id = $1 AND relation = 'replaces' AND active`,
-    [ownerId],
-  );
-  for (const row of superseded) blocked.add(row.to_id);
   return blocked;
 }

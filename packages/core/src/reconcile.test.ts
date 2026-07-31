@@ -67,6 +67,23 @@ async function seedSecondHead(storage: StorageAdapter, id: string): Promise<stri
   return row.id;
 }
 
+/** Two spellings of one name, which judgePair calls certain: what pass 2 exists to fold. */
+async function seedNameVariants(storage: StorageAdapter, a: string, b: string): Promise<void> {
+  for (const name of [a, b]) {
+    await storage.query(
+      "INSERT INTO memory_entities (owner_id, name, entity_type) VALUES ($1, $2, 'product')",
+      [SENTINEL_OWNER, name],
+    );
+  }
+}
+
+async function entityNames(storage: StorageAdapter): Promise<string[]> {
+  const rows = await storage.query<{ name: string }>(
+    "SELECT name FROM memory_entities ORDER BY name",
+  );
+  return rows.map((r) => r.name);
+}
+
 async function statusOf(storage: StorageAdapter, id: string): Promise<string> {
   const [row] = await storage.query<{ status: string }>(
     "SELECT status FROM memory_objects WHERE id = $1",
@@ -228,10 +245,12 @@ describe("reconcile", () => {
   });
 
   it("gets quieter the longer its findings are ignored", async () => {
-    expect(effectiveCaps(0)).toEqual({ retire: 10, question: 3, conflict: 5 });
-    expect(effectiveCaps(1)).toEqual({ retire: 5, question: 1, conflict: 2 });
-    expect(effectiveCaps(2)).toEqual({ retire: 2, question: 0, conflict: 1 });
-    expect(effectiveCaps(3)).toEqual({ retire: 0, question: 0, conflict: 0 });
+    // The integrity cap never moves: quieting an opinion nobody answered is right, quieting an
+    // alarm that says the store contradicts itself is not.
+    expect(effectiveCaps(0)).toEqual({ retire: 10, question: 3, conflict: 5, integrity: 10 });
+    expect(effectiveCaps(1)).toEqual({ retire: 5, question: 1, conflict: 2, integrity: 10 });
+    expect(effectiveCaps(2)).toEqual({ retire: 2, question: 0, conflict: 1, integrity: 10 });
+    expect(effectiveCaps(3)).toEqual({ retire: 0, question: 0, conflict: 0, integrity: 10 });
 
     const { memloom, storage } = await openStore();
     for (let i = 0; i < 5; i++) {
@@ -261,6 +280,134 @@ describe("reconcile", () => {
       const report = await memloom.reconcile();
       expect(report.actions.filter((a) => a.surfaced)).toHaveLength(3);
     }
+  });
+
+  it("stales a memory something already replaced but left current", async () => {
+    const { memloom, storage } = await openStore();
+    const superseded = await memloom.save({ content: "the deploy target is fly.io" });
+    const winner = await memloom.save({ content: "the release ritual is bump, tag, push" });
+    // The shape a bug in the save or resolve path leaves: the edge says replaced, the status
+    // says current, and recall returns both.
+    await storage.query(
+      `INSERT INTO memory_edges (owner_id, from_id, to_id, relation, active)
+       VALUES ($1, $2, $3, 'replaces', true)`,
+      [SENTINEL_OWNER, winner.id, superseded.id],
+    );
+
+    const report = await memloom.reconcile({ mode: "apply" });
+
+    const retire = report.actions.filter((a) => a.kind === "retire");
+    expect(retire).toHaveLength(1);
+    expect(retire[0]?.class).toBe("replaces_leak");
+    expect(await statusOf(storage, superseded.id)).toBe("stale");
+    expect(await statusOf(storage, winner.id)).toBe("active");
+
+    // Reversible like every other thing a run does.
+    await memloom.revertReconcile(report.run.id);
+    expect(await statusOf(storage, superseded.id)).toBe("active");
+  });
+
+  it("reports a stale memory with no trail and never acts on it", async () => {
+    const { memloom, storage } = await openStore();
+    const saved = await memloom.save({ content: "the deploy target is fly.io" });
+    // Staled by something that recorded no reason. There is nothing to fix: SQL cannot invent
+    // the missing edge, so the only honest output is to say so.
+    await storage.query(
+      "UPDATE memory_objects SET status = 'stale', stale_since = now() WHERE id = $1",
+      [saved.id],
+    );
+
+    const report = await memloom.reconcile({ mode: "apply" });
+
+    const orphan = report.actions.filter((a) => a.class === "stale_without_edge");
+    expect(orphan).toHaveLength(1);
+    expect(orphan[0]?.kind).toBe("question");
+    expect(orphan[0]?.applied).toBe(false);
+    expect(report.run.retired).toBe(0);
+  });
+
+  it("folds a name variant and unfolds it on revert", async () => {
+    const { memloom, storage } = await openStore();
+    await seedNameVariants(storage, "Claude Code", "claude-code");
+
+    const report = await memloom.reconcile({ mode: "apply" });
+
+    expect(report.entities?.merged).toBe(1);
+    expect(report.run.folded).toBe(1);
+    expect(await entityNames(storage)).toEqual(["Claude Code"]);
+    const fold = report.actions.find((a) => a.kind === "fold");
+    expect(fold?.mergeId).toBeTruthy();
+    expect(fold?.reason).toContain('folded "claude-code" into "Claude Code"');
+
+    // The fold is undone through revertEntityMerge, which restores the absorbed row verbatim.
+    const reverted = await memloom.revertReconcile(report.run.id);
+    expect(reverted).toMatchObject({ unfolded: 1, skipped: 0 });
+    expect(await entityNames(storage)).toEqual(["Claude Code", "claude-code"]);
+  });
+
+  it("leaves entities alone on a dry run and says what it would have done", async () => {
+    const { memloom, storage } = await openStore();
+    await seedNameVariants(storage, "Claude Code", "claude-code");
+
+    const report = await memloom.reconcile();
+
+    expect(report.entities?.merged).toBe(1);
+    expect(report.run.folded).toBe(0);
+    expect(report.actions.filter((a) => a.kind === "fold")).toHaveLength(0);
+    expect(await entityNames(storage)).toEqual(["Claude Code", "claude-code"]);
+  });
+
+  it("runs only the passes it was given", async () => {
+    const { memloom, storage } = await openStore();
+    await seedNameVariants(storage, "Claude Code", "claude-code");
+
+    const report = await memloom.reconcile({ mode: "apply", passes: ["invariants"] });
+
+    expect(report.passes).toEqual(["invariants"]);
+    expect(report.entities).toBeUndefined();
+    expect(await entityNames(storage)).toEqual(["Claude Code", "claude-code"]);
+  });
+
+  it("keeps saying the store contradicts itself however long it is ignored", async () => {
+    const { memloom, storage } = await openStore();
+    // Enough opinions to exhaust the ordinary caps, plus one alarm.
+    for (let i = 0; i < 5; i++) {
+      const saved = await memloom.save({ content: `belief number ${i} about the build` });
+      await seedSecondHead(storage, saved.id);
+    }
+    const orphaned = await memloom.save({ content: "the deploy target is fly.io" });
+    await storage.query(
+      "UPDATE memory_objects SET status = 'stale', stale_since = now() WHERE id = $1",
+      [orphaned.id],
+    );
+
+    let last = await memloom.reconcile({ mode: "apply" });
+    for (let run = 0; run < 3; run++) last = await memloom.reconcile({ mode: "apply" });
+
+    // The backoff has silenced the multi-head questions by now.
+    const surfaced = last.actions.filter((a) => a.surfaced);
+    expect(surfaced.filter((a) => a.class === "multi_head")).toHaveLength(0);
+    expect(surfaced.filter((a) => a.class === "stale_without_edge")).toHaveLength(1);
+  });
+
+  it("settings decide which passes run, and survive a read back", async () => {
+    const { memloom, storage } = await openStore();
+    await seedNameVariants(storage, "Claude Code", "claude-code");
+
+    // The two that cost money are off out of the box; the two that cannot are on.
+    expect(await memloom.reconcileSettings()).toMatchObject({
+      invariants: true,
+      entities: true,
+      llm_entities: false,
+      llm_conflicts: false,
+    });
+
+    await memloom.setReconcileSettings({ entities: false });
+    expect((await memloom.reconcileSettings()).entities).toBe(false);
+
+    const report = await memloom.reconcile({ mode: "apply" });
+    expect(report.passes).toEqual(["invariants"]);
+    expect(await entityNames(storage)).toEqual(["Claude Code", "claude-code"]);
   });
 
   it("keeps runs in the log, newest first", async () => {

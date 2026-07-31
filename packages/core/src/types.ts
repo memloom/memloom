@@ -167,6 +167,8 @@ export interface EntityMerge {
   decidedBy: "auto" | "llm" | "human";
   score: number | null;
   reason: string | null;
+  /** Which model decided, when decidedBy is 'llm'. Null for every other kind of fold. */
+  model: string | null;
   createdAt: string;
   revertedAt: string | null;
 }
@@ -212,6 +214,12 @@ export interface EntityResolutionResult {
   deferred: number;
   /** Pairs skipped because they were already merged, queued, or settled as distinct. */
   skipped: number;
+  /**
+   * The memory_entity_merges rows this pass created, in order. Empty on a dry run. A caller that
+   * has to be able to undo its own pass (reconciliation) needs the ids, and reading them back by
+   * timestamp afterwards would race with a concurrent fold.
+   */
+  mergeIds: string[];
 }
 
 /** One stated relationship between two entities, as seen from the entity being asked about. */
@@ -874,16 +882,38 @@ export interface NotionStatus {
   chunks: number;
 }
 
-// Reconciliation: the consolidation pass. A run retires only what SQL can prove obsolete, and turns
-// everything that would need a model's judgment into a question or a conflict for the human.
-// Every run is one revertable unit recorded in memory_reconcile_runs / memory_reconcile_actions.
+// Reconciliation: the consolidation pass. The rule the whole feature rests on is that reversibility
+// buys autonomy and money buys a prompt: a pass acts unasked when SQL proves the store is wrong
+// and the ledger can undo it, and asks first whenever it would spend. Every run is one revertable
+// unit recorded in memory_reconcile_runs / memory_reconcile_actions.
 
 export type ReconcileMode = "dry_run" | "apply";
 export type ReconcileTrigger = "manual" | "idle" | "startup";
 export type ReconcileRunStatus = "running" | "success" | "error" | "aborted";
-/** retire changes state; question and conflict ask the human. Only retire is ever applied. */
-export type ReconcileActionKind = "retire" | "question" | "conflict";
+/** retire and fold change state; question and conflict ask the human. */
+export type ReconcileActionKind = "retire" | "question" | "conflict" | "fold";
 export type ReconcileDecision = "approved" | "rejected" | "snoozed";
+
+/**
+ * The four passes, in cost order. The first two are free and act on their own; the last two
+ * spend money and stay off until the user turns them on.
+ */
+export type ReconcilePass = "invariants" | "entities" | "llm_entities" | "llm_conflicts";
+
+export const RECONCILE_PASSES: readonly ReconcilePass[] = [
+  "invariants",
+  "entities",
+  "llm_entities",
+  "llm_conflicts",
+];
+
+/** Passes that cost nothing and therefore need no permission and no scheduling argument. */
+export const FREE_RECONCILE_PASSES: readonly ReconcilePass[] = ["invariants", "entities"];
+
+export type ReconcileSettings = Record<ReconcilePass, boolean> & {
+  /** Run on daemon startup when the last run is older than the catch-up window. */
+  startupCatchUp: boolean;
+};
 
 export interface ReconcileAction {
   id: string;
@@ -900,6 +930,8 @@ export interface ReconcileAction {
   /** False when the finding was recorded but held back by a per-run cap. */
   surfaced: boolean;
   decision: ReconcileDecision | null;
+  /** Set when kind is 'fold': the memory_entity_merges row revertReconcile undoes. */
+  mergeId: string | null;
   createdAt: string;
 }
 
@@ -910,6 +942,8 @@ export interface ReconcileRun {
   status: ReconcileRunStatus;
   scanned: number;
   retired: number;
+  /** Entities folded into another. Reversed through revertEntityMerge, not through markStale. */
+  folded: number;
   questions: number;
   conflictsRaised: number;
   llmCalls: number;
@@ -937,6 +971,11 @@ export interface ReconcileOptions {
   mode?: ReconcileMode;
   trigger?: ReconcileTrigger;
   ownerId?: string;
+  /**
+   * Which passes to run. Defaults to the user's saved settings. A trigger that must stay free
+   * (startup, idle) passes FREE_RECONCILE_PASSES explicitly rather than trusting the settings.
+   */
+  passes?: readonly ReconcilePass[];
 }
 
 export interface ReconcileReport {
@@ -946,12 +985,18 @@ export interface ReconcileReport {
   estimate: ReconcileEstimate;
   /** Findings recorded but not shown, by kind, because a per-run cap was reached. */
   heldBack: { retire: number; question: number; conflict: number };
+  /** Which passes actually ran, after settings and mode were applied. */
+  passes: ReconcilePass[];
+  /** Deterministic entity resolution, present when the 'entities' pass ran. */
+  entities?: EntityResolutionResult;
 }
 
 export interface ReconcileRevertResult {
   runId: string;
   /** Memories returned to 'active'. */
   restored: number;
-  /** Retirements left alone because the memory's stale_since moved after the run. */
+  /** Entity folds undone through revertEntityMerge. */
+  unfolded: number;
+  /** Actions left alone because the store moved on after the run. */
   skipped: number;
 }

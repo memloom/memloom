@@ -49,10 +49,9 @@ describe("cli router", () => {
     await expect(run(["save", "--type", "fact"])).rejects.toThrow(/usage: memloom save/);
   });
 
-  it("reconcile refuses anything but a dry run, without touching the daemon", async () => {
-    await run(["reconcile"]);
-    expect(logs.join("\n")).toContain("memloom reconcile --dry-run");
-    expect(logs.join("\n")).toContain("changes nothing");
+  it("reconcile undo without a run id explains itself and never runs", async () => {
+    await run(["reconcile", "undo"]);
+    expect(logs.join("\n")).toContain("usage: memloom reconcile undo <run id>");
   });
 
   it("the reconcile report says what was found and that nothing changed", () => {
@@ -64,6 +63,7 @@ describe("cli router", () => {
         status: "success",
         scanned: 2262,
         retired: 0,
+        folded: 0,
         questions: 40,
         conflictsRaised: 0,
         llmCalls: 0,
@@ -83,6 +83,7 @@ describe("cli router", () => {
           staledAt: null,
           surfaced: true,
           decision: null,
+          mergeId: null,
           createdAt: "2026-07-27T10:00:00.000Z",
         },
         {
@@ -96,6 +97,7 @@ describe("cli router", () => {
           staledAt: null,
           surfaced: true,
           decision: null,
+          mergeId: null,
           createdAt: "2026-07-27T10:00:00.000Z",
         },
       ],
@@ -108,12 +110,24 @@ describe("cli router", () => {
         usd: 0.214,
       },
       heldBack: { retire: 0, question: 37, conflict: 0 },
+      passes: ["invariants", "entities"],
+      entities: {
+        examined: 1789,
+        pairs: 42,
+        merged: 6,
+        queued: 4,
+        deferred: 0,
+        skipped: 32,
+        mergeIds: [],
+      },
     };
 
     const out = formatReconcileReport(report);
     expect(out).toContain("would retire 1:");
     expect(out).toContain("aaaaaaaa  identical content to bbbbbbbb");
     expect(out).toContain("...and 37 more");
+    expect(out).toContain("would fold 6 name variants");
+    expect(out).toContain("4 uncertain pairs would go to the conflicts tab");
     expect(out).toContain("203 memories in the contradiction re-check window");
     expect(out).toContain("152k in / 24k out with google/gemini-2.5-flash, about $0.21");
     // The reader must never have to infer this from the absence of bad news.

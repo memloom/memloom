@@ -17,6 +17,7 @@ import type {
   ReconcileReport,
   ReconcileRevertResult,
   ReconcileRun,
+  ReconcileSettings,
   Graph,
   ImportCaptureScope,
   ImportOptions,
@@ -354,6 +355,14 @@ export class HttpMemloomClient implements MemoryEngine {
 
   revertReconcile(runId: string): Promise<ReconcileRevertResult> {
     return this.#post<ReconcileRevertResult>(`/memory/reconcile/${runId}/revert`, {});
+  }
+
+  reconcileSettings(): Promise<ReconcileSettings> {
+    return this.#json<ReconcileSettings>("/memory/reconcile/settings");
+  }
+
+  setReconcileSettings(patch: Partial<ReconcileSettings>): Promise<ReconcileSettings> {
+    return this.#post<ReconcileSettings>("/memory/reconcile/settings", patch);
   }
 
   async reconcileRuns(_ownerId?: string, limit?: number): Promise<ReconcileRun[]> {

@@ -22,11 +22,15 @@ import { type Candidate, classify } from "./dedup.js";
 import { type DistilledMemory, distillChunk } from "./distill.js";
 import {
   BACKOFF_SILENT_AFTER,
+  capBuckets,
   type ReconcileFinding,
   effectiveCaps,
   estimateRecheck,
   findDuplicateContent,
+  findEntityInvariants,
   findMultiHeadLineages,
+  findOrphanStale,
+  findReplacesLeaks,
   meanActiveContentChars,
   recheckWindow,
   retirementBlocklist,
@@ -103,6 +107,7 @@ import type {
   ReconcileRevertResult,
   ReconcileRun,
   ReconcileRunStatus,
+  ReconcileSettings,
   ReconcileTrigger,
   Entity,
   EntityConflict,
@@ -145,11 +150,24 @@ import type {
   UpdateInput,
   UpdateResult,
 } from "./types.js";
+import { RECONCILE_PASSES } from "./types.js";
 import { toVectorLiteral } from "./vector.js";
 
 // The fixed owner for the single-user embedded tier. Multi-tenant hosts pass a real
 // ownerId per call; the column exists everywhere so the schema is sync/cloud-ready.
 export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
+
+/**
+ * Free passes on, paid passes off, catch-up on. The default is the section 0 rule as a data
+ * structure: a pass that cannot spend needs no permission, and one that can does.
+ */
+export const DEFAULT_RECONCILE_SETTINGS: ReconcileSettings = {
+  invariants: true,
+  entities: true,
+  llm_entities: false,
+  llm_conflicts: false,
+  startupCatchUp: true,
+};
 
 /**
  * Voice matching: how alike a new voice must be to a stored, named voiceprint before a
@@ -441,6 +459,7 @@ interface ReconcileRunRow {
   status: ReconcileRunStatus;
   scanned: number;
   retired: number;
+  folded: number;
   questions: number;
   conflicts_raised: number;
   llm_calls: number;
@@ -448,6 +467,9 @@ interface ReconcileRunRow {
   finished_at: string | null;
   reverted_at: string | null;
 }
+
+const RECONCILE_RUN_COLUMNS = `id, mode, trigger, status, scanned, retired, folded, questions,
+        conflicts_raised, llm_calls, started_at, finished_at, reverted_at`;
 
 function mapReconcileRun(row: ReconcileRunRow): ReconcileRun {
   return {
@@ -457,6 +479,7 @@ function mapReconcileRun(row: ReconcileRunRow): ReconcileRun {
     status: row.status,
     scanned: Number(row.scanned),
     retired: Number(row.retired),
+    folded: Number(row.folded),
     questions: Number(row.questions),
     conflictsRaised: Number(row.conflicts_raised),
     llmCalls: Number(row.llm_calls),
@@ -3881,19 +3904,26 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
-   * Reconciliation: the consolidation pass. Retires only what SQL can prove obsolete (today: exact
-   * duplicate active content), turns everything needing a judgment call into a question, and
-   * counts and prices the contradiction re-check instead of spending it.
+   * Reconciliation: the consolidation pass, in up to four passes of increasing cost.
    *
-   * A dry run never touches memory_objects, memory_edges or memory_dedup_decisions. It does
-   * record itself in the reconcile ledger, because the run record IS the report and the per-run
-   * caps back off based on whether the last run's findings were acted on.
+   * The rule the whole thing rests on is that reversibility buys autonomy and money buys a
+   * prompt. Passes 1 and 2 (invariant repair, deterministic entity resolution) are free and act
+   * without asking, because the ledger can undo everything they do. Passes 3 and 4 spend money
+   * and stay off until the user turns them on.
+   *
+   * A dry run never touches memory_objects, memory_edges, memory_entities or
+   * memory_dedup_decisions. It does record itself in the reconcile ledger, because the run record IS
+   * the report and the per-run caps back off based on whether the last run's findings were acted
+   * on.
    */
   async reconcile(opts: ReconcileOptions = {}): Promise<ReconcileReport> {
     const owner = opts.ownerId ?? SENTINEL_OWNER;
     const mode = opts.mode ?? "dry_run";
     const trigger = opts.trigger ?? "manual";
     const model = modelNameOf(this.#llm);
+    const settings = await this.reconcileSettings();
+    const passes = [...(opts.passes ?? RECONCILE_PASSES.filter((p) => settings[p]))];
+    const applying = mode === "apply";
 
     const [created] = await this.#storage.query<{ id: string }>(
       `INSERT INTO memory_reconcile_runs (owner_id, mode, trigger, model)
@@ -3904,14 +3934,32 @@ export class Memloom implements MemoryEngine {
     if (!runId) throw new Error("memloom: could not open a reconcile run");
 
     try {
-      const duplicates = await findDuplicateContent(this.#storage, owner);
-      const multiHead = await findMultiHeadLineages(this.#storage, owner);
-      const blocked = await retirementBlocklist(this.#storage, owner);
-      // A memory a pending conflict already names is not reconciliation's to retire.
-      const retirable = duplicates.filter((f) => !f.memoryId || !blocked.has(f.memoryId));
-
       const caps = effectiveCaps(await this.#unactionedReconcileRuns(owner));
-      const questions = multiHead;
+      const retirable: ReconcileFinding[] = [];
+      const questions: ReconcileFinding[] = [];
+
+      if (passes.includes("invariants")) {
+        // A pending conflict already owns these memories' fate; reconciliation does not pre-empt an
+        // answer the user owes. Leaks first, so a row that is both a leak and a duplicate is
+        // recorded under the class that explains it.
+        const blocked = await retirementBlocklist(this.#storage, owner);
+        const seen = new Set<string>();
+        for (const finding of [
+          ...(await findReplacesLeaks(this.#storage, owner)),
+          ...(await findDuplicateContent(this.#storage, owner)),
+        ]) {
+          if (!finding.memoryId || blocked.has(finding.memoryId) || seen.has(finding.memoryId)) {
+            continue;
+          }
+          seen.add(finding.memoryId);
+          retirable.push(finding);
+        }
+        questions.push(
+          ...(await findMultiHeadLineages(this.#storage, owner)),
+          ...(await findOrphanStale(this.#storage, owner)),
+          ...(await findEntityInvariants(this.#storage, owner)),
+        );
+      }
 
       const scanned = await this.#activeMemoryCount(owner);
       const window = await recheckWindow(
@@ -3927,9 +3975,10 @@ export class Memloom implements MemoryEngine {
 
       // Retire inside one transaction so every row carries the stale_since the revert guard
       // will compare against, captured from the UPDATE itself rather than read back after.
-      const toRetire = retirable.slice(0, caps.retire);
+      const surfacedRetire = capBuckets(retirable, caps.retire, caps.integrity);
+      const toRetire = retirable.filter((_, i) => surfacedRetire[i]);
       const staled =
-        mode === "apply" && toRetire.length > 0
+        applying && toRetire.length > 0
           ? await this.#storage.tx((tx) =>
               markStaleReturning(
                 tx,
@@ -3938,30 +3987,62 @@ export class Memloom implements MemoryEngine {
             )
           : new Map<string, string>();
 
+      // Pass 2. resolveEntities owns candidate generation, judging, folding and the fold record;
+      // reconciliation's only job is to remember which merges belonged to this run so revertReconcile can
+      // hand them back to revertEntityMerge.
+      const entities = passes.includes("entities")
+        ? await this.resolveEntities({ ownerId: owner, dryRun: !applying })
+        : undefined;
+      const folds = entities ? await this.#describeFolds(entities.mergeIds) : [];
+
       const rows: Array<{
         finding: ReconcileFinding;
         surfaced: boolean;
         applied: boolean;
         staledAt: string | null;
+        mergeId: string | null;
       }> = [];
       for (const [i, finding] of retirable.entries()) {
         const staledAt = (finding.memoryId && staled.get(finding.memoryId)) || null;
         rows.push({
           finding,
-          surfaced: i < caps.retire,
+          surfaced: surfacedRetire[i] ?? false,
           applied: staledAt !== null,
           staledAt,
+          mergeId: null,
         });
       }
+      const surfacedQuestions = capBuckets(questions, caps.question, caps.integrity);
       for (const [i, finding] of questions.entries()) {
-        rows.push({ finding, surfaced: i < caps.question, applied: false, staledAt: null });
+        rows.push({
+          finding,
+          surfaced: surfacedQuestions[i] ?? false,
+          applied: false,
+          staledAt: null,
+          mergeId: null,
+        });
+      }
+      for (const fold of folds) {
+        rows.push({
+          finding: {
+            kind: "fold",
+            class: "entity_variant",
+            memoryId: null,
+            reason: fold.reason,
+          },
+          surfaced: true,
+          applied: true,
+          staledAt: null,
+          mergeId: fold.mergeId,
+        });
       }
 
       for (const row of rows) {
         await this.#storage.query(
           `INSERT INTO memory_reconcile_actions
-             (owner_id, run_id, kind, class, memory_id, reason, applied, staled_at, surfaced)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+             (owner_id, run_id, kind, class, memory_id, reason, applied, staled_at, surfaced,
+              merge_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
           [
             owner,
             runId,
@@ -3972,6 +4053,7 @@ export class Memloom implements MemoryEngine {
             row.applied,
             row.staledAt,
             row.surfaced,
+            row.mergeId,
           ],
         );
       }
@@ -3979,16 +4061,17 @@ export class Memloom implements MemoryEngine {
       await this.#storage.query(
         `UPDATE memory_reconcile_runs
          SET status = 'success', finished_at = now(), scanned = $2, retired = $3,
-             questions = $4, conflicts_raised = 0, llm_calls = 0,
+             folded = $7, questions = $4, conflicts_raised = 0, llm_calls = 0,
              est_input_tokens = $5, est_output_tokens = $6
          WHERE id = $1`,
         [
           runId,
           scanned,
-          rows.filter((r) => r.applied).length,
+          rows.filter((r) => r.finding.kind === "retire" && r.applied).length,
           questions.length,
           estimate.inputTokens,
           estimate.outputTokens,
+          folds.length,
         ],
       );
 
@@ -3998,10 +4081,12 @@ export class Memloom implements MemoryEngine {
         actions,
         estimate,
         heldBack: {
-          retire: Math.max(0, retirable.length - caps.retire),
-          question: Math.max(0, questions.length - caps.question),
+          retire: surfacedRetire.filter((s) => !s).length,
+          question: surfacedQuestions.filter((s) => !s).length,
           conflict: 0,
         },
+        passes,
+        ...(entities ? { entities } : {}),
       };
     } catch (err) {
       await this.#storage.query(
@@ -4012,10 +4097,44 @@ export class Memloom implements MemoryEngine {
     }
   }
 
+  /** One line per fold, read back by id so the ledger's reason survives a later rename. */
+  async #describeFolds(mergeIds: string[]): Promise<Array<{ mergeId: string; reason: string }>> {
+    if (mergeIds.length === 0) return [];
+    const rows = await this.#storage.query<{
+      id: string;
+      source_name: string;
+      canonical_name: string | null;
+    }>(
+      `SELECT m.id, m.source_name, e.name AS canonical_name
+         FROM memory_entity_merges m
+         LEFT JOIN memory_entities e ON e.id = m.canonical_id AND e.owner_id = m.owner_id
+        WHERE m.id = ANY($1::uuid[])`,
+      [mergeIds],
+    );
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return mergeIds
+      .map((id) => {
+        const row = byId.get(id);
+        if (!row) return null;
+        return {
+          mergeId: id,
+          reason: `folded "${row.source_name}" into "${row.canonical_name ?? "(removed)"}"`,
+        };
+      })
+      .filter((f): f is { mergeId: string; reason: string } => f !== null);
+  }
+
   /**
-   * Undo one reconcile run. A retirement is reversed only while the memory is still stale AND its
-   * stale_since is the one this run wrote: if a human (or a conflict resolution) staled it since,
-   * the undo skips it rather than overriding a newer decision.
+   * Undo one reconcile run.
+   *
+   * A retirement is reversed only while the memory is still stale AND its stale_since is the one
+   * this run wrote: if a human (or a conflict resolution) staled it since, the undo skips it
+   * rather than overriding a newer decision.
+   *
+   * A fold is handed straight back to revertEntityMerge, which restores the absorbed entity with
+   * its original uuid and vector and is already idempotent, so a fold the user undid by hand in
+   * the viewer is left alone. Reconciliation does not reimplement any of that: two implementations of
+   * fold reversal would be two chances to get it wrong.
    */
   async revertReconcile(runId: string, ownerId: string = SENTINEL_OWNER): Promise<ReconcileRevertResult> {
     const [run] = await this.#storage.query<{ id: string; reverted_at: string | null }>(
@@ -4023,47 +4142,99 @@ export class Memloom implements MemoryEngine {
       [runId, ownerId],
     );
     if (!run) throw new Error(`memloom: no reconcile run ${runId}`);
-    if (run.reverted_at) return { runId, restored: 0, skipped: 0 };
+    if (run.reverted_at) return { runId, restored: 0, unfolded: 0, skipped: 0 };
 
     const actions = await this.#storage.query<{
       id: string;
+      kind: ReconcileActionKind;
       memory_id: string | null;
       staled_at: string | null;
+      merge_id: string | null;
     }>(
-      `SELECT id, memory_id, staled_at FROM memory_reconcile_actions
-       WHERE run_id = $1 AND kind = 'retire' AND applied = true`,
+      `SELECT id, kind, memory_id, staled_at, merge_id FROM memory_reconcile_actions
+       WHERE run_id = $1 AND kind IN ('retire', 'fold') AND applied = true
+       ORDER BY created_at DESC`,
       [runId],
     );
 
     let restored = 0;
+    let unfolded = 0;
     let skipped = 0;
     for (const action of actions) {
-      if (!action.memory_id || !action.staled_at) {
+      const done = await this.#revertReconcileAction(action, ownerId);
+      if (!done) {
         skipped++;
         continue;
       }
-      const ok = await reactivateIfUntouched(this.#storage, action.memory_id, action.staled_at);
-      if (ok) {
-        restored++;
-        await this.#storage.query("UPDATE memory_reconcile_actions SET applied = false WHERE id = $1", [
-          action.id,
-        ]);
-      } else {
-        skipped++;
-      }
+      if (action.kind === "fold") unfolded++;
+      else restored++;
+      await this.#storage.query("UPDATE memory_reconcile_actions SET applied = false WHERE id = $1", [
+        action.id,
+      ]);
     }
 
     await this.#storage.query("UPDATE memory_reconcile_runs SET reverted_at = now() WHERE id = $1", [
       runId,
     ]);
-    return { runId, restored, skipped };
+    return { runId, restored, unfolded, skipped };
+  }
+
+  async #revertReconcileAction(
+    action: {
+      kind: ReconcileActionKind;
+      memory_id: string | null;
+      staled_at: string | null;
+      merge_id: string | null;
+    },
+    ownerId: string,
+  ): Promise<boolean> {
+    if (action.kind === "fold") {
+      if (!action.merge_id) return false;
+      // Already reverted by hand is not a failure: revertEntityMerge is a no-op on a merge
+      // stamped reverted_at, and a missing merge row means somebody removed it entirely.
+      try {
+        await this.revertEntityMerge(action.merge_id, ownerId);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    if (!action.memory_id || !action.staled_at) return false;
+    return reactivateIfUntouched(this.#storage, action.memory_id, action.staled_at);
+  }
+
+  /**
+   * Which passes a run does, and whether the daemon catches up on startup. Persisted in the
+   * store's meta table rather than config.env, so the Settings tab takes effect without a
+   * restart, which is the same choice the auto-index toggle made.
+   */
+  async reconcileSettings(): Promise<ReconcileSettings> {
+    const [row] = await this.#storage.query<{ value: string }>(
+      "SELECT value FROM _memloom_meta WHERE key = 'reconcile_settings'",
+    );
+    if (!row?.value) return { ...DEFAULT_RECONCILE_SETTINGS };
+    try {
+      const saved = JSON.parse(row.value) as Partial<ReconcileSettings>;
+      return { ...DEFAULT_RECONCILE_SETTINGS, ...saved };
+    } catch {
+      return { ...DEFAULT_RECONCILE_SETTINGS };
+    }
+  }
+
+  async setReconcileSettings(patch: Partial<ReconcileSettings>): Promise<ReconcileSettings> {
+    const next = { ...(await this.reconcileSettings()), ...patch };
+    await this.#storage.query(
+      `INSERT INTO _memloom_meta (key, value) VALUES ('reconcile_settings', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [JSON.stringify(next)],
+    );
+    return next;
   }
 
   /** Reconcile runs for the owner, newest first. */
   async reconcileRuns(ownerId: string = SENTINEL_OWNER, limit = 20): Promise<ReconcileRun[]> {
     const rows = await this.#storage.query<ReconcileRunRow>(
-      `SELECT id, mode, trigger, status, scanned, retired, questions, conflicts_raised,
-              llm_calls, started_at, finished_at, reverted_at
+      `SELECT ${RECONCILE_RUN_COLUMNS}
        FROM memory_reconcile_runs WHERE owner_id = $1 ORDER BY started_at DESC LIMIT $2`,
       [ownerId, limit],
     );
@@ -4072,9 +4243,7 @@ export class Memloom implements MemoryEngine {
 
   async #reconcileRun(runId: string): Promise<ReconcileRun> {
     const [row] = await this.#storage.query<ReconcileRunRow>(
-      `SELECT id, mode, trigger, status, scanned, retired, questions, conflicts_raised,
-              llm_calls, started_at, finished_at, reverted_at
-       FROM memory_reconcile_runs WHERE id = $1`,
+      `SELECT ${RECONCILE_RUN_COLUMNS} FROM memory_reconcile_runs WHERE id = $1`,
       [runId],
     );
     if (!row) throw new Error(`memloom: no reconcile run ${runId}`);
@@ -4093,10 +4262,11 @@ export class Memloom implements MemoryEngine {
       staled_at: string | null;
       surfaced: boolean;
       decision: ReconcileDecision | null;
+      merge_id: string | null;
       created_at: string;
     }>(
       `SELECT id, run_id, kind, class, memory_id, reason, applied, staled_at, surfaced,
-              decision, created_at
+              decision, merge_id, created_at
        FROM memory_reconcile_actions WHERE run_id = $1 ORDER BY kind, created_at`,
       [runId],
     );
@@ -4111,6 +4281,7 @@ export class Memloom implements MemoryEngine {
       staledAt: r.staled_at ? toIsoTimestamp(r.staled_at) : null,
       surfaced: Boolean(r.surfaced),
       decision: r.decision,
+      mergeId: r.merge_id,
       createdAt: toIsoTimestamp(r.created_at),
     }));
   }
@@ -5089,7 +5260,13 @@ export class Memloom implements MemoryEngine {
     sourceId: string,
     targetId: string,
     ownerId: string = SENTINEL_OWNER,
-    provenance: { decidedBy?: "auto" | "llm" | "human"; score?: number; reason?: string } = {},
+    provenance: {
+      decidedBy?: "auto" | "llm" | "human";
+      score?: number;
+      reason?: string;
+      /** Which model decided, when decidedBy is 'llm'. Unattributable folds age badly. */
+      model?: string;
+    } = {},
   ): Promise<string> {
     if (sourceId === targetId) throw new Error("memloom: cannot merge an entity into itself");
     const mergeId = randomUUID();
@@ -5172,8 +5349,9 @@ export class Memloom implements MemoryEngine {
       await tx.query(
         `INSERT INTO memory_entity_merges
            (id, owner_id, canonical_id, source_id, source_name, source_type, source_created_at,
-            decided_by, score, reason, edge_changes)
-         SELECT $1, $2, $3, me.id, me.name, me.entity_type, me.created_at, $4, $5, $6, $7::jsonb
+            decided_by, score, reason, edge_changes, model)
+         SELECT $1, $2, $3, me.id, me.name, me.entity_type, me.created_at, $4, $5, $6, $7::jsonb,
+                $9
            FROM memory_entities me WHERE me.id = $8 AND me.owner_id = $2`,
         [
           mergeId,
@@ -5189,6 +5367,7 @@ export class Memloom implements MemoryEngine {
             aliasesMoved: moved.map((r) => r.id),
           }),
           sourceId,
+          provenance.model ?? null,
         ],
       );
 
@@ -5223,11 +5402,12 @@ export class Memloom implements MemoryEngine {
       decided_by: "auto" | "llm" | "human";
       score: number | null;
       reason: string | null;
+      model: string | null;
       created_at: string;
       reverted_at: string | null;
     }>(
       `SELECT m.id, m.canonical_id, me.name AS canonical_name, m.source_id, m.source_name,
-              m.source_type, m.decided_by, m.score, m.reason, m.created_at, m.reverted_at
+              m.source_type, m.decided_by, m.score, m.reason, m.model, m.created_at, m.reverted_at
          FROM memory_entity_merges m
          LEFT JOIN memory_entities me ON me.id = m.canonical_id AND me.owner_id = m.owner_id
         WHERE m.owner_id = $1
@@ -5244,6 +5424,7 @@ export class Memloom implements MemoryEngine {
       decidedBy: r.decided_by,
       score: r.score === null ? null : Number(r.score),
       reason: r.reason,
+      model: r.model,
       createdAt: r.created_at,
       revertedAt: r.reverted_at,
     }));
@@ -5369,6 +5550,7 @@ export class Memloom implements MemoryEngine {
       queued: 0,
       deferred: 0,
       skipped: 0,
+      mergeIds: [],
     };
     if (entities.length < 2) return result;
 
@@ -5437,11 +5619,12 @@ export class Memloom implements MemoryEngine {
         result.merged++;
         continue;
       }
-      await this.mergeEntities(source.id, canonical.id, ownerId, {
+      const mergeId = await this.mergeEntities(source.id, canonical.id, ownerId, {
         decidedBy: "auto",
         score: judgement.score,
         reason: judgement.reason,
       });
+      result.mergeIds.push(mergeId);
       foldedInto.set(source.id, canonical.id);
       result.merged++;
     }

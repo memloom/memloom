@@ -125,13 +125,19 @@ export type { ReconcileCaps, ReconcileFinding, RecheckWindow } from "./reconcile
 export {
   BACKOFF_SILENT_AFTER,
   CONFLICT_QUEUE_CEILING,
+  capBuckets,
   RECONCILE_CAPS,
   RECONCILE_K,
   effectiveCaps,
   estimateRecheck,
   estimateTokens,
   findDuplicateContent,
+  findEntityInvariants,
   findMultiHeadLineages,
+  findOrphanStale,
+  findReplacesLeaks,
+  INTEGRITY_CLASSES,
+  isIntegrityFinding,
   PROMPT_OVERHEAD_TOKENS,
   recheckWindow,
 } from "./reconcile.js";
@@ -186,7 +192,12 @@ export type { ReleaseLock } from "./lock.js";
 export { acquireDataDirLock } from "./lock.js";
 export type { InitOptions, MemloomConfig } from "./memloom.js";
 // The engine facade + contract
-export { EmbeddingFingerprintError, Memloom, SENTINEL_OWNER } from "./memloom.js";
+export {
+  DEFAULT_RECONCILE_SETTINGS,
+  EmbeddingFingerprintError,
+  Memloom,
+  SENTINEL_OWNER,
+} from "./memloom.js";
 export type { EvalReport, QueryResult } from "./metrics.js";
 export { evaluate, mean, recallAtK, reciprocalRank } from "./metrics.js";
 // Migrations
@@ -291,10 +302,12 @@ export type {
   ReconcileEstimate,
   ReconcileMode,
   ReconcileOptions,
+  ReconcilePass,
   ReconcileReport,
   ReconcileRevertResult,
   ReconcileRun,
   ReconcileRunStatus,
+  ReconcileSettings,
   ReconcileTrigger,
   Entity,
   EntityConflict,
@@ -346,7 +359,7 @@ export type {
   UpdateResult,
 } from "./types.js";
 // The saveable memory taxonomy (fact | preference | episode | procedure).
-export { MEMORY_TYPES } from "./types.js";
+export { RECONCILE_PASSES, FREE_RECONCILE_PASSES, MEMORY_TYPES } from "./types.js";
 
 // Utilities
 export { toVectorLiteral } from "./vector.js";

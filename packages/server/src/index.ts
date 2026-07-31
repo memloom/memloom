@@ -447,7 +447,18 @@ const resolveSchema = z.discriminatedUnion("action", [
 const reconcileSchema = z.object({
   mode: z.enum(["dry_run", "apply"]).default("dry_run"),
   trigger: z.enum(["manual", "idle", "startup"]).default("manual"),
+  passes: z.array(z.enum(["invariants", "entities", "llm_entities", "llm_conflicts"])).optional(),
 });
+
+const reconcileSettingsSchema = z
+  .object({
+    invariants: z.boolean(),
+    entities: z.boolean(),
+    llm_entities: z.boolean(),
+    llm_conflicts: z.boolean(),
+    startupCatchUp: z.boolean(),
+  })
+  .partial();
 
 /** Parse + validate a JSON body; returns the typed value or a 400 JSON response. */
 async function parseBody<S extends z.ZodTypeAny>(
@@ -972,18 +983,19 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     return c.json({ ok: true });
   });
 
-  // Reconciliation. Apply mode is gated on RECONCILE_ENABLED because it is the one path that can change
-  // beliefs with no human in the loop; a dry run only reads and reports, so it is not gated.
-  // Every run is revertable through the route below.
+  // Reconciliation. Which passes run is the user's saved setting, not an environment variable, so the
+  // Settings tab takes effect without a restart. RECONCILE_ENABLED is only a kill switch now: set it
+  // to 0 and no run may change anything, for a host that wants the reports and none of the
+  // repairs. The passes that cost money are off by default in the settings themselves.
   app.post("/memory/reconcile", async (c) => {
     const body = await parseBody(c, reconcileSchema);
     if (!body.ok) return body.res;
-    if (body.data.mode === "apply" && process.env.RECONCILE_ENABLED !== "1") {
+    if (body.data.mode === "apply" && process.env.RECONCILE_ENABLED === "0") {
       return c.json(
         {
           error:
-            "reconciliation can only run as a dry run. Set RECONCILE_ENABLED=1 in your memloom config " +
-            "and restart the daemon to let a run change beliefs.",
+            "reconciliation is set to report only (RECONCILE_ENABLED=0). Remove it from your memloom " +
+            "config and restart the daemon to let a run act.",
         },
         403,
       );
@@ -996,6 +1008,14 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     return c.json({
       runs: await memloom.reconcileRuns(undefined, Number.isFinite(limit) ? limit : 20),
     });
+  });
+
+  app.get("/memory/reconcile/settings", async (c) => c.json(await memloom.reconcileSettings()));
+
+  app.post("/memory/reconcile/settings", async (c) => {
+    const body = await parseBody(c, reconcileSettingsSchema);
+    if (!body.ok) return body.res;
+    return c.json(await memloom.setReconcileSettings(body.data));
   });
 
   app.post("/memory/reconcile/:id/revert", async (c) => {
