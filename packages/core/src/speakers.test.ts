@@ -281,3 +281,121 @@ describe("renameSpeaker", () => {
     await expect(memloom.renameSpeaker(documentId, 1, "   ")).rejects.toThrow(/empty/);
   });
 });
+
+// The voice library: name a voice once, and later recordings of the same voice arrive
+// pre-named. A mutable fixture roster lets each test file carry its own voices through
+// the one registered extractor.
+
+let voiceRoster: SpeakerRoster | null = null;
+
+registerExtractor({
+  kind: "audio",
+  extensions: [".spkvoice"],
+  version: 1,
+  chunker: "markdown",
+  async extract() {
+    return { units: [{ text: TRANSCRIPT, page: null }], speakers: voiceRoster };
+  },
+});
+
+/** A normalized voice vector: `close` nudges it so similarity stays near but below 1. */
+function voice(axis: number, close = 0): number[] {
+  const v = [0, 0, 0, 0];
+  v[axis] = 1;
+  if (close > 0) {
+    v[axis] = Math.sqrt(1 - close * close);
+    v[(axis + 1) % 4] = close;
+  }
+  return v;
+}
+
+function voiceSpeaker(id: number, embedding: number[], seconds = 60) {
+  return {
+    id,
+    label: `Speaker ${id}`,
+    name: null,
+    seconds,
+    sampleStart: 0,
+    sampleEnd: 8,
+    embedding,
+  };
+}
+
+describe("autoNameSpeakers", () => {
+  const cleanups: Array<() => Promise<void> | void> = [];
+  afterEach(async () => {
+    while (cleanups.length) await cleanups.pop()?.();
+  });
+
+  async function fresh() {
+    const storage = await PgliteAdapter.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(256),
+      llm: new NullLLMProvider(),
+      dedup: false,
+    });
+    await memloom.init();
+    const dir = await mkdtemp(join(tmpdir(), "memloom-voice-"));
+    cleanups.push(() => rm(dir, { recursive: true, force: true }));
+    const add = async (file: string, roster: SpeakerRoster) => {
+      voiceRoster = roster;
+      const path = join(dir, file);
+      await writeFile(path, "bytes");
+      return memloom.contextAdd({ path });
+    };
+    return { memloom, add };
+  }
+
+  const rosterOf = (speakers: ReturnType<typeof voiceSpeaker>[]): SpeakerRoster => ({
+    version: 1,
+    embeddingModel: "test",
+    speakers,
+  });
+
+  it("names a known voice at ingest and leaves strangers numbered", async () => {
+    const { memloom, add } = await fresh();
+    const first = await add("first.spkvoice", rosterOf([voiceSpeaker(1, voice(0))]));
+    await memloom.renameSpeaker(first.documentId, 1, "Kostek Sytnyk");
+
+    // A near-identical voice (cosine ~0.99) plus an orthogonal stranger.
+    const second = await add(
+      "second.spkvoice",
+      rosterOf([voiceSpeaker(1, voice(0, 0.14)), voiceSpeaker(2, voice(2))]),
+    );
+    const doc = (await memloom.contextList()).find((d) => d.id === second.documentId);
+    expect(doc?.speakers?.speakers.find((s) => s.id === 1)?.name).toBe("Kostek Sytnyk");
+    expect(doc?.speakers?.speakers.find((s) => s.id === 2)?.name).toBeNull();
+
+    // The name reached the transcript too, through the same rewrite a manual rename uses.
+    const { chunks } = await memloom.contextChunks(second.documentId);
+    expect(chunks.some((c) => c.headingPath?.endsWith(", Kostek Sytnyk"))).toBe(true);
+  });
+
+  it("never auto-names a sliver, however similar", async () => {
+    const { memloom, add } = await fresh();
+    const first = await add("named.spkvoice", rosterOf([voiceSpeaker(1, voice(0))]));
+    await memloom.renameSpeaker(first.documentId, 1, "Kostek Sytnyk");
+
+    const sliver = await add(
+      "sliver.spkvoice",
+      rosterOf([voiceSpeaker(1, voice(0, 0.14), 3)]),
+    );
+    const doc = (await memloom.contextList()).find((d) => d.id === sliver.documentId);
+    expect(doc?.speakers?.speakers[0]?.name).toBeNull();
+  });
+
+  it("sweeps names onto recordings ingested before the label existed", async () => {
+    const { memloom, add } = await fresh();
+    // The backlog case: this recording arrives while nobody is labeled yet.
+    const early = await add("early.spkvoice", rosterOf([voiceSpeaker(1, voice(0, 0.1))]));
+    const labeled = await add("labeled.spkvoice", rosterOf([voiceSpeaker(1, voice(0))]));
+    await memloom.renameSpeaker(labeled.documentId, 1, "Kostek Sytnyk");
+
+    const result = await memloom.autoNameAllSpeakers();
+    expect(result.named.map((n) => n.documentId)).toContain(early.documentId);
+    const doc = (await memloom.contextList()).find((d) => d.id === early.documentId);
+    expect(doc?.speakers?.speakers[0]?.name).toBe("Kostek Sytnyk");
+  });
+});

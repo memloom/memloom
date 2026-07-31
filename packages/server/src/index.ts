@@ -1538,6 +1538,12 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     }
   });
 
+  // Run the voice matcher over every document that still has numbered speakers: how
+  // recordings ingested before a person was labeled catch up, without re-ingesting.
+  app.post("/context/speakers/match", async (c) => {
+    return c.json(await memloom.autoNameAllSpeakers());
+  });
+
   app.delete("/context/documents/:id", async (c) => {
     await memloom.contextRemove(c.req.param("id"));
     return c.json({ ok: true });

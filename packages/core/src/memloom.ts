@@ -128,6 +128,35 @@ import { toVectorLiteral } from "./vector.js";
 export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
 
 /**
+ * Voice matching: how alike a new voice must be to a stored, named voiceprint before a
+ * recording is auto-labeled with that name.
+ *
+ * Calibrated on a real store, not guessed. Across one user's videos, the same voice
+ * scored 0.73 to 0.95 cosine similarity against their labeled prints, while the OTHER
+ * person in their 1:1 call scored up to 0.779: the distributions overlap on any single
+ * print. Two rules restore the margin: a candidate scores against every stored print of
+ * a name and keeps the best (with two prints, every true match reached 0.805 or higher),
+ * and voices with almost no talk time are never auto-named (a 2 s sliver's embedding is
+ * noise). At 0.8 every decision on that store was correct. Deliberately conservative:
+ * a missed match costs one manual rename, a false match mislabels a stranger's words.
+ */
+export const VOICE_MATCH_THRESHOLD = 0.8;
+const VOICE_MATCH_MIN_SECONDS = 10;
+
+function voiceMatchThreshold(): number {
+  const fromEnv = Number.parseFloat(process.env.MEMLOOM_VOICE_MATCH_THRESHOLD ?? "");
+  return Number.isFinite(fromEnv) ? fromEnv : VOICE_MATCH_THRESHOLD;
+}
+
+/** Both vectors are stored L2-normalized, so the dot product IS the cosine similarity. */
+function cosine(a: number[], b: number[]): number {
+  let sum = 0;
+  const n = Math.min(a.length, b.length);
+  for (let i = 0; i < n; i++) sum += (a[i] as number) * (b[i] as number);
+  return sum;
+}
+
+/**
  * A speakers jsonb cell -> the roster, or null. Defensive about the driver: PGLite hands
  * back parsed objects, pg can hand back strings, and a hand-edited row should degrade to
  * "no roster" rather than crash every document listing.
@@ -579,6 +608,14 @@ export class Memloom implements MemoryEngine {
     );
     const result = await this.#ingestDocument(owner, input.path, file, null);
     if (result.outcome !== "unchanged") this.#scheduleAutoIndex(owner);
+    // The voice library pass: a fresh roster arrives with numbered speakers, and anyone
+    // the store already knows by voice gets their name before the user ever sees
+    // "Speaker 1". Also run on "unchanged", so re-adding an old recording after labeling
+    // someone picks the name up without re-transcribing anything. Never fatal: a matching
+    // failure costs labels, not the ingest that just succeeded.
+    if (file.speakers?.speakers.some((s) => !s.name)) {
+      await this.autoNameSpeakers(result.documentId, owner).catch(() => {});
+    }
     return result;
   }
 
@@ -1135,6 +1172,117 @@ export class Memloom implements MemoryEngine {
       }
     });
     return roster;
+  }
+
+  /**
+   * Every named voiceprint in the store, keyed by name, restricted to one embedding
+   * model: vectors from different models never compare. A person can hold several prints
+   * (one per recording they were named in), and that plurality is the accuracy mechanism:
+   * candidates score against all of them and keep the best.
+   */
+  async #voicePrints(owner: string, embeddingModel: string): Promise<Map<string, number[][]>> {
+    const rows = await this.#storage.query<{ speakers: unknown }>(
+      "SELECT speakers FROM context_documents WHERE owner_id = $1 AND speakers IS NOT NULL",
+      [owner],
+    );
+    const prints = new Map<string, number[][]>();
+    for (const row of rows) {
+      const roster = parseRoster(row.speakers);
+      if (!roster || roster.embeddingModel !== embeddingModel) continue;
+      for (const s of roster.speakers) {
+        if (!s.name || !s.embedding) continue;
+        const list = prints.get(s.name) ?? [];
+        list.push(s.embedding);
+        prints.set(s.name, list);
+      }
+    }
+    return prints;
+  }
+
+  /**
+   * Label the voices this store already knows: every unnamed speaker in the document is
+   * scored against the named voiceprints, and a match above the threshold gets that name
+   * through the ordinary renameSpeaker path, so headings, breadcrumbs, and embeddings
+   * update exactly as a manual rename would.
+   *
+   * This is what makes labeling amortize. Name yourself once in one recording, and every
+   * later ingest of your voice arrives pre-named; each confirmed recording adds another
+   * print, which widens the margin for the next one. Best-match-first assignment plus
+   * renameSpeaker's duplicate refusal means two similar voices in one recording cannot
+   * both take the same name: the closer one wins, the other stays a numbered speaker.
+   */
+  async autoNameSpeakers(
+    documentId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<Array<{ speakerId: number; name: string; similarity: number }>> {
+    const rows = await this.#storage.query<{ speakers: unknown }>(
+      "SELECT speakers FROM context_documents WHERE id = $1 AND owner_id = $2",
+      [documentId, ownerId],
+    );
+    const roster = parseRoster(rows[0]?.speakers);
+    if (!roster) return [];
+    const unnamed = roster.speakers.filter(
+      (s) => !s.name && s.embedding && s.seconds >= VOICE_MATCH_MIN_SECONDS,
+    );
+    if (unnamed.length === 0) return [];
+    const prints = await this.#voicePrints(ownerId, roster.embeddingModel);
+    if (prints.size === 0) return [];
+
+    const threshold = voiceMatchThreshold();
+    const candidates = unnamed
+      .map((s) => {
+        let best: { name: string; similarity: number } | null = null;
+        for (const [name, vectors] of prints) {
+          for (const v of vectors) {
+            const similarity = cosine(s.embedding as number[], v);
+            if (!best || similarity > best.similarity) best = { name, similarity };
+          }
+        }
+        return best && best.similarity >= threshold ? { speaker: s, ...best } : null;
+      })
+      .filter((c): c is NonNullable<typeof c> => c !== null)
+      .sort((a, b) => b.similarity - a.similarity);
+
+    const named: Array<{ speakerId: number; name: string; similarity: number }> = [];
+    const taken = new Set(roster.speakers.map((s) => s.name).filter((n) => n !== null));
+    for (const c of candidates) {
+      if (taken.has(c.name)) continue;
+      try {
+        await this.renameSpeaker(documentId, c.speaker.id, c.name, ownerId);
+        taken.add(c.name);
+        named.push({ speakerId: c.speaker.id, name: c.name, similarity: c.similarity });
+      } catch {
+        // A single failed rename (a race, a concurrent edit) must not fail the others.
+      }
+    }
+    return named;
+  }
+
+  /**
+   * The catch-up sweep: run the matcher over every document that still has unnamed
+   * voices. This is how recordings ingested BEFORE a person was labeled pick up the
+   * name, without re-ingesting anything.
+   */
+  async autoNameAllSpeakers(ownerId: string = SENTINEL_OWNER): Promise<{
+    scanned: number;
+    named: Array<{ documentId: string; title: string; speakerId: number; name: string }>;
+  }> {
+    const rows = await this.#storage.query<{ id: string; title: string; speakers: unknown }>(
+      "SELECT id, title, speakers FROM context_documents WHERE owner_id = $1 AND speakers IS NOT NULL",
+      [ownerId],
+    );
+    const named: Array<{ documentId: string; title: string; speakerId: number; name: string }> =
+      [];
+    let scanned = 0;
+    for (const row of rows) {
+      const roster = parseRoster(row.speakers);
+      if (!roster || !roster.speakers.some((s) => !s.name && s.embedding)) continue;
+      scanned++;
+      for (const hit of await this.autoNameSpeakers(row.id, ownerId)) {
+        named.push({ documentId: row.id, title: row.title, ...hit });
+      }
+    }
+    return { scanned, named };
   }
 
   /**
