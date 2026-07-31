@@ -13,6 +13,58 @@ export async function markStale(storage: StorageAdapter, ids: readonly string[])
   }
 }
 
+/**
+ * Timestamps as ISO strings. The drivers hand back Date objects, and a stringified Date carries
+ * a zone name ("GMT+0200") that Postgres refuses to parse when the value is fed back in as a
+ * parameter. Anything that round-trips a timestamp through SQL goes through here.
+ */
+export function toIsoTimestamp(value: unknown): string {
+  return value instanceof Date ? value.toISOString() : String(value);
+}
+
+/**
+ * markStale, but returning the stale_since each row actually got. Each UPDATE has its own
+ * now(), so a caller that needs the written value (reconciliation's revert guard) cannot read it
+ * back in a second query without racing a concurrent write. Ids that were not active are
+ * absent from the result.
+ */
+export async function markStaleReturning(
+  storage: StorageAdapter,
+  ids: readonly string[],
+): Promise<Map<string, string>> {
+  const staled = new Map<string, string>();
+  for (const id of ids) {
+    const rows = await storage.query<{ id: string; stale_since: string }>(
+      `UPDATE memory_objects SET status = 'stale', stale_since = now(), updated_at = now()
+       WHERE id = $1 AND status = 'active'
+       RETURNING id, stale_since`,
+      [id],
+    );
+    const row = rows[0];
+    if (row) staled.set(row.id, toIsoTimestamp(row.stale_since));
+  }
+  return staled;
+}
+
+/**
+ * Reactivate a memory only while it is still stale AND its stale_since is the one the caller
+ * recorded. Returns false when someone else (a human resolution, a later run) staled it since,
+ * so an undo is exact or it is a no-op, never a clobber.
+ */
+export async function reactivateIfUntouched(
+  storage: StorageAdapter,
+  id: string,
+  staleSince: string,
+): Promise<boolean> {
+  const rows = await storage.query<{ id: string }>(
+    `UPDATE memory_objects SET status = 'active', stale_since = NULL, updated_at = now()
+     WHERE id = $1 AND status = 'stale' AND stale_since = $2::timestamptz
+     RETURNING id`,
+    [id, staleSince],
+  );
+  return rows.length > 0;
+}
+
 export async function reactivate(storage: StorageAdapter, ids: readonly string[]): Promise<void> {
   for (const id of ids) {
     await storage.query(

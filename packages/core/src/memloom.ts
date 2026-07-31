@@ -20,6 +20,17 @@ import {
 import { type ResolverSide, resolveConflictWithContext } from "./conflict-resolver.js";
 import { type Candidate, classify } from "./dedup.js";
 import { type DistilledMemory, distillChunk } from "./distill.js";
+import {
+  BACKOFF_SILENT_AFTER,
+  type ReconcileFinding,
+  effectiveCaps,
+  estimateRecheck,
+  findDuplicateContent,
+  findMultiHeadLineages,
+  meanActiveContentChars,
+  recheckWindow,
+  retirementBlocklist,
+} from "./reconcile.js";
 import type { MemoryEngine } from "./engine.js";
 import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from "./entities.js";
 import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
@@ -35,7 +46,10 @@ import {
   addEdgeIfAbsent,
   deactivateEdgesTouching,
   markStale,
+  markStaleReturning,
   reactivate,
+  reactivateIfUntouched,
+  toIsoTimestamp,
 } from "./resolve.js";
 import {
   type ActiveSchema,
@@ -69,6 +83,16 @@ import type {
   ContextAttachResult,
   ContextDocument,
   DocumentChunks,
+  ReconcileAction,
+  ReconcileActionKind,
+  ReconcileDecision,
+  ReconcileMode,
+  ReconcileOptions,
+  ReconcileReport,
+  ReconcileRevertResult,
+  ReconcileRun,
+  ReconcileRunStatus,
+  ReconcileTrigger,
   Entity,
   EntityDetail,
   Graph,
@@ -323,6 +347,45 @@ function mapRow(row: MemoryRow): Memory {
     ...(row.similarity !== undefined ? { similarity: Number(row.similarity) } : {}),
     ...(row.rrf_score !== undefined ? { rrfScore: Number(row.rrf_score) } : {}),
   };
+}
+
+interface ReconcileRunRow {
+  id: string;
+  mode: ReconcileMode;
+  trigger: ReconcileTrigger;
+  status: ReconcileRunStatus;
+  scanned: number;
+  retired: number;
+  questions: number;
+  conflicts_raised: number;
+  llm_calls: number;
+  started_at: string;
+  finished_at: string | null;
+  reverted_at: string | null;
+}
+
+function mapReconcileRun(row: ReconcileRunRow): ReconcileRun {
+  return {
+    id: row.id,
+    mode: row.mode,
+    trigger: row.trigger,
+    status: row.status,
+    scanned: Number(row.scanned),
+    retired: Number(row.retired),
+    questions: Number(row.questions),
+    conflictsRaised: Number(row.conflicts_raised),
+    llmCalls: Number(row.llm_calls),
+    startedAt: toIsoTimestamp(row.started_at),
+    finishedAt: row.finished_at ? toIsoTimestamp(row.finished_at) : null,
+    revertedAt: row.reverted_at ? toIsoTimestamp(row.reverted_at) : null,
+  };
+}
+
+// The configured model's name, for the dry run's spend estimate. LLMProvider is deliberately
+// just complete(); providers that know their model expose it, and the rest are unpriced.
+function modelNameOf(llm: LLMProvider): string {
+  const named = (llm as { model?: unknown }).model;
+  return typeof named === "string" ? named : "unconfigured";
 }
 
 export class Memloom implements MemoryEngine {
@@ -3410,6 +3473,298 @@ export class Memloom implements MemoryEngine {
        WHERE id = $1`,
       [conflictId],
     );
+  }
+
+  /**
+   * Reconciliation: the consolidation pass. Retires only what SQL can prove obsolete (today: exact
+   * duplicate active content), turns everything needing a judgment call into a question, and
+   * counts and prices the contradiction re-check instead of spending it.
+   *
+   * A dry run never touches memory_objects, memory_edges or memory_dedup_decisions. It does
+   * record itself in the reconcile ledger, because the run record IS the report and the per-run
+   * caps back off based on whether the last run's findings were acted on.
+   */
+  async reconcile(opts: ReconcileOptions = {}): Promise<ReconcileReport> {
+    const owner = opts.ownerId ?? SENTINEL_OWNER;
+    const mode = opts.mode ?? "dry_run";
+    const trigger = opts.trigger ?? "manual";
+    const model = modelNameOf(this.#llm);
+
+    const [created] = await this.#storage.query<{ id: string }>(
+      `INSERT INTO memory_reconcile_runs (owner_id, mode, trigger, model)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [owner, mode, trigger, model],
+    );
+    const runId = created?.id;
+    if (!runId) throw new Error("memloom: could not open a reconcile run");
+
+    try {
+      const duplicates = await findDuplicateContent(this.#storage, owner);
+      const multiHead = await findMultiHeadLineages(this.#storage, owner);
+      const blocked = await retirementBlocklist(this.#storage, owner);
+      // A memory a pending conflict already names is not reconciliation's to retire.
+      const retirable = duplicates.filter((f) => !f.memoryId || !blocked.has(f.memoryId));
+
+      const caps = effectiveCaps(await this.#unactionedReconcileRuns(owner));
+      const questions = multiHead;
+
+      const scanned = await this.#activeMemoryCount(owner);
+      const window = await recheckWindow(
+        this.#storage,
+        owner,
+        await this.#lastReconcileAt(owner, runId),
+      );
+      const estimate = estimateRecheck(
+        window,
+        await meanActiveContentChars(this.#storage, owner),
+        model,
+      );
+
+      // Retire inside one transaction so every row carries the stale_since the revert guard
+      // will compare against, captured from the UPDATE itself rather than read back after.
+      const toRetire = retirable.slice(0, caps.retire);
+      const staled =
+        mode === "apply" && toRetire.length > 0
+          ? await this.#storage.tx((tx) =>
+              markStaleReturning(
+                tx,
+                toRetire.map((f) => f.memoryId).filter((id): id is string => Boolean(id)),
+              ),
+            )
+          : new Map<string, string>();
+
+      const rows: Array<{
+        finding: ReconcileFinding;
+        surfaced: boolean;
+        applied: boolean;
+        staledAt: string | null;
+      }> = [];
+      for (const [i, finding] of retirable.entries()) {
+        const staledAt = (finding.memoryId && staled.get(finding.memoryId)) || null;
+        rows.push({
+          finding,
+          surfaced: i < caps.retire,
+          applied: staledAt !== null,
+          staledAt,
+        });
+      }
+      for (const [i, finding] of questions.entries()) {
+        rows.push({ finding, surfaced: i < caps.question, applied: false, staledAt: null });
+      }
+
+      for (const row of rows) {
+        await this.#storage.query(
+          `INSERT INTO memory_reconcile_actions
+             (owner_id, run_id, kind, class, memory_id, reason, applied, staled_at, surfaced)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            owner,
+            runId,
+            row.finding.kind,
+            row.finding.class,
+            row.finding.memoryId,
+            row.finding.reason,
+            row.applied,
+            row.staledAt,
+            row.surfaced,
+          ],
+        );
+      }
+
+      await this.#storage.query(
+        `UPDATE memory_reconcile_runs
+         SET status = 'success', finished_at = now(), scanned = $2, retired = $3,
+             questions = $4, conflicts_raised = 0, llm_calls = 0,
+             est_input_tokens = $5, est_output_tokens = $6
+         WHERE id = $1`,
+        [
+          runId,
+          scanned,
+          rows.filter((r) => r.applied).length,
+          questions.length,
+          estimate.inputTokens,
+          estimate.outputTokens,
+        ],
+      );
+
+      const actions = await this.#reconcileActions(runId);
+      return {
+        run: await this.#reconcileRun(runId),
+        actions,
+        estimate,
+        heldBack: {
+          retire: Math.max(0, retirable.length - caps.retire),
+          question: Math.max(0, questions.length - caps.question),
+          conflict: 0,
+        },
+      };
+    } catch (err) {
+      await this.#storage.query(
+        "UPDATE memory_reconcile_runs SET status = 'error', finished_at = now(), error = $2 WHERE id = $1",
+        [runId, err instanceof Error ? err.message : String(err)],
+      );
+      throw err;
+    }
+  }
+
+  /**
+   * Undo one reconcile run. A retirement is reversed only while the memory is still stale AND its
+   * stale_since is the one this run wrote: if a human (or a conflict resolution) staled it since,
+   * the undo skips it rather than overriding a newer decision.
+   */
+  async revertReconcile(runId: string, ownerId: string = SENTINEL_OWNER): Promise<ReconcileRevertResult> {
+    const [run] = await this.#storage.query<{ id: string; reverted_at: string | null }>(
+      "SELECT id, reverted_at FROM memory_reconcile_runs WHERE id = $1 AND owner_id = $2",
+      [runId, ownerId],
+    );
+    if (!run) throw new Error(`memloom: no reconcile run ${runId}`);
+    if (run.reverted_at) return { runId, restored: 0, skipped: 0 };
+
+    const actions = await this.#storage.query<{
+      id: string;
+      memory_id: string | null;
+      staled_at: string | null;
+    }>(
+      `SELECT id, memory_id, staled_at FROM memory_reconcile_actions
+       WHERE run_id = $1 AND kind = 'retire' AND applied = true`,
+      [runId],
+    );
+
+    let restored = 0;
+    let skipped = 0;
+    for (const action of actions) {
+      if (!action.memory_id || !action.staled_at) {
+        skipped++;
+        continue;
+      }
+      const ok = await reactivateIfUntouched(this.#storage, action.memory_id, action.staled_at);
+      if (ok) {
+        restored++;
+        await this.#storage.query("UPDATE memory_reconcile_actions SET applied = false WHERE id = $1", [
+          action.id,
+        ]);
+      } else {
+        skipped++;
+      }
+    }
+
+    await this.#storage.query("UPDATE memory_reconcile_runs SET reverted_at = now() WHERE id = $1", [
+      runId,
+    ]);
+    return { runId, restored, skipped };
+  }
+
+  /** Reconcile runs for the owner, newest first. */
+  async reconcileRuns(ownerId: string = SENTINEL_OWNER, limit = 20): Promise<ReconcileRun[]> {
+    const rows = await this.#storage.query<ReconcileRunRow>(
+      `SELECT id, mode, trigger, status, scanned, retired, questions, conflicts_raised,
+              llm_calls, started_at, finished_at, reverted_at
+       FROM memory_reconcile_runs WHERE owner_id = $1 ORDER BY started_at DESC LIMIT $2`,
+      [ownerId, limit],
+    );
+    return rows.map(mapReconcileRun);
+  }
+
+  async #reconcileRun(runId: string): Promise<ReconcileRun> {
+    const [row] = await this.#storage.query<ReconcileRunRow>(
+      `SELECT id, mode, trigger, status, scanned, retired, questions, conflicts_raised,
+              llm_calls, started_at, finished_at, reverted_at
+       FROM memory_reconcile_runs WHERE id = $1`,
+      [runId],
+    );
+    if (!row) throw new Error(`memloom: no reconcile run ${runId}`);
+    return mapReconcileRun(row);
+  }
+
+  async #reconcileActions(runId: string): Promise<ReconcileAction[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      run_id: string;
+      kind: ReconcileActionKind;
+      class: string;
+      memory_id: string | null;
+      reason: string;
+      applied: boolean;
+      staled_at: string | null;
+      surfaced: boolean;
+      decision: ReconcileDecision | null;
+      created_at: string;
+    }>(
+      `SELECT id, run_id, kind, class, memory_id, reason, applied, staled_at, surfaced,
+              decision, created_at
+       FROM memory_reconcile_actions WHERE run_id = $1 ORDER BY kind, created_at`,
+      [runId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      runId: r.run_id,
+      kind: r.kind,
+      class: r.class,
+      memoryId: r.memory_id,
+      reason: r.reason,
+      applied: Boolean(r.applied),
+      staledAt: r.staled_at ? toIsoTimestamp(r.staled_at) : null,
+      surfaced: Boolean(r.surfaced),
+      decision: r.decision,
+      createdAt: toIsoTimestamp(r.created_at),
+    }));
+  }
+
+  /**
+   * The left edge of the contradiction re-check window: when a run last actually re-checked
+   * anything, which `llm_calls > 0` is the record of.
+   *
+   * Deliberately not "the last run". A dry run counts nothing and re-checks nothing, so letting
+   * it move the edge would make a second preview report the work as already done. Today nothing
+   * calls the classifier at all, so this is always null and the window is the whole active set,
+   * which is the honest answer to what a first real run would cost.
+   */
+  async #lastReconcileAt(ownerId: string, exceptRunId: string): Promise<string | null> {
+    const [row] = await this.#storage.query<{ finished_at: string | null }>(
+      `SELECT finished_at FROM memory_reconcile_runs
+       WHERE owner_id = $1 AND id <> $2 AND status = 'success' AND finished_at IS NOT NULL
+         AND llm_calls > 0
+       ORDER BY finished_at DESC LIMIT 1`,
+      [ownerId, exceptRunId],
+    );
+    return row?.finished_at ? toIsoTimestamp(row.finished_at) : null;
+  }
+
+  /**
+   * How many runs in a row surfaced findings that nobody approved or rejected.
+   *
+   * Dry runs are excluded on purpose. Until there is a surface for approving or rejecting a
+   * finding, "unactioned" says nothing about whether the user is listening, and counting dry
+   * runs would make `memloom reconcile --dry-run` print less every time it is run with no way to
+   * tell it otherwise. Backing off is for a job that acts unattended.
+   */
+  async #unactionedReconcileRuns(ownerId: string): Promise<number> {
+    const rows = await this.#storage.query<{ surfaced: number; decided: number }>(
+      `SELECT count(a.id) FILTER (WHERE a.surfaced)::int AS surfaced,
+              count(a.id) FILTER (WHERE a.surfaced AND a.decision IS NOT NULL)::int AS decided
+       FROM memory_reconcile_runs r
+       LEFT JOIN memory_reconcile_actions a ON a.run_id = r.id
+       WHERE r.owner_id = $1 AND r.status = 'success' AND r.reverted_at IS NULL
+         AND r.mode = 'apply'
+       GROUP BY r.id, r.started_at
+       ORDER BY r.started_at DESC
+       LIMIT $2`,
+      [ownerId, BACKOFF_SILENT_AFTER],
+    );
+    let streak = 0;
+    for (const row of rows) {
+      if (Number(row.surfaced) > 0 && Number(row.decided) === 0) streak++;
+      else break;
+    }
+    return streak;
+  }
+
+  async #activeMemoryCount(ownerId: string): Promise<number> {
+    const [row] = await this.#storage.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM memory_objects WHERE owner_id = $1 AND status = 'active'",
+      [ownerId],
+    );
+    return Number(row?.n ?? 0);
   }
 
   /**

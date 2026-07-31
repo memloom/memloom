@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
 import { join, resolve } from "node:path";
 import {
+  type ReconcileReport,
   detectKind,
   type ImportStatus,
   MEMORY_TYPES,
@@ -42,6 +43,57 @@ function describeSource(m: Memory): string | null {
   if (m.source.headingPath) parts.push(`› ${m.source.headingPath}`);
   if (m.source.page != null) parts.push(`(p. ${m.source.page})`);
   return parts.join(" ");
+}
+
+function tokens(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+}
+
+/**
+ * The dry run's report. Retirements first (the only thing a run acts on), then the questions,
+ * then what a real run would have spent. The last line is unconditional: a dry run touches no
+ * memories, and the reader should never have to infer that.
+ */
+export function formatReconcileReport(report: ReconcileReport): string {
+  const retire = report.actions.filter((a) => a.kind === "retire");
+  const questions = report.actions.filter((a) => a.kind === "question" && a.surfaced);
+  const lines: string[] = [];
+
+  lines.push(report.run.mode === "dry_run" ? "reconcile (dry run)" : "reconcile");
+  lines.push(`scanned ${report.run.scanned} active memories`, "");
+
+  lines.push(retire.length === 0 ? "nothing to retire" : `would retire ${retire.length}:`);
+  for (const action of retire.filter((a) => a.surfaced)) {
+    lines.push(`  ${action.memoryId?.slice(0, 8)}  ${action.reason}`);
+  }
+  if (report.heldBack.retire > 0) {
+    lines.push(`  ...and ${report.heldBack.retire} more, held back by this run's cap`);
+  }
+
+  if (questions.length > 0) {
+    lines.push("", "questions:");
+    for (const action of questions) {
+      lines.push(`  ${action.memoryId?.slice(0, 8)}  ${action.reason}`);
+    }
+    if (report.heldBack.question > 0) {
+      lines.push(`  ...and ${report.heldBack.question} more, held back so this stays readable`);
+    }
+  }
+
+  const { estimate } = report;
+  lines.push("", `${estimate.window} memories in the contradiction re-check window`);
+  if (estimate.window > 0) {
+    const price = estimate.usd === null ? "" : `, about $${estimate.usd.toFixed(2)}`;
+    lines.push(
+      `  a real run would make ${estimate.llmCalls} LLM calls, about ` +
+        `${tokens(estimate.inputTokens)} in / ${tokens(estimate.outputTokens)} out ` +
+        `with ${estimate.model}${price}`,
+      "  the contradiction pass is not built yet: this is the estimate, not a result",
+    );
+  }
+
+  lines.push("", `no memory was changed. this run is logged as ${report.run.id}`);
+  return lines.join("\n");
 }
 
 // A path argument may be a file or a directory: directories are scanned recursively for
@@ -85,6 +137,8 @@ Usage: memloom <command> [args]
                        provider (run after switching providers; daemon must be stopped)
   auto-index [on|off]  show or set background entity extraction after saves/ingests
   conflicts [auto]     list pending conflicts; auto resolves the obvious ones with the LLM
+  reconcile --dry-run      consolidation pass: what memloom would retire and ask about,
+                       changing no memories and spending nothing
   import sessions      distill recent agent sessions into memories (--dry-run first)
   import agent-memory  bring in memories your agents already saved on disk (Claude Code
                        memory folders, Copilot); no distillation step
@@ -330,6 +384,28 @@ resolution is reversible.
          memory was recorded and the transcript excerpt it came from. Decisive
          verdicts are applied (one LLM call per conflict, all revertable);
          anything the model is unsure about stays pending for you.`,
+
+  reconcile: `memloom reconcile --dry-run
+
+The consolidation pass: memloom goes over its own store, reports what it believes
+has gone obsolete, and asks about what it cannot decide alone.
+
+Only --dry-run runs today. It changes no memories and makes no LLM calls: it
+reports the classes it can prove with a query, counts what a real run would send
+to the model, and prices it. The run itself is recorded in the reconcile log so a
+later run knows whether you acted on this one.
+
+What it looks at:
+  duplicate content   two identical active memories (the older one would be kept)
+  live heads          one belief with more than one current version
+  re-check window     memories saved since the last run, which a real run would
+                      re-check for contradictions that only emerged later
+
+Retiring a memory means status 'stale', never deletion: it stops showing up in
+recall, stays in its version history, and one command puts it back.
+
+Letting a run actually retire something needs RECONCILE_ENABLED=1 in your memloom
+config and a daemon restart. No command exposes that yet.`,
 
   context: `memloom context <add|list|remove>
 
@@ -785,6 +861,21 @@ export async function run(argv: readonly string[]): Promise<void> {
             "Browse them all in the viewer (memloom ui), or let the LLM take a pass: memloom conflicts auto",
         );
       }
+      return;
+    }
+
+    case "reconcile": {
+      // Dry run is the only mode the CLI offers. The apply path exists on the engine and is
+      // tested there, but nothing a user can type changes a belief unattended yet.
+      if (!rest.includes("--dry-run")) {
+        console.log(
+          "memloom reconcile only runs as a dry run today: memloom reconcile --dry-run\n" +
+            "It reports what it would retire and ask about, and changes nothing.",
+        );
+        return;
+      }
+      const engine = await connect();
+      console.log(formatReconcileReport(await engine.reconcile({ mode: "dry_run", trigger: "manual" })));
       return;
     }
 

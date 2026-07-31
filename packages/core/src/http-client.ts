@@ -11,6 +11,10 @@ import type {
   ContextAddResult,
   ContextDocument,
   DocumentChunks,
+  ReconcileOptions,
+  ReconcileReport,
+  ReconcileRevertResult,
+  ReconcileRun,
   Graph,
   ImportCaptureScope,
   ImportOptions,
@@ -318,6 +322,23 @@ export class HttpMemloomClient implements MemoryEngine {
 
   async revertConflict(conflictId: string): Promise<void> {
     await this.#post(`/memory/conflicts/${conflictId}/revert`, {});
+  }
+
+  reconcile(opts: ReconcileOptions = {}): Promise<ReconcileReport> {
+    return this.#post<ReconcileReport>("/memory/reconcile", {
+      mode: opts.mode ?? "dry_run",
+      trigger: opts.trigger ?? "manual",
+    });
+  }
+
+  revertReconcile(runId: string): Promise<ReconcileRevertResult> {
+    return this.#post<ReconcileRevertResult>(`/memory/reconcile/${runId}/revert`, {});
+  }
+
+  async reconcileRuns(_ownerId?: string, limit?: number): Promise<ReconcileRun[]> {
+    const query = limit ? `?limit=${limit}` : "";
+    const { runs } = await this.#json<{ runs: ReconcileRun[] }>(`/memory/reconcile/runs${query}`);
+    return runs;
   }
 
   contextAdd(input: ContextAddInput): Promise<ContextAddResult> {

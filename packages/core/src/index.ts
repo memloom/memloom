@@ -52,6 +52,21 @@ export {
 } from "./claude-sessions.js";
 export type { DistilledMemory, DistillOutput } from "./distill.js";
 export { buildDistillPrompt, distillChunk, parseDistillation } from "./distill.js";
+// Reconciliation: the consolidation detectors, the per-run caps, and the cost arithmetic.
+export type { ReconcileCaps, ReconcileFinding, RecheckWindow } from "./reconcile.js";
+export {
+  BACKOFF_SILENT_AFTER,
+  CONFLICT_QUEUE_CEILING,
+  RECONCILE_CAPS,
+  RECONCILE_K,
+  effectiveCaps,
+  estimateRecheck,
+  estimateTokens,
+  findDuplicateContent,
+  findMultiHeadLineages,
+  PROMPT_OVERHEAD_TOKENS,
+  recheckWindow,
+} from "./reconcile.js";
 export type { MemoryEngine } from "./engine.js";
 export type { ContextKind, ExtractedFile, ExtractedUnit, Extractor } from "./extract.js";
 export {
@@ -163,6 +178,17 @@ export type {
   ContextChunk,
   ContextDocument,
   DocumentChunks,
+  ReconcileAction,
+  ReconcileActionKind,
+  ReconcileDecision,
+  ReconcileEstimate,
+  ReconcileMode,
+  ReconcileOptions,
+  ReconcileReport,
+  ReconcileRevertResult,
+  ReconcileRun,
+  ReconcileRunStatus,
+  ReconcileTrigger,
   Entity,
   EntityDetail,
   Graph,

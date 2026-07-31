@@ -706,3 +706,85 @@ export interface NotionStatus {
   documents: number;
   chunks: number;
 }
+
+// Reconciliation: the consolidation pass. A run retires only what SQL can prove obsolete, and turns
+// everything that would need a model's judgment into a question or a conflict for the human.
+// Every run is one revertable unit recorded in memory_reconcile_runs / memory_reconcile_actions.
+
+export type ReconcileMode = "dry_run" | "apply";
+export type ReconcileTrigger = "manual" | "idle" | "startup";
+export type ReconcileRunStatus = "running" | "success" | "error" | "aborted";
+/** retire changes state; question and conflict ask the human. Only retire is ever applied. */
+export type ReconcileActionKind = "retire" | "question" | "conflict";
+export type ReconcileDecision = "approved" | "rejected" | "snoozed";
+
+export interface ReconcileAction {
+  id: string;
+  runId: string;
+  kind: ReconcileActionKind;
+  /** The detector that produced it: 'duplicate_content', 'multi_head', ... */
+  class: string;
+  memoryId: string | null;
+  reason: string;
+  /** True only when a run in 'apply' mode actually changed this memory's status. */
+  applied: boolean;
+  /** The stale_since this run wrote. revertReconcile restores only while it is unchanged. */
+  staledAt: string | null;
+  /** False when the finding was recorded but held back by a per-run cap. */
+  surfaced: boolean;
+  decision: ReconcileDecision | null;
+  createdAt: string;
+}
+
+export interface ReconcileRun {
+  id: string;
+  mode: ReconcileMode;
+  trigger: ReconcileTrigger;
+  status: ReconcileRunStatus;
+  scanned: number;
+  retired: number;
+  questions: number;
+  conflictsRaised: number;
+  llmCalls: number;
+  startedAt: string;
+  finishedAt: string | null;
+  revertedAt: string | null;
+}
+
+/**
+ * What the contradiction re-check WOULD cost. A dry run never spends it: the window is counted
+ * and priced, not judged. Tokens are derived from the real dedup prompt template and the actual
+ * content lengths in the window; `usd` is null unless a price for `model` is known.
+ */
+export interface ReconcileEstimate {
+  /** Active memories in the re-check window (saved since the last successful run). */
+  window: number;
+  llmCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  model: string;
+  usd: number | null;
+}
+
+export interface ReconcileOptions {
+  mode?: ReconcileMode;
+  trigger?: ReconcileTrigger;
+  ownerId?: string;
+}
+
+export interface ReconcileReport {
+  run: ReconcileRun;
+  /** Every finding, surfaced or held back by a cap. */
+  actions: ReconcileAction[];
+  estimate: ReconcileEstimate;
+  /** Findings recorded but not shown, by kind, because a per-run cap was reached. */
+  heldBack: { retire: number; question: number; conflict: number };
+}
+
+export interface ReconcileRevertResult {
+  runId: string;
+  /** Memories returned to 'active'. */
+  restored: number;
+  /** Retirements left alone because the memory's stale_since moved after the run. */
+  skipped: number;
+}

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -579,6 +580,49 @@ describe("server", () => {
       conflicts: unknown[];
     };
     expect(emptied.conflicts).toHaveLength(0);
+  });
+
+  it("reconciles as a dry run over HTTP, and refuses to apply without RECONCILE_ENABLED", async () => {
+    const server = await app();
+    await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "the staging database runs on Postgres" }),
+    });
+
+    const res = await server.request("/memory/reconcile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    const report = (await res.json()) as {
+      run: { id: string; mode: string; scanned: number };
+      estimate: { window: number; usd: number | null };
+    };
+    expect(report.run.mode).toBe("dry_run");
+    expect(report.run.scanned).toBe(1);
+    expect(report.estimate.window).toBe(1);
+
+    const runs = (await (await server.request("/memory/reconcile/runs")).json()) as {
+      runs: Array<{ id: string }>;
+    };
+    expect(runs.runs.map((r) => r.id)).toEqual([report.run.id]);
+
+    // The one path that can change beliefs unattended stays shut unless the daemon was told
+    // otherwise. Nothing the CLI sends can open it.
+    delete process.env.RECONCILE_ENABLED;
+    const applied = await server.request("/memory/reconcile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "apply" }),
+    });
+    expect(applied.status).toBe(403);
+
+    const missing = await server.request(`/memory/reconcile/${randomUUID()}/revert`, {
+      method: "POST",
+    });
+    expect(missing.status).toBe(404);
   });
 
   it("deletes a memory over HTTP; a made-up id maps to 404", async () => {

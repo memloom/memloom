@@ -10,6 +10,10 @@ import type {
   ContextAddResult,
   ContextDocument,
   DocumentChunks,
+  ReconcileOptions,
+  ReconcileReport,
+  ReconcileRevertResult,
+  ReconcileRun,
   Graph,
   ImportCaptureScope,
   ImportOptions,
@@ -109,6 +113,16 @@ export interface MemoryEngine {
     ownerId?: string,
     onProgress?: (event: ConflictAutoEvent) => void,
   ): Promise<ConflictAutoResult>;
+  /**
+   * The consolidation pass. Retires only what SQL can prove obsolete, raises everything that
+   * needs judgment as a question, and prices the contradiction re-check without spending it.
+   * Defaults to 'dry_run', which leaves memories untouched.
+   */
+  reconcile(opts?: ReconcileOptions): Promise<ReconcileReport>;
+  /** Undo one reconcile run, skipping any retirement whose memory was staled again since. */
+  revertReconcile(runId: string, ownerId?: string): Promise<ReconcileRevertResult>;
+  /** Reconcile runs for the owner, newest first. */
+  reconcileRuns(ownerId?: string, limit?: number): Promise<ReconcileRun[]>;
   /** Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors; re-add replaces. */
   contextAdd(input: ContextAddInput): Promise<ContextAddResult>;
   contextList(ownerId?: string): Promise<ContextDocument[]>;

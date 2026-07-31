@@ -337,6 +337,11 @@ const resolveSchema = z.discriminatedUnion("action", [
   }),
 ]);
 
+const reconcileSchema = z.object({
+  mode: z.enum(["dry_run", "apply"]).default("dry_run"),
+  trigger: z.enum(["manual", "idle", "startup"]).default("manual"),
+});
+
 /** Parse + validate a JSON body; returns the typed value or a 400 JSON response. */
 async function parseBody<S extends z.ZodTypeAny>(
   c: Context,
@@ -782,6 +787,41 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/memory/conflicts/:id/revert", async (c) => {
     await memloom.revertConflict(c.req.param("id"));
     return c.json({ ok: true });
+  });
+
+  // Reconciliation. Apply mode is gated on RECONCILE_ENABLED because it is the one path that can change
+  // beliefs with no human in the loop; a dry run only reads and reports, so it is not gated.
+  // Every run is revertable through the route below.
+  app.post("/memory/reconcile", async (c) => {
+    const body = await parseBody(c, reconcileSchema);
+    if (!body.ok) return body.res;
+    if (body.data.mode === "apply" && process.env.RECONCILE_ENABLED !== "1") {
+      return c.json(
+        {
+          error:
+            "reconciliation can only run as a dry run. Set RECONCILE_ENABLED=1 in your memloom config " +
+            "and restart the daemon to let a run change beliefs.",
+        },
+        403,
+      );
+    }
+    return c.json(await memloom.reconcile(body.data));
+  });
+
+  app.get("/memory/reconcile/runs", async (c) => {
+    const limit = Number(c.req.query("limit") ?? 20);
+    return c.json({
+      runs: await memloom.reconcileRuns(undefined, Number.isFinite(limit) ? limit : 20),
+    });
+  });
+
+  app.post("/memory/reconcile/:id/revert", async (c) => {
+    try {
+      return c.json(await memloom.revertReconcile(c.req.param("id")));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no reconcile run/.test(message) ? 404 : 409);
+    }
   });
 
   // The auto-resolver: an LLM re-judges every pending conflict with provenance context and

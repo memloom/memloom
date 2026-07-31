@@ -206,6 +206,11 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
     this.#baseUrl = opts.baseUrl ?? OPENROUTER_BASE;
   }
 
+  /** The completion model's id. Read by reconciliation to price a run it has not spent yet. */
+  get model(): string {
+    return this.#model;
+  }
+
   async complete(prompt: string): Promise<string> {
     const json = (await postJson(
       `${this.#baseUrl}/chat/completions`,
