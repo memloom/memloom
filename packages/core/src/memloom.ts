@@ -1271,8 +1271,7 @@ export class Memloom implements MemoryEngine {
       "SELECT id, title, speakers FROM context_documents WHERE owner_id = $1 AND speakers IS NOT NULL",
       [ownerId],
     );
-    const named: Array<{ documentId: string; title: string; speakerId: number; name: string }> =
-      [];
+    const named: Array<{ documentId: string; title: string; speakerId: number; name: string }> = [];
     let scanned = 0;
     for (const row of rows) {
       const roster = parseRoster(row.speakers);

@@ -245,7 +245,10 @@ export async function resolveModel(id?: string): Promise<ResolvedModel> {
           preprocessor: await need("preprocessor", [/preprocess/i]),
           encoder: await need("encoder", [/encode/i]),
           uncachedDecoder: await need("uncached decoder", [/uncached[_-]?decode/i]),
-          cachedDecoder: await need("cached decoder", [/^cached[_-]?decode/i, /cached[_-]?decode/i]),
+          cachedDecoder: await need("cached decoder", [
+            /^cached[_-]?decode/i,
+            /cached[_-]?decode/i,
+          ]),
         },
       };
       break;
@@ -280,8 +283,7 @@ export async function resolveSpeakerModels(): Promise<SpeakerModelPaths | null> 
   const segmentationDir = join(modelDir(), SPEAKER_SEGMENTATION_ARCHIVE);
   // The archive ships model.onnx and model.int8.onnx; fp32 is preferred because the
   // segmentation model is 6 MB either way and int8 was not what upstream benchmarks.
-  const segmentation =
-    (await findOnnx(segmentationDir, [/^model\.onnx$/i, /model/i])) ?? null;
+  const segmentation = (await findOnnx(segmentationDir, [/^model\.onnx$/i, /model/i])) ?? null;
   const embedding = join(modelDir(), SPEAKER_EMBEDDING_FILE);
   const haveEmbedding = await stat(embedding)
     .then((s) => s.size > 0)
@@ -393,7 +395,9 @@ export async function setupModels(options: SetupOptions = {}): Promise<ModelStat
   await mkdir(dir, { recursive: true });
 
   const vad = join(dir, "silero_vad.onnx");
-  const haveVad = await stat(vad).then((s) => s.size > 0).catch(() => false);
+  const haveVad = await stat(vad)
+    .then((s) => s.size > 0)
+    .catch(() => false);
   if (!haveVad) {
     options.onStage?.("downloading voice activity detector (0.6 MB)");
     await download(`${RELEASE}/silero_vad.onnx`, vad, options.onProgress);

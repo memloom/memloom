@@ -1,5 +1,5 @@
 import { parentPort, workerData } from "node:worker_threads";
-import { AudioError, transcribeWav, type TranscribeProgress } from "./audio.js";
+import { AudioError, type TranscribeProgress, transcribeWav } from "./audio.js";
 import { diarizeWav } from "./diarize.js";
 
 // The inference worker. sherpa's decode() and process() are synchronous native calls; on

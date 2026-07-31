@@ -1,8 +1,5 @@
 import { loadSherpa, SAMPLE_RATE } from "./audio.js";
-import {
-  resolveSpeakerModels,
-  SPEAKER_EMBEDDING_MODEL_ID,
-} from "./audio-models.js";
+import { resolveSpeakerModels, SPEAKER_EMBEDDING_MODEL_ID } from "./audio-models.js";
 import type { DocumentSpeaker, SpeakerRoster } from "./types.js";
 
 // Who spoke when, entirely on this machine. pyannote segmentation finds voice activity per
@@ -156,10 +153,7 @@ export function relabelByAppearance(segments: RawSegment[]): RawSegment[] {
 }
 
 /** Merge per-breath segments into readable turns. Input must be sorted by start. */
-export function mergeTurns(
-  segments: RawSegment[],
-  gap = TURN_MERGE_GAP_SECONDS,
-): SpeakerTurn[] {
+export function mergeTurns(segments: RawSegment[], gap = TURN_MERGE_GAP_SECONDS): SpeakerTurn[] {
   const turns: SpeakerTurn[] = [];
   for (const seg of segments) {
     const last = turns[turns.length - 1];
@@ -255,9 +249,13 @@ export async function diarizeWav(
   // cache signature always describes the same run this constructs.
   const clustering = clusterConfig();
 
-  const sd = new (sherpa.OfflineSpeakerDiarization as new (c: unknown) => {
-    process(samples: Float32Array): RawSegment[];
-  })({
+  const sd = new (
+    sherpa.OfflineSpeakerDiarization as new (
+      c: unknown,
+    ) => {
+      process(samples: Float32Array): RawSegment[];
+    }
+  )({
     // Segmentation threads scale with the caller's numThreads too: it slides a window over
     // the ENTIRE recording, so it dominates the pass, and pinning it to 1 (as the upstream
     // example does) left most of the cost single-threaded.
@@ -303,9 +301,10 @@ export async function diarizeWav(
   // the roster: the labeling UI works fine without it.
   const extractor = (() => {
     try {
-      return new (sherpa.SpeakerEmbeddingExtractor as new (c: unknown) => EmbeddingExtractor)(
-        { model: models.embedding, numThreads },
-      );
+      return new (sherpa.SpeakerEmbeddingExtractor as new (c: unknown) => EmbeddingExtractor)({
+        model: models.embedding,
+        numThreads,
+      });
     } catch {
       return null;
     }

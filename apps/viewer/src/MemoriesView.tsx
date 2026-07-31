@@ -162,9 +162,7 @@ export function MemoriesView() {
   // Seeded from the prefetch cache: a hover on the tab (or an earlier visit) already
   // fetched, so the first render shows memories instead of "loading" and revalidates
   // behind them.
-  const [memories, setMemories] = useState<Memory[] | null>(() =>
-    cachedData<Memory[]>("memories"),
-  );
+  const [memories, setMemories] = useState<Memory[] | null>(() => cachedData<Memory[]>("memories"));
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<MemoryType | "all">("all");
 

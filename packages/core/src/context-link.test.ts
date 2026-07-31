@@ -34,7 +34,10 @@ describe("context connector: web links", () => {
   }
 
   function serve(html: string) {
-    vi.stubGlobal("fetch", async () => new Response(html, { headers: { "content-type": "text/html" } }));
+    vi.stubGlobal(
+      "fetch",
+      async () => new Response(html, { headers: { "content-type": "text/html" } }),
+    );
   }
 
   it("ingests a page and recalls it with the URL as the source", async () => {
@@ -136,7 +139,7 @@ describe("context connector: web links", () => {
 
   it("surfaces an extraction failure instead of storing an empty document", async () => {
     const { memloom } = await fresh();
-    serve("<html><body><div id=\"root\"></div></body></html>");
+    serve('<html><body><div id="root"></div></body></html>');
 
     await expect(memloom.contextAddUrl({ url: "https://app.example.com/spa" })).rejects.toThrow();
     expect(await memloom.contextList()).toHaveLength(0);

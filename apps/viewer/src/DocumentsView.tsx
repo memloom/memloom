@@ -141,6 +141,7 @@ function SpeakerPanel({
             <input
               className="speakerInput"
               value={draft}
+              // biome-ignore lint/a11y/noAutofocus: the input appears in response to the user's own click to rename; focus following that click is the accessible behavior
               autoFocus
               placeholder={s.label}
               onChange={(e) => setDraft(e.target.value)}

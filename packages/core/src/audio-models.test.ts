@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -167,7 +167,11 @@ describe("modelStatus", () => {
   });
 
   it("lists every installed model, not just the selected one", async () => {
-    await fakeInstall("parakeet-v3", ["encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx"]);
+    await fakeInstall("parakeet-v3", [
+      "encoder.int8.onnx",
+      "decoder.int8.onnx",
+      "joiner.int8.onnx",
+    ]);
     await fakeInstall("sense-voice", ["model.int8.onnx"]);
     const status = await modelStatus();
     expect(status.installedIds.sort()).toEqual(["parakeet-v3", "sense-voice"]);

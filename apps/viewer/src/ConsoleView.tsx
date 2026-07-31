@@ -9,8 +9,8 @@ import {
   XCircle,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { cachedData, refetch } from "./prefetch";
 import { api, type IndexEventLevel, type IndexRun, type IndexRunEvent } from "./api";
+import { cachedData, refetch } from "./prefetch";
 
 // Console: exercise the engine by hand (save, recall, index) without leaving the viewer.
 // Indexing history is persistent and session-grouped (a production-proven memory_index_runs

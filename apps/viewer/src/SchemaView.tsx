@@ -294,9 +294,7 @@ function EntitiesSection({
 export function SchemaView({ onChanged }: { onChanged: () => void }) {
   // Seeded from the prefetch cache (tab hover fetched already); mount revalidates, and
   // mutations reload through the cache-busting path so edits are never read back stale.
-  const [schema, setSchema] = useState<SchemaInfo | null>(() =>
-    cachedData<SchemaInfo>("schema"),
-  );
+  const [schema, setSchema] = useState<SchemaInfo | null>(() => cachedData<SchemaInfo>("schema"));
   const [error, setError] = useState<string | null>(null);
   const [kind, setKind] = useState<"entity_type" | "predicate">("entity_type");
   const [name, setName] = useState("");

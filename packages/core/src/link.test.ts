@@ -1,5 +1,5 @@
-import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -114,7 +114,7 @@ describe("extractUrl", () => {
     const chrome = '<li><a href="/x">Navigate somewhere</a></li>'.repeat(4_000);
     const shell =
       `<html><head><title>App</title></head><body><nav>${chrome}</nav>` +
-      "<div id=\"root\"><p>Loading your dashboard.</p></div></body></html>";
+      '<div id="root"><p>Loading your dashboard.</p></div></body></html>';
     expect(Buffer.byteLength(shell)).toBeGreaterThan(100 * 1024);
 
     await expect(
@@ -123,7 +123,7 @@ describe("extractUrl", () => {
   });
 
   it("refuses a page with no readable content at all, separately from the thin case", async () => {
-    const blank = "<html><head><title>App</title></head><body><div id=\"root\"></div></body></html>";
+    const blank = '<html><head><title>App</title></head><body><div id="root"></div></body></html>';
     await expect(
       extractUrl("https://app.example.com/blank", sha256, { fetchImpl: stubFetch(blank) }),
     ).rejects.toMatchObject({ code: "empty" });

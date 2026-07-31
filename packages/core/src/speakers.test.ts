@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { sectionizeTurns, toMarkdown, type TimedWord } from "./audio.js";
+import { sectionizeTurns, type TimedWord, toMarkdown } from "./audio.js";
 import {
   dropJunkClusters,
   longestSegment,
@@ -124,10 +124,10 @@ describe("sectionizeTurns", () => {
 
   it("still splits one voice's monologue on the time rules", () => {
     const monologue = words(
-      ...Array.from(
-        { length: 40 },
-        (_, i): [string, number] => [i % 9 === 8 ? "word." : "word", i * 10],
-      ),
+      ...Array.from({ length: 40 }, (_, i): [string, number] => [
+        i % 9 === 8 ? "word." : "word",
+        i * 10,
+      ]),
     );
     const sections = sectionizeTurns(monologue, [{ start: 0, end: 400, speaker: 1 }], 120);
     expect(sections.length).toBeGreaterThan(1);
@@ -135,10 +135,7 @@ describe("sectionizeTurns", () => {
   });
 
   it("lets words in the silence between turns trail the current speaker", () => {
-    const sections = sectionizeTurns(
-      words(["One.", 0], ["straggler", 4.8], ["Two.", 6]),
-      turns,
-    );
+    const sections = sectionizeTurns(words(["One.", 0], ["straggler", 4.8], ["Two.", 6]), turns);
     expect(sections[0]?.text).toBe("One. straggler");
   });
 });
@@ -270,9 +267,7 @@ describe("renameSpeaker", () => {
   it("refuses a name another speaker already carries", async () => {
     const { memloom, documentId } = await freshWithDoc();
     await memloom.renameSpeaker(documentId, 1, "Alice");
-    await expect(memloom.renameSpeaker(documentId, 2, "Alice")).rejects.toThrow(
-      /already named/,
-    );
+    await expect(memloom.renameSpeaker(documentId, 2, "Alice")).rejects.toThrow(/already named/);
   });
 
   it("rejects an unknown speaker and an empty name", async () => {
@@ -378,10 +373,7 @@ describe("autoNameSpeakers", () => {
     const first = await add("named.spkvoice", rosterOf([voiceSpeaker(1, voice(0))]));
     await memloom.renameSpeaker(first.documentId, 1, "Kostek Sytnyk");
 
-    const sliver = await add(
-      "sliver.spkvoice",
-      rosterOf([voiceSpeaker(1, voice(0, 0.14), 3)]),
-    );
+    const sliver = await add("sliver.spkvoice", rosterOf([voiceSpeaker(1, voice(0, 0.14), 3)]));
     const doc = (await memloom.contextList()).find((d) => d.id === sliver.documentId);
     expect(doc?.speakers?.speakers[0]?.name).toBeNull();
   });

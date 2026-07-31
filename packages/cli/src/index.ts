@@ -2,14 +2,14 @@ import { spawn } from "node:child_process";
 import { readdirSync, statSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
 import {
-  detectKind,
   type ContextProgressEvent,
+  detectKind,
   type ImportStatus,
+  isHttpUrl,
   MEMORY_TYPES,
   type Memory,
   type MemoryType,
   supportedExtensions,
-  isHttpUrl,
 } from "@memloom/core";
 import { runAgentMemoryImport } from "./agent-memory.js";
 import { configPath, dataDir, ensureConfig, loadConfigEnv, memloomHome } from "./config.js";
