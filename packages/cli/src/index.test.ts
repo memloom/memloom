@@ -133,7 +133,10 @@ describe("cli router", () => {
     expect(out).toContain("...and 37 more");
     expect(out).toContain("would fold 6 name variants");
     expect(out).toContain("4 uncertain pairs would go to the conflicts tab");
-    expect(out).toContain("203 memories in the contradiction re-check window");
+    expect(out).toContain("203 memories are due a contradiction re-check");
+    // The debt is bigger than one run's ceiling, and the report has to say so rather than let
+    // the reader assume the whole figure lands on the next run.
+    expect(out).toContain("the 200 that have waited longest");
     expect(out).toContain("152k in / 24k out with google/gemini-2.5-flash, about $0.21");
     // The reader must never have to infer this from the absence of bad news.
     expect(out).toContain("no memory was changed");
