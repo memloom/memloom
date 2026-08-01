@@ -62,9 +62,10 @@ function tokens(n: number): string {
 }
 
 /**
- * A run's report. Repairs first (what the run acted on), then folds, then the questions, then
- * what the contradiction pass would have spent. The last line says whether anything changed and
- * names the run, so undoing it never requires going and looking the id up.
+ * A run's report. Repairs first (what the run acted on), then folds, then what it asked the
+ * user, then what it only noticed, then what the contradiction pass would have spent. The last
+ * line says whether anything changed and names the run, so undoing it never requires going and
+ * looking the id up.
  */
 export function formatReconcileReport(report: ReconcileReport): string {
   const dry = report.run.mode === "dry_run";
@@ -72,6 +73,12 @@ export function formatReconcileReport(report: ReconcileReport): string {
   const retire = report.actions.filter((a) => a.kind === "retire");
   const folds = report.actions.filter((a) => a.kind === "fold");
   const questions = report.actions.filter((a) => a.kind === "question" && a.surfaced);
+  // Pairs a model settled are named under arbitration below, so this is what the run put to
+  // the user and left there.
+  const arbitrated = new Set((report.arbitration?.settled ?? []).map((s) => s.conflictId));
+  const raised = report.actions.filter(
+    (a) => a.kind === "conflict" && !arbitrated.has(a.conflictId ?? ""),
+  );
   const lines: string[] = [];
 
   lines.push(dry ? "reconcile (dry run)" : "reconcile");
@@ -111,8 +118,19 @@ export function formatReconcileReport(report: ReconcileReport): string {
     lines.push("", `a model re-judged ${examined} pending conflicts and resolved ${resolved}`);
   }
 
+  if (raised.length > 0) {
+    lines.push("", `asked in the conflicts tab (${raised.length}):`);
+    for (const action of raised) {
+      const id = action.memoryId ? `${action.memoryId.slice(0, 8)}  ` : "";
+      lines.push(`  ${id}${action.reason}`);
+    }
+    if (report.heldBack.conflict > 0) {
+      lines.push(`  ...and ${report.heldBack.conflict} more, left for a later run`);
+    }
+  }
+
   if (questions.length > 0) {
-    lines.push("", "questions:");
+    lines.push("", "noticed, not fixed:");
     for (const action of questions) {
       const id = action.memoryId ? `${action.memoryId.slice(0, 8)}  ` : "";
       lines.push(`  ${id}${action.reason}`);

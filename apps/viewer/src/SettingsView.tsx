@@ -48,12 +48,13 @@ function ago(iso: string): string {
   return `${Math.round(hours / 24)} days ago`;
 }
 
-/** What one run did, in the same order the CLI prints it. */
+/** What one run did, in the same order the CLI prints it. Applied runs only. */
 function runSummary(run: ReconcileRun): string {
   const parts: string[] = [];
   if (run.retired > 0) parts.push(`${run.retired} retired`);
   if (run.folded > 0) parts.push(`${run.folded} folded`);
-  if (run.questions > 0) parts.push(`${run.questions} questions`);
+  if (run.conflictsRaised > 0) parts.push(`${run.conflictsRaised} raised`);
+  if (run.questions > 0) parts.push(`${run.questions} flagged`);
   if (parts.length === 0) parts.push("nothing to do");
   return `${ago(run.startedAt)}, ${parts.join(", ")}`;
 }
@@ -329,6 +330,12 @@ function ReconcileReportCard({ report }: { report: ReconcileReport }) {
   const retire = report.actions.filter((a) => a.kind === "retire" && a.surfaced);
   const folds = report.actions.filter((a) => a.kind === "fold");
   const questions = report.actions.filter((a) => a.kind === "question" && a.surfaced);
+  // Pairs the model settled are already named under arbitration, so leave them out here and
+  // this group is the questions the run put to the user.
+  const arbitrated = new Set((report.arbitration?.settled ?? []).map((s) => s.conflictId));
+  const raised = report.actions.filter(
+    (a) => a.kind === "conflict" && !arbitrated.has(a.conflictId ?? ""),
+  );
   const { estimate } = report;
 
   return (
@@ -400,9 +407,25 @@ function ReconcileReportCard({ report }: { report: ReconcileReport }) {
         </div>
       )}
 
+      {raised.length > 0 && (
+        <div className="reconcileGroup">
+          <div className="reconcileGroupHead">asked in the conflicts tab</div>
+          {raised.map((a) => (
+            <div key={a.id} className="reconcileLine">
+              {a.reason}
+            </div>
+          ))}
+          {report.heldBack.conflict > 0 && (
+            <div className="reconcileLine reconcileLineMuted">
+              and {report.heldBack.conflict} more, left for a later run
+            </div>
+          )}
+        </div>
+      )}
+
       {questions.length > 0 && (
         <div className="reconcileGroup">
-          <div className="reconcileGroupHead">questions</div>
+          <div className="reconcileGroupHead">noticed, not fixed</div>
           {questions.map((a) => (
             <div key={a.id} className="reconcileLine">
               {a.reason}

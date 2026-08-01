@@ -276,16 +276,24 @@ export function ConsoleView({
   );
 }
 
+// The header has to account for everything the body will list, or a run that only raised
+// conflicts reads as "nothing to do" above two questions it just asked. The counters are
+// deliberately zero on a preview (nothing was done), so a preview says so instead of
+// reciting zeroes as if it had found nothing.
 function reconcileRunSummary(run: ReconcileRun): string {
   if (run.status === "running") return "reconciling…";
+  if (run.mode === "dry_run") return "preview, nothing applied";
   const parts: string[] = [];
   if (run.retired > 0) parts.push(`${run.retired} retired`);
   if (run.folded > 0) parts.push(`${run.folded} folded`);
-  if (run.questions > 0)
-    parts.push(`${run.questions} ${run.questions === 1 ? "question" : "questions"}`);
+  // "raised", not "to decide": a paid pass can settle a pair the free pass queued in the same
+  // run, so this is how many questions the run asked, not how many are still waiting.
+  if (run.conflictsRaised > 0) parts.push(`${run.conflictsRaised} raised`);
+  // Not "questions": these are the integrity oddities reconciliation reports and does not fix, and
+  // they are answerable nowhere, unlike the conflicts above them.
+  if (run.questions > 0) parts.push(`${run.questions} flagged`);
   const did = parts.length > 0 ? parts.join(", ") : "nothing to do";
-  const prefix =
-    run.mode === "dry_run" ? "preview: " : run.trigger === "manual" ? "" : `${run.trigger}: `;
+  const prefix = run.trigger === "manual" ? "" : `${run.trigger}: `;
   const calls = run.llmCalls > 0 ? `; ${run.llmCalls} LLM calls` : "";
   return `${prefix}${did}${calls}`;
 }

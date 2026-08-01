@@ -136,6 +136,85 @@ describe("cli router", () => {
     expect(out).toContain("no memory was changed");
   });
 
+  // A run whose whole output is questions used to print none of them: the report knew about
+  // retirements, folds and ledger notes, and said nothing about the rows it put in the queue.
+  it("the reconcile report names the conflicts it raised, and the ones it held back", () => {
+    const report: ReconcileReport = {
+      run: {
+        id: "run-2",
+        mode: "apply",
+        trigger: "manual",
+        status: "success",
+        scanned: 2963,
+        retired: 0,
+        folded: 0,
+        questions: 0,
+        conflictsRaised: 2,
+        llmCalls: 1,
+        startedAt: "2026-08-01T10:00:00.000Z",
+        finishedAt: "2026-08-01T10:00:01.000Z",
+        revertedAt: null,
+      },
+      actions: [
+        {
+          id: "b1",
+          runId: "run-2",
+          kind: "conflict",
+          class: "multi_head",
+          memoryId: "dddddddd-1111-2222-3333-444444444444",
+          reason: "2 versions of this belief are current at once (versions 3, 4).",
+          applied: true,
+          staledAt: null,
+          surfaced: true,
+          decision: null,
+          mergeId: null,
+          conflictId: "cf-1",
+          createdAt: "2026-08-01T10:00:00.000Z",
+        },
+        {
+          id: "b2",
+          runId: "run-2",
+          kind: "conflict",
+          class: "llm_entity_distinct",
+          memoryId: null,
+          reason: "a model kept two names apart",
+          applied: true,
+          staledAt: null,
+          surfaced: true,
+          decision: null,
+          mergeId: null,
+          conflictId: "cf-2",
+          createdAt: "2026-08-01T10:00:00.000Z",
+        },
+      ],
+      estimate: {
+        window: 0,
+        llmCalls: 0,
+        inputTokens: 0,
+        outputTokens: 0,
+        model: "google/gemini-2.5-flash",
+        usd: null,
+      },
+      heldBack: { retire: 0, question: 0, conflict: 6 },
+      passes: ["invariants", "llm_entities"],
+      arbitration: {
+        calls: 1,
+        folded: 0,
+        rejected: 1,
+        unsure: 0,
+        settled: [{ conflictId: "cf-2", class: "llm_entity_distinct", reason: "kept apart" }],
+      },
+    };
+
+    const out = formatReconcileReport(report);
+    expect(out).toContain("asked in the conflicts tab (1):");
+    expect(out).toContain("dddddddd  2 versions of this belief are current at once");
+    expect(out).toContain("...and 6 more, left for a later run");
+    // A pair the model settled is already named under arbitration; listing it here as well
+    // would read as two separate questions waiting on the user.
+    expect(out).not.toContain("a model kept two names apart");
+  });
+
   it("<command> --help prints that command's help without touching the daemon", async () => {
     // These must never call connect(); a daemon-less environment is the whole point.
     await run(["index", "--help"]);
