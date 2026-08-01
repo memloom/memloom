@@ -792,6 +792,22 @@ export interface ConflictAutoResult {
 }
 
 /**
+ * Progress from the entity arbiter: one event per pair the model was asked about. The same
+ * shape as ConflictAutoEvent, because both are one paid call per queued item and the wait is
+ * the same wait: a run of fifty is a minute of nothing without it.
+ */
+export interface EntityAutoEvent {
+  conflictId: string;
+  /** 1-based position in this pass. */
+  index: number;
+  total: number;
+  verdict: "same" | "distinct" | "unsure";
+  reason: string;
+  /** The two names, for display. */
+  pair: string;
+}
+
+/**
  * Who settled a conflict and why. Recorded on the decision row itself, which is the only place
  * a verdict that changed nothing ("these are different things") can be read back from.
  */

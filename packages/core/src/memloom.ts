@@ -116,6 +116,7 @@ import type {
   ReconcileSettings,
   ReconcileTrigger,
   Entity,
+  EntityAutoEvent,
   EntityConflict,
   EntityConflictCandidate,
   EntityDetail,
@@ -4314,11 +4315,26 @@ export class Memloom implements MemoryEngine {
   async autoResolveEntities(
     ownerId: string = SENTINEL_OWNER,
     limit = ENTITY_QUEUE_LIMIT,
+    onProgress?: (event: EntityAutoEvent) => void,
   ): Promise<ReconcileArbitration> {
-    return this.#arbitrateEntities(ownerId, modelNameOf(this.#llm), limit);
+    // Without an LLM every pair comes back unsure, and the report would read as "a model was
+    // asked about 50 pairs and would not commit" when nothing was ever asked. Reconciliation's own
+    // call is left alone: a missing key must not fail a whole run over one optional pass.
+    if (this.#llm instanceof NullLLMProvider) {
+      throw new Error(
+        "memloom: deciding uncertain entity pairs needs an LLM and none is configured. " +
+          "Set OPENROUTER_API_KEY in your memloom config and restart the daemon.",
+      );
+    }
+    return this.#arbitrateEntities(ownerId, modelNameOf(this.#llm), limit, onProgress);
   }
 
-  async #arbitrateEntities(owner: string, model: string, limit: number): Promise<ReconcileArbitration> {
+  async #arbitrateEntities(
+    owner: string,
+    model: string,
+    limit: number,
+    onProgress?: (event: EntityAutoEvent) => void,
+  ): Promise<ReconcileArbitration> {
     const result: ReconcileArbitration = {
       calls: 0,
       folded: 0,
@@ -4327,15 +4343,26 @@ export class Memloom implements MemoryEngine {
       settled: [],
     };
     const pending = (await this.entityConflicts(owner)).slice(0, limit);
-    for (const conflict of pending) {
+    for (const [i, conflict] of pending.entries()) {
       const input = arbitrationCase(conflict);
       if (!input) continue;
       result.calls++;
+      const pair = `"${input.name}" and "${input.candidateName}"`;
+      const report = (verdict: EntityAutoEvent["verdict"], reason: string) =>
+        onProgress?.({
+          conflictId: conflict.id,
+          index: i + 1,
+          total: pending.length,
+          verdict,
+          reason,
+          pair,
+        });
       const raw = await this.#llm.complete(buildEntityArbiterPrompt(input)).catch(() => "");
       const verdict = parseEntityVerdict(raw);
       // No verdict is not a verdict. Leave it pending rather than guessing.
       if (!verdict || verdict.verdict === "unsure") {
         result.unsure++;
+        report("unsure", verdict?.reason ?? "no usable answer");
         continue;
       }
       const provenance = {
@@ -4352,6 +4379,7 @@ export class Memloom implements MemoryEngine {
       await this.#resolveEntityConflict(conflict.id, decision, provenance);
       if (same) result.folded++;
       else result.rejected++;
+      report(same ? "same" : "distinct", verdict.reason);
       result.settled.push({
         conflictId: conflict.id,
         class: same ? "llm_entity_fold" : "llm_entity_distinct",

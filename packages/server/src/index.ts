@@ -943,6 +943,12 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     c.json(await memloom.autoResolveEntities()),
   );
 
+  // The same pass with progress. One call per pair means a queue of fifty is a minute of
+  // silence, so the button that starts it reads the verdicts as they land.
+  app.post("/memory/entities/resolve-auto/stream", (c) =>
+    streamNdjson(c, (emit) => memloom.autoResolveEntities(undefined, undefined, emit)),
+  );
+
   // "Which people is this person connected to." Query rather than path parameter because the
   // target may be a NAME, and real entity names carry slashes and dots ("@memloom/cli").
   app.get("/memory/entities/related", async (c) => {

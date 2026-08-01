@@ -6,10 +6,15 @@ import {
   PROMPT_OVERHEAD_TOKENS,
   startupCatchUpDue,
 } from "./reconcile.js";
-import { HashingEmbeddingProvider, ScriptedLLMProvider } from "./hashing-provider.js";
+import {
+  HashingEmbeddingProvider,
+  NullLLMProvider,
+  ScriptedLLMProvider,
+} from "./hashing-provider.js";
 import { Memloom, SENTINEL_OWNER } from "./memloom.js";
 import type { StorageAdapter } from "./storage.js";
 import { PgliteFactory } from "./testkit.js";
+import type { EntityAutoEvent } from "./types.js";
 
 // Reconciliation end to end: a dry run reports without touching a single belief, the apply path
 // retires only what SQL proved, and the undo is exact (it restores what the run staled and
@@ -570,6 +575,48 @@ describe("reconcile", () => {
     expect(kept?.reason).toContain("different things");
     expect(kept?.model).toBeTruthy();
     expect([kept?.incomingName, kept?.candidateName].sort()).toEqual(["memloom ui", "memloom.ai"]);
+  });
+
+  // One paid call per pair: a queue of fifty is a minute of nothing to look at unless the pass
+  // says what it just decided, which is the same reason the memory auto-resolver streams.
+  it("reports each pair as it decides it", async () => {
+    const verdict = JSON.stringify({
+      verdict: "distinct",
+      confidence: 0.8,
+      reason: "a website and a project are different things",
+    });
+    const { memloom, storage } = await openStore(() => verdict);
+    await seedNameVariants(storage, "memloom.ai", "memloom ui");
+    await memloom.resolveEntities();
+    expect(await memloom.entityConflicts()).toHaveLength(1);
+
+    const events: EntityAutoEvent[] = [];
+    const result = await memloom.autoResolveEntities(SENTINEL_OWNER, 50, (e) => events.push(e));
+
+    expect(result).toMatchObject({ calls: 1, rejected: 1 });
+    // The verdict list rides home in the stream's done event, so it has to survive being one.
+    expect(result.settled).toHaveLength(1);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ index: 1, total: 1, verdict: "distinct" });
+    // The names are the point: "deciding 12/50" with no idea which pair says nothing.
+    expect(events[0]?.pair).toContain("memloom");
+    expect(events[0]?.reason).toContain("different things");
+  });
+
+  it("refuses to decide entity pairs with no model configured", async () => {
+    const storage = await PgliteFactory.open();
+    cleanups.push(() => storage.close());
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: new NullLLMProvider(),
+      autoIndexDelayMs: 999_999,
+    });
+    await memloom.init();
+
+    // Without this it answers "asked about 50 pairs, would not commit on any", which reads as
+    // an indecisive model rather than an absent one.
+    await expect(memloom.autoResolveEntities()).rejects.toThrow(/needs an LLM/);
   });
 
   it("leaves a pair pending when the model will not commit", async () => {

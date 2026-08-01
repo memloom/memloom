@@ -484,6 +484,22 @@ describe("server", () => {
       unsure: 0,
     });
 
+    // The streaming variant behind the button's progress counter. Same pass, same result,
+    // delivered as NDJSON, and it must not be read as an entity id either.
+    const stream = await server.request("/memory/entities/resolve-auto/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toContain("application/x-ndjson");
+    const lines = (await stream.text())
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.some((l) => l.type === "error")).toBe(false);
+    expect(lines.at(-1)).toMatchObject({ type: "done", calls: 0, folded: 0 });
+
     const patched = await server.request(`/memory/entities/${entity?.id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },

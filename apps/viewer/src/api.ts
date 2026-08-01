@@ -119,6 +119,17 @@ export interface SettledEntityPair {
   resolvedAt: string;
 }
 
+/** Progress from the entity arbiter: one event per pair the model was asked about. */
+export interface EntityAutoEvent {
+  conflictId: string;
+  index: number;
+  total: number;
+  verdict: "same" | "distinct" | "unsure";
+  reason: string;
+  /** The two names, for display. */
+  pair: string;
+}
+
 export interface EntityResolutionResult {
   examined: number;
   pairs: number;
@@ -883,8 +894,14 @@ export const api = {
     json<{ merges: EntityMerge[] }>("/memory/entities/merges").then((r) => r.merges),
   resolveEntities: (dryRun = false) =>
     post<EntityResolutionResult>("/memory/entities/resolve", { dryRun }),
-  // One call per queued pair, so this is only ever triggered by a person clicking it.
-  autoResolveEntities: () => post<ReconcileArbitration>("/memory/entities/resolve-auto"),
+  // One call per queued pair, so this is only ever triggered by a person clicking it, and the
+  // wait is long enough that the verdicts are streamed back as they land.
+  autoResolveEntities: (onEvent: (e: EntityAutoEvent) => void) =>
+    readNdjson<EntityAutoEvent, ReconcileArbitration>(
+      "/memory/entities/resolve-auto/stream",
+      {},
+      onEvent,
+    ),
   revertEntityMerge: (id: string) =>
     post<{ ok: boolean }>(`/memory/entities/merges/${id}/revert`, {}),
   // Reconciliation. Settings live in the store, not config.env, so a toggle takes effect on the next

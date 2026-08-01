@@ -1,6 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type EntityConflict, type EntityMerge, type SettledEntityPair } from "./api";
+import {
+  api,
+  type EntityAutoEvent,
+  type EntityConflict,
+  type EntityMerge,
+  type SettledEntityPair,
+} from "./api";
 import { cachedData, prefetch, refetch } from "./prefetch";
+
+/** What the model just said about a pair, in the words the lists below use. */
+const VERDICT_LABEL: Record<EntityAutoEvent["verdict"], string> = {
+  same: "folded",
+  distinct: "kept apart",
+  unsure: "left for you",
+};
 
 // Who decided a fold. Three answers, not two: reconciliation's LLM pass writes folds with
 // decidedBy 'llm', and a fold made by a model has to say which model, or a bad one cannot be
@@ -39,6 +52,7 @@ export function EntityFoldsView({ onChanged }: { onChanged: () => void }) {
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [autoRunning, setAutoRunning] = useState(false);
+  const [autoProgress, setAutoProgress] = useState<EntityAutoEvent | null>(null);
   const [summary, setSummary] = useState<string | null>(null);
 
   const fetchBoth = useCallback((fresh: boolean) => {
@@ -87,7 +101,7 @@ export function EntityFoldsView({ onChanged }: { onChanged: () => void }) {
     setError(null);
     setSummary(null);
     try {
-      const r = await api.autoResolveEntities();
+      const r = await api.autoResolveEntities(setAutoProgress);
       setSummary(
         r.calls === 0
           ? "nothing to decide"
@@ -100,6 +114,7 @@ export function EntityFoldsView({ onChanged }: { onChanged: () => void }) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setAutoRunning(false);
+      setAutoProgress(null);
     }
   }
 
@@ -146,8 +161,17 @@ export function EntityFoldsView({ onChanged }: { onChanged: () => void }) {
               onClick={autoResolve}
               title="A model decides each pair the spelling rules could not. One call per pair. Folds it makes are reversible below, and anything it is unsure about stays here for you."
             >
-              {autoRunning ? "Deciding..." : "Resolve the obvious ones"}
+              {autoRunning
+                ? autoProgress
+                  ? `Deciding ${autoProgress.index}/${autoProgress.total}...`
+                  : "Deciding..."
+                : "Resolve the obvious ones"}
             </button>
+          )}
+          {autoRunning && autoProgress && (
+            <span style={{ color: "var(--text-faint)", alignSelf: "center" }}>
+              {VERDICT_LABEL[autoProgress.verdict]}: {autoProgress.pair}
+            </span>
           )}
         </div>
         {summary && <div className="notice">{summary}</div>}
