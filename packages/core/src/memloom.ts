@@ -36,7 +36,6 @@ import {
   type MultiHeadLineage,
   meanActiveContentChars,
   raisedLineages,
-  recheckWindow,
   retirementBlocklist,
 } from "./reconcile.js";
 import type { MemoryEngine } from "./engine.js";
@@ -44,6 +43,7 @@ import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from
 import { arbitrationCase, buildEntityArbiterPrompt, parseEntityVerdict } from "./entity-arbiter.js";
 import {
   buildRecheckPrompt,
+  countDueForRecheck,
   findRecheckSubjects,
   parseRecheckVerdicts,
   type RecheckFinding,
@@ -175,11 +175,7 @@ import { toVectorLiteral } from "./vector.js";
 // ownerId per call; the column exists everywhere so the schema is sync/cloud-ready.
 export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
 
-/**
- * The action class a contradiction re-check writes. Nothing writes it yet: the pass is designed
- * and priced but not built. It exists so #lastReconcileAt keys the re-check window off the re-check
- * itself rather than off any run that happened to call a model.
- */
+/** The action class a contradiction re-check writes, so its findings are identifiable as its own. */
 const RECHECK_CLASS = "emergent_contradiction";
 
 /**
@@ -4110,10 +4106,10 @@ export class Memloom implements MemoryEngine {
       const raised = applying ? await this.#raiseLineageConflicts(owner, lineages.take) : [];
 
       const scanned = await this.#activeMemoryCount(owner);
-      // One read, two uses: what the re-check would cost (the estimate, always) and what it
-      // actually sweeps (pass 5, when it runs). Reading it twice could straddle a concurrent run.
-      const since = await this.#lastReconcileAt(owner, runId);
-      const window = await recheckWindow(this.#storage, owner, since);
+      // What the re-check owes: beliefs never checked, plus any whose check has gone stale. Read
+      // before the pass runs, so the estimate describes the debt this run inherited rather than
+      // what it left behind.
+      const window = await countDueForRecheck(this.#storage, owner);
       const estimate = estimateRecheck(
         window,
         await meanActiveContentChars(this.#storage, owner),
@@ -4159,7 +4155,7 @@ export class Memloom implements MemoryEngine {
       // whose cost grows with how long since the last run. RECHECK_WINDOW_LIMIT is the ceiling.
       const recheck =
         applying && passes.includes("llm_recheck")
-          ? await this.#recheckContradictions(owner, model, since, runId)
+          ? await this.#recheckContradictions(owner, model, runId)
           : undefined;
       const llmCalls =
         (arbitration?.calls ?? 0) + (autoResolved?.examined ?? 0) + (recheck?.calls ?? 0);
@@ -4450,15 +4446,9 @@ export class Memloom implements MemoryEngine {
   async #recheckContradictions(
     owner: string,
     model: string,
-    since: string | null,
     runId: string,
   ): Promise<{ window: number; calls: number; claimed: number; findings: RecheckFinding[] }> {
-    const subjects = await findRecheckSubjects(
-      this.#storage,
-      owner,
-      since,
-      RECHECK_WINDOW_LIMIT,
-    );
+    const subjects = await findRecheckSubjects(this.#storage, owner, RECHECK_WINDOW_LIMIT);
     const result = { window: subjects.length, calls: 0, claimed: 0, findings: [] as RecheckFinding[] };
     for (const subject of subjects) {
       result.calls++;
@@ -4488,19 +4478,11 @@ export class Memloom implements MemoryEngine {
         );
         result.findings.push(finding);
       }
-    }
-    // One row per run even when nothing was found, or the window's left edge would never move on
-    // a clean sweep and the same beliefs would be re-checked, and re-paid for, every run.
-    if (result.calls > 0 && result.findings.length === 0) {
+      // Stamped per belief, after its call, so an aborted run keeps the work it paid for and the
+      // next run resumes at the next unchecked belief rather than starting over.
       await this.#storage.query(
-        `INSERT INTO memory_reconcile_actions (owner_id, run_id, kind, class, reason, surfaced)
-         VALUES ($1, $2, 'question', $3, $4, false)`,
-        [
-          owner,
-          runId,
-          RECHECK_CLASS,
-          `re-checked ${result.calls} beliefs against their neighbours with ${model}, found nothing`,
-        ],
+        "UPDATE memory_objects SET last_rechecked_at = now() WHERE id = $1 AND owner_id = $2",
+        [subject.id, owner],
       );
     }
     return result;
@@ -4928,36 +4910,6 @@ export class Memloom implements MemoryEngine {
       candidateId: r.candidate_id,
       createdAt: toIsoTimestamp(r.created_at),
     }));
-  }
-
-  /**
-   * The left edge of the contradiction re-check window: when a run last actually re-checked
-   * contradictions.
-   *
-   * Deliberately not "the last run", and deliberately not "the last run that called a model"
-   * either. A dry run re-checks nothing, so letting it move the edge would make a second preview
-   * report the work as already done. And a run CAN spend money without re-checking anything: the
-   * entity arbitration pass makes calls of its own, so `llm_calls > 0` would move the edge on
-   * work that has nothing to do with contradictions.
-   *
-   * So the record is the ledger: a run that re-checked wrote actions of this class. Nothing
-   * writes it yet, because the re-check is not built, which is why this is always null and the
-   * window is the whole active set. That is the honest answer to what a first real run costs,
-   * and this starts working by itself the day the pass exists.
-   */
-  async #lastReconcileAt(ownerId: string, exceptRunId: string): Promise<string | null> {
-    const [row] = await this.#storage.query<{ finished_at: string | null }>(
-      `SELECT r.finished_at FROM memory_reconcile_runs r
-       WHERE r.owner_id = $1 AND r.id <> $2 AND r.status = 'success'
-         AND r.finished_at IS NOT NULL
-         AND EXISTS (
-           SELECT 1 FROM memory_reconcile_actions a
-           WHERE a.run_id = r.id AND a.class = $3
-         )
-       ORDER BY r.finished_at DESC LIMIT 1`,
-      [ownerId, exceptRunId, RECHECK_CLASS],
-    );
-    return row?.finished_at ? toIsoTimestamp(row.finished_at) : null;
   }
 
   /**

@@ -146,7 +146,6 @@ export {
   idleRunDue,
   isIntegrityFinding,
   PROMPT_OVERHEAD_TOKENS,
-  recheckWindow,
   startupCatchUpDue,
 } from "./reconcile.js";
 export type { MemoryEngine } from "./engine.js";
@@ -263,12 +262,14 @@ export { IngestQueue, uploadStoreDir } from "./queue.js";
 export type { RecheckFinding, RecheckPair, RecheckSubject, RecheckVerdict } from "./recheck.js";
 export {
   buildRecheckPrompt,
+  countDueForRecheck,
   findRecheckSubjects,
   MIN_QUOTE_CHARS,
   parseRecheckVerdicts,
   quoteOccursIn,
   RECHECK_FLOOR,
   RECHECK_K,
+  RECHECK_QUIET_DAYS,
   verifiedFindings,
 } from "./recheck.js";
 export type { RedactResult } from "./redact.js";

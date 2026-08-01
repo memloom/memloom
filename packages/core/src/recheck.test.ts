@@ -3,6 +3,7 @@ import { HashingEmbeddingProvider, ScriptedLLMProvider } from "./hashing-provide
 import { Memloom, SENTINEL_OWNER } from "./memloom.js";
 import {
   buildRecheckPrompt,
+  countDueForRecheck,
   findRecheckSubjects,
   MIN_QUOTE_CHARS,
   parseRecheckVerdicts,
@@ -312,6 +313,65 @@ describe("the re-check pass", () => {
     expect(report.run.llmCalls).toBe(0);
   });
 
+  // The bug this replaced: the pass took the NEWEST beliefs and then moved a global watermark to
+  // the run's clock time, so on a store bigger than one run's ceiling everything older was
+  // abandoned for good while the report claimed it was "left for the next run".
+  it("drains the backlog oldest first and skips nothing", async () => {
+    const { memloom, storage } = await openStore(arbiter(NEW, OLD));
+    for (let i = 0; i < 5; i++) await memloom.save({ content: `belief number ${i}` });
+
+    const order = await storage.query<{ id: string; content: string }>(
+      "SELECT id, content FROM memory_objects WHERE owner_id = $1 ORDER BY created_at ASC",
+      [SENTINEL_OWNER],
+    );
+    const oldestTwo = order.slice(0, 2).map((r) => r.content);
+
+    // A ceiling of 2 takes the two oldest, and only those two get stamped.
+    const first = await findRecheckSubjects(storage, SENTINEL_OWNER, 2);
+    expect(first.map((s) => s.content)).toEqual(oldestTwo);
+    for (const s of first) {
+      await storage.query("UPDATE memory_objects SET last_rechecked_at = now() WHERE id = $1", [
+        s.id,
+      ]);
+    }
+
+    // The next call resumes where that one stopped rather than starting over.
+    const second = await findRecheckSubjects(storage, SENTINEL_OWNER, 2);
+    expect(second.map((s) => s.content)).toEqual(order.slice(2, 4).map((r) => r.content));
+
+    // Stamp the rest, and nothing is due until the quiet period lapses.
+    await storage.query("UPDATE memory_objects SET last_rechecked_at = now()");
+    expect(await findRecheckSubjects(storage, SENTINEL_OWNER, 10)).toEqual([]);
+    expect((await countDueForRecheck(storage, SENTINEL_OWNER)).count).toBe(0);
+
+    // A belief checked longer ago than the quiet period is due again: this is how an old belief
+    // gets a second look once the store has moved on around it.
+    await storage.query(
+      "UPDATE memory_objects SET last_rechecked_at = now() - interval '31 days' WHERE id = $1",
+      [order[0]?.id],
+    );
+    expect((await countDueForRecheck(storage, SENTINEL_OWNER)).count).toBe(1);
+    const due = await findRecheckSubjects(storage, SENTINEL_OWNER, 10);
+    expect(due.map((s) => s.content)).toEqual([order[0]?.content]);
+  });
+
+  it("stamps only the beliefs a run actually checked", async () => {
+    const { memloom, storage } = await openStore(arbiter(NEW, OLD));
+    await memloom.save({ content: OLD });
+    await memloom.save({ content: NEW });
+    await makeNeighbours(storage, OLD, NEW);
+    expect((await countDueForRecheck(storage, SENTINEL_OWNER)).count).toBe(2);
+
+    await memloom.reconcile({ mode: "apply", passes: ["llm_recheck"] });
+    expect((await countDueForRecheck(storage, SENTINEL_OWNER)).count).toBe(0);
+
+    // A dry run must not stamp: it spends nothing, so it still owes the work it did not do.
+    await storage.query("UPDATE memory_objects SET last_rechecked_at = NULL");
+    await memloom.setReconcileSettings({ llm_recheck: true });
+    await memloom.reconcile();
+    expect((await countDueForRecheck(storage, SENTINEL_OWNER)).count).toBe(2);
+  });
+
   it("skips two versions of one belief, since supersession is not contradiction", async () => {
     const { memloom, storage } = await openStore(arbiter(NEW, OLD));
     await memloom.save({ content: OLD });
@@ -327,7 +387,7 @@ describe("the re-check pass", () => {
       [oldId, NEW, "hash-for-second-version"],
     );
 
-    const subjects = await findRecheckSubjects(storage, SENTINEL_OWNER, null, 50);
+    const subjects = await findRecheckSubjects(storage, SENTINEL_OWNER, 50);
     for (const s of subjects) {
       expect(s.candidates.map((c) => c.content)).not.toContain(OLD);
     }

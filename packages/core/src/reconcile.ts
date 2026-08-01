@@ -467,32 +467,11 @@ export function lineageKey(rootId: string): string {
   return `${LINEAGE_KEY_PREFIX}${rootId}`;
 }
 
+/** The re-check's outstanding debt: see countDueForRecheck in recheck.ts, which produces it. */
 export interface RecheckWindow {
-  /** Active memories saved since the cutoff: what a real run would re-check. */
+  /** Active beliefs never re-checked, plus any whose check is older than the quiet period. */
   count: number;
   chars: number;
-}
-
-/**
- * The contradiction re-check window. Classification at save time is pairwise against the
- * candidates that existed THEN, so a belief saved today can start contradicting one saved last
- * week without either save seeing it. Re-checking everything would cost O(store) per run and
- * would re-raise resolved conflicts; re-checking what arrived since the last run costs
- * O(new writes), which is why the bill does not grow with the store.
- */
-export async function recheckWindow(
-  storage: StorageAdapter,
-  ownerId: string,
-  since: string | null,
-): Promise<RecheckWindow> {
-  const [row] = await storage.query<{ n: number; chars: number }>(
-    `SELECT count(*)::int AS n, coalesce(sum(length(content)), 0)::int AS chars
-     FROM memory_objects
-     WHERE owner_id = $1 AND status = 'active' AND embedding IS NOT NULL
-       AND ($2::timestamptz IS NULL OR created_at > $2::timestamptz)`,
-    [ownerId, since],
-  );
-  return { count: Number(row?.n ?? 0), chars: Number(row?.chars ?? 0) };
 }
 
 /** Mean active content length, standing in for the K neighbors each prompt would carry. */
@@ -509,9 +488,12 @@ export async function meanActiveContentChars(
 }
 
 /**
- * What the contradiction pass would cost, from the real prompt template and the actual content
- * lengths in the window. A dry run prints this instead of spending it, so the preview is a
- * strict subset of a real run and says so.
+ * What re-checking everything currently due would cost, from the real prompt template and the
+ * actual content lengths. A dry run prints this instead of spending it.
+ *
+ * This prices the whole debt, which one run cannot work through: RECHECK_WINDOW_LIMIT caps a run
+ * at 200 beliefs, so on a store with a backlog the figure here is what several runs will add up
+ * to, not what the next one costs. The report says so rather than leaving it to be inferred.
  */
 export function estimateRecheck(
   window: RecheckWindow,

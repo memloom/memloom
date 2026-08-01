@@ -28,6 +28,17 @@ export const RECHECK_FLOOR = 0.5;
  */
 export const MIN_QUOTE_CHARS = 15;
 
+/**
+ * How long a belief stays checked before it is due again.
+ *
+ * A belief's neighbourhood keeps changing after it is examined, so "checked once" is not
+ * "checked forever": the pair that contradicts it may not have been written yet. The design's
+ * per-belief quiet period is a neighbourhood hash OR 30 days, whichever comes first. This is the
+ * clock half. The hash half is not built, so the clock is doing all the work and 30 days is what
+ * stops a store that has caught up from re-paying for the same beliefs every run.
+ */
+export const RECHECK_QUIET_DAYS = 30;
+
 /** One unjudged pair: a newer belief and an older one nothing has compared it against. */
 export interface RecheckPair {
   candidateId: string;
@@ -60,9 +71,39 @@ export interface RecheckFinding {
   similarity: number;
 }
 
+/** Beliefs due for a re-check: never done, or done longer ago than the quiet period. */
+const DUE_PREDICATE = /* sql */ `
+  owner_id = $1 AND status = 'active' AND embedding IS NOT NULL
+  AND (last_rechecked_at IS NULL
+       OR last_rechecked_at < now() - ($2 || ' days')::interval)`;
+
+/** How many beliefs are waiting, and how much text they hold. Free, and the estimate reads it. */
+export async function countDueForRecheck(
+  storage: StorageAdapter,
+  ownerId: string,
+  quietDays: number = RECHECK_QUIET_DAYS,
+): Promise<{ count: number; chars: number }> {
+  const [row] = await storage.query<{ n: number; chars: number }>(
+    `SELECT count(*)::int AS n, coalesce(sum(length(content)), 0)::int AS chars
+       FROM memory_objects WHERE ${DUE_PREDICATE}`,
+    [ownerId, String(quietDays)],
+  );
+  return { count: Number(row?.n ?? 0), chars: Number(row?.chars ?? 0) };
+}
+
 /**
- * Pairs this run should ask about: for every belief in the window, its current nearest
- * neighbours, minus anything already settled.
+ * Pairs this run should ask about: for every belief due a check, its current nearest neighbours,
+ * minus anything already settled.
+ *
+ * **Oldest unchecked first, and that ordering is the whole backlog story.** A run takes the
+ * beliefs that have waited longest, stamps each one as it goes, and the next run picks up exactly
+ * where this one stopped. A store with 3040 beliefs and a 200 ceiling drains in about fifteen
+ * runs, none of them skipped, and after that a run only sees new writes and whatever has gone
+ * stale. Sweeping newest-first with a global watermark, which is what this did first, abandoned
+ * everything older than the first run's reach.
+ *
+ * Order affects only which run finds a pair, never whether it can be found: the candidate query
+ * has no time filter, so an old belief is still compared against the ones written today.
  *
  * Three exclusions, and each of them is what stops the pass asking a question that has an answer:
  * a pair a human already answered here, a pair already sitting in the conflict queue, and a pair
@@ -75,18 +116,17 @@ export interface RecheckFinding {
 export async function findRecheckSubjects(
   storage: StorageAdapter,
   ownerId: string,
-  since: string | null,
   limit: number,
+  quietDays: number = RECHECK_QUIET_DAYS,
   k: number = RECHECK_K,
   floor: number = RECHECK_FLOOR,
 ): Promise<RecheckSubject[]> {
   const window = await storage.query<{ id: string; content: string; root_id: string }>(
     `SELECT id, content, root_id FROM memory_objects
-     WHERE owner_id = $1 AND status = 'active' AND embedding IS NOT NULL
-       AND ($2::timestamptz IS NULL OR created_at > $2::timestamptz)
-     ORDER BY created_at DESC
-     LIMIT $3`,
-    [ownerId, since, limit],
+      WHERE ${DUE_PREDICATE}
+      ORDER BY last_rechecked_at ASC NULLS FIRST, created_at ASC
+      LIMIT $3`,
+    [ownerId, String(quietDays), limit],
   );
 
   const subjects: RecheckSubject[] = [];

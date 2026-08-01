@@ -1296,5 +1296,28 @@ export function buildMigrations(dims: number): Migration[] {
       ALTER TABLE memory_reconcile_runs ADD COLUMN IF NOT EXISTS possible int NOT NULL DEFAULT 0;
     `,
     },
+    {
+      // When each belief was last put through the contradiction re-check. NULL means never.
+      //
+      // The first design tracked this per RUN, taking the newest N beliefs and then moving a
+      // global left edge to the run's clock time. That silently abandoned the backlog: run one
+      // swept the newest 200 of 3040 and every later run only saw writes since, so 2840 beliefs
+      // were never checked by anything and the report cheerfully called them "left for the next
+      // run". Per-belief is the honest unit, and it buys three things a cursor cannot:
+      //
+      // Nothing is skipped, because the pass drains oldest-unchecked first until it catches up.
+      // A crashed or aborted run loses only the beliefs it had not stamped yet. And re-checking
+      // is the same query, so a belief examined long ago and never looked at since comes back
+      // around on its own once the backlog is clear.
+      //
+      // The index is the pass's selection order: never-checked first, oldest first within that.
+      id: "0028_recheck_watermark",
+      sql: /* sql */ `
+      ALTER TABLE memory_objects ADD COLUMN IF NOT EXISTS last_rechecked_at timestamptz;
+      CREATE INDEX IF NOT EXISTS memory_objects_recheck_due_idx
+        ON memory_objects (owner_id, last_rechecked_at NULLS FIRST, created_at)
+        WHERE status = 'active';
+    `,
+    },
   ];
 }

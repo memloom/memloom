@@ -444,8 +444,7 @@ function ReconcileReportCard({ report }: { report: ReconcileReport }) {
           )}
           {report.recheck.remaining > 0 && (
             <div className="reconcileLine reconcileLineMuted">
-              {report.recheck.remaining} beliefs left for the next run, so one run cannot run up a
-              bill
+              {report.recheck.remaining} still due, picked up oldest first by the next run
             </div>
           )}
           {report.recheck.verified > 0 && (

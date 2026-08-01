@@ -157,14 +157,14 @@ export function formatReconcileReport(report: ReconcileReport): string {
   // A dry run always lands here, which is the point: the bill is stated before it can be spent.
   const { estimate } = report;
   if (!report.recheck) {
-    lines.push("", `${estimate.window} memories in the contradiction re-check window`);
+    lines.push("", `${estimate.window} memories are due a contradiction re-check`);
     if (estimate.window > 0) {
       const price = estimate.usd === null ? "" : `, about $${estimate.usd.toFixed(2)}`;
       lines.push(
         `  re-checking all of them would make ${estimate.llmCalls} LLM calls, about ` +
           `${tokens(estimate.inputTokens)} in / ${tokens(estimate.outputTokens)} out ` +
           `with ${estimate.model}${price}`,
-        "  one run checks at most 200 of them, so the first runs cost a fraction of that",
+        "  one run takes the 200 that have waited longest, so the backlog drains over several",
       );
     }
   }
