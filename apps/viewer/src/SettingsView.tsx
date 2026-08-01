@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, type ReconcilePass, type ReconcileReport, type ReconcileRun, type ReconcileSettings } from "./api";
+import { cachedData, prefetch, refetch, seed } from "./prefetch";
 
 // Settings: everything that decides what the engine does to itself on its own, and the buttons
 // that start it doing so. The Console is the other half, and it is read-only apart from undo:
@@ -39,6 +40,8 @@ const PASSES: Array<{ pass: ReconcilePass; label: string; cost: string; free: bo
 // Mirrors RECONCILE_CATCHUP_HOURS in @memloom/core. The daemon owns the decision; this is the label.
 const CATCHUP_HOURS = 36;
 
+type AutoIndexState = { enabled: boolean; available: boolean };
+
 function ago(iso: string): string {
   const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60_000);
   if (minutes < 1) return "just now";
@@ -71,24 +74,28 @@ function IndexingSection({
   onChanged: () => void;
   onError: (message: string) => void;
 }) {
-  const [autoIdx, setAutoIdx] = useState<{ enabled: boolean; available: boolean } | null>(null);
+  // Seeded from the cache the header's hover already warmed, then revalidated. The toggle is
+  // hidden until this lands, so without a seed a revisit renders the section a row short.
+  const [autoIdx, setAutoIdx] = useState<AutoIndexState | null>(() =>
+    cachedData<AutoIndexState>("auto-index"),
+  );
   const [indexing, setIndexing] = useState(false);
   const [rebuildArmed, setRebuildArmed] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    api
-      .autoIndex()
+    prefetch("auto-index", api.autoIndex)
       .then(setAutoIdx)
       .catch(() => setAutoIdx(null));
   }, []);
 
   async function toggleAutoIndex() {
     if (!autoIdx?.available) return;
-    const next = !autoIdx.enabled;
-    setAutoIdx({ ...autoIdx, enabled: next }); // optimistic; put it back on failure
+    const next = { ...autoIdx, enabled: !autoIdx.enabled };
+    setAutoIdx(next); // optimistic; put it back on failure
     try {
-      await api.setAutoIndex(next);
+      await api.setAutoIndex(next.enabled);
+      seed("auto-index", next);
     } catch (err) {
       setAutoIdx({ ...autoIdx });
       onError(err instanceof Error ? err.message : String(err));
@@ -103,6 +110,9 @@ function IndexingSection({
       if (result.indexed === 0 && result.chunksIndexed === 0) {
         setNotice("everything is already indexed");
       }
+      // The run this just wrote is the Console's history, and the Console now seeds from the
+      // cache. Without this, walking straight over there shows the list from before the run.
+      void refetch("index-runs", api.indexRuns).catch(() => {});
       onChanged();
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
@@ -175,15 +185,25 @@ function IndexingSection({
 }
 
 export function SettingsView({ onChanged }: { onChanged: () => void }) {
-  const [settings, setSettings] = useState<ReconcileSettings | null>(null);
-  const [runs, setRuns] = useState<ReconcileRun[]>([]);
+  // Both seed from the cache the tab hover warmed, so a revisit paints the toggles and the
+  // last-run line straight away and revalidates behind them.
+  const [settings, setSettings] = useState<ReconcileSettings | null>(() =>
+    cachedData<ReconcileSettings>("reconcile-settings"),
+  );
+  const [runs, setRuns] = useState<ReconcileRun[]>(() => cachedData<ReconcileRun[]>("reconcile-runs") ?? []);
   const [report, setReport] = useState<ReconcileReport | null>(null);
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
+  // fresh: after a run, where the cached copy is the pre-run one by definition. On mount the
+  // warm entry is reused instead, so hover-then-click costs one request between them.
+  const load = useCallback(async (fresh: boolean) => {
+    const get = fresh ? refetch : prefetch;
     try {
-      const [s, r] = await Promise.all([api.reconcileSettings(), api.reconcileRuns()]);
+      const [s, r] = await Promise.all([
+        get("reconcile-settings", api.reconcileSettings),
+        get("reconcile-runs", api.reconcileRuns),
+      ]);
       setSettings(s);
       setRuns(r);
       setError(null);
@@ -193,15 +213,18 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
   }, []);
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    void load(false);
+  }, [load]);
 
   async function toggle(patch: Partial<ReconcileSettings>) {
     if (!settings) return;
     const previous = settings;
     setSettings({ ...settings, ...patch }); // optimistic; put it back if the daemon refuses
     try {
-      setSettings(await api.setReconcileSettings(patch));
+      // The response is the saved settings, so the cache can be told rather than asked.
+      const saved = await api.setReconcileSettings(patch);
+      setSettings(saved);
+      seed("reconcile-settings", saved);
     } catch (err) {
       setSettings(previous);
       setError(err instanceof Error ? err.message : String(err));
@@ -213,7 +236,7 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
     setError(null);
     try {
       setReport(await api.reconcile(mode));
-      await refresh();
+      await load(true);
       // A run that folded or retired something changed the graph the other tabs are showing.
       if (mode === "apply") onChanged();
     } catch (err) {
@@ -228,7 +251,7 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
     try {
       await api.revertReconcile(runId);
       setReport(null);
-      await refresh();
+      await load(true);
       onChanged();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

@@ -17,7 +17,13 @@ import {
   type IndexRun,
   type IndexRunEvent,
 } from "./api";
-import { cachedData, refetch } from "./prefetch";
+import { cachedData, prefetch, refetch } from "./prefetch";
+
+// The run lists are cached under one key each; a run's body gets a key of its own, because
+// the body is what a revisit used to re-fetch from scratch while showing "loading…". A
+// finished run's events and findings never change, so they are worth keeping for the session.
+export const eventsKey = (runId: string) => `index-events:${runId}`;
+const reconcileActionsKey = (runId: string) => `reconcile-actions:${runId}`;
 
 // Console: what the engine has been doing to itself. Two histories, both session-grouped and
 // both persistent, because the engine writes a run row + per-item detail to the store: the log
@@ -179,37 +185,41 @@ export function ConsoleView({
     [expandOverride, newestRunId],
   );
 
-  const loadEvents = useCallback(async (runId: string) => {
-    const events = await api.runEvents(runId).catch(() => null);
+  // A live run's log grows, so polling has to bust its key. A finished one is immutable:
+  // reuse whatever the cache holds and revalidate behind it.
+  const loadEvents = useCallback(async (runId: string, live: boolean) => {
+    const get = live ? refetch : prefetch;
+    const events = await get(eventsKey(runId), () => api.runEvents(runId)).catch(() => null);
     if (events) setEventsByRun((prev) => ({ ...prev, [runId]: events }));
   }, []);
 
   // One refresh: the runs list, plus the events of every expanded session. The store is
   // the source of truth, so this is also what keeps a live run's log growing.
-  const refreshSessions = useCallback(async () => {
-    // Always a fresh read (this also polls while a run is live), written through the
-    // cache so the next tab visit seeds instantly from it.
-    const list = await refetch("index-runs", api.indexRuns).catch(() => null);
-    if (!list) return;
-    setRuns(list);
-    const newest = list[0]?.id ?? null;
-    await Promise.all(
-      list
-        .filter((run) => expandOverride[run.id] ?? run.id === newest)
-        .map((run) => loadEvents(run.id)),
-    );
-  }, [expandOverride, loadEvents]);
+  const refreshSessions = useCallback(
+    async (fresh: boolean) => {
+      const get = fresh ? refetch : prefetch;
+      const list = await get("index-runs", api.indexRuns).catch(() => null);
+      if (!list) return;
+      setRuns(list);
+      const newest = list[0]?.id ?? null;
+      await Promise.all(
+        list
+          .filter((run) => expandOverride[run.id] ?? run.id === newest)
+          .map((run) => loadEvents(run.id, run.status === "running")),
+      );
+    },
+    [expandOverride, loadEvents],
+  );
 
   useEffect(() => {
-    void refreshSessions();
-    // On mount + steady polling while anything is live: a run started from the CLI (or
-    // before a tab switch) keeps logging here with no client state handed over.
+    // Mount reuses the warm entry the tab hover started; the poll below is what reads live.
+    void refreshSessions(false);
   }, [refreshSessions]);
 
   const anyRunning = runs?.some((r) => r.status === "running") ?? false;
   useEffect(() => {
     if (!anyRunning) return;
-    const interval = setInterval(() => void refreshSessions(), POLL_MS);
+    const interval = setInterval(() => void refreshSessions(true), POLL_MS);
     return () => clearInterval(interval);
   }, [anyRunning, refreshSessions]);
 
@@ -236,7 +246,7 @@ export function ConsoleView({
                     setClearArmed(false);
                     await api.clearRuns().catch(() => {});
                     setEventsByRun({});
-                    await refreshSessions();
+                    await refreshSessions(true);
                   }}
                 >
                   {clearArmed ? "confirm: delete all history" : "clear history"}
@@ -248,15 +258,19 @@ export function ConsoleView({
                     key={r.id}
                     run={r}
                     expanded={isExpanded(r.id)}
-                    events={eventsByRun[r.id]}
+                    // The cache outlives this component, so a session opened before a tab
+                    // switch comes back with its log already in it.
+                    events={
+                      eventsByRun[r.id] ?? cachedData<IndexRunEvent[]>(eventsKey(r.id)) ?? undefined
+                    }
                     onToggle={() => {
                       const next = !isExpanded(r.id);
                       setExpandOverride((prev) => ({ ...prev, [r.id]: next }));
-                      if (next && !eventsByRun[r.id]) void loadEvents(r.id);
+                      if (next) void loadEvents(r.id, r.status === "running");
                     }}
                     onDelete={async () => {
                       await api.deleteRun(r.id).catch(() => {});
-                      await refreshSessions();
+                      await refreshSessions(true);
                     }}
                   />
                 ))}
@@ -376,26 +390,34 @@ function ReconcileRuns({
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    const list = await refetch("reconcile-runs", api.reconcileRuns).catch(() => null);
+  const refresh = useCallback(async (fresh: boolean) => {
+    const get = fresh ? refetch : prefetch;
+    const list = await get("reconcile-runs", api.reconcileRuns).catch(() => null);
     if (list) setRuns(list);
   }, []);
 
   useEffect(() => {
-    void refresh();
+    void refresh(false);
   }, [refresh]);
 
   async function toggle(runId: string) {
     const next = !expanded[runId];
     setExpanded((prev) => ({ ...prev, [runId]: next }));
     if (!next || actionsByRun[runId]?.status === "ready") return;
-    // Mark it loading first, so a failure below can replace it. Leaving the absence of data
-    // to mean "loading" is what made a dead request look like a slow one.
-    setActionsByRun((prev) => ({ ...prev, [runId]: { status: "loading" } }));
+    // A run opened earlier in the session is already in the cache, so show it and revalidate.
+    // Otherwise mark it loading first, so a failure below can replace it: leaving the absence
+    // of data to mean "loading" is what made a dead request look like a slow one.
+    const cached = cachedData<ReconcileAction[]>(reconcileActionsKey(runId));
+    setActionsByRun((prev) => ({
+      ...prev,
+      [runId]: cached ? { status: "ready", actions: cached } : { status: "loading" },
+    }));
     try {
-      const actions = await api.reconcileActions(runId);
+      const actions = await prefetch(reconcileActionsKey(runId), () => api.reconcileActions(runId));
       setActionsByRun((prev) => ({ ...prev, [runId]: { status: "ready", actions } }));
     } catch (err) {
+      // A failed revalidation must not blank out findings that are already on screen.
+      if (cached) return;
       const message = err instanceof Error ? err.message : String(err);
       setActionsByRun((prev) => ({ ...prev, [runId]: { status: "error", message } }));
     }
@@ -405,8 +427,13 @@ function ReconcileRuns({
     setBusy(runId);
     try {
       await api.revertReconcile(runId);
-      setActionsByRun((prev) => ({ ...prev, [runId]: { status: "ready", actions: [] } }));
-      await refresh();
+      // Undo changes what the run's rows say, and the cached copy is the pre-undo one. Reading
+      // it back is the only way state and cache agree on what happened.
+      const actions = await refetch(reconcileActionsKey(runId), () => api.reconcileActions(runId)).catch(
+        () => [],
+      );
+      setActionsByRun((prev) => ({ ...prev, [runId]: { status: "ready", actions } }));
+      await refresh(true);
       onChanged();
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));

@@ -3,7 +3,7 @@ import { AssistantView } from "./AssistantView";
 import { api, type Conflict, type Graph } from "./api";
 import { ConflictsView } from "./ConflictsView";
 import { ConnectorsView } from "./ConnectorsView";
-import { ConsoleView } from "./ConsoleView";
+import { ConsoleView, eventsKey } from "./ConsoleView";
 import { DocumentsView } from "./DocumentsView";
 import { EntityFoldsView } from "./EntityFoldsView";
 import { GraphView } from "./GraphView";
@@ -44,14 +44,23 @@ const TAB_PREFETCH: Partial<Record<Tab, () => void>> = {
     void prefetch("entity-conflicts", api.entityConflicts).catch(() => {});
     void prefetch("entity-merges", api.entityMerges).catch(() => {});
   },
-  // The Console holds both histories now, so it warms both.
+  // The Console holds both histories now, so it warms both. The newest indexing session is
+  // expanded on arrival, so its log is warmed too: without that one chained fetch the Console
+  // still opens on a "loading…" body, which is the whole thing this is here to avoid.
   console: () => {
-    void prefetch("index-runs", api.indexRuns).catch(() => {});
+    void prefetch("index-runs", api.indexRuns)
+      .then((runs) => {
+        const newest = runs[0];
+        if (!newest) return;
+        void prefetch(eventsKey(newest.id), () => api.runEvents(newest.id)).catch(() => {});
+      })
+      .catch(() => {});
     void prefetch("reconcile-runs", api.reconcileRuns).catch(() => {});
   },
   settings: () => {
     void prefetch("reconcile-settings", api.reconcileSettings).catch(() => {});
     void prefetch("reconcile-runs", api.reconcileRuns).catch(() => {});
+    void prefetch("auto-index", api.autoIndex).catch(() => {});
   },
 };
 
