@@ -716,6 +716,39 @@ button {
   font-style: italic;
 }
 
+/* An unconfirmed finding. Dashed on purpose: the pass behind it is right about 4 times in 10, so
+   it must not carry the same visual weight as a conflict you decided is real. */
+.cardPossible {
+  border-style: dashed;
+}
+
+/* The quoted span IS the finding. Both quotes were verified to occur in the two memories before
+   the row was written, so this is a real substring rather than a paraphrase. */
+.quoteSpan::before {
+  color: var(--text-faint);
+  content: "“";
+}
+
+.quoteSpan::after {
+  color: var(--text-faint);
+  content: "”";
+}
+
+.possibleFull > summary {
+  color: var(--text-faint);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.possibleFull[open] > summary {
+  margin-bottom: 6px;
+}
+
+.possibleFull > .reason + .reason {
+  margin-top: 6px;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;

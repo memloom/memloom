@@ -405,6 +405,54 @@ describe("server", () => {
     expect(lopsided.status).toBe(400);
   });
 
+  // The re-check's findings have their own read and their own answer route, deliberately apart
+  // from /memory/conflicts: at about 40 percent precision they must not reach the conflicts list,
+  // the queue-pressure gate, or the tab badge until a human confirms one.
+  it("possible contradictions are answerable and are not conflicts", async () => {
+    const server = await app();
+    const empty = await server.request("/memory/reconcile/possible");
+    expect(empty.status).toBe(200);
+    expect((await empty.json()) as { possible: unknown[] }).toEqual({ possible: [] });
+
+    // Answering something that does not exist is a 404, not a 500.
+    const missing = await server.request(
+      "/memory/reconcile/possible/aaaaaaaa-1111-2222-3333-444444444444/answer",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "rejected" }),
+      },
+    );
+    expect(missing.status).toBe(404);
+
+    // Only the two answers exist. 'snoozed' is a ledger state, not something a click can set.
+    const bad = await server.request(
+      "/memory/reconcile/possible/aaaaaaaa-1111-2222-3333-444444444444/answer",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "snoozed" }),
+      },
+    );
+    expect(bad.status).toBe(400);
+  });
+
+  it("the fifth pass is off out of the box and settable", async () => {
+    const server = await app();
+    const before = (await (await server.request("/memory/reconcile/settings")).json()) as {
+      llm_recheck: boolean;
+    };
+    expect(before.llm_recheck).toBe(false);
+
+    const set = await server.request("/memory/reconcile/settings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ llm_recheck: true }),
+    });
+    expect(set.status).toBe(200);
+    expect((await set.json()) as { llm_recheck: boolean }).toMatchObject({ llm_recheck: true });
+  });
+
   it("context add stream rejects a missing path up front, not mid-stream", async () => {
     const server = await app();
     const res = await server.request("/context/add/stream", {

@@ -142,14 +142,19 @@ export interface EntityResolutionResult {
 
 // Reconciliation: the consolidation pass. Four passes in cost order; the two that call a model are
 // off until the user turns them on, because reversibility buys autonomy and money buys a prompt.
-export type ReconcilePass = "invariants" | "entities" | "llm_entities" | "llm_conflicts";
+export type ReconcilePass =
+  | "invariants"
+  | "entities"
+  | "llm_entities"
+  | "llm_conflicts"
+  | "llm_recheck";
 
 export type ReconcileSettings = Record<ReconcilePass, boolean> & { startupCatchUp: boolean };
 
 export interface ReconcileAction {
   id: string;
   runId: string;
-  kind: "retire" | "question" | "conflict" | "fold";
+  kind: "retire" | "question" | "conflict" | "fold" | "possible";
   class: string;
   memoryId: string | null;
   reason: string;
@@ -159,6 +164,8 @@ export interface ReconcileAction {
   decision: "approved" | "rejected" | "snoozed" | null;
   mergeId: string | null;
   conflictId: string | null;
+  /** Set when kind is 'possible': the older belief of the pair. */
+  candidateId: string | null;
   createdAt: string;
 }
 
@@ -172,6 +179,7 @@ export interface ReconcileRun {
   folded: number;
   questions: number;
   conflictsRaised: number;
+  possible: number;
   llmCalls: number;
   startedAt: string;
   finishedAt: string | null;
@@ -195,6 +203,27 @@ export interface ReconcileArbitration {
   settled: Array<{ conflictId: string; class: string; reason: string }>;
 }
 
+/** One unconfirmed contradiction. The quotes were verified against both contents when found. */
+export interface PossibleContradiction {
+  id: string;
+  runId: string;
+  newMemory: { id: string; content: string };
+  oldMemory: { id: string; content: string };
+  newQuote: string;
+  oldQuote: string;
+  reason: string;
+  model: string | null;
+  foundAt: string;
+}
+
+export interface ReconcileRecheckResult {
+  window: number;
+  calls: number;
+  claimed: number;
+  verified: number;
+  remaining: number;
+}
+
 export interface ReconcileReport {
   run: ReconcileRun;
   actions: ReconcileAction[];
@@ -204,6 +233,7 @@ export interface ReconcileReport {
   entities?: EntityResolutionResult;
   arbitration?: ReconcileArbitration;
   autoResolved?: { examined: number; resolved: number; unsure: number };
+  recheck?: ReconcileRecheckResult;
 }
 
 export interface GraphDocument {
@@ -910,6 +940,15 @@ export const api = {
   setReconcileSettings: (patch: Partial<ReconcileSettings>) =>
     post<ReconcileSettings>("/memory/reconcile/settings", patch),
   reconcileRuns: () => json<{ runs: ReconcileRun[] }>("/memory/reconcile/runs").then((r) => r.runs),
+  // Unconfirmed contradictions. Deliberately a separate read from conflicts(): these must not
+  // reach the conflicts badge, the queue-pressure gate, or MCP list_conflicts.
+  possibleContradictions: () =>
+    json<{ possible: PossibleContradiction[] }>("/memory/reconcile/possible").then((r) => r.possible),
+  answerPossible: (id: string, decision: "approved" | "rejected") =>
+    post<{ conflictId: string | null; decision: string }>(
+      `/memory/reconcile/possible/${id}/answer`,
+      { decision },
+    ),
   reconcileActions: (runId: string) =>
     json<{ actions: ReconcileAction[] }>(`/memory/reconcile/runs/${runId}/actions`).then((r) => r.actions),
   reconcile: (mode: "dry_run" | "apply" = "apply") =>

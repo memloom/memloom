@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   type Conflict,
   type ConflictAutoEvent,
+  type PossibleContradiction,
   type ResolveDecision,
   type ResolvedConflict,
 } from "./api";
@@ -32,6 +33,7 @@ export function ConflictsView({
   onFocusConsumed?: () => void;
 }) {
   const [resolved, setResolved] = useState<ResolvedConflict[] | null>(null);
+  const [possible, setPossible] = useState<PossibleContradiction[]>([]);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [mergeOpen, setMergeOpen] = useState<string | null>(null);
@@ -71,6 +73,15 @@ export function ConflictsView({
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, [conflicts]);
 
+  const loadPossible = useCallback(() => {
+    api
+      .possibleContradictions()
+      .then(setPossible)
+      // An older daemon has no such route, and an empty list is the right answer then.
+      .catch(() => setPossible([]));
+  }, []);
+  useEffect(loadPossible, [loadPossible]);
+
   async function resolve(conflict: Conflict, decision: ResolveDecision) {
     setBusy(conflict.id);
     setError(null);
@@ -102,6 +113,23 @@ export function ConflictsView({
     } finally {
       setAutoRunning(false);
       setAutoProgress(null);
+    }
+  }
+
+  // Approving promotes the finding into a real conflict, which lands in the pending list above;
+  // rejecting records the pair so no later run asks about it again. Both are one click, which is
+  // the point: this pass is right about 4 findings in 10, so dismissing has to be cheap.
+  async function answer(id: string, decision: "approved" | "rejected") {
+    setBusy(id);
+    setError(null);
+    try {
+      await api.answerPossible(id, decision);
+      loadPossible();
+      if (decision === "approved") onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
     }
   }
 
@@ -254,6 +282,60 @@ export function ConflictsView({
             );
           })}
         </div>
+
+        {/* Reconciliation's re-check finds beliefs that did not contradict anything when either was
+            saved. It is right about roughly 4 in 10, so these are not conflicts and never touch
+            the tab badge: they sit here as two quoted lines until you say otherwise. */}
+        {possible.length > 0 && (
+          <>
+            <h2 className="sectionTitle">Possible contradictions; {possible.length}</h2>
+            <p className="cardNote">
+              Found by reconciliation, not confirmed. Each one quotes the two claims that clash, so it
+              reads in a few seconds. Confirming makes it a conflict above; dismissing means this
+              pair is never raised again.
+            </p>
+            <div className="conflictList">
+              {possible.map((p) => (
+                <div key={p.id} className="card cardPossible">
+                  <div className="cardLabel">
+                    {p.model ? `${p.model} says` : "says"}: {p.reason}
+                  </div>
+                  <div className="statement statementNew">
+                    <span className="quoteSpan">{p.newQuote}</span>
+                  </div>
+                  <div className="statement statementExisting">
+                    <span className="quoteSpan">{p.oldQuote}</span>
+                  </div>
+                  <details className="possibleFull">
+                    <summary>the two memories in full</summary>
+                    <div className="reason">{p.newMemory.content}</div>
+                    <div className="reason">{p.oldMemory.content}</div>
+                  </details>
+                  <div className="actions">
+                    <button
+                      type="button"
+                      className="btn btnPrimary"
+                      disabled={busy === p.id}
+                      onClick={() => answer(p.id, "approved")}
+                      title="Make this a real conflict, with the four resolution choices."
+                    >
+                      These conflict
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={busy === p.id}
+                      onClick={() => answer(p.id, "rejected")}
+                      title="Not a contradiction. This pair is never raised again."
+                    >
+                      No
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </>
+        )}
 
         {resolved && resolved.length > 0 && (
           <>

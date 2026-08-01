@@ -113,6 +113,19 @@ export function formatReconcileReport(report: ReconcileReport): string {
     lines.push("", `a model settled ${folded + rejected} uncertain pairs in ${calls} calls:`);
     lines.push(`  ${folded} folded, ${rejected} kept apart, ${unsure} left for you`);
   }
+  // The re-check is the only pass that sweeps, so its report says what it cost and what it left.
+  if (report.recheck) {
+    const { calls, claimed, verified, remaining } = report.recheck;
+    lines.push("", `contradiction re-check: swept ${calls} beliefs against their 20 nearest`);
+    lines.push(`  kept ${verified} of ${claimed} the model claimed`);
+    if (claimed > verified) {
+      lines.push(
+        `  ${claimed - verified} dropped: no verbatim quote for the clashing claim on both sides`,
+      );
+    }
+    if (remaining > 0) lines.push(`  ${remaining} beliefs left for the next run`);
+    if (verified > 0) lines.push("  waiting for you in the conflicts tab");
+  }
   if (report.autoResolved) {
     const { examined, resolved } = report.autoResolved;
     lines.push("", `a model re-judged ${examined} pending conflicts and resolved ${resolved}`);
@@ -140,16 +153,20 @@ export function formatReconcileReport(report: ReconcileReport): string {
     }
   }
 
+  // Priced only when the pass did not run, since a run that swept reports what it actually did.
+  // A dry run always lands here, which is the point: the bill is stated before it can be spent.
   const { estimate } = report;
-  lines.push("", `${estimate.window} memories in the contradiction re-check window`);
-  if (estimate.window > 0) {
-    const price = estimate.usd === null ? "" : `, about $${estimate.usd.toFixed(2)}`;
-    lines.push(
-      `  a real run would make ${estimate.llmCalls} LLM calls, about ` +
-        `${tokens(estimate.inputTokens)} in / ${tokens(estimate.outputTokens)} out ` +
-        `with ${estimate.model}${price}`,
-      "  the contradiction pass is not built yet: this is the estimate, not a result",
-    );
+  if (!report.recheck) {
+    lines.push("", `${estimate.window} memories in the contradiction re-check window`);
+    if (estimate.window > 0) {
+      const price = estimate.usd === null ? "" : `, about $${estimate.usd.toFixed(2)}`;
+      lines.push(
+        `  re-checking all of them would make ${estimate.llmCalls} LLM calls, about ` +
+          `${tokens(estimate.inputTokens)} in / ${tokens(estimate.outputTokens)} out ` +
+          `with ${estimate.model}${price}`,
+        "  one run checks at most 200 of them, so the first runs cost a fraction of that",
+      );
+    }
   }
 
   const changed = report.run.retired + report.run.folded;

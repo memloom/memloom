@@ -1256,5 +1256,37 @@ export function buildMigrations(dims: number): Migration[] {
       ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS resolution_reason text;
     `,
     },
+    {
+      // The contradiction re-check's findings. A 'possible' row is deliberately NOT a conflict:
+      // measured precision on this pass is about 40 percent, so putting them in
+      // memory_dedup_decisions would make the queue, the queue-pressure gate, the tab badge and
+      // MCP list_conflicts all 60 percent noise. They live here until a human says otherwise, and
+      // approving one writes the real conflict row.
+      //
+      // The two quotes are the point. The model must copy the clashing assertion from each side
+      // verbatim, and the pass verifies both spans occur in the two memories before recording
+      // anything. Measured: the model never invents a quote, it omits them when it cannot find
+      // one, so this rejects the findings it will not stand behind. It does not raise precision
+      // (a true span can still carry a wrong conclusion) and it is kept because two quotes make a
+      // finding readable in three seconds instead of two full memories.
+      id: "0034_reconcile_recheck",
+      sql: /* sql */ `
+      ALTER TABLE memory_reconcile_actions DROP CONSTRAINT IF EXISTS memory_reconcile_actions_kind_check;
+      ALTER TABLE memory_reconcile_actions ADD CONSTRAINT memory_reconcile_actions_kind_check
+        CHECK (kind IN ('retire', 'question', 'conflict', 'fold', 'possible'));
+
+      -- The other side of the pair. memory_id holds the newer belief, candidate_id the older.
+      ALTER TABLE memory_reconcile_actions ADD COLUMN IF NOT EXISTS candidate_id uuid;
+      ALTER TABLE memory_reconcile_actions ADD COLUMN IF NOT EXISTS new_quote text;
+      ALTER TABLE memory_reconcile_actions ADD COLUMN IF NOT EXISTS old_quote text;
+
+      -- "Never ask again" reads this: an answered pair is never re-judged, in either direction.
+      CREATE INDEX IF NOT EXISTS memory_reconcile_actions_pair_idx
+        ON memory_reconcile_actions (owner_id, memory_id, candidate_id);
+
+      -- Counted apart from conflicts_raised: nothing was raised, something was noticed.
+      ALTER TABLE memory_reconcile_runs ADD COLUMN IF NOT EXISTS possible int NOT NULL DEFAULT 0;
+    `,
+    },
   ];
 }

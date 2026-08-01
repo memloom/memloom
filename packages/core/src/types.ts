@@ -936,21 +936,33 @@ export interface NotionStatus {
 export type ReconcileMode = "dry_run" | "apply";
 export type ReconcileTrigger = "manual" | "idle" | "startup";
 export type ReconcileRunStatus = "running" | "success" | "error" | "aborted";
-/** retire and fold change state; question and conflict ask the human. */
-export type ReconcileActionKind = "retire" | "question" | "conflict" | "fold";
+/**
+ * retire and fold change state; question and conflict ask the human.
+ *
+ * 'possible' is a contradiction the re-check found and nobody has confirmed. It is not a conflict
+ * on purpose: the pass runs at roughly 40 percent precision, so these wait in the ledger where
+ * dismissing one costs a click, and approving one is what writes the real conflict row.
+ */
+export type ReconcileActionKind = "retire" | "question" | "conflict" | "fold" | "possible";
 export type ReconcileDecision = "approved" | "rejected" | "snoozed";
 
 /**
- * The four passes, in cost order. The first two are free and act on their own; the last two
- * spend money and stay off until the user turns them on.
+ * The five passes, in cost order. The first two are free and act on their own; the rest spend
+ * money and stay off until the user turns them on.
  */
-export type ReconcilePass = "invariants" | "entities" | "llm_entities" | "llm_conflicts";
+export type ReconcilePass =
+  | "invariants"
+  | "entities"
+  | "llm_entities"
+  | "llm_conflicts"
+  | "llm_recheck";
 
 export const RECONCILE_PASSES: readonly ReconcilePass[] = [
   "invariants",
   "entities",
   "llm_entities",
   "llm_conflicts",
+  "llm_recheck",
 ];
 
 /** Passes that cost nothing and therefore need no permission and no scheduling argument. */
@@ -980,7 +992,36 @@ export interface ReconcileAction {
   mergeId: string | null;
   /** Set when kind is 'conflict': the queue row this finding became, so a surface can link it. */
   conflictId: string | null;
+  /** Set when kind is 'possible': the older belief of the pair. memoryId holds the newer one. */
+  candidateId: string | null;
   createdAt: string;
+}
+
+/**
+ * One unconfirmed contradiction, with the spans that make it readable without opening either
+ * memory. The quotes were verified against the two contents before this row was written, so they
+ * are guaranteed to occur in them.
+ */
+export interface PossibleContradiction {
+  /** The reconcile action id. Answering quotes this back. */
+  id: string;
+  runId: string;
+  newMemory: { id: string; content: string };
+  oldMemory: { id: string; content: string };
+  /** Verbatim spans from newMemory.content and oldMemory.content. */
+  newQuote: string;
+  oldQuote: string;
+  /** The model's own words, kept short by the prompt. */
+  reason: string;
+  model: string | null;
+  foundAt: string;
+}
+
+/** What answering a possible contradiction did. */
+export interface PossibleAnswer {
+  /** Set when the answer was 'approved': the conflict row it became. */
+  conflictId: string | null;
+  decision: ReconcileDecision;
 }
 
 export interface ReconcileRun {
@@ -994,6 +1035,8 @@ export interface ReconcileRun {
   folded: number;
   questions: number;
   conflictsRaised: number;
+  /** Unconfirmed contradictions the re-check recorded. Not conflicts until a human says so. */
+  possible: number;
   llmCalls: number;
   startedAt: string;
   finishedAt: string | null;
@@ -1053,6 +1096,25 @@ export interface ReconcileReport {
   arbitration?: ReconcileArbitration;
   /** The existing conflict auto-resolver, present when the 'llm_conflicts' pass ran. */
   autoResolved?: ConflictAutoResult;
+  /** The contradiction re-check, present when the 'llm_recheck' pass ran. */
+  recheck?: ReconcileRecheckResult;
+}
+
+/**
+ * What the contradiction re-check did. `claimed` against `verified` is the honest measure of how
+ * much the model asserted versus how much it could back with quotes from both memories.
+ */
+export interface ReconcileRecheckResult {
+  /** Beliefs swept. Capped by RECHECK_WINDOW_LIMIT, which is also the cost ceiling. */
+  window: number;
+  /** One per belief swept. The only number that costs money. */
+  calls: number;
+  /** Contradictions the model asserted. */
+  claimed: number;
+  /** Of those, the ones whose quotes were found in both memories. Only these are recorded. */
+  verified: number;
+  /** Beliefs in the window the ceiling left for a later run. */
+  remaining: number;
 }
 
 export interface ReconcileRevertResult {

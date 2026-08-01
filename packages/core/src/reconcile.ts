@@ -18,8 +18,13 @@ export interface ReconcileFinding {
   reason: string;
 }
 
-/** Neighbors per contradiction re-check. Matches CANDIDATE_LIMIT in the save path. */
-export const RECONCILE_K = 5;
+/**
+ * Neighbours per contradiction re-check. Four times the save path's CANDIDATE_LIMIT, because a
+ * background pass has nobody waiting on it and can afford to look wider. Measured: of the real
+ * contradictions a wider net finds, only 1 in 6 sits inside the top 5, and they run out to rank
+ * 18, so half the width finds a third of them. See RECHECK_K in recheck.ts, which this must track.
+ */
+export const RECONCILE_K = 20;
 
 /**
  * Per-run limits. A background job that surfaces 40 things a week gets turned off in week two,
@@ -163,8 +168,15 @@ export function estimateTokens(chars: number): number {
 /** The dedup prompt's fixed cost, measured from the real template rather than guessed. */
 export const PROMPT_OVERHEAD_TOKENS = estimateTokens(buildDedupPrompt({ content: "" }, []).length);
 
-/** One classification's JSON reply: a relation and a short reason per candidate. */
-const OUTPUT_TOKENS_PER_CANDIDATE = 24;
+/**
+ * One classification's JSON reply per candidate.
+ *
+ * Measured at 63, not the 24 this used to guess: the model explains every verdict and the reasons
+ * run long. Output is also the expensive side at these models' prices, so the old constant made the
+ * estimate about 5x low, which is the wrong direction for a number a user reads before deciding
+ * whether to spend. The re-check prompt caps reasons at 12 words to pull this back down.
+ */
+const OUTPUT_TOKENS_PER_CANDIDATE = 63;
 
 export function estimateUsd(
   model: string,

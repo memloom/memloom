@@ -43,6 +43,13 @@ import type { MemoryEngine } from "./engine.js";
 import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from "./entities.js";
 import { arbitrationCase, buildEntityArbiterPrompt, parseEntityVerdict } from "./entity-arbiter.js";
 import {
+  buildRecheckPrompt,
+  findRecheckSubjects,
+  parseRecheckVerdicts,
+  type RecheckFinding,
+  verifiedFindings,
+} from "./recheck.js";
+import {
   judgePair,
   mergeKey,
   nameTokens,
@@ -143,6 +150,8 @@ import type {
   NotionSyncEvent,
   NotionSyncOptions,
   NotionSyncResult,
+  PossibleAnswer,
+  PossibleContradiction,
   RecallOptions,
   ReembedOptions,
   ReembedProgressEvent,
@@ -182,8 +191,20 @@ export const DEFAULT_RECONCILE_SETTINGS: ReconcileSettings = {
   entities: true,
   llm_entities: false,
   llm_conflicts: false,
+  llm_recheck: false,
   startupCatchUp: true,
 };
+
+/**
+ * The most beliefs one re-check run may sweep, and therefore the most calls it can make.
+ *
+ * This is the cost ceiling, and it is a ceiling on purpose rather than a batch size. The pass
+ * costs about one third of a cent per belief (measured), so a run cannot exceed roughly $0.55
+ * however long the window has grown. Without it, the first run on an untouched store would sweep
+ * everything: 3026 beliefs is $8 arriving as a surprise. Anything left over is reported, and the
+ * next run picks it up because the window's left edge only moves for work that was actually done.
+ */
+export const RECHECK_WINDOW_LIMIT = 200;
 
 /**
  * Voice matching: how alike a new voice must be to a stored, named voiceprint before a
@@ -478,6 +499,7 @@ interface ReconcileRunRow {
   folded: number;
   questions: number;
   conflicts_raised: number;
+  possible: number;
   llm_calls: number;
   started_at: string;
   finished_at: string | null;
@@ -485,7 +507,7 @@ interface ReconcileRunRow {
 }
 
 const RECONCILE_RUN_COLUMNS = `id, mode, trigger, status, scanned, retired, folded, questions,
-        conflicts_raised, llm_calls, started_at, finished_at, reverted_at`;
+        conflicts_raised, possible, llm_calls, started_at, finished_at, reverted_at`;
 
 function mapReconcileRun(row: ReconcileRunRow): ReconcileRun {
   return {
@@ -498,6 +520,7 @@ function mapReconcileRun(row: ReconcileRunRow): ReconcileRun {
     folded: Number(row.folded),
     questions: Number(row.questions),
     conflictsRaised: Number(row.conflicts_raised),
+    possible: Number(row.possible),
     llmCalls: Number(row.llm_calls),
     startedAt: toIsoTimestamp(row.started_at),
     finishedAt: row.finished_at ? toIsoTimestamp(row.finished_at) : null,
@@ -4087,11 +4110,10 @@ export class Memloom implements MemoryEngine {
       const raised = applying ? await this.#raiseLineageConflicts(owner, lineages.take) : [];
 
       const scanned = await this.#activeMemoryCount(owner);
-      const window = await recheckWindow(
-        this.#storage,
-        owner,
-        await this.#lastReconcileAt(owner, runId),
-      );
+      // One read, two uses: what the re-check would cost (the estimate, always) and what it
+      // actually sweeps (pass 5, when it runs). Reading it twice could straddle a concurrent run.
+      const since = await this.#lastReconcileAt(owner, runId);
+      const window = await recheckWindow(this.#storage, owner, since);
       const estimate = estimateRecheck(
         window,
         await meanActiveContentChars(this.#storage, owner),
@@ -4133,7 +4155,14 @@ export class Memloom implements MemoryEngine {
         applying && passes.includes("llm_conflicts") && (await this.conflicts(owner)).length > 0
           ? await this.autoResolveConflicts(owner)
           : undefined;
-      const llmCalls = (arbitration?.calls ?? 0) + (autoResolved?.examined ?? 0);
+      // Pass 5, and the only one that sweeps rather than draining a queue, so it is the only one
+      // whose cost grows with how long since the last run. RECHECK_WINDOW_LIMIT is the ceiling.
+      const recheck =
+        applying && passes.includes("llm_recheck")
+          ? await this.#recheckContradictions(owner, model, since, runId)
+          : undefined;
+      const llmCalls =
+        (arbitration?.calls ?? 0) + (autoResolved?.examined ?? 0) + (recheck?.calls ?? 0);
 
       const rows: Array<{
         finding: ReconcileFinding;
@@ -4254,7 +4283,7 @@ export class Memloom implements MemoryEngine {
         `UPDATE memory_reconcile_runs
          SET status = 'success', finished_at = now(), scanned = $2, retired = $3,
              folded = $7, questions = $4, conflicts_raised = $8, llm_calls = $9,
-             est_input_tokens = $5, est_output_tokens = $6
+             possible = $10, est_input_tokens = $5, est_output_tokens = $6
          WHERE id = $1`,
         [
           runId,
@@ -4266,6 +4295,7 @@ export class Memloom implements MemoryEngine {
           folds.length + (arbitration?.folded ?? 0),
           raised.length + (entities?.queued ?? 0),
           llmCalls,
+          recheck?.findings.length ?? 0,
         ],
       );
 
@@ -4283,6 +4313,19 @@ export class Memloom implements MemoryEngine {
         ...(entities ? { entities } : {}),
         ...(arbitration ? { arbitration } : {}),
         ...(autoResolved ? { autoResolved } : {}),
+        ...(recheck
+          ? {
+              recheck: {
+                window: recheck.window,
+                calls: recheck.calls,
+                claimed: recheck.claimed,
+                verified: recheck.findings.length,
+                // What the ceiling held back. The next run picks it up, because the window's left
+                // edge only moves for beliefs this run actually paid to check.
+                remaining: Math.max(0, window.count - recheck.calls),
+              },
+            }
+          : {}),
       };
     } catch (err) {
       await this.#storage.query(
@@ -4389,6 +4432,195 @@ export class Memloom implements MemoryEngine {
       });
     }
     return result;
+  }
+
+  /**
+   * The contradiction re-check. Beliefs that contradict each other now but did not when either
+   * was saved, because save time only ever compared each against the 5 nearest things that
+   * existed at that moment.
+   *
+   * One call per belief in the window, carrying up to 20 neighbours. Findings are written as
+   * 'possible' actions, never as conflicts: measured precision is about 40 percent, so a queue
+   * fed directly from here would be more noise than signal. A human promotes one with a click.
+   *
+   * The findings' class is RECHECK_CLASS, which is what moves the window's left edge. That
+   * bookkeeping was written before this pass existed and starts working now that something writes
+   * the class.
+   */
+  async #recheckContradictions(
+    owner: string,
+    model: string,
+    since: string | null,
+    runId: string,
+  ): Promise<{ window: number; calls: number; claimed: number; findings: RecheckFinding[] }> {
+    const subjects = await findRecheckSubjects(
+      this.#storage,
+      owner,
+      since,
+      RECHECK_WINDOW_LIMIT,
+    );
+    const result = { window: subjects.length, calls: 0, claimed: 0, findings: [] as RecheckFinding[] };
+    for (const subject of subjects) {
+      result.calls++;
+      const raw = await this.#llm
+        .complete(buildRecheckPrompt(subject, subject.candidates))
+        .catch(() => "");
+      const verdicts = parseRecheckVerdicts(raw, subject.candidates);
+      result.claimed += verdicts.filter((v) => v.contradictory).length;
+      // Quotes are checked here rather than trusted. A verdict whose spans are not in the two
+      // memories is dropped and not recorded, so it is asked about again on a later run.
+      for (const finding of verifiedFindings(subject, subject.candidates, verdicts)) {
+        await this.#storage.query(
+          `INSERT INTO memory_reconcile_actions
+             (owner_id, run_id, kind, class, memory_id, candidate_id, reason, new_quote, old_quote,
+              applied, surfaced)
+           VALUES ($1, $2, 'possible', $3, $4, $5, $6, $7, $8, false, true)`,
+          [
+            owner,
+            runId,
+            RECHECK_CLASS,
+            finding.memoryId,
+            finding.candidateId,
+            finding.reason,
+            finding.newQuote,
+            finding.oldQuote,
+          ],
+        );
+        result.findings.push(finding);
+      }
+    }
+    // One row per run even when nothing was found, or the window's left edge would never move on
+    // a clean sweep and the same beliefs would be re-checked, and re-paid for, every run.
+    if (result.calls > 0 && result.findings.length === 0) {
+      await this.#storage.query(
+        `INSERT INTO memory_reconcile_actions (owner_id, run_id, kind, class, reason, surfaced)
+         VALUES ($1, $2, 'question', $3, $4, false)`,
+        [
+          owner,
+          runId,
+          RECHECK_CLASS,
+          `re-checked ${result.calls} beliefs against their neighbours with ${model}, found nothing`,
+        ],
+      );
+    }
+    return result;
+  }
+
+  /**
+   * Unconfirmed contradictions waiting for a yes or no, newest first.
+   *
+   * The quotes were verified against both contents when the row was written, so a surface can show
+   * them as the whole finding: two spans read in three seconds, against two full memories that
+   * have to be read and compared.
+   */
+  async possibleContradictions(
+    ownerId: string = SENTINEL_OWNER,
+    limit = 50,
+  ): Promise<PossibleContradiction[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      run_id: string;
+      memory_id: string;
+      candidate_id: string;
+      new_content: string;
+      old_content: string;
+      new_quote: string | null;
+      old_quote: string | null;
+      reason: string;
+      model: string | null;
+      created_at: string;
+    }>(
+      `SELECT a.id, a.run_id, a.memory_id, a.candidate_id, a.new_quote, a.old_quote, a.reason,
+              r.model, a.created_at, n.content AS new_content, o.content AS old_content
+         FROM memory_reconcile_actions a
+         JOIN memory_reconcile_runs r ON r.id = a.run_id
+         JOIN memory_objects n ON n.id = a.memory_id
+         JOIN memory_objects o ON o.id = a.candidate_id
+        WHERE a.owner_id = $1 AND a.kind = 'possible' AND a.decision IS NULL
+          -- A belief retired or superseded since the finding is no longer a live question.
+          AND n.status = 'active' AND o.status = 'active'
+        ORDER BY a.created_at DESC
+        LIMIT $2`,
+      [ownerId, limit],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      runId: r.run_id,
+      newMemory: { id: r.memory_id, content: r.new_content },
+      oldMemory: { id: r.candidate_id, content: r.old_content },
+      newQuote: r.new_quote ?? "",
+      oldQuote: r.old_quote ?? "",
+      reason: r.reason,
+      model: r.model,
+      foundAt: toIsoTimestamp(r.created_at),
+    }));
+  }
+
+  /**
+   * Answer one. 'approved' promotes it into a real conflict and hands it to the queue that already
+   * knows how to resolve and revert; 'rejected' records the pair so it is never asked about again.
+   *
+   * Raising a conflict between two existing beliefs is only safe because resolveConflict now
+   * versions from the lineage head and revertConflict restores the incoming's recorded prior
+   * lineage. Before those two fixes this call would have manufactured the multi-head collisions
+   * reconciliation exists to report.
+   *
+   * A rejection is the asset here, not the leftover: it is a labelled example of what this user
+   * does not consider a contradiction, and the only path off 40 percent precision that does not
+   * mean a more expensive model.
+   */
+  async answerPossible(
+    actionId: string,
+    decision: Extract<ReconcileDecision, "approved" | "rejected">,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<PossibleAnswer> {
+    const [row] = await this.#storage.query<{
+      memory_id: string;
+      candidate_id: string;
+      reason: string;
+      new_content: string;
+      old_content: string;
+    }>(
+      `SELECT a.memory_id, a.candidate_id, a.reason,
+              n.content AS new_content, o.content AS old_content
+         FROM memory_reconcile_actions a
+         JOIN memory_objects n ON n.id = a.memory_id
+         JOIN memory_objects o ON o.id = a.candidate_id
+        WHERE a.id = $1 AND a.owner_id = $2 AND a.kind = 'possible' AND a.decision IS NULL`,
+      [actionId, ownerId],
+    );
+    if (!row) throw new Error(`memloom: no unanswered possible contradiction ${actionId}`);
+
+    let conflictId: string | null = null;
+    if (decision === "approved") {
+      const [created] = await this.#storage.query<{ id: string }>(
+        `INSERT INTO memory_dedup_decisions
+           (owner_id, action, incoming_id, incoming_canonical, incoming_content, candidates)
+         VALUES ($1, 'conflict', $2, NULL, $3, $4::jsonb) RETURNING id`,
+        [
+          ownerId,
+          row.memory_id,
+          row.new_content,
+          JSON.stringify([
+            {
+              id: row.candidate_id,
+              canonical: null,
+              content: row.old_content,
+              relation: "contradictory",
+              reason: row.reason,
+            },
+          ]),
+        ],
+      );
+      conflictId = created?.id ?? null;
+    }
+    await this.#storage.query(
+      `UPDATE memory_reconcile_actions
+          SET decision = $2, decided_at = now(), conflict_id = $3
+        WHERE id = $1`,
+      [actionId, decision, conflictId],
+    );
+    return { conflictId, decision };
   }
 
   /**
@@ -4672,10 +4904,11 @@ export class Memloom implements MemoryEngine {
       decision: ReconcileDecision | null;
       merge_id: string | null;
       conflict_id: string | null;
+      candidate_id: string | null;
       created_at: string;
     }>(
       `SELECT id, run_id, kind, class, memory_id, reason, applied, staled_at, surfaced,
-              decision, merge_id, conflict_id, created_at
+              decision, merge_id, conflict_id, candidate_id, created_at
        FROM memory_reconcile_actions WHERE run_id = $1 ORDER BY kind, created_at`,
       [runId],
     );
@@ -4692,6 +4925,7 @@ export class Memloom implements MemoryEngine {
       decision: r.decision,
       mergeId: r.merge_id,
       conflictId: r.conflict_id,
+      candidateId: r.candidate_id,
       createdAt: toIsoTimestamp(r.created_at),
     }));
   }

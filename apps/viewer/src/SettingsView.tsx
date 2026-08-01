@@ -35,6 +35,15 @@ const PASSES: Array<{ pass: ReconcilePass; label: string; cost: string; free: bo
     cost: "costs money, one call per conflict",
     free: false,
   },
+  // The only pass that sweeps rather than draining a queue, so it is the only one whose cost grows
+  // with how long since the last run. Measured on a real store: about a third of a cent per belief,
+  // capped at 200 beliefs a run, so roughly 55 cents in the worst case.
+  {
+    pass: "llm_recheck",
+    label: "Look for contradictions the save path could not see",
+    cost: "costs money, up to 200 calls per run",
+    free: false,
+  },
 ];
 
 // Mirrors RECONCILE_CATCHUP_HOURS in @memloom/core. The daemon owns the decision; this is the label.
@@ -416,6 +425,31 @@ function ReconcileReportCard({ report }: { report: ReconcileReport }) {
             <div className="reconcileLine reconcileLineMuted">
               {report.arbitration.unsure} left for you: the model would not commit
             </div>
+          )}
+        </div>
+      )}
+
+      {report.recheck && (
+        <div className="reconcileGroup">
+          <div className="reconcileGroupHead">contradiction re-check</div>
+          <div className="reconcileLine">
+            swept {report.recheck.calls} beliefs against their 20 nearest, kept{" "}
+            {report.recheck.verified} of {report.recheck.claimed} the model claimed
+          </div>
+          {report.recheck.claimed > report.recheck.verified && (
+            <div className="reconcileLine reconcileLineMuted">
+              {report.recheck.claimed - report.recheck.verified} dropped: the model could not quote
+              the clashing claim from both memories
+            </div>
+          )}
+          {report.recheck.remaining > 0 && (
+            <div className="reconcileLine reconcileLineMuted">
+              {report.recheck.remaining} beliefs left for the next run, so one run cannot run up a
+              bill
+            </div>
+          )}
+          {report.recheck.verified > 0 && (
+            <div className="reconcileLine">waiting for you in the conflicts tab</div>
           )}
         </div>
       )}

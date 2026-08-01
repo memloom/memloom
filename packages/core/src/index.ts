@@ -258,6 +258,19 @@ export type {
 export { isChatProvider } from "./providers.js";
 export type { QueueItem, QueueRunner, QueueSnapshot, QueueStatus } from "./queue.js";
 export { IngestQueue, uploadStoreDir } from "./queue.js";
+// The contradiction re-check: the retrieval widening, the prompt, and the quote verification.
+// All pure except findRecheckSubjects, which is one indexed query per belief in the window.
+export type { RecheckFinding, RecheckPair, RecheckSubject, RecheckVerdict } from "./recheck.js";
+export {
+  buildRecheckPrompt,
+  findRecheckSubjects,
+  MIN_QUOTE_CHARS,
+  parseRecheckVerdicts,
+  quoteOccursIn,
+  RECHECK_FLOOR,
+  RECHECK_K,
+  verifiedFindings,
+} from "./recheck.js";
 export type { RedactResult } from "./redact.js";
 export { redact } from "./redact.js";
 // The graph schema: the system-tier vocabulary constants (seeded into the memory_schema
@@ -323,6 +336,7 @@ export type {
   ReconcileMode,
   ReconcileOptions,
   ReconcilePass,
+  ReconcileRecheckResult,
   ReconcileReport,
   ReconcileRevertResult,
   ReconcileRun,
@@ -362,6 +376,8 @@ export type {
   NotionSyncEvent,
   NotionSyncOptions,
   NotionSyncResult,
+  PossibleAnswer,
+  PossibleContradiction,
   RecallOptions,
   RecallSource,
   ReembedOptions,

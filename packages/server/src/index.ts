@@ -489,6 +489,7 @@ const reconcileSettingsSchema = z
     entities: z.boolean(),
     llm_entities: z.boolean(),
     llm_conflicts: z.boolean(),
+    llm_recheck: z.boolean(),
     startupCatchUp: z.boolean(),
   })
   .partial();
@@ -1079,6 +1080,24 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   );
 
   app.get("/memory/reconcile/settings", async (c) => c.json(await memloom.reconcileSettings()));
+
+  // The re-check's findings, and answering one. These are NOT conflicts: the pass runs at about
+  // 40 percent precision, so they wait here where dismissing costs a click. Approving is what
+  // writes the conflict row, which is why this route can return one.
+  app.get("/memory/reconcile/possible", async (c) =>
+    c.json({ possible: await memloom.possibleContradictions() }),
+  );
+
+  app.post("/memory/reconcile/possible/:id/answer", async (c) => {
+    const body = await parseBody(c, z.object({ decision: z.enum(["approved", "rejected"]) }));
+    if (!body.ok) return body.res;
+    try {
+      return c.json(await memloom.answerPossible(c.req.param("id"), body.data.decision));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no unanswered/.test(message) ? 404 : 400);
+    }
+  });
 
   app.post("/memory/reconcile/settings", async (c) => {
     const body = await parseBody(c, reconcileSettingsSchema);
