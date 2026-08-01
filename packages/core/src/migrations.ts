@@ -1147,9 +1147,17 @@ export function buildMigrations(dims: number): Migration[] {
       // restores a row only while that value is untouched, so a later human decision is never
       // clobbered. `class` + `decision` are also the counters that let a retirement class earn
       // autonomy later.
-      id: "0030_reconciliation",
+      //
+      // collide, and renumbered before release to close the gap that reservation left. Nothing
+      // outside a dev store ever recorded the old ids.
+      //
+      // Which is why every statement in these five is safe to run twice. A store that applied
+      // them under the old ids will apply them again under the new ones, because `migrate` keys
+      // on the id and cannot know they are the same work. Re-applying has to be a no-op, and
+      // extra rows left in _memloom_migrations for ids no longer in this array are ignored.
+      id: "0023_reconcile",
       sql: /* sql */ `
-      CREATE TABLE memory_reconcile_runs (
+      CREATE TABLE IF NOT EXISTS memory_reconcile_runs (
         id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         owner_id          uuid NOT NULL,
         mode              text NOT NULL CHECK (mode IN ('dry_run', 'apply')),
@@ -1176,10 +1184,10 @@ export function buildMigrations(dims: number): Migration[] {
         finished_at       timestamptz,
         reverted_at       timestamptz
       );
-      CREATE INDEX memory_reconcile_runs_owner_started_idx
+      CREATE INDEX IF NOT EXISTS memory_reconcile_runs_owner_started_idx
         ON memory_reconcile_runs (owner_id, started_at DESC);
 
-      CREATE TABLE memory_reconcile_actions (
+      CREATE TABLE IF NOT EXISTS memory_reconcile_actions (
         id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
         owner_id    uuid NOT NULL,
         run_id      uuid NOT NULL REFERENCES memory_reconcile_runs (id) ON DELETE CASCADE,
@@ -1202,8 +1210,8 @@ export function buildMigrations(dims: number): Migration[] {
         merge_id    uuid,
         created_at  timestamptz NOT NULL DEFAULT now()
       );
-      CREATE INDEX memory_reconcile_actions_run_idx ON memory_reconcile_actions (run_id, created_at);
-      CREATE INDEX memory_reconcile_actions_class_idx
+      CREATE INDEX IF NOT EXISTS memory_reconcile_actions_run_idx ON memory_reconcile_actions (run_id, created_at);
+      CREATE INDEX IF NOT EXISTS memory_reconcile_actions_class_idx
         ON memory_reconcile_actions (owner_id, class, decision);
     `,
     },
@@ -1213,7 +1221,7 @@ export function buildMigrations(dims: number): Migration[] {
       // 'llm' had no writer until reconciliation got one. Without this a fold made six months ago is
       // unattributable and a bad model cannot be traced through its decisions.
       //
-      id: "0031_entity_merge_model",
+      id: "0024_entity_merge_model",
       sql: /* sql */ `
       ALTER TABLE memory_entity_merges ADD COLUMN IF NOT EXISTS model text;
     `,
@@ -1231,7 +1239,7 @@ export function buildMigrations(dims: number): Migration[] {
       // NULL means "no record", which every row written before this migration is, and every
       // one of those IS a save-time incoming. So NULL keeps the old behaviour and is correct
       // rather than merely compatible. Do not "fix" that fallback.
-      id: "0032_conflict_prior_lineage",
+      id: "0025_conflict_prior_lineage",
       sql: /* sql */ `
       ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS prior_root_id uuid;
       ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS prior_version int;
@@ -1248,7 +1256,7 @@ export function buildMigrations(dims: number): Migration[] {
       // record of what was decided or that a model decided it.
       //
       // NULL means a human clicked it, which is what every row written before this migration is.
-      id: "0033_resolution_provenance",
+      id: "0026_resolution_provenance",
       sql: /* sql */ `
       ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS resolution_by text;
       ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS resolution_model text;
@@ -1269,7 +1277,7 @@ export function buildMigrations(dims: number): Migration[] {
       // one, so this rejects the findings it will not stand behind. It does not raise precision
       // (a true span can still carry a wrong conclusion) and it is kept because two quotes make a
       // finding readable in three seconds instead of two full memories.
-      id: "0034_reconcile_recheck",
+      id: "0027_reconcile_recheck",
       sql: /* sql */ `
       ALTER TABLE memory_reconcile_actions DROP CONSTRAINT IF EXISTS memory_reconcile_actions_kind_check;
       ALTER TABLE memory_reconcile_actions ADD CONSTRAINT memory_reconcile_actions_kind_check
