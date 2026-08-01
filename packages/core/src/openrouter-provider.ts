@@ -211,6 +211,20 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
     return this.#model;
   }
 
+  /**
+   * Every caller of this is a classifier or a structured extractor: save-time dedup, conflict
+   * re-judging, entity extraction, distillation, entity arbitration. None of them wants a
+   * sampled answer, so temperature is pinned at 0.
+   *
+   * It was absent, which means each of those ran at the model's default (about 1.0 for
+   * gemini-2.5-flash). Measured on a real store: the same 1156 memory pairs judged twice with
+   * an identical prompt disagreed on 8 of them at the default and on 0 of 1156 at temperature 0.
+   * So two identical saves could be classified differently, one belief raising a conflict and
+   * its twin not, and no test could catch a bug that only showed up on some samples.
+   *
+   * chat() and chatStream() deliberately do not do this. They carry the assistant's own words,
+   * where sampling is the point.
+   */
   async complete(prompt: string): Promise<string> {
     const json = (await postJson(
       `${this.#baseUrl}/chat/completions`,
@@ -219,6 +233,7 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
         model: this.#model,
         messages: [{ role: "user", content: prompt }],
         max_tokens: MAX_COMPLETION_TOKENS,
+        temperature: 0,
       },
       "completion",
     )) as { choices: { message: { content: string } }[] };

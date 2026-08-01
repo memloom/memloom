@@ -83,6 +83,24 @@ describe("OpenRouterLLM per-request model override", () => {
     expect(body.max_tokens).toBe(8192);
   });
 
+  // Every complete() caller classifies or extracts. Measured on a real store: 1156 memory pairs
+  // judged twice with an identical prompt disagreed on 8 at the model's default temperature and on
+  // none at 0. Without this, two identical saves can be classified differently, and no test can
+  // catch a bug that only shows up on some samples.
+  it("complete() pins temperature at 0, and chat() leaves the assistant's own words sampled", async () => {
+    const fetch = mockChatFetch();
+    vi.stubGlobal("fetch", fetch);
+    const llm = new OpenRouterLLM({ apiKey: "k" });
+
+    await llm.complete("classify this");
+    await llm.chat([{ role: "user", content: "hi" }]);
+
+    const completion = JSON.parse((fetch.mock.calls[0]?.[1] as { body: string }).body);
+    const chat = JSON.parse((fetch.mock.calls[1]?.[1] as { body: string }).body);
+    expect(completion.temperature).toBe(0);
+    expect(chat.temperature).toBeUndefined();
+  });
+
   it("chat() sends opts.model when given, the configured chatModel otherwise", async () => {
     const fetch = mockChatFetch();
     vi.stubGlobal("fetch", fetch);
