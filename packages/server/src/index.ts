@@ -187,6 +187,24 @@ async function nativePick(mode: "file" | "folder"): Promise<string[] | null> {
   }
 }
 
+/**
+ * Resolve a path a person typed or pasted.
+ *
+ * Windows Explorer's "Copy as path" wraps what it copies in double quotes, and a shell would
+ * strip them before the program ever saw them. Pasted into a text box nothing does, so the
+ * quotes stay in the string, resolve() reads it as relative, and an absolute path comes back
+ * as a nonsense one joined to whatever directory the daemon happens to run in. Quotes are
+ * stripped only in matching pairs: a file really can be named with a quote at one end.
+ */
+function userPath(raw: string): string {
+  const trimmed = raw.trim();
+  const quoted =
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'")));
+  return resolve(quoted ? trimmed.slice(1, -1).trim() : trimmed);
+}
+
 // Folder ingestion: walk for supported files, bounded so a mistaken "add C:\" cannot
 // run away. Hidden dirs and dependency/VCS dirs are skipped.
 const WALK_MAX_DEPTH = 5;
@@ -1260,7 +1278,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     // recording with its own progress and its own cancel, instead of one opaque row.
     const paths: string[] = [];
     for (const raw of body.data.paths) {
-      const target = resolve(raw);
+      const target = userPath(raw);
       const info = await stat(target).catch(() => null);
       if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
       if (info.isDirectory()) paths.push(...(await collectSupportedFiles(target)));
@@ -1374,7 +1392,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/context/add", async (c) => {
     const body = await parseBody(c, contextAddSchema);
     if (!body.ok) return body.res;
-    const target = resolve(body.data.path);
+    const target = userPath(body.data.path);
     const info = await stat(target).catch(() => null);
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
     if (!info.isDirectory()) {
@@ -1429,7 +1447,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/context/add/stream", async (c) => {
     const body = await parseBody(c, contextAddSchema);
     if (!body.ok) return body.res;
-    const target = resolve(body.data.path);
+    const target = userPath(body.data.path);
     const info = await stat(target).catch(() => null);
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
     const files = info.isDirectory() ? await collectSupportedFiles(target) : [target];

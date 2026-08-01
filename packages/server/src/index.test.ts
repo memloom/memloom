@@ -378,6 +378,33 @@ describe("server", () => {
     expect(done?.chunks).toBeGreaterThan(0);
   });
 
+  // Windows "Copy as path" hands you the path already wrapped in double quotes. A shell eats
+  // them; a text box in the viewer does not, so they reached resolve(), which read the whole
+  // thing as relative and joined an absolute path onto the daemon's working directory.
+  it("accepts a path pasted with the quotes Explorer copies", async () => {
+    const server = await app();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-ctx-quoted-"));
+    const file = join(dir, "Aug 1, 4.39 PM.md");
+    writeFileSync(file, "# Recording notes\nthe staging database is Postgres");
+
+    const res = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: `"${file}"` }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { outcome: string }).toMatchObject({ outcome: "added" });
+
+    // A quote at one end only is part of the name, not a wrapper, so it is left alone and the
+    // path is still reported as missing rather than silently mangled into a different one.
+    const lopsided = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: `"${join(tmpdir(), "memloom-no-such-file")}` }),
+    });
+    expect(lopsided.status).toBe(400);
+  });
+
   it("context add stream rejects a missing path up front, not mid-stream", async () => {
     const server = await app();
     const res = await server.request("/context/add/stream", {
