@@ -5,11 +5,11 @@ import type { StorageAdapter } from "./storage.js";
 //
 // Save-time detection is pairwise against the 5 nearest candidates that existed at that moment
 // (CANDIDATE_LIMIT, floor 0.5 in memloom.ts). A pair that sat at rank 6 was never judged by
-// anything, and never will be: nothing looks again. Measured on a real 3026-memory store, 12.4
-// pairs per memory had never been compared with each other, and 98 percent of memories had at
-// least one such pair.
+// anything, and never will be: nothing looks again. On a 3000-belief store that is 12.4 unjudged
+// pairs per belief, with 98 percent of beliefs having at least one.
 //
-// Everything in this file was chosen by measurement rather than argument. The numbers are in
+// The constants below come from measurement rather than argument, and each carries the number
+// that decided it.
 
 /** How many neighbours the re-check looks at, against 5 at save time. */
 export const RECHECK_K = 20;
@@ -95,12 +95,11 @@ export async function countDueForRecheck(
  * Pairs this run should ask about: for every belief due a check, its current nearest neighbours,
  * minus anything already settled.
  *
- * **Oldest unchecked first, and that ordering is the whole backlog story.** A run takes the
- * beliefs that have waited longest, stamps each one as it goes, and the next run picks up exactly
- * where this one stopped. A store with 3040 beliefs and a 200 ceiling drains in about fifteen
- * runs, none of them skipped, and after that a run only sees new writes and whatever has gone
- * stale. Sweeping newest-first with a global watermark, which is what this did first, abandoned
- * everything older than the first run's reach.
+ * **Oldest unchecked first, and that ordering carries the backlog.** A run takes the beliefs that
+ * have waited longest, stamps each one as it goes, and the next run resumes where this one
+ * stopped, so a store larger than one run's ceiling drains over several runs with nothing
+ * skipped. Selecting newest-first instead would strand everything older than the first run's
+ * reach, because a run that only looks forward never comes back.
  *
  * Order affects only which run finds a pair, never whether it can be found: the candidate query
  * has no time filter, so an old belief is still compared against the ones written today.
@@ -178,11 +177,13 @@ export async function findRecheckSubjects(
  *
  * It differs in three ways, each earned. It says the candidates are loosely related, because 20
  * neighbours at floor 0.5 mostly are not about the same thing. It lists what is not a
- * contradiction, because the first four false positives measured were all "a how-to is not a
- * requirement" and "two things called a queue are not the same queue". And it lists what IS one,
- * because a stricter prompt without that list silenced the only findings worth having: an earlier
- * draft told the model that "true then, changed now" is not a contradiction, which is precisely
- * the supersession class this pass exists to surface, and it lost every real finding.
+ * contradiction, because the false positives this pass produces are overwhelmingly of two shapes:
+ * a how-to read as a requirement, and two mechanisms that share a word.
+ *
+ * And it lists what IS one, which is load-bearing. **Do not add "true then, changed now is not a
+ * contradiction" to the exclusions.** A decision deferred and later scheduled is exactly that
+ * shape, and it is the class this pass exists to surface: excluding it removes the findings worth
+ * having and leaves the noise behind.
  */
 export function buildRecheckPrompt(subject: { content: string }, candidates: RecheckPair[]): string {
   const list = candidates.map((c, i) => `${i + 1}. ${c.content}`).join("\n");
@@ -282,12 +283,14 @@ export function quoteOccursIn(quote: string, source: string): boolean {
 }
 
 /**
- * Keep the verdicts whose quotes are real. Measured: the model never fabricates a span, it omits
- * the fields when it cannot find one, so this drops the findings it will not stand behind (3 of
- * 13 in the sweep). It is not a precision filter and must not be sold as one: a verbatim quote
- * can carry a wrong conclusion, and the clearest measured example is "matching chunks are
- * retained" against "the old row is deleted", where both spans are real and both statements are
- * true of different cases.
+ * Keep the verdicts whose quotes are real. In practice the model does not fabricate a span; it
+ * leaves the fields empty when it cannot find one, so this drops the roughly one finding in four
+ * that it will not stand behind.
+ *
+ * It is not a precision filter and must not be treated as one. A verbatim quote can carry a wrong
+ * conclusion: "matching chunks are retained" against "the old row is deleted" quotes both sides
+ * correctly and is not a contradiction, because the two statements are about different cases. The
+ * check earns its place by making a finding readable without opening either memory.
  */
 export function verifiedFindings(
   subject: { id: string; content: string },

@@ -194,11 +194,11 @@ export const DEFAULT_RECONCILE_SETTINGS: ReconcileSettings = {
 /**
  * The most beliefs one re-check run may sweep, and therefore the most calls it can make.
  *
- * This is the cost ceiling, and it is a ceiling on purpose rather than a batch size. The pass
- * costs about one third of a cent per belief (measured), so a run cannot exceed roughly $0.55
- * however long the window has grown. Without it, the first run on an untouched store would sweep
- * everything: 3026 beliefs is $8 arriving as a surprise. Anything left over is reported, and the
- * next run picks it up because the window's left edge only moves for work that was actually done.
+ * A ceiling on purpose rather than a batch size. The pass costs roughly a third of a cent per
+ * belief, so a run cannot exceed about $0.55 however large the backlog. Without it the first run
+ * on an untouched store sweeps everything, which on a few thousand beliefs is several dollars
+ * arriving unannounced. Whatever the ceiling leaves is reported and picked up by the next run,
+ * because each belief is stamped individually as it is checked.
  */
 export const RECHECK_WINDOW_LIMIT = 200;
 

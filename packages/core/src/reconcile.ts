@@ -385,8 +385,9 @@ export async function findEntityInvariants(
 
 /**
  * A belief lineage with more than one current version. Detected purely from root_id/version, but
- * NOT retired: the cause is a version collision in resolveConflict's reparent path (see
- * is a question, and the human decides which head survives.
+ * NOT retired: the cause is a version collision in resolveConflict's reparent path, and
+ * auto-retiring would hide that rather than fix it. So it is a question, and the human decides
+ * which head survives.
  */
 export async function findMultiHeadLineages(
   storage: StorageAdapter,

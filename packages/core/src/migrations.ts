@@ -1148,13 +1148,10 @@ export function buildMigrations(dims: number): Migration[] {
       // clobbered. `class` + `decision` are also the counters that let a retirement class earn
       // autonomy later.
       //
-      // collide, and renumbered before release to close the gap that reservation left. Nothing
-      // outside a dev store ever recorded the old ids.
-      //
-      // Which is why every statement in these five is safe to run twice. A store that applied
-      // them under the old ids will apply them again under the new ones, because `migrate` keys
-      // on the id and cannot know they are the same work. Re-applying has to be a no-op, and
-      // extra rows left in _memloom_migrations for ids no longer in this array are ignored.
+      // Every statement in 0023 to 0027 is written to be safe to run twice. `migrate` keys on the
+      // id, so a migration that is renamed, or one whose objects a store already has for any
+      // other reason, is applied again and must be a no-op rather than an error. Rows in
+      // _memloom_migrations for ids no longer in this array are ignored.
       id: "0023_reconcile",
       sql: /* sql */ `
       CREATE TABLE IF NOT EXISTS memory_reconcile_runs (
@@ -1220,7 +1217,6 @@ export function buildMigrations(dims: number): Migration[] {
       // ('auto' | 'llm' | 'human'), the score and the reason, but not who the model was, and
       // 'llm' had no writer until reconciliation got one. Without this a fold made six months ago is
       // unattributable and a bad model cannot be traced through its decisions.
-      //
       id: "0024_entity_merge_model",
       sql: /* sql */ `
       ALTER TABLE memory_entity_merges ADD COLUMN IF NOT EXISTS model text;
@@ -1299,16 +1295,12 @@ export function buildMigrations(dims: number): Migration[] {
     {
       // When each belief was last put through the contradiction re-check. NULL means never.
       //
-      // The first design tracked this per RUN, taking the newest N beliefs and then moving a
-      // global left edge to the run's clock time. That silently abandoned the backlog: run one
-      // swept the newest 200 of 3040 and every later run only saw writes since, so 2840 beliefs
-      // were never checked by anything and the report cheerfully called them "left for the next
-      // run". Per-belief is the honest unit, and it buys three things a cursor cannot:
-      //
-      // Nothing is skipped, because the pass drains oldest-unchecked first until it catches up.
-      // A crashed or aborted run loses only the beliefs it had not stamped yet. And re-checking
-      // is the same query, so a belief examined long ago and never looked at since comes back
-      // around on its own once the backlog is clear.
+      // Per belief rather than per run, and that choice is what makes the pass safe to cap. A
+      // single watermark advanced to a run's clock time would strand every belief the capped run
+      // did not reach, since later runs only look forward. Stamping each belief instead means the
+      // pass drains oldest-unchecked first and nothing is skipped, an interrupted run keeps the
+      // beliefs it already paid for, and a belief examined long ago comes back around on its own
+      // once the backlog is clear, because that is the same query.
       //
       // The index is the pass's selection order: never-checked first, oldest first within that.
       id: "0028_recheck_watermark",

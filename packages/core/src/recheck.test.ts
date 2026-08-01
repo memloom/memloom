@@ -87,8 +87,8 @@ describe("verifiedFindings", () => {
     expect(findings[0]).toMatchObject({ memoryId: "new-1", candidateId: "cand-1" });
   });
 
-  // Measured behaviour: the model omits the quotes when it cannot find them rather than inventing
-  // them, so this is what rejection actually looks like in practice.
+  // What rejection looks like in practice: a model that cannot find the span leaves the fields
+  // empty rather than inventing one.
   it("drops a contradiction with no quotes at all", () => {
     const findings = verifiedFindings(subject, PAIR, [
       {
@@ -117,9 +117,8 @@ describe("verifiedFindings", () => {
 });
 
 describe("buildRecheckPrompt", () => {
-  // An earlier draft told the model that "true then, changed now" is not a contradiction, and it
-  // lost every real finding: supersession is the class this pass exists for. The prompt must say
-  // the opposite, out loud.
+  // Supersession is the class this pass exists for, so the prompt has to name it as a
+  // contradiction out loud. Excluding "true then, changed now" removes the findings worth having.
   it("names a reversed decision as a contradiction that matters", () => {
     const prompt = buildRecheckPrompt({ content: "x" }, PAIR);
     expect(prompt).toContain("These ARE contradictions");
@@ -313,9 +312,8 @@ describe("the re-check pass", () => {
     expect(report.run.llmCalls).toBe(0);
   });
 
-  // The bug this replaced: the pass took the NEWEST beliefs and then moved a global watermark to
-  // the run's clock time, so on a store bigger than one run's ceiling everything older was
-  // abandoned for good while the report claimed it was "left for the next run".
+  // The invariant a capped sweep lives or dies on: a store larger than one run's ceiling must
+  // drain across runs, and a belief must never be passed over for good.
   it("drains the backlog oldest first and skips nothing", async () => {
     const { memloom, storage } = await openStore(arbiter(NEW, OLD));
     for (let i = 0; i < 5; i++) await memloom.save({ content: `belief number ${i}` });
