@@ -2739,11 +2739,38 @@ textarea {
   overflow: hidden;
 }
 
+/* The rail itself never scrolls. Only the queue does, so the footer and the resolved drawer
+   stay put at the bottom instead of riding up over the rows on a long list. */
 .inboxRail {
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
+}
+
+.inboxTabs,
+.inboxSort,
+.inboxFoot,
+.inboxResolved,
+.inboxDrawer {
+  flex: none;
+}
+
+.inboxQueue {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* Opening the drawer must not push the queue off the bottom, so it gets a ceiling of its own. */
+.inboxDrawer {
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  max-height: 40vh;
   overflow-y: auto;
 }
 
@@ -2855,14 +2882,20 @@ textarea {
 
 .inboxFoot {
   border-top: 1px solid var(--border);
-  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
   padding: 12px;
+}
+
+.inboxFoot:empty {
+  display: none;
 }
 
 .inboxNote {
   color: var(--text-faint);
   font-size: 11px;
-  margin: 8px 0 0;
+  margin: 0;
 }
 
 .inboxResolved {

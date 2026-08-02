@@ -311,7 +311,7 @@ export function ConflictsView({
           </button>
         </div>
 
-        <div className="inboxList">
+        <div className="inboxQueue">
           {visible.length === 0 && <p className="inboxEmpty">Nothing to decide here.</p>}
           {visible.map((row) => (
             <button
@@ -364,7 +364,7 @@ export function ConflictsView({
           {showResolved ? "▾" : "▸"} resolved {resolved.length + merges.length + settled.length}
         </button>
         {showResolved && (
-          <div className="inboxList">
+          <div className="inboxDrawer">
             {resolved.slice(0, 20).map((r) => (
               <div key={r.id} className="inboxRow">
                 <span className="inboxRowHead">
