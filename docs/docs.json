@@ -39,6 +39,7 @@
               "concepts/distillation",
               "concepts/graph",
               "concepts/entity-resolution",
+              "concepts/reconciliation",
               "concepts/retrieval",
               "concepts/assistant"
             ]
