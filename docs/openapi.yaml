@@ -1358,6 +1358,349 @@ paths:
                 example: |
                   {"type":"item","conflictId":"...","index":1,"total":3,"verdict":"keep_new","reason":"the newer session shows the change","content":"the deploy target is railway"}
                   {"type":"done","examined":3,"resolved":2,"keepNew":1,"keepExisting":0,"keepBoth":1,"unsure":1}
+  /memory/reconcile:
+    post:
+      summary: Run the consolidation pass
+      description: |
+        What `memloom reconcile` calls. memloom goes over its own store, repairs what SQL proves
+        is wrong, folds duplicate entity names, and asks about the rest. Every run is one
+        undoable unit: the report names the run id, and `/memory/reconcile/{id}/revert` puts back
+        exactly what it did.
+
+        `mode` defaults to `dry_run`, which changes nothing and never calls a model however
+        the settings are set. What the paid passes would have cost is counted and returned in
+        `estimate` instead. Note that the `memloom reconcile` CLI command defaults the other way
+        and applies.
+
+        Which passes run comes from the saved settings unless `passes` overrides them. The
+        two free passes are on by default; the three that spend money are off. See
+        [Reconciliation](https://docs.memloom.dev/concepts/reconciliation).
+
+        With the contradiction re-check on, a run is minutes of sequential model calls. Use
+        the stream variant below rather than holding this request open.
+      operationId: reconcile
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconcileInput"
+      responses:
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "403":
+          description: |
+            `RECONCILE_ENABLED=0` is set on the daemon and `mode` is `apply`. The kill switch
+            refuses any run that was asked to act; a dry run still works.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: reconciliation is set to report only (RECONCILE_ENABLED=0). Remove it from your memloom config and restart the daemon to let a run act.
+        "409":
+          description: Another applying run is already going. Watch it or wait for it to finish.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "memloom: a reconcile run is already going. Watch it in the Console, or wait for it to finish."
+        "200":
+          description: What the run found and what it changed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconcileReport"
+  /memory/reconcile/stream:
+    post:
+      summary: Run the consolidation pass (NDJSON stream)
+      description: |
+        The same run, reported as it goes. Streams NDJSON: one `{"type":"item"}` event per
+        belief the contradiction re-check checks, a `{"type":"ping"}` every 15 seconds so the
+        pipe never times out, and a final `{"type":"done"}` carrying the whole report. A
+        mid-stream failure arrives as `{"type":"error"}` rather than an HTTP status, because
+        the response has already started.
+
+        Disconnecting stops the run. That is the point rather than a side effect: nobody is
+        watching, so nothing more should be spent, and every belief already checked stays
+        checked. The first event names the run id, which is what a stop button needs.
+      operationId: reconcileStream
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconcileInput"
+      responses:
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "403":
+          description: "`RECONCILE_ENABLED=0` is set on the daemon and `mode` is `apply`."
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: reconciliation is set to report only (RECONCILE_ENABLED=0).
+        "200":
+          description: NDJSON progress stream ending with a done (or error) event.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+                example: |
+                  {"type":"item","runId":"0f2c7b18","pass":"llm_recheck","checked":1,"total":200,"found":0}
+                  {"type":"item","runId":"0f2c7b18","pass":"llm_recheck","checked":2,"total":200,"found":1}
+                  {"type":"done","run":{"id":"0f2c7b18","mode":"apply","status":"success"},"actions":[]}
+  /memory/reconcile/runs:
+    get:
+      summary: List reconcile runs
+      description: |
+        Every run for this store, newest first, with what each one scanned, changed, and asked.
+        This is the Console tab's history. A run with `status` `running` is still going and its
+        counters move.
+      operationId: listReconcileRuns
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Reconcile runs, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runs:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ReconcileRun"
+  /memory/reconcile/runs/{id}/actions:
+    get:
+      summary: List one run's findings
+      description: |
+        Everything the run recorded, including findings held back by a per-run cap
+        (`surfaced: false`). An unknown id reads as an empty run rather than another store's
+        ledger.
+      operationId: listReconcileActions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: The run's findings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  actions:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ReconcileAction"
+  /memory/reconcile/settings:
+    get:
+      summary: Get the reconcile settings
+      description: |
+        Which passes a run does, and whether the daemon catches up on startup. Stored in the
+        store rather than in `config.env`, so a change takes effect without a restart.
+      operationId: getReconcileSettings
+      responses:
+        "200":
+          description: The saved settings.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconcileSettings"
+    post:
+      summary: Update the reconcile settings
+      description: |
+        Patch any subset. This is what the viewer's Settings tab writes. Turning on
+        `llm_entities`, `llm_conflicts`, or `llm_recheck` is what allows a run started by hand
+        to spend money; the daemon's own idle and startup runs stay on the free passes
+        whatever is saved here.
+      operationId: setReconcileSettings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ReconcileSettings"
+      responses:
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "200":
+          description: The settings as saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReconcileSettings"
+  /memory/reconcile/{id}/revert:
+    post:
+      summary: Undo one reconcile run
+      description: |
+        Put back exactly what one run did, and only that run. A retired memory is reactivated
+        only while it is still stale and its `stale_since` is the one this run wrote, so a
+        newer decision is never overridden. A fold goes back through the same revert entity
+        resolution uses. A conflict the run raised and nobody answered is removed from the
+        queue; one that was answered is left alone and counted in `skipped`. Reverting twice
+        is a no-op.
+      operationId: revertReconcile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "404":
+          description: No such run.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "memloom: no reconcile run 0f2c7b18"
+        "200":
+          description: What the undo restored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  runId:
+                    type: string
+                    format: uuid
+                  restored:
+                    type: integer
+                    description: Memories reactivated.
+                  unfolded:
+                    type: integer
+                    description: Entity folds and model-decided pairs reversed.
+                  skipped:
+                    type: integer
+                    description: Findings the store has moved on from, left alone.
+  /memory/reconcile/{id}/stop:
+    post:
+      summary: Stop a running reconcile
+      description: |
+        Abort the run if this daemon is the one running it, and mark the row either way. A run
+        whose daemon died mid-sweep has no controller left, and this is the only way its row
+        ever leaves `running`. Beliefs the run already checked stay checked, so stopping costs
+        nothing beyond the calls already paid for.
+      operationId: stopReconcile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: Whether a live run was marked stopped.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  stopped:
+                    type: boolean
+  /memory/reconcile/possible:
+    get:
+      summary: List possible contradictions
+      description: |
+        What the contradiction re-check found and nobody has confirmed, newest first. These
+        are deliberately **not** conflicts: measured precision for that pass is roughly 40
+        percent, so they wait here where dismissing one costs a click. Each one carries the
+        verbatim clashing span from both sides, verified against the two memories before the
+        row was written, so it can be judged without opening either memory. A finding whose
+        two memories are no longer both active drops out of this list.
+      operationId: listPossibleContradictions
+      responses:
+        "200":
+          description: Unconfirmed contradictions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  possible:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PossibleContradiction"
+  /memory/reconcile/possible/{id}/answer:
+    post:
+      summary: Confirm or dismiss a possible contradiction
+      description: |
+        `approved` promotes it into a real conflict and returns the conflict id, so it is then
+        resolved and reverted like any other. `rejected` records the pair so it is never
+        raised again.
+      operationId: answerPossibleContradiction
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: The finding id from the possible list.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [decision]
+              properties:
+                decision:
+                  type: string
+                  enum: [approved, rejected]
+      responses:
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: No unanswered possible contradiction with that id.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: "memloom: no unanswered possible contradiction 8a41c0e2"
+        "200":
+          description: What answering did.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  decision:
+                    type: string
+                    enum: [approved, rejected]
+                  conflictId:
+                    type: string
+                    nullable: true
+                    description: The conflict row it became. Null on a rejection.
   /context/add:
     post:
       summary: Ingest a file as context
@@ -2521,6 +2864,299 @@ components:
         skipped:
           type: integer
           description: Pairs already merged, queued, or settled as distinct.
+    ReconcileInput:
+      type: object
+      description: What to run. Every field is optional.
+      properties:
+        mode:
+          type: string
+          enum: [dry_run, apply]
+          default: dry_run
+          description: >-
+            `dry_run` reports and changes nothing, and never calls a model. `apply` acts.
+        trigger:
+          type: string
+          enum: [manual, idle, startup]
+          default: manual
+          description: Recorded on the run, so the history says who started it.
+        passes:
+          type: array
+          description: >-
+            Override the saved settings for this run. Omit to use them. The contradiction
+            re-check (`llm_recheck`) is not requestable here; it runs only when the setting is
+            on.
+          items:
+            type: string
+            enum: [invariants, entities, llm_entities, llm_conflicts]
+    ReconcileSettings:
+      type: object
+      description: >-
+        Which passes a run does. The two free passes are on by default and the three that
+        spend money are off, because a pass whose work the ledger can undo needs no permission
+        and one that spends does. Every field is optional on a write.
+      properties:
+        invariants:
+          type: boolean
+          default: true
+          description: Fix memory principle violations. Free, acts on its own.
+        entities:
+          type: boolean
+          default: true
+          description: Resolve duplicate entities. Free, acts on its own.
+        llm_entities:
+          type: boolean
+          default: false
+          description: Let a model resolve uncertain entity pairs. One call per pair.
+        llm_conflicts:
+          type: boolean
+          default: false
+          description: Let a model resolve memory conflicts. One call per conflict.
+        llm_recheck:
+          type: boolean
+          default: false
+          description: >-
+            Look for contradictions the save path could not see. Up to 200 calls per run,
+            roughly $0.55 at the ceiling.
+        startupCatchUp:
+          type: boolean
+          default: true
+          description: >-
+            Run the free passes shortly after the daemon starts when the last run is more than
+            36 hours old.
+    ReconcileRun:
+      type: object
+      description: One run, and what it did.
+      properties:
+        id:
+          type: string
+          format: uuid
+        mode:
+          type: string
+          enum: [dry_run, apply]
+        trigger:
+          type: string
+          enum: [manual, idle, startup]
+        status:
+          type: string
+          enum: [running, success, error, aborted]
+        scanned:
+          type: integer
+          description: Active memories the run looked at.
+        retired:
+          type: integer
+          description: Memories staled. Never deleted, and undo puts them back.
+        folded:
+          type: integer
+          description: Entities folded into another.
+        questions:
+          type: integer
+          description: Findings reported rather than fixed.
+        conflictsRaised:
+          type: integer
+        possible:
+          type: integer
+          description: >-
+            Unconfirmed contradictions the re-check recorded. Not conflicts until a human says
+            so.
+        llmCalls:
+          type: integer
+        startedAt:
+          type: string
+          format: date-time
+        finishedAt:
+          type: string
+          format: date-time
+          nullable: true
+        revertedAt:
+          type: string
+          format: date-time
+          nullable: true
+    ReconcileAction:
+      type: object
+      description: One thing a run found.
+      properties:
+        id:
+          type: string
+          format: uuid
+        runId:
+          type: string
+          format: uuid
+        kind:
+          type: string
+          enum: [retire, question, conflict, fold, possible]
+          description: >-
+            `retire` and `fold` changed state. `question` and `conflict` ask you. `possible` is
+            an unconfirmed contradiction from the re-check.
+        class:
+          type: string
+          description: The detector behind it.
+          example: duplicate_content
+        memoryId:
+          type: string
+          format: uuid
+          nullable: true
+        reason:
+          type: string
+          example: identical content to 41b0e2d8, which is older and stays active
+        applied:
+          type: boolean
+          description: True only when an applying run actually changed something here.
+        surfaced:
+          type: boolean
+          description: False when the finding was recorded but held back by a per-run cap.
+        decision:
+          type: string
+          enum: [approved, rejected, snoozed]
+          nullable: true
+        mergeId:
+          type: string
+          format: uuid
+          nullable: true
+          description: On a fold, the merge record the undo reverses.
+        conflictId:
+          type: string
+          format: uuid
+          nullable: true
+          description: On a conflict, the queue row this finding became.
+        candidateId:
+          type: string
+          format: uuid
+          nullable: true
+          description: On a possible contradiction, the older belief of the pair.
+        createdAt:
+          type: string
+          format: date-time
+    ReconcileEstimate:
+      type: object
+      description: >-
+        What re-checking everything currently due would cost, from the real prompt template
+        and the actual content lengths. A dry run reports this instead of spending it. One run
+        is capped at 200 beliefs, so on a store with a backlog this is what several runs add up
+        to.
+      properties:
+        window:
+          type: integer
+          description: Active memories due a contradiction re-check.
+        llmCalls:
+          type: integer
+          description: One per memory in the window.
+        inputTokens:
+          type: integer
+        outputTokens:
+          type: integer
+        model:
+          type: string
+          example: google/gemini-2.5-flash
+        usd:
+          type: number
+          nullable: true
+          description: >-
+            Null for a model whose rates memloom does not know, rather than a confident wrong
+            number.
+    ReconcileReport:
+      type: object
+      description: One run's own words. This is what the CLI prints and the Settings tab renders.
+      properties:
+        run:
+          $ref: "#/components/schemas/ReconcileRun"
+        actions:
+          type: array
+          items:
+            $ref: "#/components/schemas/ReconcileAction"
+        estimate:
+          $ref: "#/components/schemas/ReconcileEstimate"
+        passes:
+          type: array
+          items:
+            type: string
+          description: The passes this run actually ran.
+        heldBack:
+          type: object
+          description: Findings recorded but not surfaced, because a per-run cap was reached.
+          properties:
+            retire: { type: integer }
+            question: { type: integer }
+            conflict: { type: integer }
+        entities:
+          $ref: "#/components/schemas/EntityResolutionResult"
+        arbitration:
+          type: object
+          description: Present when the uncertain entity pairs pass ran.
+          properties:
+            calls: { type: integer }
+            folded: { type: integer }
+            rejected:
+              type: integer
+              description: Pairs the model said are different things. Recorded, so it is never asked again.
+            unsure:
+              type: integer
+              description: Left pending for a human.
+        autoResolved:
+          type: object
+          description: Present when the memory conflicts pass ran.
+          properties:
+            examined: { type: integer }
+            resolved: { type: integer }
+        recheck:
+          type: object
+          description: Present when the contradiction re-check ran.
+          properties:
+            window:
+              type: integer
+              description: Beliefs this run swept.
+            calls: { type: integer }
+            claimed:
+              type: integer
+              description: Contradictions the model claimed, before the quotes were checked.
+            verified:
+              type: integer
+              description: Findings whose quotes were found in both memories, and were recorded.
+            remaining:
+              type: integer
+              description: Beliefs the 200 ceiling left for the next run.
+    PossibleContradiction:
+      type: object
+      description: >-
+        One unconfirmed contradiction, with the spans that make it readable without opening
+        either memory. Both quotes were verified against the two contents before the row was
+        written, so they are guaranteed to occur in them.
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: The finding id. Answering quotes it back.
+        runId:
+          type: string
+          format: uuid
+        newMemory:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            content: { type: string }
+        oldMemory:
+          type: object
+          properties:
+            id: { type: string, format: uuid }
+            content: { type: string }
+        newQuote:
+          type: string
+          description: The verbatim span from newMemory making its claim.
+        oldQuote:
+          type: string
+          description: The verbatim span from oldMemory making the opposing claim.
+        reason:
+          type: string
+          description: The model's own words, kept to 12 words by the prompt.
+        model:
+          type: string
+          nullable: true
+        similarity:
+          type: number
+          nullable: true
+          description: Cosine between the two beliefs. The same ordering signal the conflict queue uses.
+        foundAt:
+          type: string
+          format: date-time
     AssistantSession:
       type: object
       properties:

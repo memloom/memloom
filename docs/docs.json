@@ -161,6 +161,23 @@
                 ]
               },
               {
+                "group": "Reconciliation",
+                "openapi": "openapi.yaml",
+                "expanded": false,
+                "pages": [
+                  "POST /memory/reconcile",
+                  "POST /memory/reconcile/stream",
+                  "GET /memory/reconcile/runs",
+                  "GET /memory/reconcile/runs/{id}/actions",
+                  "GET /memory/reconcile/settings",
+                  "POST /memory/reconcile/settings",
+                  "POST /memory/reconcile/{id}/revert",
+                  "POST /memory/reconcile/{id}/stop",
+                  "GET /memory/reconcile/possible",
+                  "POST /memory/reconcile/possible/{id}/answer"
+                ]
+              },
+              {
                 "group": "Import",
                 "openapi": "openapi.yaml",
                 "expanded": false,
