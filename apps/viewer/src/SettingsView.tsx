@@ -60,6 +60,13 @@ function ago(iso: string): string {
   return `${Math.round(hours / 24)} days ago`;
 }
 
+/** A run still going. The counters are written per belief, so this number moves. */
+function liveSummary(run: ReconcileRun): string {
+  if (run.llmCalls === 0) return "running now…";
+  const found = run.possible > 0 ? `, ${run.possible} found` : "";
+  return `running now: ${run.llmCalls} checked${found}`;
+}
+
 /** What one run did, in the same order the CLI prints it. Applied runs only. */
 function runSummary(run: ReconcileRun): string {
   const parts: string[] = [];
@@ -225,6 +232,13 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
     void load(false);
   }, [load]);
 
+  const liveRunId = runs.find((r) => r.status === "running")?.id ?? null;
+  useEffect(() => {
+    if (!liveRunId) return;
+    const interval = setInterval(() => void load(true), 2_000);
+    return () => clearInterval(interval);
+  }, [liveRunId, load]);
+
   async function toggle(patch: Partial<ReconcileSettings>) {
     if (!settings) return;
     const previous = settings;
@@ -267,6 +281,9 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
     }
   }
 
+  // A sweep runs for minutes, so a live one is the thing to show. Reporting the last SUCCESSFUL
+  // run instead makes a run you started thirty seconds ago look like it never happened.
+  const liveRun = runs.find((r) => r.status === "running") ?? null;
   const lastRun = runs.find((r) => r.mode === "apply" && r.status === "success") ?? null;
   // Undo for the run you just started, where you are already looking. Undo for any older run
   // lives in the Console next to the rest of the history.
@@ -323,7 +340,7 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
             <button
               type="button"
               className="btn"
-              disabled={running}
+              disabled={running || liveRun !== null}
               onClick={() => void run("apply")}
             >
               {running ? "Reconciling…" : "Reconcile now"}
@@ -331,12 +348,16 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
             <button
               type="button"
               className="btn btnGhost"
-              disabled={running}
+              disabled={running || liveRun !== null}
               onClick={() => void run("dry_run")}
             >
               Preview only
             </button>
-            {lastRun && <span className="cardLabel">last run: {runSummary(lastRun)}</span>}
+            {liveRun ? (
+              <span className="cardLabel">{liveSummary(liveRun)}</span>
+            ) : (
+              lastRun && <span className="cardLabel">last run: {runSummary(lastRun)}</span>
+            )}
             {justRan && report && (
               <button
                 type="button"

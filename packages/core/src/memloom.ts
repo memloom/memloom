@@ -203,6 +203,15 @@ export const DEFAULT_RECONCILE_SETTINGS: ReconcileSettings = {
 export const RECHECK_WINDOW_LIMIT = 200;
 
 /**
+ * How long a run may sit in 'running' before the next one treats it as dead.
+ *
+ * Generous, because a sweep at the ceiling is minutes of sequential model calls and cutting a
+ * live run off would be worse than waiting. A daemon killed mid-run leaves the row behind with
+ * nobody to finish it, and without this the next run would be blocked forever.
+ */
+export const RECONCILE_STALE_RUN_MINUTES = 30;
+
+/**
  * Voice matching: how alike a new voice must be to a stored, named voiceprint before a
  * recording is auto-labeled with that name.
  *
@@ -4062,6 +4071,29 @@ export class Memloom implements MemoryEngine {
     const passes = [...(opts.passes ?? RECONCILE_PASSES.filter((p) => settings[p]))];
     const applying = mode === "apply";
 
+    // A re-check sweep is minutes of sequential model calls, long enough that a second click
+    // looks like the first one did nothing. Two runs would then sweep the same beliefs and bill
+    // twice, so an applying run refuses to start while another is live. A run that died without
+    // finishing would otherwise block every future one, so anything older than the cutoff is
+    // written off as aborted first.
+    if (applying) {
+      await this.#storage.query(
+        `UPDATE memory_reconcile_runs SET status = 'aborted', finished_at = now()
+          WHERE owner_id = $1 AND status = 'running'
+            AND started_at < now() - ($2 || ' minutes')::interval`,
+        [owner, String(RECONCILE_STALE_RUN_MINUTES)],
+      );
+      const [live] = await this.#storage.query<{ id: string }>(
+        "SELECT id FROM memory_reconcile_runs WHERE owner_id = $1 AND status = 'running' LIMIT 1",
+        [owner],
+      );
+      if (live) {
+        throw new Error(
+          "memloom: a reconcile run is already going. Watch it in the Console, or wait for it to finish.",
+        );
+      }
+    }
+
     const [created] = await this.#storage.query<{ id: string }>(
       `INSERT INTO memory_reconcile_runs (owner_id, mode, trigger, model)
        VALUES ($1, $2, $3, $4) RETURNING id`,
@@ -4106,6 +4138,10 @@ export class Memloom implements MemoryEngine {
       const raised = applying ? await this.#raiseLineageConflicts(owner, lineages.take) : [];
 
       const scanned = await this.#activeMemoryCount(owner);
+      await this.#storage.query("UPDATE memory_reconcile_runs SET scanned = $2 WHERE id = $1", [
+        runId,
+        scanned,
+      ]);
       // What the re-check owes: beliefs never checked, plus any whose check has gone stale. Read
       // before the pass runs, so the estimate describes the debt this run inherited rather than
       // what it left behind.
@@ -4483,6 +4519,12 @@ export class Memloom implements MemoryEngine {
       await this.#storage.query(
         "UPDATE memory_objects SET last_rechecked_at = now() WHERE id = $1 AND owner_id = $2",
         [subject.id, owner],
+      );
+      // The run row is the only thing a watcher can see. Written per belief rather than once at
+      // the end, or a ten-minute sweep reports nothing until the moment it is over.
+      await this.#storage.query(
+        "UPDATE memory_reconcile_runs SET llm_calls = $2, possible = $3 WHERE id = $1",
+        [runId, result.calls, result.findings.length],
       );
     }
     return result;

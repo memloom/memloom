@@ -295,7 +295,13 @@ export function ConsoleView({
 // deliberately zero on a preview (nothing was done), so a preview says so instead of
 // reciting zeroes as if it had found nothing.
 function reconcileRunSummary(run: ReconcileRun): string {
-  if (run.status === "running") return "reconciling…";
+  if (run.status === "running") {
+    // A re-check sweep is minutes of model calls. The counters are written per belief, so this
+    // moves; without it a long run is indistinguishable from a stuck one.
+    if (run.llmCalls === 0) return "reconciling…";
+    const found = run.possible > 0 ? `, ${run.possible} found` : "";
+    return `reconciling… ${run.llmCalls} checked${found}`;
+  }
   if (run.mode === "dry_run") return "preview, nothing applied";
   const parts: string[] = [];
   if (run.retired > 0) parts.push(`${run.retired} retired`);
@@ -399,6 +405,25 @@ function ReconcileRuns({
   useEffect(() => {
     void refresh(false);
   }, [refresh]);
+
+  // Same treatment the indexing history gets: while anything is live, keep reading it back.
+  const anyRunning = runs?.some((r) => r.status === "running") ?? false;
+  useEffect(() => {
+    if (!anyRunning) return;
+    const interval = setInterval(() => {
+      void refresh(true);
+      // An expanded live run gains findings as it goes, so its body is re-read too.
+      for (const run of runs ?? []) {
+        if (run.status !== "running" || !expanded[run.id]) continue;
+        refetch(reconcileActionsKey(run.id), () => api.reconcileActions(run.id))
+          .then((actions) =>
+            setActionsByRun((prev) => ({ ...prev, [run.id]: { status: "ready", actions } })),
+          )
+          .catch(() => {});
+      }
+    }, POLL_MS);
+    return () => clearInterval(interval);
+  }, [anyRunning, refresh, runs, expanded]);
 
   async function toggle(runId: string) {
     const next = !expanded[runId];

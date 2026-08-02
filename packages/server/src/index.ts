@@ -1065,7 +1065,13 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         403,
       );
     }
-    return c.json(await memloom.reconcile(body.data));
+    try {
+      return c.json(await memloom.reconcile(body.data));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Already running is the caller's answer to give, not a fault: 409, not 500.
+      return c.json({ error: message }, /already going/.test(message) ? 409 : 500);
+    }
   });
 
   app.get("/memory/reconcile/runs", async (c) => {

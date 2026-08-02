@@ -370,6 +370,45 @@ describe("the re-check pass", () => {
     expect((await countDueForRecheck(storage, SENTINEL_OWNER)).count).toBe(2);
   });
 
+  // A sweep takes minutes, so a second click looks like the first did nothing. Two runs would
+  // sweep the same beliefs and bill twice.
+  it("refuses a second applying run while one is live, and writes off a dead one", async () => {
+    const { memloom, storage } = await openStore(arbiter(NEW, OLD));
+    await memloom.save({ content: OLD });
+
+    await storage.query(
+      `INSERT INTO memory_reconcile_runs (owner_id, mode, trigger, status)
+       VALUES ($1, 'apply', 'manual', 'running')`,
+      [SENTINEL_OWNER],
+    );
+    await expect(memloom.reconcile({ mode: "apply" })).rejects.toThrow(/already going/);
+
+    // A preview spends nothing, so it is never blocked.
+    await expect(memloom.reconcile()).resolves.toBeTruthy();
+
+    // A run old enough to be dead is written off rather than blocking every future run.
+    await storage.query(
+      "UPDATE memory_reconcile_runs SET started_at = now() - interval '31 minutes' WHERE status = 'running'",
+    );
+    await expect(memloom.reconcile({ mode: "apply" })).resolves.toBeTruthy();
+    const [dead] = await storage.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM memory_reconcile_runs WHERE status = 'aborted'",
+    );
+    expect(Number(dead?.n)).toBe(1);
+  });
+
+  it("moves its counters while it runs, not only at the end", async () => {
+    const { memloom, storage } = await openStore(arbiter(NEW, OLD));
+    await memloom.save({ content: OLD });
+    await memloom.save({ content: NEW });
+    await makeNeighbours(storage, OLD, NEW);
+
+    const report = await memloom.reconcile({ mode: "apply", passes: ["llm_recheck"] });
+    // scanned is written before the slow pass starts, so a watcher never sees a run claiming 0.
+    expect(report.run.scanned).toBeGreaterThan(0);
+    expect(report.run.llmCalls).toBeGreaterThan(0);
+  });
+
   it("skips two versions of one belief, since supersession is not contradiction", async () => {
     const { memloom, storage } = await openStore(arbiter(NEW, OLD));
     await memloom.save({ content: OLD });
