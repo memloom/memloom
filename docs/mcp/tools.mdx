@@ -1,9 +1,9 @@
 ---
 title: "Tools"
-description: "The nine tools memloom exposes to MCP clients, and how they chain together"
+description: "The tools memloom exposes to MCP clients, and how they chain together"
 ---
 
-Nine tools, split by what they touch: memories, the graph, conflicts, and the graph
+The tools, split by what they touch: memories, the graph, conflicts, and the graph
 vocabulary. The descriptions the calling agent sees are written so it knows when to reach for
 each one; this page is the human-readable version, with the flows between tools spelled out.
 
@@ -115,6 +115,37 @@ Every resolution is reversible.
 The full conflict flow: `save_memory` reports "CONTRADICTS an existing memory" with a
 conflict id, `list_conflicts` shows what clashes, the user picks an action, and
 `resolve_conflict` applies it.
+
+## list_possible_contradictions
+
+List unconfirmed possible contradictions: pairs of memories the reconcile pass thinks clash but
+nobody has confirmed. No parameters. Each entry shows the id to answer with, a verbatim quote
+from each side, the reason the model gave, and how similar the two memories are.
+
+These are not conflicts. The pass that finds them runs at roughly 40 percent precision, so most
+of what it returns is wrong, which is why they wait here instead of going into the conflict
+queue. Treat each one as a question for the user rather than a fact about the store.
+
+## answer_possible_contradiction
+
+Answer one finding from `list_possible_contradictions`.
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `id` | string | required, from the list |
+| `answer` | enum | `confirm` or `dismiss` |
+
+`confirm` turns the finding into a real conflict, which then has to be resolved with
+`resolve_conflict` like any other. `dismiss` records that pair as not a contradiction
+permanently: it is never raised again and there is no undo.
+
+Ask the user rather than guessing. A wrong confirm puts noise in a queue they have to clear, and
+a wrong dismiss loses a real contradiction for good.
+
+The full flow: `memloom reconcile` finds candidates, `list_possible_contradictions` shows what is
+waiting, the user decides, `answer_possible_contradiction` records it, and a confirmed one
+continues through `list_conflicts` and `resolve_conflict`. See
+[reconciliation](/concepts/reconciliation) for what the pass does and what it costs.
 
 ## set_schema_entry_status
 
