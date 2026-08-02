@@ -133,7 +133,6 @@ export function ConflictsView({
 
   const visible = bySort(rows[kind], sort);
   const currentId = selected[kind] ?? visible[0]?.id ?? null;
-  const position = visible.findIndex((r) => r.id === currentId);
 
   const select = (id: string | null) => setSelected((prev) => ({ ...prev, [kind]: id }));
 
@@ -512,7 +511,7 @@ export function ConflictsView({
                 </>
               )}
               <span className="paneHint">
-                deciding advances to the next · <kbd>u</kbd> undo
+                deciding advances to the next; <kbd>u</kbd> undo
               </span>
             </footer>
           </>
@@ -607,17 +606,12 @@ export function ConflictsView({
                 onClick={() => act(maybe.id, () => api.answerPossible(maybe.id, "rejected"))}
               />
               <span className="paneHint">
-                confirming makes it a real conflict · dismissing is permanent
+                confirming makes it a real conflict; dismissing is permanent
               </span>
             </footer>
           </>
         )}
 
-        {visible.length > 0 && position >= 0 && (
-          <div className="paneCount">
-            {position + 1} of {visible.length}
-          </div>
-        )}
       </section>
     </div>
   );
