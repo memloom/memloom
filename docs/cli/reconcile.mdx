@@ -1,6 +1,6 @@
 ---
 title: "Reconciliation"
-description: "reconcile, reconcile undo, reconcile settings: the consolidation pass and how to take one back"
+description: "reconcile and its subcommands: the consolidation pass, its findings, and how to take a run back"
 ---
 
 ## reconcile
@@ -51,10 +51,64 @@ price is only shown for a model whose rates memloom knows; anything else prints 
 figure rather than a confident wrong number.
 
 A run with the contradiction re-check on is minutes of sequential model calls, and the CLI waits for
-it. Watch it live in the viewer's Settings tab instead if you want per-belief progress, or in the
-Console, which can also stop a run that is going.
+it. Watch it live in the viewer's Settings tab instead if you want per-belief progress. Either way
+`memloom reconcile stop <run id>` ends it early.
 
 Only one applying run at a time. A second one is refused while the first is live.
+
+## reconcile possible
+
+```bash
+memloom reconcile possible
+```
+
+List the unconfirmed contradictions the contradiction re-check found, one block each. These are not
+conflicts and nothing in the store has acted on them.
+
+```
+3 unconfirmed contradictions. about 2 in 5 are real, so read both quotes before answering.
+
+similarity 71%, judged by google/gemini-2.5-flash
+  NEW:      the release is scheduled for the 14th
+  EXISTING: the release is deferred until the extractor work lands
+  why:      deferred then scheduled
+  id:       8a41c0e2-...
+```
+
+The two quotes were verified against both memories when the finding was written, so they are the
+whole question: reading them is faster than opening two beliefs and comparing them. About two in
+five are real, so read both before answering.
+
+The same list is the third queue in the viewer's Conflicts tab, which also shows each memory in
+full.
+
+## reconcile yes, reconcile no
+
+```bash
+memloom reconcile yes <id>
+memloom reconcile no <id>
+```
+
+Answer one finding. The id is the one printed by `reconcile possible`, not a run id.
+
+`yes` confirms it and creates a real conflict, which you then resolve in the viewer or over MCP
+like any other. `no` dismisses it, and that pair is never raised again. A rejection is not waste:
+it records what you do not consider a contradiction.
+
+An id that was already answered, or one whose memories the store has moved on from, prints a
+pointer back to `reconcile possible` rather than an error.
+
+## reconcile stop
+
+```bash
+memloom reconcile stop <run id>
+```
+
+Stop a run that is still going. Whatever it already checked stays checked, so stopping costs
+nothing beyond the calls already paid for, and the next run resumes where this one left off.
+
+This also works on a run whose daemon died mid-sweep. That is the only way such a row stops
+counting as live, and until it does, a new applying run is refused.
 
 ## reconcile undo
 
@@ -77,7 +131,8 @@ the undo.
 Possible contradictions from the re-check are findings rather than changes, so undo leaves them in
 the Conflicts tab. Undoing the same run twice does nothing the second time.
 
-Undo for older runs is also in the viewer's Console tab, next to the rest of the history.
+The viewer's Console tab has both of these next to the run history: undo for any past run, and stop
+for one that is going.
 
 ## reconcile settings
 
