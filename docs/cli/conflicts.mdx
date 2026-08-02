@@ -1,6 +1,6 @@
 ---
 title: "Conflicts"
-description: "conflicts: listing pending contradictions, or auto-resolving them with an LLM judge"
+description: "List pending contradictions, or let a model clear the queue"
 icon: "scale-balanced"
 ---
 
@@ -10,13 +10,14 @@ icon: "scale-balanced"
 memloom conflicts
 ```
 
-List pending contradictions: the new memory and the existing ones it clashes with. A
-conflict appears when a save contradicts something already stored; both memories stay
-active until resolved.
+Lists pending contradictions: the new memory and the existing ones it clashes with. Both stay
+active until settled.
 
-Resolving by hand lives where a human is: the viewer's Conflicts tab, or an MCP client
-relaying your choice via [`resolve_conflict`](/mcp/tools#resolve_conflict). The four actions
-are keep new, keep existing, keep both, and merge; every resolution is reversible.
+Resolving by hand lives where a human is: the viewer's Conflicts tab, or an agent relaying your
+choice through [`resolve_conflict`](/mcp/tools). The four actions are keep new, keep existing,
+keep both, and merge. Every resolution is reversible.
+
+***
 
 ## conflicts auto
 
@@ -24,30 +25,22 @@ are keep new, keep existing, keep both, and merge; every resolution is reversibl
 memloom conflicts auto
 ```
 
-Re-judges every pending conflict with an LLM, one call per conflict. The dedup classifier
-that filed each conflict only ever saw two isolated pieces of text; the auto-resolver adds
-what it couldn't see, when each memory was recorded, and, for memories that came from
-`import sessions`, the transcript excerpt it was distilled from. A later session
-recording a state change against an older fact usually resolves the way a human skimming
-both would resolve it.
+Re-judges every pending conflict, one call each. The classifier that filed them saw two isolated
+pieces of text; this adds what it could not see: when each memory was recorded, and for imported
+ones the transcript excerpt it came from.
 
 ```
 [1/3] keep new: the deploy target is railway  (the newer session shows the change)
 [2/3] left for you: staging runs on Postgres  (times are too close)
-[3/3] keep both: prefers pnpm in this repo, npm in the legacy one  (different scopes)
-resolved 2 of 3: 1 keep new, 0 keep existing, 1 keep both; 1 left for you
-every auto-resolution is revertable from the viewer's conflicts tab.
+[3/3] keep both: prefers pnpm here, npm in the legacy repo  (different scopes)
+resolved 2 of 3; 1 left for you
 ```
 
-Only a decisive verdict resolves anything. The model is instructed to answer **unsure**
-rather than guess, and an unsure conflict stays in the queue exactly as it was. A resolved
-one lands in the same revertable history as a resolution made by hand, so `conflicts auto`
-is safe to run repeatedly over a growing queue.
+Only a decisive verdict resolves anything. The model is told to answer **unsure** rather than
+guess, and an unsure conflict stays exactly as it was. Resolutions land in the same revertable
+history as manual ones, so this is safe to re-run over a growing queue.
 
 <Note>
-Auto-resolution needs the LLM, so it's unavailable in offline mode (no
-`OPENROUTER_API_KEY`).
+  Needs a model, so it is unavailable offline. How detection works and what each resolution does
+  to the version chain is in [Conflicts](/concepts/conflicts).
 </Note>
-
-How contradiction detection works, and what each resolution does to the version chain, is
-covered in [Conflicts](/concepts/conflicts).

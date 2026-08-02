@@ -1,6 +1,6 @@
 ---
-title: "Graph & embeddings"
-description: "index, reembed, auto-index, schema: building the graph and keeping vectors consistent"
+title: "Graph and embeddings"
+description: "index, reembed, auto-index and schema"
 icon: "circle-nodes"
 ---
 
@@ -10,14 +10,13 @@ icon: "circle-nodes"
 memloom index [--rebuild]
 ```
 
-Extract entities from unindexed memories and context chunks into the graph (one LLM call per
-item; needs an API key). Prints one line per item with the entities found. With auto-index on
-(the default in cloud mode) new items are indexed in the background, so this command usually
-reports nothing pending.
+Extract entities from unindexed memories and chunks into the graph. One model call per item, so it
+needs a key. With auto-index on this usually reports nothing pending.
 
-`--rebuild` wipes extracted entities and their edges (mentions and relationships found in
-your content), then re-extracts from scratch. It does not touch memories, conflicts, or the
-`replaces`/`distinct` edges created by resolving conflicts.
+`--rebuild` wipes extracted entities and their edges, then re-extracts from scratch. It does not
+touch memories, conflicts, or the `replaces` and `distinct` edges that conflict resolution created.
+
+***
 
 ## reembed
 
@@ -25,47 +24,41 @@ your content), then re-extracts from scratch. It does not touch memories, confli
 memloom reembed [--force]
 ```
 
-Recompute every stored embedding with the embedding provider currently configured in
-`~/.memloom/config.env`, then stamp the store with the new fingerprint. Run this after
-switching providers or models, for example after adding `OPENROUTER_API_KEY` to leave
-offline mode: without it the daemon refuses to start, because old and new vectors live in
-incompatible spaces.
+Recompute every embedding with the currently configured provider, then stamp the new fingerprint.
+Run it after switching provider or model, for example after adding a key to leave offline mode.
+Without it the daemon refuses to start, because old and new vectors live in incompatible spaces.
 
 <Warning>
-The daemon must be stopped first (`memloom stop`); reembed opens the store directly.
+  Stop the daemon first. `reembed` opens the store directly.
 </Warning>
 
-Interrupting is safe: memories and files are never touched, only their vectors, and running
-the command again resumes where it stopped. Costs one embedding API call per 64 items.
+Interrupting is safe: only vectors are touched and running again resumes where it stopped. Costs
+one call per 64 items. `--force` re-embeds even when the store already matches the config.
 
-`--force` re-embeds even when the store already matches the configured provider and nothing
-is missing.
-
-A typical offline-to-cloud migration:
+A typical offline to cloud migration:
 
 ```bash
 memloom stop
 # set OPENROUTER_API_KEY in ~/.memloom/config.env
 memloom reembed
-memloom serve      # or any command; then:
-memloom index      # build the graph (offline mode couldn't)
+memloom serve
+memloom index      # build the graph, which offline mode could not
 ```
+
+***
 
 ## auto-index
 
 ```bash
-memloom auto-index [on|off]
+memloom auto-index        # show
+memloom auto-index off    # index only on demand
 ```
 
-Show or set background entity extraction. When on, new memories and files are indexed a few
-seconds after they land (debounced into batched runs, visible in the Console). The setting
-persists across daemon restarts; `MEMLOOM_AUTO_INDEX` in config.env is only the default
-before the first use of this switch. Needs an API key; offline mode cannot enable it.
+Background extraction a few seconds after new memories and files land, debounced into batched runs
+and visible in the Console. The setting persists across restarts; `MEMLOOM_AUTO_INDEX` is only the
+default before the first use of this switch. Needs a key, so offline cannot enable it.
 
-```bash
-memloom auto-index        # show the current state
-memloom auto-index off    # index only via 'memloom index' / the Console
-```
+***
 
 ## schema
 
@@ -73,14 +66,14 @@ memloom auto-index off    # index only via 'memloom index' / the Console
 memloom schema [list|disable|enable|delete]
 ```
 
-Manage the extraction vocabulary: the entity types and predicates the LLM is allowed to use
-when indexing. With no arguments, prints the vocabulary with usage counts and status.
+Manage the extraction vocabulary: the entity types and predicates the model may use. With no
+arguments, prints it with usage counts and status.
 
 | Subcommand | Effect |
 | --- | --- |
-| `schema disable <entity_type\|predicate> <name>` | Stop using an entry for future extraction. Entities already extracted under it stay in the graph. Works on built-ins and user-tier entries alike. |
-| `schema enable <entity_type\|predicate> <name>` | Re-enable a disabled entry. |
-| `schema delete <entity_type\|predicate> <name>` | Permanently remove a DISABLED user-tier entry. Built-ins can only be disabled, and an active entry must be disabled first. |
+| `disable <kind> <name>` | Stops future use. Entities already extracted under it stay. Works on built-ins too |
+| `enable <kind> <name>` | Re-enables a disabled entry |
+| `delete <kind> <name>` | Removes a **disabled** entry you added. Built-ins can only be disabled |
 
-The vocabulary itself, and how the LLM proposes new entries for your approval, is covered in
-[The graph](/concepts/graph).
+`<kind>` is `entity_type` or `predicate`. How the model proposes new entries for your approval is
+covered in [The graph](/concepts/graph).
