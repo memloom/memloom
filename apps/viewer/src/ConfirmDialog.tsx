@@ -47,17 +47,20 @@ export function ConfirmDialog({
   if (!open) return null;
 
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: the backdrop is a dismiss target, and
-    // every action it offers is also reachable from the buttons and the Escape key.
-    <div className="modalBackdrop" onClick={onCancel}>
-      <div
-        className="modal"
-        role="dialog"
-        aria-modal="true"
-        aria-label={title}
-        onClick={(e) => e.stopPropagation()}
-        onKeyDown={(e) => e.stopPropagation()}
-      >
+    <div className="modalBackdrop">
+      {/*
+        A real button rather than a div with a click handler. Clicking outside to dismiss is a
+        mouse convenience, and a button gets keyboard and screen-reader support for free instead
+        of needing a11y rules suppressed. Escape closes it too, so this is never the only way out.
+      */}
+      <button
+        type="button"
+        className="modalScrim"
+        aria-label="Cancel"
+        tabIndex={-1}
+        onClick={onCancel}
+      />
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
         <h3 className="modalTitle">{title}</h3>
         <p className="modalBody">{body}</p>
         <div className="modalActions">

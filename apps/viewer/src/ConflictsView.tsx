@@ -7,7 +7,6 @@ import {
   type EntityConflict,
   type EntityMerge,
   type PossibleContradiction,
-  type ResolveDecision,
   type ResolvedConflict,
   type SettledEntityPair,
 } from "./api";
@@ -563,7 +562,7 @@ export function ConflictsView({
           </>
         )}
 
-        {entity && entity.candidates[0] && (
+        {entity?.candidates[0] && (
           <>
             <header className="paneHead">
               <span className="paneKind">same thing?</span>

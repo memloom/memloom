@@ -3053,12 +3053,26 @@ textarea {
    shadow, and the backdrop only dims rather than blurring. */
 .modalBackdrop {
   align-items: center;
-  background: rgb(0 0 0 / 55%);
   display: flex;
   inset: 0;
   justify-content: center;
   position: fixed;
   z-index: 50;
+}
+
+/* The dim itself is a button, so clicking outside dismisses without a div carrying a click
+   handler. Out of the tab order: Escape and the Cancel button are the keyboard routes. */
+.modalScrim {
+  background: rgb(0 0 0 / 55%);
+  border: none;
+  cursor: default;
+  inset: 0;
+  padding: 0;
+  position: absolute;
+}
+
+.modal {
+  position: relative;
 }
 
 .modal {
