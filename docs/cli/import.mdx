@@ -4,6 +4,31 @@ description: "Distill your agent's sessions into memories"
 icon: "file-import"
 ---
 
+## Overview
+
+Your agents already know things: months of decisions in Claude Code transcripts, and the notes
+they write to disk. Import brings both into the store, through the same belief pipeline as
+anything else.
+
+<CardGroup cols={3}>
+  <Card title="import sessions" icon="comments">
+    Distills Claude Code transcripts into typed memories. Spends model calls.
+  </Card>
+  <Card title="import agent-memory" icon="file-lines">
+    Reads the memory files agents already keep. No extraction, so free.
+  </Card>
+  <Card title="connect claude-code" icon="link">
+    Same pipeline, triggered as each session ends.
+  </Card>
+</CardGroup>
+
+<Warning>
+  Start with `--dry-run` on either import. It lists what would be processed and makes zero model
+  calls.
+</Warning>
+
+***
+
 ## import sessions
 
 ```bash
@@ -11,52 +36,27 @@ memloom import sessions --dry-run
 memloom import sessions
 ```
 
-Your Claude Code sessions hold months of decisions, preferences, and hard-won fixes. You
-could ask Claude Code to go dig one out: it can grep old transcripts as well as you can
-scroll them. But that means minutes of searching and real tokens spent hunting through a
-hundred sessions for one detail, instead of writing code, and it gets slower as your history
-grows. Import distills every session once into typed, searchable memories: each session is
-read locally from `~/.claude/projects`, scrubbed of secret-shaped strings, distilled by your
-configured LLM into facts, preferences, episodes, and procedures, and saved through the same
-belief pipeline as everything else. Duplicates merge, restatements version, and
-contradictions become reviewable conflicts. See [Session distillation](/concepts/distillation)
-for how that pipeline works end to end.
+Each session is read from `~/.claude/projects`, scrubbed of secret-shaped strings, distilled into
+facts, preferences, episodes and procedures, and saved. Duplicates merge, restatements version,
+contradictions become reviewable conflicts. Every memory keeps provenance: the session file, the
+line range, and a short excerpt. See [Session distillation](/concepts/distillation).
 
-Every imported memory keeps provenance: the session file, the line range, and a short
-excerpt, so a recall can always be traced back to the conversation it came from.
-
-Start with `--dry-run`. It lists what would be processed and makes zero LLM calls.
-
-## Bounds and idempotency
-
-Import is bounded by default: sessions modified in the last 14 days, newest first, at most
-20\. Anything skipped is announced, never silent. Widen with flags when you want more
-history:
-
-```bash
-memloom import sessions --days 60 --sessions 100
-memloom import sessions --project myapp
-```
-
-Re-running is cheap. A ledger tracks how far each session was processed, so an unchanged
-session is skipped outright and a session that grew since the last run only has its new
-part distilled. If Claude Code rewrote a transcript (compaction, resume), the ledger
-notices and reprocesses that session from the start.
-
-| Flag | What it does |
+| Flag | Does |
 | --- | --- |
-| `--agent X` | Which agent's sessions to import (default and only option today: `claude-code`) |
-| `--dry-run` | List sessions and chunk counts; no LLM calls, no writes |
-| `--force` | Reprocess everything from scratch, ignoring the ledger |
-| `--days N` | Widen the day window (default 14) |
-| `--sessions N` | Raise the session cap (default 20) |
-| `--project X` | Only sessions whose project folder name contains X |
+| `--dry-run` | List sessions and chunk counts. No calls, no writes |
+| `--days N` | Widen the day window. Default 14 |
+| `--sessions N` | Raise the session cap. Default 20 |
+| `--project X` | Only projects whose folder name contains X |
+| `--agent X` | Which agent. Today only `claude-code` |
+| `--force` | Reprocess everything, ignoring the ledger |
 
-## What it costs
+Bounded by default and never silent: anything skipped is announced. Re-running is cheap, because a
+ledger tracks how far each session got. An unchanged session is skipped, a grown one has only its
+new part distilled, and a rewritten one is reprocessed from the start.
 
-The run ends with a cost line: extraction calls (one per transcript chunk), dedup
-classifier calls (one per saved memory that had similar neighbors), and embedding calls
-(one batch per session). Nothing runs unattended; import spends only while you watch it.
+The run ends with a cost line: extraction calls, dedup calls, and embedding batches.
+
+***
 
 ## import agent-memory
 
@@ -65,26 +65,24 @@ memloom import agent-memory --dry-run
 memloom import agent-memory
 ```
 
-Your agents already keep long-term notes on disk: Claude Code writes one markdown file per
-memory under each project's `memory/` folder, and GitHub Copilot keeps topic files whose
-`##` sections are individual memories. Those files are distilled already, so this import
-needs no LLM extraction: each memory is redacted, embedded, and saved through the same
-belief pipeline (duplicates merge, restatements version, contradictions become reviewable
-conflicts), with provenance back to the file and line range.
+Claude Code writes one markdown file per memory under each project's `memory/` folder, and Copilot
+keeps topic files whose `##` sections are individual memories. Those are already distilled, so
+this needs no extraction: each is redacted, embedded and saved with provenance.
 
-Re-running is free: a content-hash ledger skips unchanged memories before any provider
-call. The import is read-only on the agents' folders; memloom never writes into them.
-
-This is an import, not a sync: an edited agent file re-imports and versions the memory,
-but deleting a file from an agent's folder does not delete the memory here. memloom keeps
-what it learned; remove memories from the viewer or CLI if you want them gone.
-
-| Flag | What it does |
+| Flag | Does |
 | --- | --- |
-| `--agent X` | Only this agent's folders: `claude-code` or `copilot` (repeatable; default both) |
-| `--dry-run` | List folders and memory counts; no provider calls, no writes |
+| `--agent X` | `claude-code` or `copilot`, repeatable. Default both |
+| `--dry-run` | List folders and counts |
+| `--project X` | Only Claude Code projects matching X |
 | `--force` | Re-import everything, ignoring the content-hash ledger |
-| `--project X` | Only Claude Code projects whose folder name contains X |
+
+<Note>
+  This is an import, not a sync. An edited agent file re-imports and versions the memory, but
+  deleting one from the agent's folder does not delete it here. memloom never writes into those
+  folders.
+</Note>
+
+***
 
 ## Automatic capture
 
@@ -93,50 +91,45 @@ memloom connect claude-code --project myapp
 memloom status
 ```
 
-`connect` makes capture continuous: a session-end hook is added to your Claude Code
-settings, and each finished session is distilled by the daemon in the background, using
-the exact same pipeline as `import`. The hook is a thin notifier that hands the daemon a
-path and exits in milliseconds; if the daemon is down when a session ends, the next daemon
-start sweeps the gap using the ledger, so nothing is lost.
+A session-end hook hands the daemon a path the moment a session finishes, and the daemon distills
+it in the background with the same pipeline. The hook exits in milliseconds. If the daemon is down
+the next start sweeps the gap from the ledger, so nothing is lost.
 
-Capture scope is an allowlist and it is empty by default: nothing is captured until you
-name projects with `--project` (repeatable) or opt into `--all`. That is deliberate. The
-hook fires for every project on your machine, including client work and repositories whose
-code should never reach an LLM provider.
+<Warning>
+  Capture scope is an allowlist and it is **empty by default**. Nothing is captured until you name
+  projects with `--project`, or opt into `--all`. The hook fires for every project on your
+  machine, including client work whose code should never reach a provider.
+</Warning>
 
-Guarantees around the settings edit: it merges with your existing hooks (never replaces),
-a one-time backup is written next to the file before the first edit, running `connect`
-twice changes nothing, and `memloom disconnect claude-code` removes only memloom's
-entries. A settings file that does not parse is refused untouched.
+<Accordion title="What the settings edit guarantees" icon="shield">
+  It merges with your existing hooks and never replaces them, a one-time backup is written before
+  the first edit, running `connect` twice changes nothing, and `memloom disconnect claude-code`
+  removes only memloom's entries. A settings file that does not parse is refused untouched.
+</Accordion>
 
-## Prompt-time recall
+### Prompt-time recall
 
-`connect` also installs a second hook: at every prompt you type in Claude Code, memloom
-recalls the memories relevant to that prompt and injects them as context, so Claude uses
-your memory without being told to search it. Recall only reads the store; the capture
-allowlist gates what gets imported, not what gets recalled.
+`connect` also installs a second hook that recalls relevant memories into every prompt you type,
+so Claude uses your memory without being told to search it. Recall only reads, so the capture
+allowlist gates what is imported, not what is recalled.
 
-The hook is built to be invisible when it has nothing to add. It skips slash commands and
-shell passthrough, injects nothing when no memory matches, and treats a stopped daemon, a
-locked store, or a slow response as silence. It never blocks a prompt: a hard timeout caps
-the added latency, and any failure exits cleanly with no output.
+It is built to be invisible when it has nothing to add: it skips slash commands, injects nothing
+when no memory matches, and treats a stopped daemon or slow response as silence. A hard timeout
+caps the added latency and any failure exits cleanly.
 
-Skip it with `--no-recall` (which also removes the hook if a previous `connect` installed
-it), or remove both hooks with `memloom disconnect claude-code`. `memloom status` shows
-which hooks are installed. If you connected before 0.5.0, run `connect` again to add the
-recall hook.
+Skip it with `--no-recall`, or remove both hooks with `memloom disconnect claude-code`.
 
-Unattended capture runs against a daily distillation budget so it can never silently burn
-credits: when the budget is spent, capture pauses and `memloom status` says so loudly.
-`status` also shows whether the hook is installed, when it last fired, and whether the
-last capture failed (a provider outage, a missing API key), so a dead hook is always
-visible, never silent.
+<Note>
+  Unattended capture runs against a daily distillation budget, so it cannot silently burn credits.
+  `memloom status` shows which hooks are installed, when they last fired, whether the last capture
+  failed, and whether the budget is spent.
+</Note>
 
-## Privacy notes
+***
 
-Transcripts never leave your machine except as redacted chunks sent to the LLM provider
-you configured. Redaction is pattern-based (API key shapes, bearer tokens, credentialed
-URLs) and best-effort by design; review with `--dry-run` and the viewer if your sessions
-handle sensitive material. Subagent transcripts and compaction summaries are excluded, and
-import refuses to run in offline mode rather than degrade silently: distillation needs an
-LLM, so `OPENROUTER_API_KEY` must be set.
+## Privacy
+
+Transcripts never leave your machine except as redacted chunks sent to the provider you
+configured. Redaction is pattern-based and best-effort, so review with `--dry-run` and the viewer
+if your sessions handle sensitive material. Subagent transcripts and compaction summaries are
+excluded, and import refuses to run offline rather than degrade silently.
