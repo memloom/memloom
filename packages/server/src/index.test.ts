@@ -32,11 +32,21 @@ const extractor = new ScriptedLLMProvider((prompt) =>
 // costs about six seconds and the tests themselves cost milliseconds, so a store per test
 // spends effectively all of its wall clock on Postgres startup.
 let storage: StorageAdapter;
+// The ingest queue persists to MEMLOOM_HOME. Left alone, a test that POSTs /queue writes into
+// the developer's real ~/.memloom and leaves a failed row there pointing at a deleted temp file.
+let previousHome: string | undefined;
+let fakeHome: string;
 beforeAll(async () => {
   storage = await PgliteAdapter.open();
+  fakeHome = mkdtempSync(join(tmpdir(), "memloom-server-home-"));
+  previousHome = process.env.MEMLOOM_HOME;
+  process.env.MEMLOOM_HOME = fakeHome;
 });
 afterAll(async () => {
   await storage.close();
+  if (previousHome === undefined) delete process.env.MEMLOOM_HOME;
+  else process.env.MEMLOOM_HOME = previousHome;
+  rmSync(fakeHome, { recursive: true, force: true });
 });
 
 describe("server", () => {
@@ -314,6 +324,123 @@ describe("server", () => {
       documents: unknown[];
     };
     expect(docs.documents).toHaveLength(3);
+
+    // Adding a folder records the folder, not just the files that happened to be in it. The
+    // root is the only thing that makes a file arriving tomorrow findable.
+    const roots = (await (await server.request("/context/roots")).json()) as {
+      enabled: boolean;
+      roots: Array<{ path: string; watching: boolean; documents: number }>;
+    };
+    expect(roots.roots).toHaveLength(1);
+    expect(roots.roots[0]?.path).toBe(dir);
+    expect(roots.roots[0]?.watching).toBe(true);
+    expect(roots.roots[0]?.documents).toBe(3);
+    // Off in tests: a server per case must not hold OS watchers or a rescan timer.
+    expect(roots.enabled).toBe(false);
+  });
+
+  // Three routes accept a directory and every one of them has to record the root. The queue
+  // route is the one the viewer's add card uses for recordings, which is the flow watching
+  // exists for, so a miss there would look like the feature simply not working.
+  it("records the root from the queue and streaming add paths too", async () => {
+    const server = await app();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-root-paths-"));
+    cleanups.push(async () => rmSync(dir, { recursive: true, force: true }));
+    const nested = join(dir, "queued");
+    mkdirSync(nested);
+    writeFileSync(join(nested, "a.md"), "# A\nqueued notes");
+    const streamed = join(dir, "streamed");
+    mkdirSync(streamed);
+    writeFileSync(join(streamed, "b.md"), "# B\nstreamed notes");
+
+    await server.request("/queue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ paths: [nested] }),
+    });
+    await server.request("/context/add/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: streamed }),
+    });
+
+    const roots = (await (await server.request("/context/roots")).json()) as {
+      roots: Array<{ path: string }>;
+    };
+    expect(
+      roots.roots
+        .map((r) => r.path)
+        .filter((p) => p.startsWith(dir))
+        .sort(),
+    ).toEqual([nested, streamed].sort());
+  });
+
+  it("switches watching off for a root and for one document, and forgets a root without deleting it", async () => {
+    const server = await app();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-watch-"));
+    cleanups.push(async () => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, "a.md"), "# A\nfirst note");
+
+    await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: dir }),
+    });
+    const listed = (await (await server.request("/context/roots")).json()) as {
+      roots: Array<{ id: string }>;
+    };
+    const rootId = listed.roots[0]?.id ?? "";
+    // Selected by path, not by index: the ingest queue persists across servers, so another
+    // test's file can still be draining into this store.
+    const ours = async () => {
+      const body = (await (await server.request("/context/documents")).json()) as {
+        documents: Array<{ id: string; path: string; watching: boolean; watchable: boolean }>;
+      };
+      return body.documents.filter((d) => d.path.startsWith(dir));
+    };
+    const [doc] = await ours();
+    const docId = doc?.id ?? "";
+    expect(doc?.watchable).toBe(true);
+
+    const offRoot = await server.request(`/context/roots/${rootId}/watch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ watching: false }),
+    });
+    expect(offRoot.status).toBe(200);
+    const offDoc = await server.request(`/context/documents/${docId}/watch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ watching: false }),
+    });
+    expect(offDoc.status).toBe(200);
+
+    expect((await ours())[0]?.watching).toBe(false);
+
+    // Forgetting the root keeps the document: stop following a folder is not forget it.
+    const removed = await server.request(`/context/roots/${rootId}`, { method: "DELETE" });
+    expect(removed.status).toBe(200);
+    const gone = (await (await server.request("/context/roots")).json()) as {
+      roots: Array<{ path: string }>;
+    };
+    expect(gone.roots.filter((r) => r.path === dir)).toEqual([]);
+    expect(await ours()).toHaveLength(1);
+  });
+
+  it("answers 404 for a watch change to something that is not there", async () => {
+    const server = await app();
+    const missing = "11111111-2222-3333-4444-555555555555";
+    for (const path of [`/context/roots/${missing}/watch`, `/context/documents/${missing}/watch`]) {
+      const res = await server.request(path, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ watching: false }),
+      });
+      expect(res.status).toBe(404);
+    }
+    expect((await server.request(`/context/roots/${missing}`, { method: "DELETE" })).status).toBe(
+      404,
+    );
   });
 
   // The streaming variant exists because transcribing an hour of audio takes 8 to 11
