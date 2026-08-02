@@ -152,7 +152,9 @@ function IndexingSection({
       const result = rebuild ? await api.reindex() : await api.index();
       const what = `${result.indexed} memories and ${result.chunksIndexed} chunks`;
       if (result.indexed === 0 && result.chunksIndexed === 0) {
-        toastSaid(rebuild ? "re-indexed, but there was nothing to index" : "everything is already indexed");
+        toastSaid(
+          rebuild ? "re-indexed, but there was nothing to index" : "everything is already indexed",
+        );
       } else {
         toastDone(rebuild ? `re-indexed ${what} from scratch` : `indexed ${what}`);
       }
@@ -196,7 +198,12 @@ function IndexingSection({
         )}
 
         <div className="formRow">
-          <button type="button" className="btn" disabled={indexing} onClick={() => void runIndex(false)}>
+          <button
+            type="button"
+            className="btn"
+            disabled={indexing}
+            onClick={() => void runIndex(false)}
+          >
             {indexing ? "Indexing…" : "Extract entities from unindexed memories & context"}
           </button>
           <button
@@ -232,7 +239,9 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
   const [settings, setSettings] = useState<ReconcileSettings | null>(() =>
     cachedData<ReconcileSettings>("reconcile-settings"),
   );
-  const [runs, setRuns] = useState<ReconcileRun[]>(() => cachedData<ReconcileRun[]>("reconcile-runs") ?? []);
+  const [runs, setRuns] = useState<ReconcileRun[]>(
+    () => cachedData<ReconcileRun[]>("reconcile-runs") ?? [],
+  );
   const [report, setReport] = useState<ReconcileReport | null>(null);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<ReconcileProgressEvent | null>(null);
@@ -358,7 +367,9 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
                   key={pass}
                   type="button"
                   className={`passRow ${settings[pass] ? "passRowOn" : ""}`}
-                  onClick={() => void toggle({ [pass]: !settings[pass] } as Partial<ReconcileSettings>)}
+                  onClick={() =>
+                    void toggle({ [pass]: !settings[pass] } as Partial<ReconcileSettings>)
+                  }
                 >
                   <span className="autoIndexTrack">
                     <span className="autoIndexKnob" />

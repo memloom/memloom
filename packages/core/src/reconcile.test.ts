@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  RECONCILE_IDLE_QUIET_MS,
-  effectiveCaps,
-  idleRunDue,
-  PROMPT_OVERHEAD_TOKENS,
-  startupCatchUpDue,
-} from "./reconcile.js";
-import {
   HashingEmbeddingProvider,
   NullLLMProvider,
   ScriptedLLMProvider,
 } from "./hashing-provider.js";
 import { Memloom, SENTINEL_OWNER } from "./memloom.js";
+import {
+  effectiveCaps,
+  idleRunDue,
+  PROMPT_OVERHEAD_TOKENS,
+  RECONCILE_IDLE_QUIET_MS,
+  startupCatchUpDue,
+} from "./reconcile.js";
 import type { StorageAdapter } from "./storage.js";
 import { PgliteFactory } from "./testkit.js";
 import type { EntityAutoEvent } from "./types.js";

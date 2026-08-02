@@ -964,14 +964,18 @@ export const api = {
   // Unconfirmed contradictions. Deliberately a separate read from conflicts(): these must not
   // reach the conflicts badge, the queue-pressure gate, or MCP list_conflicts.
   possibleContradictions: () =>
-    json<{ possible: PossibleContradiction[] }>("/memory/reconcile/possible").then((r) => r.possible),
+    json<{ possible: PossibleContradiction[] }>("/memory/reconcile/possible").then(
+      (r) => r.possible,
+    ),
   answerPossible: (id: string, decision: "approved" | "rejected") =>
     post<{ conflictId: string | null; decision: string }>(
       `/memory/reconcile/possible/${id}/answer`,
       { decision },
     ),
   reconcileActions: (runId: string) =>
-    json<{ actions: ReconcileAction[] }>(`/memory/reconcile/runs/${runId}/actions`).then((r) => r.actions),
+    json<{ actions: ReconcileAction[] }>(`/memory/reconcile/runs/${runId}/actions`).then(
+      (r) => r.actions,
+    ),
   reconcile: (mode: "dry_run" | "apply" = "apply") =>
     post<ReconcileReport>("/memory/reconcile", { mode, trigger: "manual" }),
   // A sweep runs for minutes, so it reports per belief over NDJSON rather than holding one

@@ -13,13 +13,6 @@ import type {
   ContextDocument,
   ContextProgressEvent,
   DocumentChunks,
-  ReconcileAction,
-  ReconcileDecision,
-  ReconcileOptions,
-  ReconcileReport,
-  ReconcileRevertResult,
-  ReconcileRun,
-  ReconcileSettings,
   Graph,
   ImportCaptureScope,
   ImportOptions,
@@ -38,6 +31,13 @@ import type {
   PossibleAnswer,
   PossibleContradiction,
   RecallOptions,
+  ReconcileAction,
+  ReconcileDecision,
+  ReconcileOptions,
+  ReconcileReport,
+  ReconcileRevertResult,
+  ReconcileRun,
+  ReconcileSettings,
   RelatedEntities,
   ResolveDecision,
   ResolvedConflict,
@@ -406,7 +406,9 @@ export class HttpMemloomClient implements MemoryEngine {
     actionId: string,
     decision: Extract<ReconcileDecision, "approved" | "rejected">,
   ): Promise<PossibleAnswer> {
-    return this.#post<PossibleAnswer>(`/memory/reconcile/possible/${actionId}/answer`, { decision });
+    return this.#post<PossibleAnswer>(`/memory/reconcile/possible/${actionId}/answer`, {
+      decision,
+    });
   }
 
   contextAdd(

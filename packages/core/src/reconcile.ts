@@ -57,7 +57,11 @@ export function isIntegrityFinding(finding: ReconcileFinding): boolean {
  * one flag per finding, positionally, so the caller can keep the original order in the ledger:
  * held back is recorded, not lost.
  */
-export function capBuckets(findings: ReconcileFinding[], cap: number, integrityCap: number): boolean[] {
+export function capBuckets(
+  findings: ReconcileFinding[],
+  cap: number,
+  integrityCap: number,
+): boolean[] {
   let normal = 0;
   let integrity = 0;
   return findings.map((finding) =>

@@ -1,6 +1,6 @@
-import type { ReconcileReport, PossibleContradiction } from "@memloom/core";
+import type { PossibleContradiction, ReconcileReport } from "@memloom/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { formatReconcileReport, formatPossibleContradictions, run } from "./index.js";
+import { formatPossibleContradictions, formatReconcileReport, run } from "./index.js";
 
 // The CLI is now a thin router over the daemon (data commands auto-start `memloom serve` and
 // talk to it over HTTP). Here we cover the router itself; save/recall behaviour is tested at

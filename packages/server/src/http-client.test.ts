@@ -165,7 +165,9 @@ describe("HttpMemloomClient", () => {
 
   it("stopping a run that is not going answers instead of failing", async () => {
     const c = await client();
-    expect(await c.stopReconcile("00000000-0000-0000-0000-000000000000")).toEqual({ stopped: false });
+    expect(await c.stopReconcile("00000000-0000-0000-0000-000000000000")).toEqual({
+      stopped: false,
+    });
   });
 });
 

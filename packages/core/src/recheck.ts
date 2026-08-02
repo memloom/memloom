@@ -205,7 +205,10 @@ export async function findRecheckSubjects(
  * shape, and it is the class this pass exists to surface: excluding it removes the findings worth
  * having and leaves the noise behind.
  */
-export function buildRecheckPrompt(subject: { content: string }, candidates: RecheckPair[]): string {
+export function buildRecheckPrompt(
+  subject: { content: string },
+  candidates: RecheckPair[],
+): string {
   const list = candidates.map((c, i) => `${i + 1}. ${c.content}`).join("\n");
   return [
     "You compare a NEW memory against EXISTING memories and classify how each existing one",

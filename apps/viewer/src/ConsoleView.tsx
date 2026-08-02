@@ -11,11 +11,11 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
-  type ReconcileAction,
-  type ReconcileRun,
   type IndexEventLevel,
   type IndexRun,
   type IndexRunEvent,
+  type ReconcileAction,
+  type ReconcileRun,
 } from "./api";
 import { cachedData, prefetch, refetch } from "./prefetch";
 import { toastDone, toastFailed } from "./toast";
@@ -282,7 +282,11 @@ export function ConsoleView({
           )}
         </div>
 
-        <ReconcileRuns onChanged={onChanged} onError={toastFailed} onOpenConflict={onOpenConflict} />
+        <ReconcileRuns
+          onChanged={onChanged}
+          onError={toastFailed}
+          onOpenConflict={onOpenConflict}
+        />
       </div>
     </div>
   );
@@ -393,7 +397,9 @@ function ReconcileRuns({
   onError: (message: string) => void;
   onOpenConflict: (conflictId: string) => void;
 }) {
-  const [runs, setRuns] = useState<ReconcileRun[] | null>(() => cachedData<ReconcileRun[]>("reconcile-runs"));
+  const [runs, setRuns] = useState<ReconcileRun[] | null>(() =>
+    cachedData<ReconcileRun[]>("reconcile-runs"),
+  );
   const [actionsByRun, setActionsByRun] = useState<Record<string, ActionsState>>({});
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState<string | null>(null);
@@ -471,9 +477,9 @@ function ReconcileRuns({
       await api.revertReconcile(runId);
       // Undo changes what the run's rows say, and the cached copy is the pre-undo one. Reading
       // it back is the only way state and cache agree on what happened.
-      const actions = await refetch(reconcileActionsKey(runId), () => api.reconcileActions(runId)).catch(
-        () => [],
-      );
+      const actions = await refetch(reconcileActionsKey(runId), () =>
+        api.reconcileActions(runId),
+      ).catch(() => []);
       setActionsByRun((prev) => ({ ...prev, [runId]: { status: "ready", actions } }));
       await refresh(true);
       onChanged();

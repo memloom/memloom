@@ -20,36 +20,9 @@ import {
 import { type ResolverSide, resolveConflictWithContext } from "./conflict-resolver.js";
 import { type Candidate, classify } from "./dedup.js";
 import { type DistilledMemory, distillChunk } from "./distill.js";
-import {
-  BACKOFF_SILENT_AFTER,
-  CONFLICT_QUEUE_CEILING,
-  capBuckets,
-  type ReconcileFinding,
-  effectiveCaps,
-  estimateRecheck,
-  estimateUsd,
-  findDuplicateContent,
-  findEntityInvariants,
-  findMultiHeadLineages,
-  findOrphanStale,
-  findReplacesLeaks,
-  lineageKey,
-  type MultiHeadLineage,
-  meanActiveContentChars,
-  raisedLineages,
-  retirementBlocklist,
-} from "./reconcile.js";
 import type { MemoryEngine } from "./engine.js";
 import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from "./entities.js";
 import { arbitrationCase, buildEntityArbiterPrompt, parseEntityVerdict } from "./entity-arbiter.js";
-import {
-  buildRecheckPrompt,
-  countDueForRecheck,
-  findRecheckSubjects,
-  parseRecheckVerdicts,
-  type RecheckFinding,
-  verifiedFindings,
-} from "./recheck.js";
 import {
   judgePair,
   mergeKey,
@@ -64,8 +37,36 @@ import { migrate } from "./migrate.js";
 import type { NotionBlockNode } from "./notion.js";
 import { dataSourceTitle, expandsInline, NotionClient, pageTitle } from "./notion.js";
 import { blocksToMarkdown, rowsToMarkdown } from "./notion-markdown.js";
+import { LlmSpendError } from "./openrouter-provider.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
 import { uploadStoreDir } from "./queue.js";
+import {
+  buildRecheckPrompt,
+  countDueForRecheck,
+  findRecheckSubjects,
+  parseRecheckVerdicts,
+  type RecheckFinding,
+  verifiedFindings,
+} from "./recheck.js";
+import {
+  BACKOFF_SILENT_AFTER,
+  CONFLICT_QUEUE_CEILING,
+  capBuckets,
+  effectiveCaps,
+  estimateRecheck,
+  estimateUsd,
+  findDuplicateContent,
+  findEntityInvariants,
+  findMultiHeadLineages,
+  findOrphanStale,
+  findReplacesLeaks,
+  lineageKey,
+  type MultiHeadLineage,
+  meanActiveContentChars,
+  type ReconcileFinding,
+  raisedLineages,
+  retirementBlocklist,
+} from "./reconcile.js";
 import { redact } from "./redact.js";
 import {
   addEdge,
@@ -89,7 +90,6 @@ import {
   type SchemaInfo,
   type SchemaKind,
 } from "./schema.js";
-import { LlmSpendError } from "./openrouter-provider.js";
 import type { StorageAdapter } from "./storage.js";
 import type {
   AgentMemoryFolderEvent,
@@ -112,19 +112,6 @@ import type {
   ContextDocument,
   ContextProgressEvent,
   DocumentChunks,
-  ReconcileAction,
-  ReconcileActionKind,
-  ReconcileArbitration,
-  ReconcileDecision,
-  ReconcileMode,
-  ReconcileOptions,
-  ReconcileProgressEvent,
-  ReconcileReport,
-  ReconcileRevertResult,
-  ReconcileRun,
-  ReconcileRunStatus,
-  ReconcileSettings,
-  ReconcileTrigger,
   Entity,
   EntityAutoEvent,
   EntityConflict,
@@ -156,6 +143,19 @@ import type {
   PossibleAnswer,
   PossibleContradiction,
   RecallOptions,
+  ReconcileAction,
+  ReconcileActionKind,
+  ReconcileArbitration,
+  ReconcileDecision,
+  ReconcileMode,
+  ReconcileOptions,
+  ReconcileProgressEvent,
+  ReconcileReport,
+  ReconcileRevertResult,
+  ReconcileRun,
+  ReconcileRunStatus,
+  ReconcileSettings,
+  ReconcileTrigger,
   ReembedOptions,
   ReembedProgressEvent,
   ReembedResult,
@@ -4733,7 +4733,10 @@ export class Memloom implements MemoryEngine {
    * way its row ever leaves 'running'. Beliefs the run already checked stay checked, so stopping
    * costs nothing beyond the calls already paid for.
    */
-  async stopReconcile(runId: string, ownerId: string = SENTINEL_OWNER): Promise<{ stopped: boolean }> {
+  async stopReconcile(
+    runId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<{ stopped: boolean }> {
     const rows = await this.#storage.query<{ id: string }>(
       `UPDATE memory_reconcile_runs SET status = 'aborted', finished_at = now()
         WHERE id = $1 AND owner_id = $2 AND status = 'running'
@@ -4970,7 +4973,10 @@ export class Memloom implements MemoryEngine {
    * the viewer is left alone. Reconciliation does not reimplement any of that: two implementations of
    * fold reversal would be two chances to get it wrong.
    */
-  async revertReconcile(runId: string, ownerId: string = SENTINEL_OWNER): Promise<ReconcileRevertResult> {
+  async revertReconcile(
+    runId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<ReconcileRevertResult> {
     const [run] = await this.#storage.query<{ id: string; reverted_at: string | null }>(
       "SELECT id, reverted_at FROM memory_reconcile_runs WHERE id = $1 AND owner_id = $2",
       [runId, ownerId],
@@ -5005,14 +5011,16 @@ export class Memloom implements MemoryEngine {
       }
       if (action.kind === "fold" || action.kind === "conflict") unfolded++;
       else restored++;
-      await this.#storage.query("UPDATE memory_reconcile_actions SET applied = false WHERE id = $1", [
-        action.id,
-      ]);
+      await this.#storage.query(
+        "UPDATE memory_reconcile_actions SET applied = false WHERE id = $1",
+        [action.id],
+      );
     }
 
-    await this.#storage.query("UPDATE memory_reconcile_runs SET reverted_at = now() WHERE id = $1", [
-      runId,
-    ]);
+    await this.#storage.query(
+      "UPDATE memory_reconcile_runs SET reverted_at = now() WHERE id = $1",
+      [runId],
+    );
     return { runId, restored, unfolded, skipped };
   }
 
@@ -5123,7 +5131,10 @@ export class Memloom implements MemoryEngine {
    * One run's findings, for the Console's history. Owner-scoped rather than taking the run id
    * on trust, so a bad id reads as an empty run instead of another owner's ledger.
    */
-  async reconcileActions(runId: string, ownerId: string = SENTINEL_OWNER): Promise<ReconcileAction[]> {
+  async reconcileActions(
+    runId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<ReconcileAction[]> {
     const [run] = await this.#storage.query<{ id: string }>(
       "SELECT id FROM memory_reconcile_runs WHERE id = $1 AND owner_id = $2",
       [runId, ownerId],

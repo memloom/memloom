@@ -5,8 +5,8 @@ import type {
   ChatTool,
   ChatToolCall,
   EmbeddingProvider,
-  LlmUsage,
   LLMProvider,
+  LlmUsage,
 } from "./providers.js";
 
 // Real cloud providers via OpenRouter (OpenAI-compatible endpoints). BYO key. These are the
@@ -251,7 +251,10 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
    * chat() and chatStream() deliberately do not do this. They carry the assistant's own words,
    * where sampling is the point.
    */
-  async complete(prompt: string, opts: { onUsage?: (usage: LlmUsage) => void } = {}): Promise<string> {
+  async complete(
+    prompt: string,
+    opts: { onUsage?: (usage: LlmUsage) => void } = {},
+  ): Promise<string> {
     const json = (await postJson(
       `${this.#baseUrl}/chat/completions`,
       this.#apiKey,

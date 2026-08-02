@@ -55,19 +55,19 @@ describe("config", () => {
     expect(process.env.TEST_MEMLOOM_KEY).toBe("quoted-value"); // file value, quotes stripped
   });
 
-// The template `memloom init` writes and the config.env.example in the repo are two copies of
-// the same list, and they have drifted before: the example gained a setting the template never
-// got, so the file users actually receive was the wrong one. This compares the variable names
-// rather than the prose, which is the part that matters and the part that goes stale.
-it("the init template and config.env.example document the same settings", () => {
-  const names = (text: string) =>
-    [...text.matchAll(/^#\s*([A-Z][A-Z0-9_]+)=/gm)].map((m) => m[1]).sort();
-  const example = readFileSync(
-    join(import.meta.dirname, "..", "..", "..", "config.env.example"),
-    "utf8",
-  );
-  expect(names(configTemplate())).toEqual(names(example));
-  // And every one of them is read somewhere, so the list cannot fill up with dead settings.
-  expect(names(example).length).toBeGreaterThan(15);
-});
+  // The template `memloom init` writes and the config.env.example in the repo are two copies of
+  // the same list, and they have drifted before: the example gained a setting the template never
+  // got, so the file users actually receive was the wrong one. This compares the variable names
+  // rather than the prose, which is the part that matters and the part that goes stale.
+  it("the init template and config.env.example document the same settings", () => {
+    const names = (text: string) =>
+      [...text.matchAll(/^#\s*([A-Z][A-Z0-9_]+)=/gm)].map((m) => m[1]).sort();
+    const example = readFileSync(
+      join(import.meta.dirname, "..", "..", "..", "config.env.example"),
+      "utf8",
+    );
+    expect(names(configTemplate())).toEqual(names(example));
+    // And every one of them is read somewhere, so the list cannot fill up with dead settings.
+    expect(names(example).length).toBeGreaterThan(15);
+  });
 });

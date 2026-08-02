@@ -231,7 +231,8 @@ export function ConflictsView({
       }
       if (e.key === "u") {
         const newest = resolved[0];
-        if (newest) void act(newest.id, () => api.revert(newest.id), { said: "undone", thenAdvance: false });
+        if (newest)
+          void act(newest.id, () => api.revert(newest.id), { said: "undone", thenAdvance: false });
         return;
       }
       if (!currentId || busy) return;
@@ -383,11 +384,7 @@ export function ConflictsView({
           )}
         </div>
 
-        <button
-          type="button"
-          className="inboxResolved"
-          onClick={() => setShowResolved((v) => !v)}
-        >
+        <button type="button" className="inboxResolved" onClick={() => setShowResolved((v) => !v)}>
           {showResolved ? "▾" : "▸"} resolved {resolved.length + merges.length + settled.length}
         </button>
         {showResolved && (
@@ -399,7 +396,9 @@ export function ConflictsView({
                   <button
                     type="button"
                     className="linkBtn"
-                    onClick={() => void act(r.id, () => api.revert(r.id), { said: "undone", thenAdvance: false })}
+                    onClick={() =>
+                      void act(r.id, () => api.revert(r.id), { said: "undone", thenAdvance: false })
+                    }
                   >
                     undo
                   </button>
@@ -444,11 +443,11 @@ export function ConflictsView({
                     type="button"
                     className="linkBtn"
                     onClick={() =>
-                    void act(p.id, () => api.revert(p.id), {
-                      said: "back in the queue to decide again",
-                      thenAdvance: false,
-                    })
-                  }
+                      void act(p.id, () => api.revert(p.id), {
+                        said: "back in the queue to decide again",
+                        thenAdvance: false,
+                      })
+                    }
                   >
                     ask again
                   </button>
@@ -675,7 +674,6 @@ export function ConflictsView({
             </footer>
           </>
         )}
-
       </section>
     </div>
   );
