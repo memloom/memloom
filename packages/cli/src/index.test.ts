@@ -68,6 +68,15 @@ describe("cli router", () => {
     expect(logs.join("\n")).toContain("usage: memloom reconcile no <id>");
   });
 
+  // A reconcile with no subcommand retires and folds memories, so a misspelled one must never fall
+  // through to it. Six subcommands are six words a user can get wrong.
+  it("an unknown reconcile subcommand is refused instead of becoming a real run", async () => {
+    await expect(run(["reconcile", "possibles"])).rejects.toThrow(
+      /usage: memloom reconcile \[--dry-run\|possible\|yes\|no\|stop\|undo\|settings\]/,
+    );
+    await expect(run(["reconcile", "undoo", "run-1"])).rejects.toThrow(/usage: memloom reconcile/);
+  });
+
   it("reconcile help names the answering subcommands", async () => {
     await run(["reconcile", "--help"]);
     const help = logs.join("\n");

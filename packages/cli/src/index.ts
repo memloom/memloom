@@ -1185,7 +1185,13 @@ export async function run(argv: readonly string[]): Promise<void> {
     case "reconcile": {
       const [sub, ...args] = rest;
       const id = args[0] ?? "";
-      // Missing arguments are caught before connect(), so a typo never starts a daemon.
+      const subcommands = ["possible", "yes", "no", "stop", "undo", "settings"];
+      // A misspelled subcommand must not reach the run path: with no subcommand this command
+      // retires and folds memories, which is not what a typo asked for. Checked here with the
+      // missing arguments below, before connect(), so neither case starts a daemon.
+      if (sub !== undefined && !sub.startsWith("-") && !subcommands.includes(sub)) {
+        throw new Error(`usage: memloom reconcile [--dry-run|${subcommands.join("|")}]`);
+      }
       if ((sub === "undo" || sub === "stop") && !id) {
         console.log(`usage: memloom reconcile ${sub} <run id>`);
         return;
