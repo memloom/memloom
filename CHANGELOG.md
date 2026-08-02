@@ -19,7 +19,8 @@
 - Its findings arrive as possible contradictions rather than conflicts, in the Conflicts tab next
   to memory conflicts and duplicate entities. About 40 percent of them are real, so each one
   quotes the clashing sentence from both sides and waits for a yes or no. Confirming is what
-  creates the conflict; dismissing means it is never raised again
+  creates the conflict; dismissing means it is never raised again. `memloom reconcile possible` lists
+  them in a terminal, and `memloom reconcile yes <id>` or `memloom reconcile no <id>` answers one
 - The daemon reconciles on its own: shortly after startup when the last run is more than 36 hours
   old, and when it has been quiet for a while. Automatic runs only ever use the free passes, so a
   run nobody watched can never spend money. Reconciliation also gets quieter rather than louder: ignore
