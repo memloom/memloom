@@ -2,7 +2,7 @@
   "name": "@memloom/mcp",
   "version": "0.7.0",
   "type": "module",
-  "description": "memloom MCP server (stdio): save_memory, recall_memory, resolve_conflict.",
+  "description": "MCP server for memloom. Gives an AI agent a persistent memory it can search and write to, shared with every other tool on the machine.",
   "license": "Apache-2.0",
   "author": "Kostek Sytnyk <kostek@versuno.ai>",
   "homepage": "https://memloom.dev",

@@ -2,7 +2,7 @@
   "name": "@memloom/core",
   "version": "0.7.0",
   "type": "module",
-  "description": "The memloom memory engine: storage adapter, providers, write path, retrieval.",
+  "description": "The memloom engine: hybrid retrieval, a belief pipeline that keeps contradictions instead of overwriting them, context ingestion, and an entity graph.",
   "license": "Apache-2.0",
   "author": "Kostek Sytnyk <kostek@versuno.ai>",
   "homepage": "https://memloom.dev",
