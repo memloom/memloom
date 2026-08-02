@@ -1,75 +1,84 @@
 ---
-title: "Memory types & versioning"
+title: "Memory types and versioning"
 description: "The taxonomy, the belief lifecycle, and version chains"
 icon: "tags"
 ---
 
 ## The taxonomy
 
-Every saved memory carries a `memoryType`. The taxonomy is the same across every client
-(CLI, MCP, HTTP), so a memory means the same thing no matter who wrote it. Pass it on save;
-it defaults to `fact`.
+Every memory carries a type, the same one across CLI, MCP and HTTP. Defaults to `fact`.
 
-| Type | What it holds | Example |
+| Type | Holds | Example |
 | --- | --- | --- |
-| `fact` | A stable truth about the world or the user | *the staging database runs on Postgres* |
-| `preference` | How the user likes things done | *prefers pnpm over npm* |
+| `fact` | A stable truth | *the staging database runs on Postgres* |
+| `preference` | How you like things done | *prefers pnpm over npm* |
 | `episode` | A time-bound event or decision | *shipped the viewer on 2026-07-05* |
-| `procedure` | Reusable how-to steps | *to release: bump VERSION, tag, push* |
+| `procedure` | Reusable steps | *to release: bump VERSION, tag, push* |
 
-The type is stored with a database CHECK constraint, so the store rejects an invalid type
-even if it gets past the API. Two practical effects of choosing well:
+A database constraint rejects anything else, even if it gets past the API. Choosing well pays off
+twice: the viewer filters by type, and the MCP tool description teaches agents the same
+definitions, so an agent saving "user prefers tabs" tags it `preference` unprompted.
 
-- **Browsing.** The viewer's Memories tab filters by type; a wall of untyped facts is much
-  less useful than preferences you can pull up on their own.
-- **Meaning for agents.** The MCP `save_memory` description teaches agents the same
-  definitions, so an agent saving *"user prefers tabs"* tags it `preference` without being
-  told.
+<Note>
+  Recall results can also carry the sentinel type `context`. Those are chunks of ingested files,
+  not saved memories, and their `kind` is `context`. You cannot save one. The sentinel exists so a
+  single result list can hold both kinds honestly.
+</Note>
 
-Recall results can also carry the sentinel type **`context`**: those aren't saved memories
-but chunks of ingested files (their `kind` field is `context`, and they include a `source`
-saying which file and section they came from). You can't save a `context` memory; the
-sentinel exists so one result list can hold both kinds honestly.
+***
 
 ## Beliefs, not rows
 
-A memory in memloom is a **belief with a lineage**. Rows are never mutated in place. Concretely:
+A memory is a **belief with a lineage**. Rows are never mutated in place.
 
-- Every memory has a `rootId` (the stable identity of the belief) and a `version` (1, 2, 3…).
-- The newest **`active`** row of a lineage is the current belief. Older versions are
-  **`stale`**: kept forever, excluded from recall, dedup, and the graph.
-- Each version step writes a `replaces` edge (child → parent), so the graph and history agree.
-- Validity is temporal: `assertedAt` is when a version became the belief, and a stale
-  version's `staleSince` is when it stopped.
+<CardGroup cols={2}>
+  <Card title="rootId and version" icon="code-branch">
+    `rootId` is the stable identity of the belief, `version` counts up from 1.
+  </Card>
+  <Card title="Active is current" icon="circle-check">
+    The newest active row is the belief. Older ones are stale: kept forever, out of recall, dedup
+    and the graph.
+  </Card>
+  <Card title="Edges agree" icon="link">
+    Each step writes a `replaces` edge from child to parent, so history and the graph tell the
+    same story.
+  </Card>
+  <Card title="Validity is temporal" icon="clock">
+    `assertedAt` is when a version became the belief. `staleSince` is when it stopped.
+  </Card>
+</CardGroup>
 
-## What creates a new version
+***
+
+## What creates a version
 
 | You do | memloom decides | Outcome |
 | --- | --- | --- |
-| Save the exact same text again | content hash matches | `merged`: no-op |
-| Save the same fact, reworded | classifier says *identical* | `versioned`: new version, old one goes stale |
-| Save a related fact that can coexist | classifier says *complementary* | `added`: a new belief, its own lineage |
-| Save a contradiction | classifier says *contradictory* | `conflict`: both stay active, you decide ([Conflicts](/concepts/conflicts)) |
-| `memloom update <id> <text>` | no classifier (explicit edit) | new version, unconditionally |
+| Save the same text again | Content hash matches | `merged`, a no-op |
+| Save the same fact, reworded | Classifier says *identical* | `versioned`, old one goes stale |
+| Save a fact that can coexist | Classifier says *complementary* | `added`, its own lineage |
+| Save a contradiction | Classifier says *contradictory* | `conflict`, both stay active |
+| `memloom update <id> <text>` | No classifier, explicit edit | New version, unconditionally |
 
-Resolving a conflict can also step a version: *keep new* and *merge* make the winning memory
-continue the existing belief's lineage, so a resolved contradiction shows up in that belief's
-history instead of orphaning it.
+Resolving a conflict can step a version too: **keep new** and **merge** make the winner continue
+the existing lineage, so a settled contradiction lands in that belief's history instead of
+orphaning it.
+
+***
 
 ## Walking history
 
 ```bash
-memloom history 43c1…        # any version's id works
-# * v3  2026-07-10T09:12:00Z  the staging db runs on Postgres 17
-#   v2  2026-07-02T14:03:00Z  the staging db runs on Postgres 16
-#   v1  2026-06-20T08:41:00Z  staging uses Postgres
+memloom history 43c1
+# * v3  2026-07-10  the staging db runs on Postgres 17
+#   v2  2026-07-02  the staging db runs on Postgres 16
+#   v1  2026-06-20  staging uses Postgres
 ```
 
-The same chain is available as `GET /memory/:id/history`, in the viewer's memory panel, and
-to agents via the read-only `memory_history` MCP tool. Agents can *read* history; editing a
-belief (`update`) is deliberately a human action in the CLI or viewer.
+Any version's id works. The same chain is at `GET /memory/:id/history`, in the viewer's memory
+panel, and in the read-only `memory_history` MCP tool.
 
 <Note>
-Recall never returns stale versions: `memloom_fuse` and the dedup candidate search both
-filter on `status = 'active'`. History is where old versions live.
+  Agents can read history but not edit a belief. `update` is deliberately a human action in the
+  CLI or viewer. Recall never returns stale versions, so old ones cannot shadow the current one.
 </Note>

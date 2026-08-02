@@ -1,16 +1,14 @@
 ---
 title: "Architecture"
-description: "One daemon owns the store; everything else is a client"
+description: "One daemon owns the store, everything else is a client"
 icon: "sitemap"
 ---
 
-## The single-owner model
+## Overview
 
-memloom's default store is PGLite: real Postgres compiled to WASM, embedded in the daemon
-process, with data in a plain folder. PGLite allows exactly **one** connection, so
-**`memloom serve` is the single owner of the store, and every other surface is a client of
-the daemon.** (The same daemon runs on an external Postgres via `MEMLOOM_PG_URL`; the
-single-owner API model stays, only the storage moves out of the process.)
+The default store is PGLite: real Postgres compiled to WASM, embedded in the daemon, with data in
+a plain folder. PGLite allows exactly one connection, so **`memloom serve` owns the store and
+every other surface is a client**.
 
 ```mermaid
 flowchart LR
@@ -26,84 +24,90 @@ flowchart LR
     Engine -.-> Providers["embeddings + LLM (OpenRouter, or offline)"]
 ```
 
-The daemon exposes the store two ways from one process: the HTTP API on `127.0.0.1:4319`
-(which also serves the viewer bundle at `/`), and, on the embedded tier, the raw Postgres
-wire protocol on `127.0.0.1:54329` for database tools (`MEMLOOM_PG_PORT` moves that port; with `MEMLOOM_PG_URL` set there is
-no bridge; point your tools at the server). Any CLI command auto-starts the daemon if it
-isn't running; `memloom stop` shuts it down gracefully and releases the data-dir lock.
+The daemon exposes the store two ways from one process: the HTTP API on `127.0.0.1:4319`, which
+also serves the viewer, and the raw Postgres wire on `127.0.0.1:54329` for database tools. Any CLI
+command starts it if it is not running.
 
 <Warning>
-Because PGLite is single-connection, a connected wire client (Drizzle Studio, psql, an IDE
-database panel) holds an exclusive lock and every API call queues behind it. The API detects
-this and answers **503** within ~1.5 seconds instead of hanging; the `serve` terminal warns
-when a wire client attaches. Disconnect the client to resume.
+  A connected wire client holds an exclusive lock, so every API call would queue behind it. The
+  API detects this and answers **503** within about 1.5 seconds instead of hanging. Disconnect the
+  database client to resume.
 </Warning>
+
+***
 
 ## Packages
 
 | Package | Role |
 | --- | --- |
-| `@memloom/core` | The engine: belief pipeline, retrieval, graph, context ingestion, migrations, storage adapters, providers. No HTTP, no CLI, no `process.env`. |
-| `@memloom/server` | A thin Hono HTTP layer over the engine. Validates requests, maps engine calls to routes, serves the viewer bundle. |
-| `memloom` (CLI) | Commands + the daemon. Wires PGLite, config, and providers together and starts the server. |
-| `@memloom/mcp` | The [MCP tools](/mcp/tools) for agents: save, recall, read_passage, history, conflicts, and schema management. |
-| `@memloom/viewer` | The browser UI (React). Built and baked into the CLI package, so the daemon serves it with no separate process. |
+| `@memloom/core` | The engine. Belief pipeline, retrieval, graph, ingestion, migrations. No HTTP, no CLI, no `process.env` |
+| `@memloom/server` | A thin Hono layer over the engine. Validates requests, serves the viewer |
+| `memloom` | Commands and the daemon. Wires storage, config and providers together |
+| `@memloom/mcp` | The [MCP tools](/mcp/tools) for agents |
+| `@memloom/viewer` | The React UI, baked into the CLI package so no separate process is needed |
+
+***
 
 ## The engine contract
 
-Every surface programs against one interface, `MemoryEngine`:
+Every surface programs against one interface.
 
 ```ts
 interface MemoryEngine {
   save(input): Promise<SaveResult>;
   recall(query, opts?): Promise<Memory[]>;
-  memories(): Promise<Memory[]>;          // browse (recall is for querying)
-  update(input): Promise<UpdateResult>;   // new version of a belief
-  history(memoryId): Promise<Memory[]>;   // the full version chain
-  index(): Promise<IndexResult>;          // entity extraction → graph edges
+  memories(): Promise<Memory[]>;
+  update(input): Promise<UpdateResult>;
+  history(memoryId): Promise<Memory[]>;
+  index(): Promise<IndexResult>;
   graph(): Promise<Graph>;
   conflicts() / resolveConflict() / revertConflict();
   contextAdd() / contextList() / contextChunks() / contextRemove();
 }
 ```
 
-Two implementations exist: `Memloom` (the real engine, in-process) and `HttpMemloomClient`
-(the same interface over HTTP). The CLI and MCP use the HTTP client, which is why many
-clients can share one store safely: they were never holding the store in the first place.
+Two implementations: `Memloom` in-process, and `HttpMemloomClient` over HTTP. The CLI and MCP use
+the HTTP one, which is why many clients share one store safely. They were never holding it.
+
+***
 
 ## Storage tiers
 
-Storage is an adapter interface (`query`, `exec`, `tx`), with two implementations:
+| Adapter | Tier | Selected by |
+| --- | --- | --- |
+| `PgliteAdapter` | Embedded, zero setup, data in a folder | Default |
+| `PgAdapter` | A real Postgres server with pgvector, pooled | `MEMLOOM_PG_URL` |
 
-- **`PgliteAdapter`**: the embedded tier. What the daemon uses. Zero setup, data in a folder.
-- **`PgAdapter`**: a real Postgres server over the wire (Docker, Supabase, any managed
-  Postgres with pgvector), pooled. Selected with `MEMLOOM_PG_URL` in `config.env`; see
-  [Self-hosting](/guides/self-hosting).
+The schema is identical. Migrations are plain SQL and the one stored function is `LANGUAGE sql`
+rather than plpgsql, so it runs the same on both. See [Self-hosting](/guides/self-hosting).
 
-The schema is identical in both: memloom's migrations are plain SQL and its one stored
-function (`memloom_fuse`) is `LANGUAGE sql` rather than plpgsql, so it runs identically on
-PGLite and server Postgres.
+***
 
-## Design rules worth knowing
+## Rules worth knowing
 
-- **All config is injected.** Core never reads `process.env` or global state. The daemon is
-  the only place environment/config is read, then everything is passed in as constructor
-  arguments. This is why the whole engine is testable without a network.
-- **The edge table has no foreign keys.** `memory_edges` links memories, entities, *and*
-  context chunks in one table. Those are different node tables, so FKs are impossible by design. The
-  trade: cascade deletes can't clean edges, so every chunk/memory removal path deletes its
-  edges explicitly.
-- **Nothing is destroyed.** Superseded memories go `status = 'stale'`, edges deactivate
-  (`active = false`) rather than being deleted. This is what makes conflict resolution and
-  versioning reversible.
-- **Migrations are ordered and idempotent.** `Memloom.init()` runs pending migrations, then
-  verifies the store's **embedding fingerprint**: a store embedded with one model refuses to
-  open under another, because mixed vector spaces make similarity silently meaningless.
+<CardGroup cols={2}>
+  <Card title="Config is injected" icon="syringe">
+    Core never reads `process.env`. The daemon is the only place config is read, then everything is
+    passed in. That is why the engine is testable without a network.
+  </Card>
+  <Card title="Nothing is destroyed" icon="shield">
+    Superseded memories go stale and edges deactivate rather than being deleted. That is what makes
+    versioning and conflict resolution reversible.
+  </Card>
+  <Card title="No foreign keys on edges" icon="link-slash">
+    One edge table links memories, entities and chunks, which are different node tables. Every
+    delete path removes its own edges explicitly.
+  </Card>
+  <Card title="Vectors are fingerprinted" icon="fingerprint">
+    A store embedded with one model refuses to open under another, because mixed vector spaces
+    make similarity silently meaningless.
+  </Card>
+</CardGroup>
 
 ## Data layout
 
 ```
 ~/.memloom/            (override with MEMLOOM_HOME)
 ├── config.env         settings the daemon reads at startup
-└── data/              the Postgres data directory, your memory. Copy it = backup.
+└── data/              your memory. Copy it to back it up.
 ```
