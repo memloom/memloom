@@ -290,6 +290,29 @@ export interface ContextDocument {
   updatedAt: string;
   /** Present on diarized recordings; absent on text documents and older ingests. */
   speakers?: SpeakerRoster | null;
+  /** Re-ingest this document when its file changes. Only meaningful when watchable. */
+  watching?: boolean;
+  /** There is a file on disk behind this document, so watching it means something. */
+  watchable?: boolean;
+  /** When its file stopped being findable on disk. The chunks stay regardless. */
+  missingAt?: string | null;
+}
+
+/** A linked folder. Files that appear inside it get ingested while it is watched. */
+export interface ContextRoot {
+  id: string;
+  path: string;
+  watching: boolean;
+  documents: number;
+  lastScanAt: string | null;
+  createdAt: string;
+}
+
+export interface ContextRootsResult {
+  /** False when the daemon has watching switched off (MEMLOOM_SYNC=off). */
+  enabled: boolean;
+  roots: ContextRoot[];
+  stats?: { roots: number; files: number; queued: number; missing: number; capped: boolean };
 }
 
 export interface ContextChunk {
@@ -799,6 +822,22 @@ export const api = {
     }),
   removeDocument: (id: string) =>
     json<{ ok: boolean }>(`/context/documents/${id}`, { method: "DELETE" }),
+  contextRoots: () => json<ContextRootsResult>("/context/roots"),
+  watchRoot: (id: string, watching: boolean) =>
+    json<{ ok: boolean }>(`/context/roots/${id}/watch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ watching }),
+    }),
+  // Forgets the folder. The documents it produced stay: stop following a folder is not the
+  // same request as forget what was read in it.
+  forgetRoot: (id: string) => json<{ ok: boolean }>(`/context/roots/${id}`, { method: "DELETE" }),
+  watchDocument: (id: string, watching: boolean) =>
+    json<{ ok: boolean }>(`/context/documents/${id}/watch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ watching }),
+    }),
   contextAdd: (path: string) =>
     post<{
       documentId?: string;

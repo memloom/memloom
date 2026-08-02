@@ -1400,6 +1400,12 @@ textarea {
   padding: 1px 6px;
 }
 
+/* State worth stating, not worth alarming about: a missing file, or watching switched off. The
+   green of .kindTag reads as "this is fine and active", which neither of these is. */
+.kindTagMuted {
+  color: var(--text-faint);
+}
+
 .docMeta {
   margin-left: auto;
   font-family: var(--mono);
