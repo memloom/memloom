@@ -556,6 +556,37 @@ export interface ContextDocument {
   updatedAt: string;
   /** Present on diarized recordings; absent on text documents and pre-diarization ingests. */
   speakers?: SpeakerRoster | null;
+  /**
+   * Keep this document current as the file changes. On by default for anything with a disk
+   * path; meaningless for uploads, chat attachments and web pages, which have no file to watch.
+   */
+  watching?: boolean;
+  /** When the file stopped being findable on disk. The chunks stay either way. */
+  missingAt?: string | null;
+}
+
+// ---- Watched roots (the folders a person linked, as opposed to the files inside them) ----
+
+/**
+ * A folder someone linked. Adding a folder creates one document per file in it and would
+ * otherwise forget the folder itself, which is the only record that files arriving LATER were
+ * asked for too.
+ */
+export interface ContextRoot {
+  id: string;
+  path: string;
+  watching: boolean;
+  /** Documents in the store whose path sits under this root, right now. */
+  documents: number;
+  /** The catch-up watermark: a rescan only looks at entries touched since this. */
+  lastScanAt: string | null;
+  createdAt: string;
+}
+
+/** Everything the watcher has an eye on: linked folders, plus files linked on their own. */
+export interface SyncTargets {
+  roots: ContextRoot[];
+  files: { id: string; path: string }[];
 }
 
 // ---- Chat attachments (files uploaded into one assistant session's scope) ----

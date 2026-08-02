@@ -30,6 +30,8 @@ import {
   startupCatchUpDue,
   supportedExtensions,
   uploadStoreDir,
+  WALK_MAX_FILES,
+  walkSupportedFiles,
 } from "@memloom/core";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -205,24 +207,20 @@ function userPath(raw: string): string {
   return resolve(quoted ? trimmed.slice(1, -1).trim() : trimmed);
 }
 
-// Folder ingestion: walk for supported files, bounded so a mistaken "add C:\" cannot
-// run away. Hidden dirs and dependency/VCS dirs are skipped.
-const WALK_MAX_DEPTH = 5;
-const WALK_MAX_FILES = 500;
-const SKIP_DIRS = new Set(["node_modules", "dist", "build", "__pycache__", "target"]);
+// Folder ingestion walks for supported files, bounded so a mistaken "add C:\" cannot run away.
+// The walk itself lives in core (walk.ts), because the sync rescan needs the same rules with
+// the cap lifted. Here it stays capped, and `capped` is reported rather than swallowed: the
+// first 500 files of a folder look exactly like the whole folder unless something says so.
 
-async function collectSupportedFiles(root: string, depth = 0, out: string[] = []) {
-  if (depth > WALK_MAX_DEPTH || out.length >= WALK_MAX_FILES) return out;
-  const supported = new Set(supportedExtensions());
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    if (out.length >= WALK_MAX_FILES) break;
-    if (entry.name.startsWith(".") || SKIP_DIRS.has(entry.name)) continue;
-    const full = join(root, entry.name);
-    if (entry.isDirectory()) await collectSupportedFiles(full, depth + 1, out);
-    else if (supported.has(extname(entry.name).toLowerCase())) out.push(full);
-  }
-  return out;
+/** The note a capped walk adds to a response, so a trimmed folder ingest is visible. */
+function cappedNote(capped: boolean): { capped?: string } {
+  return capped
+    ? {
+        capped:
+          `stopped at the first ${WALK_MAX_FILES} files; ` +
+          "link the subfolders separately to take in the rest",
+      }
+    : {};
 }
 
 const MIME: Record<string, string> = {
@@ -1383,18 +1381,22 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     // A folder is expanded here rather than queued whole, so the list shows one row per
     // recording with its own progress and its own cancel, instead of one opaque row.
     const paths: string[] = [];
+    let capped = false;
     for (const raw of body.data.paths) {
       const target = userPath(raw);
       const info = await stat(target).catch(() => null);
       if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
-      if (info.isDirectory()) paths.push(...(await collectSupportedFiles(target)));
-      else paths.push(target);
+      if (info.isDirectory()) {
+        const walked = await walkSupportedFiles(target);
+        capped ||= walked.capped;
+        paths.push(...walked.files.map((f) => f.path));
+      } else paths.push(target);
     }
     if (paths.length === 0) {
       return c.json({ error: `no supported files (${supportedExtensions().join(", ")})` }, 400);
     }
     const added = await queue.add(paths);
-    return c.json({ added: added.length, ...queue.snapshot() });
+    return c.json({ added: added.length, ...cappedNote(capped), ...queue.snapshot() });
   });
 
   app.post("/queue/:id/cancel", async (c) => {
@@ -1512,7 +1514,8 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       }
     }
 
-    const files = await collectSupportedFiles(target);
+    const walked = await walkSupportedFiles(target);
+    const files = walked.files.map((f) => f.path);
     if (files.length === 0) {
       return c.json(
         { error: `no supported files (${supportedExtensions().join(", ")}) under ${target}` },
@@ -1542,6 +1545,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       unchanged,
       chunks,
       ...(absorbed > 0 ? { absorbed } : {}),
+      ...cappedNote(walked.capped),
       ...(errors.length > 0 ? { errors } : {}),
     });
   });
@@ -1556,7 +1560,8 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const target = userPath(body.data.path);
     const info = await stat(target).catch(() => null);
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
-    const files = info.isDirectory() ? await collectSupportedFiles(target) : [target];
+    const walked = info.isDirectory() ? await walkSupportedFiles(target) : null;
+    const files = walked ? walked.files.map((f) => f.path) : [target];
     if (files.length === 0) {
       return c.json(
         { error: `no supported files (${supportedExtensions().join(", ")}) under ${target}` },
@@ -1611,6 +1616,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         documents: added,
         unchanged,
         chunks,
+        ...cappedNote(walked?.capped ?? false),
         ...(errors.length > 0 ? { errors } : {}),
       };
     });

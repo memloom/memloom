@@ -303,6 +303,8 @@ export {
 } from "./schema.js";
 export type { FileStability, StabilityOptions } from "./stability.js";
 export { waitUntilStable } from "./stability.js";
+export type { SyncOptions, SyncStats, SyncStore } from "./sync.js";
+export { FileSync } from "./sync.js";
 export type { StorageAdapter } from "./storage.js";
 // Test-only helper, exported for the same reason PgliteAdapter is: the server and MCP test
 // suites build stores too, and reaching into core/src across packages breaks their rootDir.
@@ -327,6 +329,7 @@ export type {
   ContextChunk,
   ContextDocument,
   ContextProgressEvent,
+  ContextRoot,
   DocumentChunks,
   DocumentSpeaker,
   Entity,
@@ -392,6 +395,7 @@ export type {
   SaveOutcome,
   SaveResult,
   SpeakerRoster,
+  SyncTargets,
   UpdateInput,
   UpdateResult,
 } from "./types.js";
@@ -400,5 +404,12 @@ export { FREE_RECONCILE_PASSES, MEMORY_TYPES, RECONCILE_PASSES } from "./types.j
 
 // Utilities
 export { toVectorLiteral } from "./vector.js";
+export type { WalkedFile, WalkOptions, WalkResult } from "./walk.js";
+export {
+  WALK_MAX_DEPTH,
+  WALK_MAX_FILES,
+  WALK_SKIP_DIRS,
+  walkSupportedFiles,
+} from "./walk.js";
 
 export const VERSION = "0.0.0";

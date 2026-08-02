@@ -111,6 +111,7 @@ import type {
   ContextAttachResult,
   ContextDocument,
   ContextProgressEvent,
+  ContextRoot,
   DocumentChunks,
   Entity,
   EntityAutoEvent,
@@ -168,6 +169,7 @@ import type {
   SaveResult,
   SettledEntityPair,
   SpeakerRoster,
+  SyncTargets,
   UpdateInput,
   UpdateResult,
 } from "./types.js";
@@ -1230,8 +1232,10 @@ export class Memloom implements MemoryEngine {
       chunk_count: number;
       updated_at: string;
       speakers: unknown;
+      watching: boolean;
+      missing_at: string | null;
     }>(
-      `SELECT id, path, title, kind, chunk_count, updated_at, speakers
+      `SELECT id, path, title, kind, chunk_count, updated_at, speakers, watching, missing_at
        FROM context_documents WHERE owner_id = $1 AND session_id IS NULL
        ORDER BY updated_at DESC`,
       [ownerId],
@@ -1244,7 +1248,181 @@ export class Memloom implements MemoryEngine {
       chunkCount: Number(r.chunk_count),
       updatedAt: r.updated_at,
       speakers: parseRoster(r.speakers),
+      watching: r.watching,
+      missingAt: r.missing_at,
     }));
+  }
+
+  // ---- File sync: which folders and files stay current on their own ----
+
+  /**
+   * Record that someone linked a FOLDER, not just the files that were in it at the time.
+   *
+   * Idempotent by (owner, path): re-linking a folder already on the list turns watching back
+   * on rather than erroring or making a second row, because "add this folder again" reads as
+   * "yes, I do want this folder" every time.
+   */
+  async contextRootAdd(path: string, ownerId: string = SENTINEL_OWNER): Promise<ContextRoot> {
+    const [row] = await this.#storage.query<{ id: string }>(
+      `INSERT INTO context_roots (owner_id, path) VALUES ($1, $2)
+       ON CONFLICT (owner_id, path) DO UPDATE SET watching = true
+       RETURNING id`,
+      [ownerId, path],
+    );
+    if (!row) throw new Error("memloom: context root insert returned no id");
+    const roots = await this.contextRoots(ownerId);
+    const found = roots.find((r) => r.id === row.id);
+    if (!found) throw new Error("memloom: context root vanished during insert");
+    return found;
+  }
+
+  /** Every linked folder, watched or not, newest first. */
+  async contextRoots(ownerId: string = SENTINEL_OWNER): Promise<ContextRoot[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      path: string;
+      watching: boolean;
+      last_scan_at: string | null;
+      created_at: string;
+      documents: number;
+    }>(
+      // left(path, length(r.path)) rather than LIKE: a folder name containing % or _ would
+      // otherwise match half the store, and escaping a user-supplied path into a LIKE pattern
+      // is the kind of thing that is wrong once and then wrong forever.
+      `SELECT r.id, r.path, r.watching, r.last_scan_at, r.created_at,
+              (SELECT count(*) FROM context_documents d
+                WHERE d.owner_id = r.owner_id AND d.session_id IS NULL
+                  AND left(d.path, length(r.path)) = r.path) AS documents
+       FROM context_roots r WHERE r.owner_id = $1 ORDER BY r.created_at DESC`,
+      [ownerId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      path: r.path,
+      watching: r.watching,
+      documents: Number(r.documents),
+      lastScanAt: r.last_scan_at,
+      createdAt: r.created_at,
+    }));
+  }
+
+  /** Start or stop watching a linked folder. Its documents and their chunks are untouched. */
+  async contextRootWatch(
+    rootId: string,
+    watching: boolean,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<boolean> {
+    const rows = await this.#storage.query<{ id: string }>(
+      "UPDATE context_roots SET watching = $3 WHERE id = $1 AND owner_id = $2 RETURNING id",
+      [rootId, ownerId, watching],
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * Forget a linked folder. The documents it produced stay, because they are memory and this
+   * is a watch list: "stop following this folder" must never read as "delete what you learned
+   * from it". Removing the documents is a separate, explicit act.
+   */
+  async contextRootRemove(rootId: string, ownerId: string = SENTINEL_OWNER): Promise<boolean> {
+    const rows = await this.#storage.query<{ id: string }>(
+      "DELETE FROM context_roots WHERE id = $1 AND owner_id = $2 RETURNING id",
+      [rootId, ownerId],
+    );
+    return rows.length > 0;
+  }
+
+  /** Stamp a root as scanned, so the next rescan only looks at what changed after this. */
+  async contextRootScanned(
+    rootId: string,
+    at: Date,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<void> {
+    await this.#storage.query(
+      "UPDATE context_roots SET last_scan_at = $3 WHERE id = $1 AND owner_id = $2",
+      [rootId, ownerId, at.toISOString()],
+    );
+  }
+
+  /** Start or stop watching one document, without touching the folder it came from. */
+  async contextWatch(
+    documentId: string,
+    watching: boolean,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<boolean> {
+    const rows = await this.#storage.query<{ id: string }>(
+      "UPDATE context_documents SET watching = $3 WHERE id = $1 AND owner_id = $2 RETURNING id",
+      [documentId, ownerId, watching],
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * Mark a document's file as gone, or as back. Never deletes anything: the ordinary causes
+   * are a temp-file rename, an unmounted drive, and a pipeline that tidies up after itself,
+   * none of which mean the person wanted to forget what the file said.
+   */
+  async contextMarkMissing(
+    documentId: string,
+    missing: boolean,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<boolean> {
+    const rows = await this.#storage.query<{ id: string }>(
+      `UPDATE context_documents SET missing_at = ${missing ? "COALESCE(missing_at, now())" : "NULL"}
+       WHERE id = $1 AND owner_id = $2 RETURNING id`,
+      [documentId, ownerId],
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * What the watcher should be watching: every watched root, plus every watched document that
+   * has a real file behind it.
+   *
+   * `path !~ '^[A-Za-z][A-Za-z0-9+.-]*://'` is the test for "this is a disk path". It rejects
+   * upload://, attachment:// and http(s):// in one condition, and leaves C:\recordings and
+   * /home/me/notes alone, because a Windows path has a backslash after the colon, not two
+   * slashes. Documents inside a watched root appear here too, which is what makes a single
+   * file inside a folder switchable off on its own.
+   */
+  async syncTargets(ownerId: string = SENTINEL_OWNER): Promise<SyncTargets> {
+    const roots = (await this.contextRoots(ownerId)).filter((r) => r.watching);
+    const files = await this.#storage.query<{ id: string; path: string }>(
+      `SELECT id, path FROM context_documents
+       WHERE owner_id = $1 AND session_id IS NULL AND watching = true
+         AND path !~ '^[A-Za-z][A-Za-z0-9+.-]*://'
+       ORDER BY updated_at DESC`,
+      [ownerId],
+    );
+    return { roots, files };
+  }
+
+  /**
+   * Every document whose file sits under `prefix`. One query per rescan instead of one per
+   * file, which is the difference between a folder of five thousand recordings costing a walk
+   * and costing five thousand round trips to the store.
+   */
+  async contextDocumentsUnder(
+    prefix: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<{ id: string; path: string; watching: boolean }[]> {
+    return await this.#storage.query<{ id: string; path: string; watching: boolean }>(
+      `SELECT id, path, watching FROM context_documents
+       WHERE owner_id = $1 AND session_id IS NULL AND left(path, length($2)) = $2`,
+      [ownerId, prefix],
+    );
+  }
+
+  /** The document at this exact path, or null. The watcher's "have I seen this file" check. */
+  async contextDocumentByPath(
+    path: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<{ id: string; watching: boolean } | null> {
+    const [row] = await this.#storage.query<{ id: string; watching: boolean }>(
+      "SELECT id, watching FROM context_documents WHERE owner_id = $1 AND path = $2",
+      [ownerId, path],
+    );
+    return row ?? null;
   }
 
   /**
