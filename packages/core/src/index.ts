@@ -406,6 +406,7 @@ export { FREE_RECONCILE_PASSES, MEMORY_TYPES, RECONCILE_PASSES } from "./types.j
 export { toVectorLiteral } from "./vector.js";
 export type { WalkedFile, WalkOptions, WalkResult } from "./walk.js";
 export {
+  hasDiskPath,
   WALK_MAX_DEPTH,
   WALK_MAX_FILES,
   WALK_SKIP_DIRS,

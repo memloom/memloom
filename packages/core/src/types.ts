@@ -557,10 +557,13 @@ export interface ContextDocument {
   /** Present on diarized recordings; absent on text documents and pre-diarization ingests. */
   speakers?: SpeakerRoster | null;
   /**
-   * Keep this document current as the file changes. On by default for anything with a disk
-   * path; meaningless for uploads, chat attachments and web pages, which have no file to watch.
+   * Keep this document current as the file changes. On by default, but only meaningful when
+   * `watchable` is true: an upload or a web page has no file to watch, and the column carries
+   * its default on those rows rather than a considered answer.
    */
   watching?: boolean;
+  /** There is a file on disk behind this document, so watching it means something. */
+  watchable?: boolean;
   /** When the file stopped being findable on disk. The chunks stay either way. */
   missingAt?: string | null;
 }

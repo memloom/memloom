@@ -175,6 +175,7 @@ import type {
 } from "./types.js";
 import { RECONCILE_PASSES } from "./types.js";
 import { toVectorLiteral } from "./vector.js";
+import { hasDiskPath } from "./walk.js";
 
 // The fixed owner for the single-user embedded tier. Multi-tenant hosts pass a real
 // ownerId per call; the column exists everywhere so the schema is sync/cloud-ready.
@@ -1249,6 +1250,7 @@ export class Memloom implements MemoryEngine {
       updatedAt: r.updated_at,
       speakers: parseRoster(r.speakers),
       watching: r.watching,
+      watchable: hasDiskPath(r.path),
       missingAt: r.missing_at,
     }));
   }
@@ -1286,13 +1288,15 @@ export class Memloom implements MemoryEngine {
       created_at: string;
       documents: number;
     }>(
-      // left(path, length(r.path)) rather than LIKE: a folder name containing % or _ would
+      // left(path, length(...)) rather than LIKE: a folder name containing % or _ would
       // otherwise match half the store, and escaping a user-supplied path into a LIKE pattern
-      // is the kind of thing that is wrong once and then wrong forever.
+      // is the kind of thing that is wrong once and then wrong forever. The separator is part
+      // of the prefix, so a root at /a/b does not claim the documents under /a/bc.
       `SELECT r.id, r.path, r.watching, r.last_scan_at, r.created_at,
               (SELECT count(*) FROM context_documents d
                 WHERE d.owner_id = r.owner_id AND d.session_id IS NULL
-                  AND left(d.path, length(r.path)) = r.path) AS documents
+                  AND (left(d.path, length(r.path) + 1) = r.path || '/'
+                    OR left(d.path, length(r.path) + 1) = r.path || '\\')) AS documents
        FROM context_roots r WHERE r.owner_id = $1 ORDER BY r.created_at DESC`,
       [ownerId],
     );
@@ -1367,9 +1371,14 @@ export class Memloom implements MemoryEngine {
     missing: boolean,
     ownerId: string = SENTINEL_OWNER,
   ): Promise<boolean> {
+    // Guarded so the UPDATE is a no-op once the mark is already right, and so the return value
+    // means "this changed" rather than "this row exists". A folder whose files are deleted
+    // after upload is rescanned every tick, and without the guard every tick would rewrite
+    // every dead row and report each one as newly missing.
     const rows = await this.#storage.query<{ id: string }>(
-      `UPDATE context_documents SET missing_at = ${missing ? "COALESCE(missing_at, now())" : "NULL"}
-       WHERE id = $1 AND owner_id = $2 RETURNING id`,
+      `UPDATE context_documents SET missing_at = ${missing ? "now()" : "NULL"}
+       WHERE id = $1 AND owner_id = $2 AND missing_at IS ${missing ? "NULL" : "NOT NULL"}
+       RETURNING id`,
       [documentId, ownerId],
     );
     return rows.length > 0;
@@ -1406,9 +1415,12 @@ export class Memloom implements MemoryEngine {
     prefix: string,
     ownerId: string = SENTINEL_OWNER,
   ): Promise<{ id: string; path: string; watching: boolean }[]> {
+    // The separator is part of the prefix, so a root at /a/b does not sweep up /a/bc/notes.md
+    // and report it missing the moment /a/bc is renamed.
     return await this.#storage.query<{ id: string; path: string; watching: boolean }>(
       `SELECT id, path, watching FROM context_documents
-       WHERE owner_id = $1 AND session_id IS NULL AND left(path, length($2)) = $2`,
+       WHERE owner_id = $1 AND session_id IS NULL
+         AND (left(path, length($2) + 1) = $2 || '/' OR left(path, length($2) + 1) = $2 || '\\')`,
       [ownerId, prefix],
     );
   }

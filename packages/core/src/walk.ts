@@ -16,6 +16,18 @@ export const WALK_MAX_FILES = 500;
 /** Dependency and build output, plus anything hidden. Nobody links a folder to index these. */
 export const WALK_SKIP_DIRS = new Set(["node_modules", "dist", "build", "__pycache__", "target"]);
 
+/**
+ * Is this document path a real file on disk, as opposed to upload://, attachment:// or a URL?
+ *
+ * The test is "starts with a scheme", which all three synthetic provenances do and no local
+ * path does: C:\recordings has a backslash after the colon, not two slashes. Mirrors the
+ * regex in syncTargets, and both exist because only a document with a file behind it can be
+ * kept in step with one.
+ */
+export function hasDiskPath(path: string): boolean {
+  return !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(path);
+}
+
 export interface WalkedFile {
   path: string;
   /** Carried out of the walk so a rescan can skip untouched files without a second stat. */

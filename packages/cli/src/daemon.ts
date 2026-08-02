@@ -135,6 +135,9 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promis
     fetch: createServer(memloom, {
       log: true,
       onShutdown: shutdown,
+      // The daemon is the one host that should hold OS file watchers: it is long-lived and it
+      // owns the store. MEMLOOM_SYNC=off in the config file still turns it off.
+      fileSync: true,
       ...(staticDir ? { staticDir } : {}),
       // Mirrors OpenRouterLLM's own chat-model fallback chain, for the picker's label.
       ...(apiKey ? { defaultChatModel: chatModel ?? llmModel ?? "google/gemini-2.5-flash" } : {}),

@@ -139,11 +139,28 @@ export class IngestQueue {
     return () => this.#listeners.delete(listener);
   }
 
-  /** Add paths to the back of the queue. Already-queued or running paths are not duplicated. */
-  async add(paths: string[], opts: { uploaded?: boolean } = {}): Promise<QueueItem[]> {
+  /**
+   * Add paths to the back of the queue. Already-queued or running paths are not duplicated.
+   *
+   * `skipFailed` also drops paths whose last attempt failed, and exists for the file watcher.
+   * A file that cannot be ingested at all (a truncated recording, an encrypted PDF) still sits
+   * in its folder, so a rescan finds it again every tick and would add a fresh failed row every
+   * tick forever. A person adding the same file by hand is asking for a retry, and gets one.
+   */
+  async add(
+    paths: string[],
+    opts: { uploaded?: boolean; skipFailed?: boolean } = {},
+  ): Promise<QueueItem[]> {
     await this.load();
     const pending = new Set(
-      this.#items.filter((i) => i.status === "queued" || i.status === "running").map((i) => i.path),
+      this.#items
+        .filter(
+          (i) =>
+            i.status === "queued" ||
+            i.status === "running" ||
+            (opts.skipFailed === true && i.status === "failed"),
+        )
+        .map((i) => i.path),
     );
     const added: QueueItem[] = [];
     for (const path of paths) {
