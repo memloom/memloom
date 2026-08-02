@@ -11,6 +11,7 @@ import {
   type ResolvedConflict,
   type SettledEntityPair,
 } from "./api";
+import { toastDone, toastFailed, toastSaid } from "./toast";
 
 // The decision inbox: a queue on the left, one thing to read on the right.
 //
@@ -72,8 +73,6 @@ export function ConflictsView({
   const [settled, setSettled] = useState<SettledEntityPair[]>([]);
   const [showResolved, setShowResolved] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
   const [autoRunning, setAutoRunning] = useState(false);
   const [autoLabel, setAutoLabel] = useState<string | null>(null);
   const [mergeText, setMergeText] = useState<string | null>(null);
@@ -146,7 +145,6 @@ export function ConflictsView({
 
   async function act(id: string, run: () => Promise<unknown>, thenAdvance = true) {
     setBusy(id);
-    setError(null);
     try {
       await run();
       if (thenAdvance) advance();
@@ -154,7 +152,7 @@ export function ConflictsView({
       load();
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      toastFailed(err instanceof Error ? err.message : String(err));
     } finally {
       setBusy(null);
     }
@@ -163,24 +161,22 @@ export function ConflictsView({
   // One button, two meanings, because the rail decides which queue it drains.
   async function resolveObvious() {
     setAutoRunning(true);
-    setError(null);
-    setNotice(null);
     try {
       if (kind === "entities") {
         const r = await api.autoResolveEntities((e: EntityAutoEvent) =>
           setAutoLabel(`${e.index}/${e.total}`),
         );
-        setNotice(`folded ${r.folded}, kept ${r.rejected} apart, left ${r.unsure} for you`);
+        toastSaid(`folded ${r.folded}, kept ${r.rejected} apart, left ${r.unsure} for you`);
       } else {
         const r = await api.autoResolveConflicts((e: ConflictAutoEvent) =>
           setAutoLabel(`${e.index}/${e.total}`),
         );
-        setNotice(`resolved ${r.resolved} of ${r.examined}, ${r.unsure} left for you`);
+        toastSaid(`resolved ${r.resolved} of ${r.examined}, ${r.unsure} left for you`);
       }
       load();
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      toastFailed(err instanceof Error ? err.message : String(err));
     } finally {
       setAutoRunning(false);
       setAutoLabel(null);
@@ -190,15 +186,13 @@ export function ConflictsView({
   // Fills the entity queue: lexical rules fold what is certain and ask about the rest.
   async function findDuplicates() {
     setScanning(true);
-    setError(null);
-    setNotice(null);
     try {
       const r = await api.resolveEntities();
-      setNotice(`looked at ${r.examined} entities: folded ${r.merged}, ${r.queued} to decide`);
+      toastSaid(`looked at ${r.examined} entities: folded ${r.merged}, ${r.queued} to decide`);
       load();
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      toastFailed(err instanceof Error ? err.message : String(err));
     } finally {
       setScanning(false);
     }
@@ -425,9 +419,6 @@ export function ConflictsView({
       </aside>
 
       <section className="inboxPane">
-        {error && <div className="notice noticeError">{error}</div>}
-        {notice && <div className="notice">{notice}</div>}
-
         {!currentId && <p className="inboxEmpty">Pick something on the left.</p>}
 
         {conflict && (

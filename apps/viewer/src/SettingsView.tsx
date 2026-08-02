@@ -8,6 +8,7 @@ import {
   type ReconcileSettings,
 } from "./api";
 import { cachedData, prefetch, refetch, seed } from "./prefetch";
+import { toastDone, toastFailed, toastSaid } from "./toast";
 
 // Settings: everything that decides what the engine does to itself on its own, and the buttons
 // that start it doing so. The Console is the other half, and it is read-only apart from undo:
@@ -104,7 +105,6 @@ function IndexingSection({
   );
   const [indexing, setIndexing] = useState(false);
   const [rebuildArmed, setRebuildArmed] = useState(false);
-  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     prefetch("auto-index", api.autoIndex)
@@ -127,11 +127,12 @@ function IndexingSection({
 
   async function runIndex(rebuild: boolean) {
     setIndexing(true);
-    setNotice(null);
     try {
       const result = rebuild ? await api.reindex() : await api.index();
       if (result.indexed === 0 && result.chunksIndexed === 0) {
-        setNotice("everything is already indexed");
+        toastSaid("everything is already indexed");
+      } else {
+        toastDone(`indexed ${result.indexed} memories and ${result.chunksIndexed} chunks`);
       }
       // The run this just wrote is the Console's history, and the Console now seeds from the
       // cache. Without this, walking straight over there shows the list from before the run.
@@ -201,7 +202,6 @@ function IndexingSection({
             {rebuildArmed ? "Confirm: wipe all entities & re-index" : "Re-index from scratch"}
           </button>
         </div>
-        {notice && <div className="sessionEmpty">{notice}</div>}
       </div>
     </>
   );
@@ -261,7 +261,7 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
       seed("reconcile-settings", saved);
     } catch (err) {
       setSettings(previous);
-      setError(err instanceof Error ? err.message : String(err));
+      toastFailed(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -285,7 +285,7 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
       // A run that folded or retired something changed the graph the other tabs are showing.
       if (mode === "apply") onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      toastFailed(err instanceof Error ? err.message : String(err));
     } finally {
       setRunning(false);
       setProgress(null);
@@ -299,8 +299,9 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
       setReport(null);
       await load(true);
       onChanged();
+      toastDone("that run was undone");
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      toastFailed(err instanceof Error ? err.message : String(err));
     }
   }
 
@@ -321,7 +322,7 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
           <div className="notice noticeError">the last run stopped: {failed.error}</div>
         )}
 
-        <IndexingSection onChanged={onChanged} onError={setError} />
+        <IndexingSection onChanged={onChanged} onError={toastFailed} />
 
         <h2 className="sectionTitle">Reconciliation</h2>
         <div className="card">
@@ -406,9 +407,7 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
               </span>
             ) : liveRun ? (
               <span className="cardLabel">{liveSummary(liveRun)}</span>
-            ) : (
-              lastRun && <span className="cardLabel">last run: {runSummary(lastRun)}</span>
-            )}
+            ) : null}
             {justRan && report && (
               <button
                 type="button"

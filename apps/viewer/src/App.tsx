@@ -12,6 +12,7 @@ import { prefetch } from "./prefetch";
 import { SchemaView } from "./SchemaView";
 import { SettingsView } from "./SettingsView";
 import { ThemeToggle } from "./ThemeToggle";
+import { Toaster } from "./toast";
 
 type Tab =
   | "graph"
@@ -224,6 +225,11 @@ export function App() {
         )}
         {tab === "settings" && <SettingsView onChanged={refresh} />}
       </main>
+      <Toaster
+        position="bottom-right"
+        // Styling lives in styles.css so both themes read from the same tokens as everything else.
+        toastOptions={{ className: "toast" }}
+      />
     </div>
   );
 }

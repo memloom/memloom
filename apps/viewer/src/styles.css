@@ -3019,3 +3019,32 @@ textarea {
   outline: none;
   width: 96px;
 }
+
+/* Toasts. The library ships a rounded white pill with a drop shadow, which belongs to a different
+   application: this one has square corners, hairline borders and no shadows anywhere. Everything
+   below is an override of its defaults so a toast reads as part of the same surface, in both
+   themes, from the same tokens. */
+.toast {
+  background: var(--bg-raised) !important;
+  border: 1px solid var(--border-strong);
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  color: var(--text) !important;
+  font-family: var(--sans);
+  font-size: 13px;
+  max-width: 420px !important;
+  padding: 10px 12px !important;
+}
+
+/* One coloured edge carries the meaning, the way the run levels and the statement cards do. */
+.toastDone {
+  border-left: 3px solid var(--ok);
+}
+
+.toastFailed {
+  border-left: 3px solid var(--danger);
+}
+
+.toastSaid {
+  border-left: 3px solid var(--memory);
+}

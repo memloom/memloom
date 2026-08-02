@@ -18,6 +18,7 @@ import {
   type IndexRunEvent,
 } from "./api";
 import { cachedData, prefetch, refetch } from "./prefetch";
+import { toastDone, toastFailed } from "./toast";
 
 // The run lists are cached under one key each; a run's body gets a key of its own, because
 // the body is what a revisit used to re-fetch from scratch while showing "loading…". A
@@ -170,7 +171,6 @@ export function ConsoleView({
   onOpenConflict: (conflictId: string) => void;
 }) {
   const [clearArmed, setClearArmed] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   // Seeded from the prefetch cache so a revisit (or a hover on the tab) renders the
   // session list immediately; the mount refresh below replaces it with a live read.
@@ -226,8 +226,6 @@ export function ConsoleView({
   return (
     <div className="panel">
       <div className="panelInner">
-        {error && <div className="notice noticeError">{error}</div>}
-
         <h2 className="sectionTitle">Indexing</h2>
         <div className="card">
           {runs && runs.length > 0 && (
@@ -284,7 +282,7 @@ export function ConsoleView({
           )}
         </div>
 
-        <ReconcileRuns onChanged={onChanged} onError={setError} onOpenConflict={onOpenConflict} />
+        <ReconcileRuns onChanged={onChanged} onError={toastFailed} onOpenConflict={onOpenConflict} />
       </div>
     </div>
   );
@@ -459,6 +457,7 @@ function ReconcileRuns({
     try {
       await api.stopReconcile(runId);
       await refresh(true);
+      toastDone("run stopped. what it already checked stays checked");
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -478,6 +477,7 @@ function ReconcileRuns({
       setActionsByRun((prev) => ({ ...prev, [runId]: { status: "ready", actions } }));
       await refresh(true);
       onChanged();
+      toastDone("that run was undone");
     } catch (err) {
       onError(err instanceof Error ? err.message : String(err));
     } finally {
