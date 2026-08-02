@@ -100,6 +100,23 @@ Entity folds never appear in `memloom conflicts` or `list_conflicts`. Those are 
 memory contradictions, so an agent asking about pending conflicts is never handed a question
 about spelling.
 
+## Possible contradictions are a third kind
+
+The Conflicts tab has one more queue: **possible contradictions**, found by the contradiction
+re-check in [reconciliation](/concepts/reconciliation#the-contradiction-re-check). Save-time detection only
+compares an incoming memory against the 5 nearest that existed at that moment, so a pair at rank 6
+is never judged by anything. The re-check goes back over old beliefs against 20 neighbours and
+finds those.
+
+They are deliberately not conflicts. Measured precision for that pass is roughly 40 percent, so
+they wait as findings where dismissing one costs a click. Each one shows the verbatim clashing
+sentence from both sides, so it can be judged in seconds. Confirming one is what writes the real
+conflict row, and from there it behaves exactly like any other conflict on this page. Dismissing
+records the pair so it is never raised again.
+
+Like entity folds, they never appear in `memloom conflicts` or `list_conflicts`: an agent asking
+about pending conflicts should not be handed something no human has confirmed.
+
 <Note>
 Conflict detection requires the LLM, so it's off in offline mode (no `OPENROUTER_API_KEY`).
 Offline saves skip the belief pipeline entirely and always report `added`.

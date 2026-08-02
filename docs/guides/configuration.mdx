@@ -32,6 +32,9 @@ OPENROUTER_CHAT_MODEL=google/gemini-2.5-flash  # assistant chat; must support to
 MEMLOOM_AUTO_INDEX=on               # background entity extraction after saves/ingests
 MEMLOOM_INDEX_CONCURRENCY=6         # entity-extraction worker pool size
 
+# Kill switch for reconciliation: keep the reports, refuse the repairs (see the note below):
+RECONCILE_ENABLED=0
+
 # Notion connector (see the Notion page in the CLI reference):
 NOTION_TOKEN=ntn_...                # internal integration token; pages shared with it sync
 NOTION_POLL_MS=300000               # how often the daemon checks for edits (min 60000)
@@ -46,6 +49,15 @@ MEMLOOM_PG_URL=postgres://user:password@localhost:5432/memloom
 save or file ingest (one LLM call per new item, debounced into batched runs). Set it to
 `off` if you want every LLM call to be explicit; `memloom index` and the Console still
 work either way. Offline mode never auto-indexes.
+</Note>
+
+<Note>
+`RECONCILE_ENABLED=0` is a kill switch, not the switch. [Reconciliation](/concepts/reconciliation) is on by
+default with its two free passes, and which passes run is a setting in the viewer rather than an
+env var, so it takes effect without a restart. Setting this to `0` makes a run that was asked to
+act fail with a 403 and an explanation, while dry runs and their reports keep working. It guards
+the HTTP surface the CLI and viewer both go through; the daemon's own idle and startup runs of the
+free passes are not affected by it. Any other value, or leaving it unset, is normal operation.
 </Note>
 
 <Note>

@@ -93,6 +93,16 @@ When two memories can't both be true, memloom keeps both and asks *you*: in the 
 CLI, or through an agent using the MCP tools. Every resolution (keep new, keep existing, keep
 both, merge) is reversible. See [Conflicts](/concepts/conflicts).
 
+## Reconciliation: the store looks after itself
+
+`memloom reconcile` goes over the store, repairs what SQL proves is wrong, folds duplicate entity
+names, and asks about the rest. Two free passes are on and act on their own, because everything
+they do is undoable. Three passes that spend money are off until you turn them on, one of which
+re-checks old beliefs against 20 neighbours to find contradictions the save path never compared.
+Automatic runs only ever use the free passes, so a run nobody watched cannot cost anything, and
+every run is one unit you can undo with `memloom reconcile undo <run id>`. See
+[Reconciliation](/concepts/reconciliation) and [the CLI page](/cli/reconcile).
+
 ## Import your Claude Code history into that same store
 
 `memloom import sessions` reads your local Claude Code sessions, redacts secret-shaped strings, and distills each session into typed
