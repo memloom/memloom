@@ -1137,5 +1137,206 @@ export function buildMigrations(dims: number): Migration[] {
       ALTER TABLE context_documents ADD COLUMN IF NOT EXISTS speakers jsonb;
     `,
     },
+    {
+      // Reconciliation: the consolidation pass. One runs row per `memloom reconcile`, an append-only
+      // action row per thing the run retired, asked about, or raised. The ledger is what makes
+      // a run reversible: status stays two-valued ('active'/'stale') and records only THAT a
+      // memory is not current, never why, so the run that staled a row has to say so somewhere
+      // else. revertReconcile reads these rows back, exactly as revertConflict reads
+      // memory_dedup_decisions. staled_at holds the stale_since the run actually wrote: revert
+      // restores a row only while that value is untouched, so a later human decision is never
+      // clobbered. `class` + `decision` are also the counters that let a retirement class earn
+      // autonomy later.
+      //
+      // Every reconcile migration below is written to be safe to run twice. `migrate` keys on
+      // the id, so one whose objects a store already has for any reason is applied again and
+      // must be a no-op rather than an error. Rows in _memloom_migrations for ids no longer in
+      // this array are ignored.
+      id: "0023_reconcile",
+      sql: /* sql */ `
+      CREATE TABLE IF NOT EXISTS memory_reconcile_runs (
+        id                uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id          uuid NOT NULL,
+        mode              text NOT NULL CHECK (mode IN ('dry_run', 'apply')),
+        trigger           text NOT NULL DEFAULT 'manual'
+                            CHECK (trigger IN ('manual', 'idle', 'startup')),
+        status            text NOT NULL DEFAULT 'running'
+                            CHECK (status IN ('running', 'success', 'error', 'aborted')),
+        scanned           int NOT NULL DEFAULT 0,
+        retired           int NOT NULL DEFAULT 0,
+        -- Entities folded. Counted apart from retired because they are undone by a different
+        -- mechanism: revertEntityMerge rather than reactivating a staled row.
+        folded            int NOT NULL DEFAULT 0,
+        questions         int NOT NULL DEFAULT 0,
+        conflicts_raised  int NOT NULL DEFAULT 0,
+        llm_calls         int NOT NULL DEFAULT 0,
+        -- What the contradiction pass WOULD cost. Tokens, not currency: nothing in the repo
+        -- tracks model prices, so a stored dollar figure would rot. The printed estimate
+        -- applies a hand-maintained constant in reconcile.ts to these numbers.
+        est_input_tokens  int NOT NULL DEFAULT 0,
+        est_output_tokens int NOT NULL DEFAULT 0,
+        model             text,
+        error             text,
+        started_at        timestamptz NOT NULL DEFAULT now(),
+        finished_at       timestamptz,
+        reverted_at       timestamptz
+      );
+      CREATE INDEX IF NOT EXISTS memory_reconcile_runs_owner_started_idx
+        ON memory_reconcile_runs (owner_id, started_at DESC);
+
+      CREATE TABLE IF NOT EXISTS memory_reconcile_actions (
+        id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id    uuid NOT NULL,
+        run_id      uuid NOT NULL REFERENCES memory_reconcile_runs (id) ON DELETE CASCADE,
+        kind        text NOT NULL CHECK (kind IN ('retire', 'question', 'conflict', 'fold')),
+        class       text NOT NULL,
+        memory_id   uuid,
+        reason      text NOT NULL DEFAULT '',
+        -- applied: the run actually changed state for this row (never true in a dry run).
+        applied     boolean NOT NULL DEFAULT false,
+        staled_at   timestamptz,
+        -- surfaced: shown to the human. Findings past the per-run cap are recorded and NOT
+        -- shown, so nothing is lost and nothing floods.
+        surfaced    boolean NOT NULL DEFAULT false,
+        decision    text CHECK (decision IN ('approved', 'rejected', 'snoozed')),
+        decided_at  timestamptz,
+        conflict_id uuid,
+        -- Set when kind='fold': the memory_entity_merges row revertReconcile hands to
+        -- revertEntityMerge. Without it a run's entity folds are not undoable, and being
+        -- undoable is the whole reason the fold pass is allowed to act unasked.
+        merge_id    uuid,
+        created_at  timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS memory_reconcile_actions_run_idx ON memory_reconcile_actions (run_id, created_at);
+      CREATE INDEX IF NOT EXISTS memory_reconcile_actions_class_idx
+        ON memory_reconcile_actions (owner_id, class, decision);
+    `,
+    },
+    {
+      // Which model decided a fold. memory_entity_merges already records decided_by
+      // ('auto' | 'llm' | 'human'), the score and the reason, but not who the model was, and
+      // 'llm' had no writer until reconciliation got one. Without this a fold made six months ago is
+      // unattributable and a bad model cannot be traced through its decisions.
+      id: "0024_entity_merge_model",
+      sql: /* sql */ `
+      ALTER TABLE memory_entity_merges ADD COLUMN IF NOT EXISTS model text;
+    `,
+    },
+    {
+      // Where a conflict's incoming belief sat BEFORE keep_new moved it onto the winning
+      // lineage, so revert can put it back exactly.
+      //
+      // revertConflict hardcoded root = self, version = 1. That is right for a save-time
+      // incoming, which is always a fresh insert at (self, 1), and wrong for anything else: a
+      // conflict raised between two beliefs that already exist would, on revert, drop a
+      // version-4 belief to version 1 of its own root while versions 1 to 3 still claim that
+      // root. Reconciliation raises exactly that kind of conflict now.
+      //
+      // NULL means "no record", which every row written before this migration is, and every
+      // one of those IS a save-time incoming. So NULL keeps the old behaviour and is correct
+      // rather than merely compatible. Do not "fix" that fallback.
+      id: "0025_conflict_prior_lineage",
+      sql: /* sql */ `
+      ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS prior_root_id uuid;
+      ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS prior_version int;
+    `,
+    },
+    {
+      // Who settled a conflict, and why.
+      //
+      // A fold records this already (memory_entity_merges carries decided_by, score, reason and
+      // model), but only a fold does. A pair the model kept APART writes keep_both and nothing
+      // else, and an auto-resolved memory conflict writes its action and nothing else, so the
+      // model's reasoning existed only in the progress stream and was gone the moment the run
+      // finished. One button press that decided fifty pairs left thirty-seven of them with no
+      // record of what was decided or that a model decided it.
+      //
+      // NULL means a human clicked it, which is what every row written before this migration is.
+      id: "0026_resolution_provenance",
+      sql: /* sql */ `
+      ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS resolution_by text;
+      ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS resolution_model text;
+      ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS resolution_score double precision;
+      ALTER TABLE memory_dedup_decisions ADD COLUMN IF NOT EXISTS resolution_reason text;
+    `,
+    },
+    {
+      // The contradiction re-check's findings. A 'possible' row is deliberately NOT a conflict:
+      // measured precision on this pass is about 40 percent, so putting them in
+      // memory_dedup_decisions would make the queue, the queue-pressure gate, the tab badge and
+      // MCP list_conflicts all 60 percent noise. They live here until a human says otherwise, and
+      // approving one writes the real conflict row.
+      //
+      // The two quotes are the point. The model must copy the clashing assertion from each side
+      // verbatim, and the pass verifies both spans occur in the two memories before recording
+      // anything. Measured: the model never invents a quote, it omits them when it cannot find
+      // one, so this rejects the findings it will not stand behind. It does not raise precision
+      // (a true span can still carry a wrong conclusion) and it is kept because two quotes make a
+      // finding readable in three seconds instead of two full memories.
+      id: "0027_reconcile_recheck",
+      sql: /* sql */ `
+      ALTER TABLE memory_reconcile_actions DROP CONSTRAINT IF EXISTS memory_reconcile_actions_kind_check;
+      ALTER TABLE memory_reconcile_actions ADD CONSTRAINT memory_reconcile_actions_kind_check
+        CHECK (kind IN ('retire', 'question', 'conflict', 'fold', 'possible'));
+
+      -- The other side of the pair. memory_id holds the newer belief, candidate_id the older.
+      ALTER TABLE memory_reconcile_actions ADD COLUMN IF NOT EXISTS candidate_id uuid;
+      ALTER TABLE memory_reconcile_actions ADD COLUMN IF NOT EXISTS new_quote text;
+      ALTER TABLE memory_reconcile_actions ADD COLUMN IF NOT EXISTS old_quote text;
+
+      -- "Never ask again" reads this: an answered pair is never re-judged, in either direction.
+      CREATE INDEX IF NOT EXISTS memory_reconcile_actions_pair_idx
+        ON memory_reconcile_actions (owner_id, memory_id, candidate_id);
+
+      -- Counted apart from conflicts_raised: nothing was raised, something was noticed.
+      ALTER TABLE memory_reconcile_runs ADD COLUMN IF NOT EXISTS possible int NOT NULL DEFAULT 0;
+    `,
+    },
+    {
+      // When each belief was last put through the contradiction re-check. NULL means never.
+      //
+      // Per belief rather than per run, and that choice is what makes the pass safe to cap. A
+      // single watermark advanced to a run's clock time would strand every belief the capped run
+      // did not reach, since later runs only look forward. Stamping each belief instead means the
+      // pass drains oldest-unchecked first and nothing is skipped, an interrupted run keeps the
+      // beliefs it already paid for, and a belief examined long ago comes back around on its own
+      // once the backlog is clear, because that is the same query.
+      //
+      // The index is the pass's selection order: never-checked first, oldest first within that.
+      id: "0028_recheck_watermark",
+      sql: /* sql */ `
+      ALTER TABLE memory_objects ADD COLUMN IF NOT EXISTS last_rechecked_at timestamptz;
+      CREATE INDEX IF NOT EXISTS memory_objects_recheck_due_idx
+        ON memory_objects (owner_id, last_rechecked_at NULLS FIRST, created_at)
+        WHERE status = 'active';
+    `,
+    },
+    {
+      // What a run actually spent, as opposed to est_input_tokens and est_output_tokens, which
+      // price work nobody has done yet. Written per call rather than once at the end: a sweep runs
+      // for minutes and a budget that can only be checked afterwards is not a budget.
+      //
+      // spent_usd is the provider's own billed figure, so it matches the invoice rather than a
+      // local price table.
+      id: "0029_reconcile_spend",
+      sql: /* sql */ `
+      ALTER TABLE memory_reconcile_runs ADD COLUMN IF NOT EXISTS spent_input_tokens int NOT NULL DEFAULT 0;
+      ALTER TABLE memory_reconcile_runs ADD COLUMN IF NOT EXISTS spent_output_tokens int NOT NULL DEFAULT 0;
+      ALTER TABLE memory_reconcile_runs ADD COLUMN IF NOT EXISTS spent_usd double precision NOT NULL DEFAULT 0;
+    `,
+    },
+    {
+      // One applying run at a time, enforced by the database rather than by a read followed by an
+      // insert. The check in reconcile() spans an await, so two concurrent callers could both find
+      // no live run and both start, which is the double spend the check exists to prevent.
+      //
+      // Partial twice over: finished runs are unconstrained so history is unlimited, and dry runs
+      // are unconstrained because a preview spends nothing and must never be refused.
+      id: "0030_one_live_reconcile",
+      sql: /* sql */ `
+      CREATE UNIQUE INDEX IF NOT EXISTS memory_reconcile_runs_one_live_idx
+        ON memory_reconcile_runs (owner_id) WHERE status = 'running' AND mode = 'apply';
+    `,
+    },
   ];
 }

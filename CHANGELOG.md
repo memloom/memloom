@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.8.0 (2026-08-02)
+
+- Added reconciliation: memloom goes over its own store, repairs what SQL proves is wrong, folds
+  duplicate entity names, and asks about the rest. Run it with `memloom reconcile`, preview it with
+  `memloom reconcile --dry-run`, and take a whole run back with `memloom reconcile undo <run id>`.
+  Retiring a memory means it goes stale, never deleted, so undo puts it back unless something
+  else changed it first ([docs](https://docs.memloom.dev/concepts/reconciliation))
+- Reconciliation has five passes, listed in cost order in the viewer's Settings tab. The two free ones
+  are on and act on their own, because everything they do is undoable. The three that spend
+  money are off until you turn them on: let a model resolve uncertain entity pairs, let a model
+  resolve memory conflicts, and look for contradictions the save path could not see
+- The contradiction re-check finds pairs nothing ever compared. A save is only judged against the
+  5 nearest memories that existed at that moment, so a pair at rank 6 was never looked at by
+  anything and nothing looked again. The re-check goes back over old beliefs against 20
+  neighbours, capped at 200 a run (about 55 cents), oldest first so the backlog drains with
+  nothing skipped, and brings a belief back around after 30 days
+- Its findings arrive as possible contradictions rather than conflicts, in the Conflicts tab next
+  to memory conflicts and duplicate entities. About 40 percent of them are real, so each one
+  quotes the clashing sentence from both sides and waits for a yes or no. Confirming is what
+  creates the conflict; dismissing means it is never raised again. `memloom reconcile possible` lists
+  them in a terminal, and `memloom reconcile yes <id>` or `memloom reconcile no <id>` answers one
+- The daemon reconciles on its own: shortly after startup when the last run is more than 36 hours
+  old, and when it has been quiet for a while. Automatic runs only ever use the free passes, so a
+  run nobody watched can never spend money. Reconciliation also gets quieter rather than louder: ignore
+  its findings and the next run surfaces fewer
+- The viewer's Settings tab drives all of it, with live progress for a long run, and the Console
+  tab keeps every run in history with stop and undo
+- Set `RECONCILE_ENABLED=0` in `~/.memloom/config.env` on a host that wants the reports and none of
+  the repairs. It is a kill switch, not an opt-in: reconciliation is on by default with its two free
+  passes ([docs](https://docs.memloom.dev/guides/configuration))
+
 ## 0.7.0
 
 - Added web pages as context: `memloom context add https://…` (or the viewer's Add link

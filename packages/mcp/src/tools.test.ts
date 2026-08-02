@@ -13,9 +13,11 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import {
   addFile,
   addLink,
+  answerPossibleContradiction,
   deleteSchemaEntry,
   listConflicts,
   listDocuments,
+  listPossibleContradictions,
   MAX_INLINE_MEDIA_SECONDS,
   memoryHistory,
   readPassage,
@@ -31,6 +33,27 @@ import {
 const contradictory = new ScriptedLLMProvider(
   () => '[{"candidate": 1, "relation": "contradictory", "reason": "different value"}]',
 );
+
+// The two beliefs the re-check pass is scripted to clash, and a model that quotes both of them
+// verbatim so the finding survives verification. Saves see nothing, which is the situation the
+// pass exists for: a contradiction nobody caught on the way in.
+const OLD_BELIEF = "the deploy target is fly.io";
+const NEW_BELIEF = "we run on railway now";
+const recheckArbiter = new ScriptedLLMProvider((prompt) => {
+  if (!prompt.startsWith("You compare a NEW memory")) return "[]";
+  if (!prompt.includes("These ARE contradictions")) {
+    return JSON.stringify([{ candidate: 1, relation: "complementary", reason: "unrelated" }]);
+  }
+  return JSON.stringify([
+    {
+      candidate: 1,
+      relation: "contradictory",
+      reason: "deploy target changed",
+      new_quote: NEW_BELIEF,
+      old_quote: OLD_BELIEF,
+    },
+  ]);
+});
 
 // One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
 // costs about six seconds and the tests themselves cost milliseconds, so a store per test
@@ -85,6 +108,35 @@ describe("mcp tools", () => {
       llm: contradictory,
     });
     await memloom.init();
+    return memloom;
+  }
+
+  /**
+   * A store holding exactly one unconfirmed contradiction.
+   *
+   * The hashing embedding provider is not semantic, so two sentences about the same subject land
+   * nowhere near each other and the pass's similarity floor finds nothing. Copying one vector
+   * onto the other is how a test says "these are about the same thing" to code that only sees
+   * cosine, and it is done after both saves so the save path judged them on their real vectors.
+   */
+  async function withPossible() {
+    await truncateAll(storage);
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: recheckArbiter,
+      autoIndexDelayMs: 999_999,
+    });
+    await memloom.init();
+    await memloom.save({ content: OLD_BELIEF });
+    await memloom.save({ content: NEW_BELIEF });
+    await storage.query(
+      `UPDATE memory_objects SET embedding = (
+         SELECT embedding FROM memory_objects WHERE content = $1 LIMIT 1
+       ) WHERE content = $2`,
+      [OLD_BELIEF, NEW_BELIEF],
+    );
+    await memloom.reconcile({ mode: "apply", passes: ["llm_recheck"] });
     return memloom;
   }
 
@@ -401,5 +453,71 @@ describe("mcp tools", () => {
     const resolved = await resolveConflict(m, { conflictId, action: "keep_new" });
     expect(resolved).toContain("keep_new");
     expect(await listConflicts(m)).toBe("No pending conflicts.");
+  });
+
+  it("list_possible_contradictions shows both quotes and marks them unconfirmed", async () => {
+    const m = await withPossible();
+    const listed = await listPossibleContradictions(m);
+    expect(listed).toContain("UNCONFIRMED");
+    expect(listed).toContain(`NEW:      ${NEW_BELIEF}`);
+    expect(listed).toContain(`EXISTING: ${OLD_BELIEF}`);
+    expect(listed).toContain("deploy target changed");
+    // The findings are deliberately kept out of the conflict queue until someone answers.
+    expect(await listConflicts(m)).toBe("No pending conflicts.");
+  });
+
+  it("confirming a possible contradiction creates a conflict to resolve", async () => {
+    const m = await withPossible();
+    const id = (await m.possibleContradictions())[0]?.id as string;
+
+    const confirmed = await answerPossibleContradiction(m, { id, answer: "confirm" });
+    expect(confirmed).toContain("resolve_conflict");
+    const conflicts = await m.conflicts();
+    expect(conflicts).toHaveLength(1);
+    expect(confirmed).toContain(conflicts[0]?.id as string);
+    expect(await listPossibleContradictions(m)).toContain("No unconfirmed contradictions");
+
+    // Answered means answered: a stale id is relayed as a sentence, never thrown, so an agent
+    // re-lists instead of retrying.
+    const again = await answerPossibleContradiction(m, { id, answer: "dismiss" });
+    expect(again).toContain(`Nothing unconfirmed with id ${id}`);
+    expect(await m.conflicts()).toHaveLength(1);
+  });
+
+  it("dismissing a possible contradiction says it is permanent and raises no conflict", async () => {
+    const m = await withPossible();
+    const id = (await m.possibleContradictions())[0]?.id as string;
+
+    const dismissed = await answerPossibleContradiction(m, { id, answer: "dismiss" });
+    expect(dismissed).toContain("never be raised again");
+    expect(await m.conflicts()).toHaveLength(0);
+    expect(await m.possibleContradictions()).toHaveLength(0);
+  });
+
+  // As it ships the engine is an HttpMemloomClient, so a 404 for an answered id arrives wrapped
+  // in the daemon's JSON body rather than as the engine's own Error.
+  it("relays an already-answered finding that came back over HTTP", async () => {
+    const overHttp = {
+      answerPossible: async () => {
+        throw new Error(
+          'memloom server 404: {"error":"memloom: no unanswered possible contradiction act-9"}',
+        );
+      },
+    } as unknown as MemoryEngine;
+
+    const answered = await answerPossibleContradiction(overHttp, {
+      id: "act-9",
+      answer: "confirm",
+    });
+    expect(answered).toContain("Nothing unconfirmed with id act-9");
+    expect(answered).not.toContain("memloom server 404");
+
+    // Anything else is still a real tool failure rather than a message shaped like one.
+    const broken = {
+      answerPossible: async () => Promise.reject(new Error("socket hang up")),
+    } as unknown as MemoryEngine;
+    await expect(
+      answerPossibleContradiction(broken, { id: "act-9", answer: "confirm" }),
+    ).rejects.toThrow(/socket hang up/);
   });
 });

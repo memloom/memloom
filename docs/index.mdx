@@ -1,150 +1,128 @@
 ---
-title: "memloom"
+title: "Introduction"
 description: "A memory engine you own, running on your machine"
+icon: "house"
 ---
 
-memloom is a local-first memory engine for AI agents: one Postgres-native store on your machine,
-shared by every client. That means the CLI, MCP (Claude Desktop, Claude Code, Cursor, etc.), a
-browser viewer, and plain HTTP.
+## Overview
 
-This page gets you running. If you want to understand how the engine actually works, start with
-[Features](/features), then the concept pages: [Architecture](/concepts/architecture),
-[Memory types & versioning](/concepts/memory-types), [Conflicts](/concepts/conflicts),
-[The graph](/concepts/graph), and [Retrieval](/concepts/retrieval). For the command and tool
-surfaces, see the [CLI Reference](/cli/overview) and the [MCP Reference](/mcp/setup) tabs.
+One Postgres-native store on your machine, shared by every client: the CLI, MCP agents, a browser
+viewer, and plain HTTP. Requires **Node 20 or later**.
 
-## Quickstart
-
-Prefer to delegate? An AI agent can run this whole setup from one pasted prompt: see
-[Agent setup](/guides/agent-setup).
-
-Requires **Node 20 or later**. Check with `node -v`.
-
-```bash
-npm install -g memloom   # or run every command through npx: npx memloom@latest <command>
-memloom init             # creates ~/.memloom (store + config.env), starts the daemon
-memloom save "the staging database runs on Postgres"
-memloom recall "staging database"
-```
+<Steps>
+  <Step title="Install" icon="download">
+    ```bash
+    npm install -g memloom
+    ```
+    Or run everything through `npx memloom@latest <command>`.
+  </Step>
+  <Step title="Start" icon="play">
+    ```bash
+    memloom init
+    ```
+    Creates `~/.memloom` with the store and `config.env`, then starts the daemon.
+  </Step>
+  <Step title="Use it" icon="brain">
+    ```bash
+    memloom save "the staging database runs on Postgres"
+    memloom recall "staging database"
+    ```
+  </Step>
+</Steps>
 
 <Note>
-If `memloom` is not found after installing, your Node is probably too old: npm skips a package
-whose `engines` it cannot satisfy, so nothing gets linked onto your PATH. Run `node -v`, upgrade
-to Node 20 or later, then install again.
+  If `memloom` is not found after installing, your Node is probably too old. npm skips a package
+  whose `engines` it cannot satisfy, so nothing lands on your PATH. Check `node -v`, upgrade, and
+  install again.
 </Note>
 
-`init` prints the path to `config.env`. To switch from offline mode to real embeddings,
-semantic dedup, and contradiction detection: set `OPENROUTER_API_KEY` there, then
+Prefer to delegate? An agent can run this whole setup from one pasted prompt. See
+[Agent setup](/guides/agent-setup).
+
+***
+
+## Turning on cloud mode
+
+Without a key memloom runs offline with deterministic embeddings and no dedup. Set
+`OPENROUTER_API_KEY` in `~/.memloom/config.env`, then:
 
 ```bash
-memloom stop      # the store must be closed for the next step
-memloom reembed   # recompute existing vectors with the new provider
-memloom serve     # start again in cloud mode
+memloom stop      # the store must be closed
+memloom reembed   # recompute vectors with the new provider
+memloom serve
 ```
 
-The `reembed` step matters: offline and cloud vectors live in different spaces, and the daemon
-refuses to start on a store whose vectors do not match its config (see the note below).
+<Warning>
+  Offline and cloud embeddings live in different vector spaces. Mixing them makes similarity
+  meaningless, so the daemon refuses to start until the store matches the config. That is what
+  `reembed` is for.
+</Warning>
+
+***
 
 ## Memory types
 
-Every saved memory has a `memoryType`: the same taxonomy across every client, so a memory means
-the same thing whether the CLI, MCP, or a raw HTTP call wrote it. Pass it on save (defaults to
-`fact`):
+Every memory carries a type, and it means the same thing whichever client wrote it. Defaults to
+`fact`.
 
-| Type | What it holds | Example |
+| Type | Holds | Example |
 | --- | --- | --- |
-| `fact` | A stable truth about the world or the user | *the staging database runs on Postgres* |
-| `preference` | How the user likes things done | *prefers pnpm over npm* |
+| `fact` | A stable truth | *the staging database runs on Postgres* |
+| `preference` | How you like things done | *prefers pnpm over npm* |
 | `episode` | A time-bound event or decision | *shipped the viewer on 2026-07-05* |
-| `procedure` | Reusable how-to steps | *to release: bump VERSION, tag, push* |
+| `procedure` | Reusable steps | *to release: bump VERSION, tag, push* |
 
-Recall results for ingested context chunks aren't saved memories: they carry the sentinel type
-`context`, and their `kind` field is `context` rather than `memory`.
+Chunks from ingested files are not saved memories. They carry the sentinel type `context`.
 
-## Context: bring your files
+***
+
+## Bring your files
 
 ```bash
-memloom context add ./docs        # ingest .md/.txt/.pdf files (directories scan recursively)
+memloom context add ./docs
 memloom recall "how do we restart the ingest worker"
 ```
 
-Files are chunked structure-aware, embedded, and fused into the **same recall** as memories.
-Markdown splits at headings; plain text and PDFs split along their outline: ALL-CAPS title
-lines and numbered points (`2. DEFINITION. …`). One point per chunk, so a chunk is exactly
-one definition, theorem, or exercise. Each chunk carries its breadcrumb and PDFs keep page
-numbers, so results from files always say where they came from:
+Markdown, text and PDF, chunked along real structure and fused into the same recall as your
+memories. Every result says where it came from:
 `from lecture-notes.pdf › LIMITS OF FUNCTIONS > 2. DEFINITION (p. 1)`.
+See [Extractors and chunking](/guides/extractors).
 
-PDF text is rebuilt from glyph geometry rather than stream order, so equation-heavy PDFs
-(Word/LaTeX math) come out in reading order, and 2-up print layouts (the same content twice, side by
-side) are de-duplicated. Symbols from unmapped fonts (∞, ∈, ≠) can't be recovered from the
-text layer; that would need OCR, which is out of scope.
-
-Documents are mirrors: re-adding an unchanged file is a no-op, a changed file replaces its
-chunks. When memloom's extraction pipeline improves, the pipeline version bumps and
-`context add` re-ingests files whose bytes didn't change. `memloom context list` /
-`memloom context remove <id>` manage them.
-
-Context joins the graph too: `memloom index` extracts entities from chunks as well as
-memories, so documents appear in the viewer's graph connected to your memories through the
-entities they share. Recall's entity arm can surface document sections by entity as well as
-by wording. The graph shows one node per **document** (chunk-level mentions roll up into
-a weighted document → entity edge), so a 300-page PDF stays one node.
+***
 
 ## The daemon
 
-`memloom serve` is the single owner of the store. Everything else is a client:
+`memloom serve` owns the store. Everything else is a client, and any CLI command starts it if it
+is not running.
 
-| Surface | Where |
+| | |
 | --- | --- |
-| HTTP API | `http://127.0.0.1:4319`: what the CLI, MCP, and this docs playground call |
-| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres`: for Drizzle Studio, psql, TablePlus (default port, `MEMLOOM_PG_PORT` moves it; embedded tier only) |
+| HTTP API | `http://127.0.0.1:4319` |
+| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres` |
 | Data | `~/.memloom/data` |
 | Config | `~/.memloom/config.env` |
 
-Any CLI command auto-starts the daemon if it isn't running. Stop it cleanly with `memloom stop`.
-
 <Warning>
-**The Postgres wire pauses the API.** PGLite is a single-connection database: while a DB client
-(Drizzle Studio, psql, an IDE database panel) is connected on the wire port, it holds an exclusive
-lock. Memory endpoints detect this and answer **503 "store is locked by a connected Postgres wire
-client"** instead of hanging; the `serve` terminal also warns when a wire client connects.
-Disconnect the DB client to resume.
+  **The Postgres wire pauses the API.** PGLite takes one connection at a time, so while Drizzle
+  Studio or psql is attached it holds an exclusive lock. Memory endpoints answer **503** instead of
+  hanging. Disconnect the client to resume.
 </Warning>
 
-## Configuration
+***
 
-`~/.memloom/config.env`, dotenv-style. Real environment variables win over the file.
+## Where next
 
-```bash
-OPENROUTER_API_KEY=sk-or-...          # enables cloud mode
-OPENROUTER_EMBED_MODEL=qwen/qwen3-embedding-8b   # default
-OPENROUTER_EMBED_DIMS=1024                       # default (Matryoshka truncation)
-OPENROUTER_EMBED_PROVIDER=nebius                 # default host for the default model (fastest)
-OPENROUTER_LLM_MODEL=google/gemini-2.5-flash     # default
-```
-
-<Note>
-Offline and cloud embeddings live in different vector spaces. If you switch modes, run
-[`memloom reembed`](/cli/graph#reembed) (daemon stopped) to recompute every vector with the
-new provider; mixed embeddings make similarity meaningless, so the daemon refuses to start
-until the store matches the config.
-</Note>
-
-## Testing the API by hand
-
-With the daemon running, curl any endpoint from your own machine:
-
-```bash
-curl -s http://127.0.0.1:4319/memory/query \
-  -H "content-type: application/json" \
-  -d '{"query": "staging database"}'
-```
-
-The `serve` terminal logs every request twice: `→` on arrival and `←` with status + duration on
-completion. A locked store answers 503 within ~1.5s (see the warning above); a stalled provider
-call times out after 60s with the provider's error in the response.
-
-Every endpoint is documented in the API Reference tab. The daemon only accepts browser
-requests from localhost origins by design, so test against it with curl or your own local
-tools rather than from a hosted page.
+<CardGroup cols={2}>
+  <Card title="Features" icon="sparkles" href="/features">
+    What memloom does, one card per capability.
+  </Card>
+  <Card title="Architecture" icon="sitemap" href="/concepts/architecture">
+    One daemon, one store, many clients.
+  </Card>
+  <Card title="CLI reference" icon="terminal" href="/cli/overview">
+    Every command.
+  </Card>
+  <Card title="MCP setup" icon="plug" href="/mcp/setup">
+    Give your agent the store.
+  </Card>
+</CardGroup>

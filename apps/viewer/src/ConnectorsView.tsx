@@ -8,6 +8,7 @@ import {
   type NotionSyncEvent,
   type NotionSyncResult,
 } from "./api";
+import { toastDone, toastFailed, toastSaid } from "./toast";
 
 // Connectors: outside sources that sync into the same recall as memories and files. Notion
 // is the first (and only) one. The daemon holds the token and owns the sync watermarks; this
@@ -281,11 +282,18 @@ function NotionCard({ onChanged }: { onChanged: () => void }) {
         setLog((prev) => [...prev, { level: syncLevel(e.outcome), message: syncMessage(e) }]);
       });
       setSummary(result);
+      // The log below says what happened per page. This says whether it worked, from anywhere on
+      // the page, because a sync can take a while and the eye wanders.
+      if (result.errors > 0) toastFailed(`sync finished with problems. ${summaryLine(result)}`);
+      else if (result.dryRun) toastSaid(summaryLine(result));
+      else toastDone(`Notion synced. ${summaryLine(result)}`);
       await loadStatus();
       await loadPages();
       onChanged();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      setError(message);
+      toastFailed(`sync failed: ${message}`);
     } finally {
       setSyncing(false);
     }

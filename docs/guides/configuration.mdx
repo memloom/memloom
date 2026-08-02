@@ -1,100 +1,107 @@
 ---
 title: "Configuration"
 description: "config.env, the two modes, and the embedding fingerprint"
+icon: "sliders"
 ---
 
 ## Where config lives
-
-All configuration is one dotenv-style file, created by `memloom init`:
 
 ```
 ~/.memloom/config.env
 ```
 
-The daemon reads it **at startup**. After editing it, restart (`memloom stop`, then any
-command). Real environment variables take precedence over the file, so a shell-provided or
-MCP-provided key overrides what's written there. Set `MEMLOOM_HOME` to relocate the whole
-home directory (config *and* data).
+Created by `memloom init`, dotenv-style, read **at startup**. Restart after editing. Real
+environment variables win over the file, so a shell or MCP key overrides what is written there.
+`MEMLOOM_HOME` relocates the whole directory, config and data together.
 
-## Reference
+***
+
+## The settings that matter
 
 ```bash
-# The one switch that matters: with a key, memloom runs in cloud mode;
-# without it, offline mode.
-OPENROUTER_API_KEY=sk-or-...
-
-# Optional overrides (defaults shown):
-OPENROUTER_EMBED_MODEL=qwen/qwen3-embedding-8b
-OPENROUTER_EMBED_DIMS=1024          # Matryoshka truncation from the native 4096
-OPENROUTER_EMBED_PROVIDER=nebius    # preferred OpenRouter host for embeddings
-OPENROUTER_LLM_MODEL=google/gemini-2.5-flash
-OPENROUTER_CHAT_MODEL=google/gemini-2.5-flash  # assistant chat; must support tool calling
-MEMLOOM_AUTO_INDEX=on               # background entity extraction after saves/ingests
-MEMLOOM_INDEX_CONCURRENCY=6         # entity-extraction worker pool size
-
-# Notion connector (see the Notion page in the CLI reference):
-NOTION_TOKEN=ntn_...                # internal integration token; pages shared with it sync
-NOTION_POLL_MS=300000               # how often the daemon checks for edits (min 60000)
-
-# Storage tier: unset = embedded PGLite in ~/.memloom/data. Set to run on a real
-# Postgres server with pgvector instead (see the self-hosting guide):
-MEMLOOM_PG_URL=postgres://user:password@localhost:5432/memloom
+OPENROUTER_API_KEY=sk-or-...        # the one switch: with it, cloud mode. Without it, offline
 ```
 
-<Note>
-`MEMLOOM_AUTO_INDEX` controls the background indexing that runs a few seconds after a
-save or file ingest (one LLM call per new item, debounced into batched runs). Set it to
-`off` if you want every LLM call to be explicit; `memloom index` and the Console still
-work either way. Offline mode never auto-indexes.
-</Note>
+| Setting | Default | For |
+| --- | --- | --- |
+| `OPENROUTER_EMBED_MODEL` | `qwen/qwen3-embedding-8b` | Embeddings |
+| `OPENROUTER_EMBED_DIMS` | `1024` | Matryoshka truncation from the native 4096 |
+| `OPENROUTER_LLM_MODEL` | `google/gemini-2.5-flash` | The pipeline's classifier and extractors |
+| `OPENROUTER_CHAT_MODEL` | same as above | The assistant. Must support tool calling |
+| `MEMLOOM_AUTO_INDEX` | `on` | Background entity extraction after saves and ingests |
+| `MEMLOOM_INDEX_CONCURRENCY` | `6` | Extraction worker pool size |
+| `RECONCILE_ENABLED` | unset | Set to `0` to keep the reports and refuse the repairs |
+| `MEMLOOM_PG_URL` | unset | Run on a real Postgres instead of the embedded store |
 
-<Note>
-`OPENROUTER_EMBED_PROVIDER` exists because embedding latency varies wildly between hosts of
-the same model on OpenRouter: the same call has been observed taking 16s on one host and
-under a second on another. For the default model, memloom pins the fast host (nebius)
-automatically; set this only if you change models or want a different host.
-</Note>
+The full annotated list, including transcription and diarization, lives in
+`config.env.example` in the repo and in the file `memloom init` writes.
+
+<Accordion title="Notes on three of them" icon="circle-info">
+  **`MEMLOOM_AUTO_INDEX`** covers the indexing that runs a few seconds after a save or ingest, one
+  model call per new item, debounced. Set it `off` to make every call explicit. `memloom index`
+  still works. Offline never auto-indexes.
+
+  **`RECONCILE_ENABLED=0`** is a kill switch, not the switch.
+  [Reconciliation](/concepts/reconciliation) is on by default with its two free passes, and which
+  passes run is a viewer setting that needs no restart. Setting `0` makes an applying run fail
+  with a 403 and stops automatic runs acting. Previews keep working.
+
+  **`OPENROUTER_EMBED_PROVIDER`** exists because embedding latency varies wildly between hosts of
+  the same model: the same call has been seen taking 16 seconds on one and under a second on
+  another. memloom pins the fast host for the default model, so set this only if you change
+  models.
+</Accordion>
+
+***
 
 ## The two modes
 
-| | **Cloud** (key set) | **Offline** (no key) |
+| | Cloud (key set) | Offline (no key) |
 | --- | --- | --- |
-| Embeddings | Real model via OpenRouter | Deterministic hash embeddings |
-| Recall quality | Full semantic | Word-overlap only (keyword arm still full quality) |
-| Dedup / versioning on save | ✓ | ✗ (every save is `added`) |
-| Conflict detection | ✓ | ✗ |
-| `memloom index` (entities, graph) | ✓ | ✗ (errors; needs the LLM) |
-| Context ingestion & citations | ✓ | ✓ |
-| Network calls | Embedding + LLM requests only | None |
+| Embeddings | Real model | Deterministic hash |
+| Recall | Full semantic | Word overlap, with the keyword arm at full quality |
+| Dedup and versioning | Yes | No, every save is `added` |
+| Conflict detection | Yes | No |
+| `memloom index` | Yes | No, it needs a model |
+| Context ingestion and citations | Yes | Yes |
+| Network calls | Embedding and model requests | None |
 
-Offline mode is for trying memloom, tests, and air-gapped storage of text you'll search by
-keywords. For real use, set the key.
+Offline is for trying memloom, tests, and air-gapped keyword search. For real use, set the key.
+
+***
 
 ## The embedding fingerprint
 
-A store's vectors are only comparable to vectors from the same provider + model + dims. On
-first init, memloom stamps the store with the embedding fingerprint (e.g.
-`openrouter:qwen/qwen3-embedding-8b@1024`). Any later startup with a **different**
-fingerprint is refused with an explicit error, because mixed embedding spaces don't fail
-with an error; they silently return garbage recall.
+Vectors are only comparable to vectors from the same provider, model and dims, so the store is
+stamped on first init, for example `openrouter:qwen/qwen3-embedding-8b@1024`. A later startup with
+a different fingerprint is refused.
 
-Switching between offline and cloud mode (or changing embedding models) is a migration, not
-a dead end: stop the daemon and run [`memloom reembed`](/cli/graph#reembed), which recomputes
-every vector with the new provider and stamps the new fingerprint. The LLM model, by
-contrast, can be changed freely; it doesn't touch the vector space.
+<Warning>
+  This is deliberate. Mixed embedding spaces do not fail with an error, they silently return
+  garbage recall.
+</Warning>
+
+Changing model is a migration, not a dead end: stop the daemon and run
+[`memloom reembed`](/cli/graph), which recomputes every vector and stamps the new fingerprint. The
+LLM model can be changed freely, since it never touches the vector space.
+
+***
 
 ## Daemon endpoints
 
-| What | Where | Change |
+| What | Where | Movable |
 | --- | --- | --- |
-| HTTP API + viewer | `http://127.0.0.1:4319` | fixed (localhost-only by design) |
-| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres` | `MEMLOOM_PG_PORT`; a distinctive default so it never collides with a local Postgres on 5432. Embedded tier only: with `MEMLOOM_PG_URL` set there is no bridge, inspect your server directly |
+| HTTP API and viewer | `http://127.0.0.1:4319` | No, localhost only by design |
+| Postgres wire | `postgresql://postgres@127.0.0.1:54329/postgres` | `MEMLOOM_PG_PORT`, embedded tier only |
 
-On Windows, Hyper-V, WSL and Docker reserve random 100-port blocks inside the ephemeral range
-at every boot, and one can land on 54329. The daemon then starts without the wire and prints
-why, so the HTTP API and viewer keep working. Set `MEMLOOM_PG_PORT` to a free port below
-49152 (`MEMLOOM_PG_PORT=45432`) and restart to get the wire back. `netsh interface ipv4 show
-excludedportrange protocol=tcp` lists the blocked ranges.
+Both bind to `127.0.0.1`, and CORS admits only localhost origins, so a public web page cannot
+drive your daemon.
 
-Both bind to `127.0.0.1` only, and the API's CORS policy allows only localhost origins, so a
-public web page can't drive your daemon.
+<Accordion title="If the wire port will not bind on Windows" icon="windows">
+  Hyper-V, WSL and Docker reserve random 100-port blocks inside the ephemeral range at every boot,
+  and one can land on 54329. The daemon then starts without the wire and prints why, so the API
+  and viewer keep working.
+
+  Set `MEMLOOM_PG_PORT` to a free port below 49152 and restart.
+  `netsh interface ipv4 show excludedportrange protocol=tcp` lists the blocked ranges.
+</Accordion>

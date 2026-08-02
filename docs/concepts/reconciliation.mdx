@@ -1,0 +1,156 @@
+---
+title: "Reconciliation"
+description: "memloom reviews its own store, fixes what it can prove is wrong, and asks you about the rest"
+icon: "rotate"
+---
+
+## Overview
+
+A store that only grows drifts. Duplicates land, resolutions leave loose ends, and beliefs written
+months apart contradict each other with nothing there to notice. Reconciliation is the pass that
+looks.
+
+<CardGroup cols={3}>
+  <Card title="Undoable" icon="rotate-left">
+    Every run is one unit with an id. `memloom reconcile undo <id>` takes the whole thing back.
+  </Card>
+  <Card title="Free by default" icon="lock">
+    The two passes that are on can only do what undo reverses. The three that cost money stay off
+    until you turn them on.
+  </Card>
+  <Card title="Never spends unwatched" icon="shield-check">
+    Automatic runs use the free passes only. Money is spent from a command or a button, never a
+    timer.
+  </Card>
+</CardGroup>
+
+***
+
+## The five passes
+
+Cost order, the same order the CLI report and the Settings tab use.
+
+| Pass | Cost | Default |
+| --- | --- | --- |
+| Fix memory principle violations | free | **on** |
+| Resolve duplicate entities | free | **on** |
+| Let a model resolve uncertain entity pairs | one call per pair | off |
+| Let a model resolve memory conflicts | one call per conflict | off |
+| Look for contradictions the save path could not see | up to 200 calls per run | off |
+
+<Accordion title="What each pass changes, and what it only reports" icon="list-check">
+  | Pass | Repairs | Reports only |
+  | --- | --- | --- |
+  | Memory principles | Duplicate content, memories left current after a resolution | Orphans, entity invariants |
+  | Duplicate entities | Name variants the rules are certain about | Pairs that need a human |
+  | Uncertain entity pairs | Folds the queue a model can settle | Leaves the rest queued |
+  | Memory conflicts | Re-judges the pending queue | Leaves unsure ones pending |
+  | Contradiction re-check | Nothing. Every finding waits for you | All of them |
+
+  Entity invariants are reported and never repaired. They mean something upstream wrote a bad row,
+  and auto-fixing that hides the bug instead of fixing it.
+</Accordion>
+
+***
+
+## The contradiction re-check
+
+A save is judged against the **5 nearest** memories that existed at that moment. A pair sitting at
+rank 6 is never compared by anything, and nothing looks again. On a 3000-belief store that is
+around 12 unjudged pairs per belief.
+
+This pass goes back over old beliefs against their **20 nearest** neighbours.
+
+| | |
+| --- | --- |
+| Cost ceiling | 200 beliefs a run, about **$0.55** |
+| Progress | Per belief, oldest first, so a backlog drains across runs with nothing skipped |
+| Repeat | A belief comes back around after 30 days |
+| Precision | About **40 percent** |
+
+Because it is wrong more often than right, its findings are **possible contradictions**, not
+conflicts. They wait in the Conflicts tab. Confirming one creates the real conflict; dismissing one
+is permanent for that pair.
+
+<Note>
+  The model has to quote the clashing claim from both sides word for word, and the pass drops the
+  finding if either quote is not really there. That is what lets you judge one in three seconds
+  without opening either memory. It is not a precision filter: a real quote can still carry a wrong
+  conclusion.
+</Note>
+
+Set a budget in the Settings tab to keep going past the 200 ceiling until the backlog is clear or
+that much has been billed.
+
+***
+
+## When it runs
+
+<Steps>
+  <Step title="On demand" icon="play">
+    `memloom reconcile`, or **Reconcile now** in Settings. The only way the paid passes ever run.
+  </Step>
+  <Step title="Startup catch-up" icon="power-off">
+    The daemon starts, settles for two minutes, and runs if the last one is over 36 hours old.
+    Switch it off in Settings.
+  </Step>
+  <Step title="Idle" icon="moon">
+    No run for 20 hours and nothing served for 10 minutes, with a 48 hour ceiling for a busy
+    machine. Never while indexing.
+  </Step>
+</Steps>
+
+<Warning>
+  Automatic triggers run the free passes only, whatever your settings say. A run nobody watched
+  cannot spend money.
+</Warning>
+
+<Accordion title="How a run stays quiet" icon="volume-low">
+  Per run: 10 retirements, 3 reported questions, 5 conflicts raised, 10 integrity findings.
+  Anything past a cap is held for the next run, and the report says how many.
+
+  No conflicts are raised at all while 20 are already pending. Every consecutive run whose findings
+  you neither approve nor reject halves the next run's caps, and after three of them a run keeps
+  scanning and stops talking. Integrity findings are exempt: quieting an opinion is right, quieting
+  an alarm is not.
+</Accordion>
+
+***
+
+## Undo
+
+```bash
+memloom reconcile undo <run id>
+```
+
+| What the run did | What undo does |
+| --- | --- |
+| Retired a memory | Reactivates it, unless something else changed it since |
+| Folded an entity | Restores the absorbed entity with its original id |
+| Raised a conflict nobody answered | Removes it from the queue |
+| Raised a conflict you answered | Leaves it alone and counts it as skipped |
+
+Possible contradictions are findings rather than changes, so undo leaves them. Running undo twice
+does nothing the second time.
+
+***
+
+## Where you drive it
+
+| Surface | For |
+| --- | --- |
+| Settings tab | The toggles, the budget, Reconcile now, Preview only |
+| Conflicts tab | The inbox: one item at a time, numbered keys |
+| Console tab | Every run and its findings, with stop and undo |
+| CLI | [`memloom reconcile`](/cli/reconcile) |
+| HTTP | `POST /memory/reconcile` and the rest of `/memory/reconcile` |
+
+## Turning it off
+
+```bash
+RECONCILE_ENABLED=0
+```
+
+In `~/.memloom/config.env`. Reports still run, repairs do not: an applying run is refused with a
+403, automatic runs stop acting, and a preview still works. The three paid passes also need
+`OPENROUTER_API_KEY`, and find nothing without one.

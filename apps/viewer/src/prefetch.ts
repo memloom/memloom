@@ -50,6 +50,16 @@ export function cachedData<T>(key: string): T | null {
   return hit && hit.data !== undefined ? (hit.data as T) : null;
 }
 
+/**
+ * Record a value the caller already knows is current, without a request. For the mutations
+ * whose response IS the new state (a settings PATCH answers with the saved settings): busting
+ * the key instead would leave the next visit seeding from the pre-edit copy and flipping a
+ * toggle back under the user for one frame.
+ */
+export function seed<T>(key: string, data: T): void {
+  cache.set(key, { at: Date.now(), promise: Promise.resolve(data), data });
+}
+
 /** Bust and reload: what a mutation calls so its own refresh cannot serve the pre-edit copy. */
 export function refetch<T>(key: string, load: () => Promise<T>): Promise<T> {
   cache.delete(key);

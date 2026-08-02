@@ -42,6 +42,11 @@ const CONFIG_TEMPLATE = `# memloom configuration. The daemon (\`memloom serve\`)
 # Indexing runs entity extraction on a worker pool; raise or lower the concurrency:
 # MEMLOOM_INDEX_CONCURRENCY=6
 
+# Stop \`memloom reconcile\` from ever changing anything, on a host that wants its reports and
+# none of its repairs. Which passes run is a setting in the viewer, not an env var, and the
+# three that cost money are off until you turn them on. This is a kill switch, not the switch:
+# RECONCILE_ENABLED=0
+
 # Notion connector: create an internal integration at notion.so/profile/integrations,
 # share your pages with it, and put the token here. Pick pages with \`memloom notion connect\`.
 # NOTION_TOKEN=ntn_...
@@ -57,7 +62,48 @@ const CONFIG_TEMPLATE = `# memloom configuration. The daemon (\`memloom serve\`)
 # on a real Postgres server instead (local Docker or managed cloud; pgvector must be
 # available), point memloom at it and restart:
 # MEMLOOM_PG_URL=postgres://user:password@localhost:5432/memloom
+
+# Everything memloom keeps lives under one directory: this file, the store, downloaded models,
+# uploaded media, cached transcripts. Move all of it at once by moving the home:
+# MEMLOOM_HOME=/path/to/memloom
+
+# Transcription. Speech models are hundreds of megabytes, so they are downloaded once and
+# shared by every project on the machine. Pick one with \`memloom asr\` or in Settings; this
+# pins a model for a single run without changing the saved choice:
+# MEMLOOM_ASR_MODEL=parakeet-v3
+# MEMLOOM_MODEL_DIR=~/.memloom/models
+
+# Transcribing an hour of audio takes minutes, so results are cached by file hash and model.
+# Deleting a cached transcript makes the next import redo the work:
+# MEMLOOM_TRANSCRIPT_DIR=~/.memloom/transcripts
+
+# Uploaded media is copied here rather than left in the system temp directory, which Windows
+# clears whenever it likes. Deleting a document deletes its bytes from here too:
+# MEMLOOM_UPLOAD_DIR=~/.memloom/uploads
+
+# Transcription runs in a worker thread so a long file cannot block the daemon. Set this to 1
+# to run it in the main process instead, which is only useful when debugging the worker:
+# MEMLOOM_ASR_INPROC=1
+
+# Diarization: who spoke when, in a recording with more than one voice. The number of speakers
+# is worked out from the audio by default. Set the count when you already know it, which is
+# more reliable than any threshold:
+# MEMLOOM_DIARIZE_SPEAKERS=2
+# How readily two stretches of speech are treated as the same person, from 0 to 1. Lower splits
+# one speaker into several, higher merges different people into one:
+# MEMLOOM_DIARIZE_THRESHOLD=0.6
+
+# Naming a voice teaches memloom that voice, so the same person is recognised in later
+# recordings. Deliberately conservative: a missed match costs one manual rename, a false match
+# puts a stranger's words under someone's name:
+# MEMLOOM_VOICE_MATCH_THRESHOLD=0.8
 `;
+
+/** The commented template `memloom init` writes. Exported so a test can hold it to the copy in
+ * config.env.example, which is the same list and has drifted from it before. */
+export function configTemplate(): string {
+  return CONFIG_TEMPLATE;
+}
 
 /** Create the home + a commented config template if missing. Returns the config path. */
 export function ensureConfig(): string {

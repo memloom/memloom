@@ -1,81 +1,87 @@
 ---
-title: "Extractors & chunking"
+title: "Extractors and chunking"
 description: "How files become searchable chunks, and how to add a format"
+icon: "file-import"
 ---
 
-## The ingestion pipeline
-
-`memloom context add <path>` runs every file through four stages:
+## Overview
 
 ```
-file bytes → extract (format-specific) → chunk (structure-aware) → embed → store
+file bytes → extract → chunk → embed → store
 ```
 
-1. **Extract.** The extractor registered for the file's extension turns bytes into text
-   units: one unit for a text file, one unit *per page* for a PDF (so page numbers survive
-   into citations).
-2. **Chunk.** Units are split along the document's real structure (below), each chunk
-   carrying a breadcrumb like `Guide > Setup > Postgres`.
-3. **Embed.** All chunks are embedded in batches *before* the store transaction: provider
-   calls are slow and can fail, so the database write stays short and all-or-nothing.
-4. **Store.** Chunks replace the document's previous chunks in one transaction.
+<Steps>
+  <Step title="Extract" icon="file-arrow-up">
+    The extractor for the file's extension turns bytes into text units. One unit per page for a
+    PDF, so page numbers survive into citations.
+  </Step>
+  <Step title="Chunk" icon="scissors">
+    Units split along the document's real structure, each chunk carrying a breadcrumb like
+    `Guide > Setup > Postgres`.
+  </Step>
+  <Step title="Embed and store" icon="database">
+    Embedded in batches before the transaction opens, so the database write stays short and
+    all-or-nothing.
+  </Step>
+</Steps>
 
-Documents are **mirrors** of files, so the belief machinery doesn't apply to them: no
-dedup, no conflicts, no versions.
-Re-adding an unchanged file (same content hash) is a no-op; a changed file atomically
-replaces its chunks.
+<Note>
+  Documents are mirrors of files, so the belief machinery does not apply: no dedup, no conflicts,
+  no versions. Re-adding an unchanged file is a no-op; a changed file atomically replaces its
+  chunks.
+</Note>
+
+***
 
 ## Built-in extractors
 
 | Kind | Extensions | Chunker | Notes |
 | --- | --- | --- | --- |
-| `md` | `.md`, `.markdown` | markdown | Title from the first `#` heading |
+| `md` | `.md`, `.markdown` | markdown | Title from the first heading |
 | `txt` | `.txt` | outline | |
-| `pdf` | `.pdf` | outline | Text layer via unpdf (pure JS); no OCR |
-| `link` | any `http(s)://` URL | markdown | Fetched and parsed locally; the URL is the document's path |
-| `audio` | `.mp3` `.m4a` `.wav` `.flac` `.ogg` `.opus` `.aac` `.wma` | markdown | Transcribed on this machine; sections carry time ranges and speakers |
-| `video` | `.mp4` `.mkv` `.mov` `.webm` `.avi` `.m4v` | markdown | The audio track is transcribed; every track is mixed in |
+| `pdf` | `.pdf` | outline | Text layer via unpdf, no OCR |
+| `link` | any `http(s)` URL | markdown | Fetched and parsed locally |
+| `audio` | `.mp3` `.m4a` `.wav` `.flac` `.ogg` `.opus` `.aac` `.wma` | markdown | Transcribed on this machine |
+| `video` | `.mp4` `.mkv` `.mov` `.webm` `.avi` `.m4v` | markdown | The audio track, every track mixed in |
 
-Recordings deserve their own page: transcription models, the ingest queue, speaker
-diarization, and the voice library are covered in
-[Recordings: audio & video](/guides/recordings). Web pages are fetched and parsed
-in-process (no reader service); pages that build themselves in the browser are refused
-with advice rather than stored empty.
+Recordings have their own page: see [Recordings](/guides/recordings). Web pages that build
+themselves in the browser are refused with advice rather than stored empty.
 
-PDF text is rebuilt from **glyph geometry** instead of stream order: equation-heavy PDFs (Word or
-LaTeX math) come out in reading order, and 2-up print layouts (the same content twice, side
-by side) are de-duplicated. Symbols that a PDF's fonts never map to Unicode (∞, ∈, ≠) can't
-be recovered from the text layer; that would need OCR, which is deliberately out of scope.
+<Accordion title="What the PDF extractor can and cannot do" icon="file-pdf">
+  Text is rebuilt from glyph geometry rather than stream order, so equation-heavy PDFs come out in
+  reading order and 2-up print layouts are de-duplicated.
+
+  Symbols a PDF's fonts never map to Unicode (∞, ∈, ≠) cannot be recovered from the text layer.
+  That needs OCR, which is deliberately out of scope.
+</Accordion>
+
+***
 
 ## Two chunking strategies
 
-Both aim at the same rule: **a chunk never starts mid-section, and always knows where it
-came from.**
+Both follow one rule: a chunk never starts mid-section, and always knows where it came from.
 
-**Markdown** splits at ATX headings (headings inside code fences do not count as structure),
-tracking the heading stack. Each chunk gets its breadcrumb *prepended to the text*
-(`Guide > Setup > Postgres\n\n<chunk>`), so retrieval's vector and keyword arms both see the
-section context along with the paragraph.
+| | **Markdown** | **Outline** |
+| --- | --- | --- |
+| Splits at | ATX headings, ignoring ones inside code fences | ALL-CAPS titles and numbered points |
+| Chunk is | One heading section, whole | One definition, theorem or clause |
+| Size | Up to 16,000 chars, splitting past that toward 8,000 | ~1,600 chars, 2,048 cap, ~200 overlap |
+| Overlap | None. Heading boundaries are exact | Yes, carried across boundaries |
 
-**Outline** handles documents without markdown structure: lecture notes, contracts,
-exercise sheets. It recognizes ALL-CAPS title lines (Unicode-aware, so `ŚREDNIA WAŻONA`
-qualifies) and numbered points (`2. DEFINITION. …`) as boundaries. One point = one
-chunk, so a chunk is exactly one definition, theorem, or clause, with a breadcrumb like
-`LIMITS OF FUNCTIONS > 2. DEFINITION`. Text with no such structure degrades gracefully to
-plain size-based splitting.
+Every chunk gets its breadcrumb prepended to the text, so both the vector and keyword arms see
+the section context along with the paragraph. Text with no structure degrades to plain size-based
+splitting.
 
-The two strategies size chunks differently. **Markdown keeps a heading section whole**: one
-section is one chunk up to 16,000 characters, and only a section past that cap splits, at
-paragraph boundaries toward an 8,000-character target with zero overlap. Heading boundaries
-are exact semantic boundaries, so nothing is cut mid-thought and nothing is duplicated
-across chunks. **Outline chunks** (plain text and PDF) target ~1,600 characters with a
-2,048 hard cap and ~200 characters of overlap carried across boundaries. Both are sized in
-characters on purpose: a tokenizer dependency buys nothing when the embedding model has
-that much context headroom.
+<Accordion title="Why characters and not tokens" icon="ruler">
+  Both are sized in characters on purpose. A tokenizer dependency buys nothing when the embedding
+  model has that much context headroom.
+</Accordion>
+
+***
 
 ## Adding a format
 
-Adding a format means registering one object; no fork needed.
+One object, no fork.
 
 ```ts
 import { registerExtractor } from "@memloom/core";
@@ -84,7 +90,7 @@ registerExtractor({
   kind: "html",
   extensions: [".html", ".htm"],
   version: 1,
-  chunker: "markdown",           // or "outline": the section strategy applied after extract
+  chunker: "markdown",           // or "outline"
   async extract(bytes, path) {
     const text = htmlToText(new TextDecoder().decode(bytes));
     return { title: findTitle(text), units: [{ text, page: null }] };
@@ -92,30 +98,18 @@ registerExtractor({
 });
 ```
 
-Registrations are keyed by extension (last one wins), so you can also *override* a built-in:
-for example, replace the PDF extractor with an OCR-backed one.
+Registrations are keyed by extension and the last one wins, so this also overrides a built-in.
+You could replace the PDF extractor with an OCR-backed one.
 
-Ground rules that keep memloom's install light:
-
-- **Lazy-import your parser** (`await import(...)` inside `extract`) and keep it pure JS. No
-  native binaries, no cloud calls.
-- **Preserve locality**: emit one unit per page/sheet/section when the format has them;
-  citations depend on the `page` field of the unit.
-- **Bump `version`** whenever extraction output changes (see below).
-- **Test end to end**: register, ingest through `contextAdd`, recall, assert the citation.
-  See the extractor registry test in `packages/core/src/extract.test.ts`; it runs against
-  real Postgres (PGLite) with no setup.
-
-## Pipeline versioning
-
-Each extractor declares a `version`. Bump it when the format's extract/chunk logic changes:
-the version is salted into the document's content hash (`<sha256>#p2`), so the next
-`context add` sees "changed" and re-ingests files **whose bytes didn't change**, instead of
-no-op'ing forever on chunks produced by the old pipeline. Version 1 is unsalted so existing
-stores don't mass-reingest on upgrade.
+| Rule | Why |
+| --- | --- |
+| Lazy-import your parser, keep it pure JS | No native binaries, no cloud calls, light install |
+| One unit per page or section | Citations depend on the unit's `page` field |
+| Bump `version` when output changes | It salts the content hash, so files re-ingest |
+| Test end to end | Register, ingest, recall, assert the citation |
 
 <Note>
-Directories passed to `context add` are scanned recursively; `node_modules` and dotfiles are
-skipped, and only files whose extension has a registered extractor are picked up.
-`supportedExtensions()` is what the CLI help and error messages print.
+  Directories are scanned recursively. `node_modules` and dotfiles are skipped, and only files
+  with a registered extractor are picked up. Version 1 is unsalted, so existing stores do not mass
+  re-ingest on upgrade.
 </Note>

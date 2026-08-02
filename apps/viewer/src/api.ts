@@ -102,8 +102,32 @@ export interface EntityMerge {
   decidedBy: "auto" | "llm" | "human";
   score: number | null;
   reason: string | null;
+  /** Which model decided, when decidedBy is 'llm'. Null for every other kind of fold. */
+  model: string | null;
   createdAt: string;
   revertedAt: string | null;
+}
+
+/** An entity pair a decision settled as two different things, and why. */
+export interface SettledEntityPair {
+  id: string;
+  incomingName: string;
+  candidateName: string;
+  decidedBy: "auto" | "llm" | "human";
+  model: string | null;
+  reason: string | null;
+  resolvedAt: string;
+}
+
+/** Progress from the entity arbiter: one event per pair the model was asked about. */
+export interface EntityAutoEvent {
+  conflictId: string;
+  index: number;
+  total: number;
+  verdict: "same" | "distinct" | "unsure";
+  reason: string;
+  /** The two names, for display. */
+  pair: string;
 }
 
 export interface EntityResolutionResult {
@@ -113,6 +137,122 @@ export interface EntityResolutionResult {
   queued: number;
   deferred: number;
   skipped: number;
+  mergeIds: string[];
+}
+
+// Reconciliation: the consolidation pass. Five passes in cost order; the three that call a model
+// are off until the user turns them on, because only they can spend money.
+export type ReconcilePass =
+  | "invariants"
+  | "entities"
+  | "llm_entities"
+  | "llm_conflicts"
+  | "llm_recheck";
+
+export type ReconcileSettings = Record<ReconcilePass, boolean> & { startupCatchUp: boolean };
+
+export interface ReconcileAction {
+  id: string;
+  runId: string;
+  kind: "retire" | "question" | "conflict" | "fold" | "possible";
+  class: string;
+  memoryId: string | null;
+  reason: string;
+  applied: boolean;
+  staledAt: string | null;
+  surfaced: boolean;
+  decision: "approved" | "rejected" | "snoozed" | null;
+  mergeId: string | null;
+  conflictId: string | null;
+  /** Set when kind is 'possible': the older belief of the pair. */
+  candidateId: string | null;
+  createdAt: string;
+}
+
+export interface ReconcileRun {
+  id: string;
+  mode: "dry_run" | "apply";
+  trigger: "manual" | "idle" | "startup";
+  status: "running" | "success" | "error" | "aborted";
+  scanned: number;
+  retired: number;
+  folded: number;
+  questions: number;
+  conflictsRaised: number;
+  possible: number;
+  llmCalls: number;
+  spentUsd: number;
+  spentInputTokens: number;
+  spentOutputTokens: number;
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  revertedAt: string | null;
+}
+
+export interface ReconcileEstimate {
+  window: number;
+  llmCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  model: string;
+  usd: number | null;
+}
+
+export interface ReconcileArbitration {
+  calls: number;
+  folded: number;
+  rejected: number;
+  unsure: number;
+  settled: Array<{ conflictId: string; class: string; reason: string }>;
+}
+
+/** One unconfirmed contradiction. The quotes were verified against both contents when found. */
+export interface PossibleContradiction {
+  id: string;
+  runId: string;
+  newMemory: { id: string; content: string };
+  oldMemory: { id: string; content: string };
+  newQuote: string;
+  oldQuote: string;
+  reason: string;
+  model: string | null;
+  similarity: number | null;
+  foundAt: string;
+}
+
+/** One belief checked by the re-check, as it happens. */
+export interface ReconcileProgressEvent {
+  runId: string;
+  pass: ReconcilePass;
+  checked: number;
+  total: number;
+  found: number;
+  spentUsd: number;
+}
+
+export interface ReconcileRecheckResult {
+  window: number;
+  calls: number;
+  claimed: number;
+  verified: number;
+  remaining: number;
+  spentUsd: number;
+  spentInputTokens: number;
+  spentOutputTokens: number;
+  stoppedBy: "budget" | "aborted" | "cap" | "unpriced" | "failed" | null;
+}
+
+export interface ReconcileReport {
+  run: ReconcileRun;
+  actions: ReconcileAction[];
+  estimate: ReconcileEstimate;
+  heldBack: { retire: number; question: number; conflict: number };
+  passes: ReconcilePass[];
+  entities?: EntityResolutionResult;
+  arbitration?: ReconcileArbitration;
+  autoResolved?: { examined: number; resolved: number; unsure: number };
+  recheck?: ReconcileRecheckResult;
 }
 
 export interface GraphDocument {
@@ -271,6 +411,8 @@ export interface ConflictCandidate {
   content: string;
   relation: string;
   reason: string;
+  /** Cosine to the incoming belief. Null when either side has no vector. */
+  similarity?: number | null;
 }
 
 export interface Conflict {
@@ -548,8 +690,25 @@ export async function fileToBase64(file: File): Promise<string> {
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
-  const body = (await res.json().catch(() => null)) as { error?: string } | null;
+  const text = await res.text();
+  let body: { error?: string } | null = null;
+  try {
+    body = text ? JSON.parse(text) : null;
+  } catch {
+    body = null;
+  }
   if (!res.ok) throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
+  // A 200 that is not JSON means no API route claimed this path, so the request fell through
+  // to the static handler and got index.html back. Every daemon route answers JSON, so the one
+  // way to see this is a viewer bundle newer than the daemon serving it. Throw rather than
+  // return null: null crashes some later caller far from the cause, or leaves a view loading
+  // forever.
+  if (body === null) {
+    throw new Error(
+      `${path} is not available on this daemon. It is probably older than this page: ` +
+        "rebuild and restart it.",
+    );
+  }
   return body as T;
 }
 
@@ -780,12 +939,65 @@ export const api = {
   // the fold history are separate.
   entityConflicts: () =>
     json<{ conflicts: EntityConflict[] }>("/memory/entities/conflicts").then((r) => r.conflicts),
+  settledEntityPairs: () =>
+    json<{ settled: SettledEntityPair[] }>("/memory/entities/settled").then((r) => r.settled),
   entityMerges: () =>
     json<{ merges: EntityMerge[] }>("/memory/entities/merges").then((r) => r.merges),
   resolveEntities: (dryRun = false) =>
     post<EntityResolutionResult>("/memory/entities/resolve", { dryRun }),
+  // One call per queued pair, so this is only ever triggered by a person clicking it, and the
+  // wait is long enough that the verdicts are streamed back as they land.
+  autoResolveEntities: (onEvent: (e: EntityAutoEvent) => void) =>
+    readNdjson<EntityAutoEvent, ReconcileArbitration>(
+      "/memory/entities/resolve-auto/stream",
+      {},
+      onEvent,
+    ),
   revertEntityMerge: (id: string) =>
     post<{ ok: boolean }>(`/memory/entities/merges/${id}/revert`, {}),
+  // Reconciliation. Settings live in the store, not config.env, so a toggle takes effect on the next
+  // run rather than the next daemon restart.
+  reconcileSettings: () => json<ReconcileSettings>("/memory/reconcile/settings"),
+  setReconcileSettings: (patch: Partial<ReconcileSettings>) =>
+    post<ReconcileSettings>("/memory/reconcile/settings", patch),
+  reconcileRuns: () => json<{ runs: ReconcileRun[] }>("/memory/reconcile/runs").then((r) => r.runs),
+  // Unconfirmed contradictions. Deliberately a separate read from conflicts(): these must not
+  // reach the conflicts badge, the queue-pressure gate, or MCP list_conflicts.
+  possibleContradictions: () =>
+    json<{ possible: PossibleContradiction[] }>("/memory/reconcile/possible").then(
+      (r) => r.possible,
+    ),
+  answerPossible: (id: string, decision: "approved" | "rejected") =>
+    post<{ conflictId: string | null; decision: string }>(
+      `/memory/reconcile/possible/${id}/answer`,
+      { decision },
+    ),
+  reconcileActions: (runId: string) =>
+    json<{ actions: ReconcileAction[] }>(`/memory/reconcile/runs/${runId}/actions`).then(
+      (r) => r.actions,
+    ),
+  reconcile: (mode: "dry_run" | "apply" = "apply") =>
+    post<ReconcileReport>("/memory/reconcile", { mode, trigger: "manual" }),
+  // A sweep runs for minutes, so it reports per belief over NDJSON rather than holding one
+  // request open to the end. Hanging up stops the run, which is the cheap way to cancel.
+  reconcileStream: (
+    mode: "dry_run" | "apply",
+    onEvent: (e: ReconcileProgressEvent) => void,
+    signal?: AbortSignal,
+    budgetUsd?: number,
+  ) =>
+    readNdjson<ReconcileProgressEvent, ReconcileReport>(
+      "/memory/reconcile/stream",
+      { mode, trigger: "manual", ...(budgetUsd ? { budgetUsd } : {}) },
+      onEvent,
+      signal,
+    ),
+  stopReconcile: (runId: string) => post<{ stopped: boolean }>(`/memory/reconcile/${runId}/stop`),
+  revertReconcile: (runId: string) =>
+    post<{ runId: string; restored: number; unfolded: number; skipped: number }>(
+      `/memory/reconcile/${runId}/revert`,
+      {},
+    ),
   /**
    * Walk the graph from one entity. `target` may be a name, an id, or a folded-away spelling;
    * null means nothing matched, which is different from an entity with no neighbours.

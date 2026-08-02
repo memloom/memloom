@@ -28,7 +28,16 @@ import type {
   NotionSyncEvent,
   NotionSyncOptions,
   NotionSyncResult,
+  PossibleAnswer,
+  PossibleContradiction,
   RecallOptions,
+  ReconcileAction,
+  ReconcileDecision,
+  ReconcileOptions,
+  ReconcileReport,
+  ReconcileRevertResult,
+  ReconcileRun,
+  ReconcileSettings,
   RelatedEntities,
   ResolveDecision,
   ResolvedConflict,
@@ -339,6 +348,67 @@ export class HttpMemloomClient implements MemoryEngine {
 
   async revertConflict(conflictId: string): Promise<void> {
     await this.#post(`/memory/conflicts/${conflictId}/revert`, {});
+  }
+
+  reconcile(opts: ReconcileOptions = {}): Promise<ReconcileReport> {
+    return this.#post<ReconcileReport>("/memory/reconcile", {
+      mode: opts.mode ?? "dry_run",
+      trigger: opts.trigger ?? "manual",
+      // Forwarded, or the same call would run different passes for a different price depending
+      // on which implementation of the interface it reached.
+      ...(opts.passes ? { passes: opts.passes } : {}),
+      ...(opts.budgetUsd != null ? { budgetUsd: opts.budgetUsd } : {}),
+    });
+  }
+
+  revertReconcile(runId: string): Promise<ReconcileRevertResult> {
+    return this.#post<ReconcileRevertResult>(`/memory/reconcile/${runId}/revert`, {});
+  }
+
+  stopReconcile(runId: string): Promise<{ stopped: boolean }> {
+    return this.#post<{ stopped: boolean }>(`/memory/reconcile/${runId}/stop`, {});
+  }
+
+  reconcileSettings(): Promise<ReconcileSettings> {
+    return this.#json<ReconcileSettings>("/memory/reconcile/settings");
+  }
+
+  setReconcileSettings(patch: Partial<ReconcileSettings>): Promise<ReconcileSettings> {
+    return this.#post<ReconcileSettings>("/memory/reconcile/settings", patch);
+  }
+
+  async reconcileRuns(_ownerId?: string, limit?: number): Promise<ReconcileRun[]> {
+    const query = limit ? `?limit=${limit}` : "";
+    const { runs } = await this.#json<{ runs: ReconcileRun[] }>(`/memory/reconcile/runs${query}`);
+    return runs;
+  }
+
+  async reconcileActions(runId: string): Promise<ReconcileAction[]> {
+    const { actions } = await this.#json<{ actions: ReconcileAction[] }>(
+      `/memory/reconcile/runs/${runId}/actions`,
+    );
+    return actions;
+  }
+
+  // The route serves the daemon's own page size, so a limit here would only describe a cap the
+  // wire does not carry.
+  async possibleContradictions(
+    _ownerId?: string,
+    _limit?: number,
+  ): Promise<PossibleContradiction[]> {
+    const { possible } = await this.#json<{ possible: PossibleContradiction[] }>(
+      "/memory/reconcile/possible",
+    );
+    return possible;
+  }
+
+  answerPossible(
+    actionId: string,
+    decision: Extract<ReconcileDecision, "approved" | "rejected">,
+  ): Promise<PossibleAnswer> {
+    return this.#post<PossibleAnswer>(`/memory/reconcile/possible/${actionId}/answer`, {
+      decision,
+    });
   }
 
   contextAdd(

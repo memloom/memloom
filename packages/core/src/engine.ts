@@ -27,7 +27,16 @@ import type {
   NotionSyncEvent,
   NotionSyncOptions,
   NotionSyncResult,
+  PossibleAnswer,
+  PossibleContradiction,
   RecallOptions,
+  ReconcileAction,
+  ReconcileDecision,
+  ReconcileOptions,
+  ReconcileReport,
+  ReconcileRevertResult,
+  ReconcileRun,
+  ReconcileSettings,
   RelatedEntities,
   ResolveDecision,
   ResolvedConflict,
@@ -121,6 +130,41 @@ export interface MemoryEngine {
     ownerId?: string,
     onProgress?: (event: ConflictAutoEvent) => void,
   ): Promise<ConflictAutoResult>;
+  /**
+   * The consolidation pass. Repairs what SQL proves is wrong, folds duplicate entities, raises
+   * everything that needs judgment as a question, and prices the contradiction re-check without
+   * spending it. Defaults to 'dry_run', which changes nothing.
+   */
+  reconcile(opts?: ReconcileOptions): Promise<ReconcileReport>;
+  /** Undo one reconcile run, skipping anything the store has moved on from since. */
+  revertReconcile(runId: string, ownerId?: string): Promise<ReconcileRevertResult>;
+  /**
+   * Stop a run that is still going, and mark its row so it leaves 'running' either way.
+   * `stopped` is false when no run of that id was live. Whatever it already checked stays
+   * checked, so stopping costs nothing beyond the calls already paid for.
+   */
+  stopReconcile(runId: string, ownerId?: string): Promise<{ stopped: boolean }>;
+  /** Reconcile runs for the owner, newest first. */
+  reconcileRuns(ownerId?: string, limit?: number): Promise<ReconcileRun[]>;
+  /** What one run found and did: the expandable body of a run in the Console. */
+  reconcileActions(runId: string, ownerId?: string): Promise<ReconcileAction[]>;
+  /**
+   * Unconfirmed contradictions waiting for a yes or no, newest first. The re-check pass that
+   * finds them runs at roughly 40 percent precision, so these are questions, not conflicts.
+   */
+  possibleContradictions(ownerId?: string, limit?: number): Promise<PossibleContradiction[]>;
+  /**
+   * Answer one. 'approved' promotes it into a real conflict the queue can resolve and revert;
+   * 'rejected' records the pair so it is never raised again.
+   */
+  answerPossible(
+    actionId: string,
+    decision: Extract<ReconcileDecision, "approved" | "rejected">,
+    ownerId?: string,
+  ): Promise<PossibleAnswer>;
+  /** Which passes a run does, and whether the daemon catches up on startup. */
+  reconcileSettings(): Promise<ReconcileSettings>;
+  setReconcileSettings(patch: Partial<ReconcileSettings>): Promise<ReconcileSettings>;
   /**
    * Ingest (or re-ingest) a file as context: chunk, embed, store. Mirrors; re-add replaces.
    * `onProgress` only fires for extractors slow enough to need it, which today means audio

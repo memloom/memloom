@@ -22,6 +22,7 @@ import { type Candidate, classify } from "./dedup.js";
 import { type DistilledMemory, distillChunk } from "./distill.js";
 import type { MemoryEngine } from "./engine.js";
 import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from "./entities.js";
+import { arbitrationCase, buildEntityArbiterPrompt, parseEntityVerdict } from "./entity-arbiter.js";
 import {
   judgePair,
   mergeKey,
@@ -36,15 +37,46 @@ import { migrate } from "./migrate.js";
 import type { NotionBlockNode } from "./notion.js";
 import { dataSourceTitle, expandsInline, NotionClient, pageTitle } from "./notion.js";
 import { blocksToMarkdown, rowsToMarkdown } from "./notion-markdown.js";
+import { LlmSpendError } from "./openrouter-provider.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
 import { uploadStoreDir } from "./queue.js";
+import {
+  buildRecheckPrompt,
+  countDueForRecheck,
+  findRecheckSubjects,
+  parseRecheckVerdicts,
+  type RecheckFinding,
+  verifiedFindings,
+} from "./recheck.js";
+import {
+  BACKOFF_SILENT_AFTER,
+  CONFLICT_QUEUE_CEILING,
+  capBuckets,
+  effectiveCaps,
+  estimateRecheck,
+  estimateUsd,
+  findDuplicateContent,
+  findEntityInvariants,
+  findMultiHeadLineages,
+  findOrphanStale,
+  findReplacesLeaks,
+  lineageKey,
+  type MultiHeadLineage,
+  meanActiveContentChars,
+  type ReconcileFinding,
+  raisedLineages,
+  retirementBlocklist,
+} from "./reconcile.js";
 import { redact } from "./redact.js";
 import {
   addEdge,
   addEdgeIfAbsent,
   deactivateEdgesTouching,
   markStale,
+  markStaleReturning,
   reactivate,
+  reactivateIfUntouched,
+  toIsoTimestamp,
 } from "./resolve.js";
 import {
   type ActiveSchema,
@@ -81,6 +113,7 @@ import type {
   ContextProgressEvent,
   DocumentChunks,
   Entity,
+  EntityAutoEvent,
   EntityConflict,
   EntityConflictCandidate,
   EntityDetail,
@@ -107,25 +140,91 @@ import type {
   NotionSyncEvent,
   NotionSyncOptions,
   NotionSyncResult,
+  PossibleAnswer,
+  PossibleContradiction,
   RecallOptions,
+  ReconcileAction,
+  ReconcileActionKind,
+  ReconcileArbitration,
+  ReconcileDecision,
+  ReconcileMode,
+  ReconcileOptions,
+  ReconcileProgressEvent,
+  ReconcileReport,
+  ReconcileRevertResult,
+  ReconcileRun,
+  ReconcileRunStatus,
+  ReconcileSettings,
+  ReconcileTrigger,
   ReembedOptions,
   ReembedProgressEvent,
   ReembedResult,
   RelatedEntities,
   RelatedEntity,
+  ResolutionProvenance,
   ResolveDecision,
   ResolvedConflict,
   SaveInput,
   SaveResult,
+  SettledEntityPair,
   SpeakerRoster,
   UpdateInput,
   UpdateResult,
 } from "./types.js";
+import { RECONCILE_PASSES } from "./types.js";
 import { toVectorLiteral } from "./vector.js";
 
 // The fixed owner for the single-user embedded tier. Multi-tenant hosts pass a real
 // ownerId per call; the column exists everywhere so the schema is sync/cloud-ready.
 export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
+
+/** The action class a contradiction re-check writes, so its findings are identifiable as its own. */
+const RECHECK_CLASS = "emergent_contradiction";
+
+/**
+ * Free passes on, paid passes off, catch-up on. A pass that cannot spend money needs no
+ * permission; one that can does.
+ */
+export const DEFAULT_RECONCILE_SETTINGS: ReconcileSettings = {
+  invariants: true,
+  entities: true,
+  llm_entities: false,
+  llm_conflicts: false,
+  llm_recheck: false,
+  startupCatchUp: true,
+};
+
+/**
+ * The most beliefs one re-check run may sweep, and therefore the most calls it can make.
+ *
+ * A ceiling on purpose rather than a batch size. The pass costs roughly a third of a cent per
+ * belief, so a run cannot exceed about $0.55 however large the backlog. Without it the first run
+ * on an untouched store sweeps everything, which on a few thousand beliefs is several dollars
+ * arriving unannounced. Whatever the ceiling leaves is reported and picked up by the next run,
+ * because each belief is stamped individually as it is checked.
+ */
+export const RECHECK_WINDOW_LIMIT = 200;
+
+/**
+ * How long a run may sit in 'running' before the next one treats it as dead.
+ *
+ * Generous, because a sweep at the ceiling is minutes of sequential model calls and cutting a
+ * live run off would be worse than waiting. A daemon killed mid-run leaves the row behind with
+ * nobody to finish it, and without this the next run would be blocked forever.
+ */
+export const RECONCILE_STALE_RUN_MINUTES = 30;
+
+/** What one re-check pass did, including what it cost and why it stopped. */
+interface ReconcileRecheckOutcome {
+  window: number;
+  calls: number;
+  claimed: number;
+  findings: RecheckFinding[];
+  spent: { inputTokens: number; outputTokens: number; usd: number };
+  remaining: number;
+  /** null means it swept everything that was due. */
+  stoppedBy: "budget" | "aborted" | "cap" | "unpriced" | "failed" | null;
+}
 
 /**
  * Voice matching: how alike a new voice must be to a stored, named voiceprint before a
@@ -410,6 +509,61 @@ function mapRow(row: MemoryRow): Memory {
   };
 }
 
+interface ReconcileRunRow {
+  id: string;
+  mode: ReconcileMode;
+  trigger: ReconcileTrigger;
+  status: ReconcileRunStatus;
+  scanned: number;
+  retired: number;
+  folded: number;
+  questions: number;
+  conflicts_raised: number;
+  possible: number;
+  llm_calls: number;
+  spent_usd: number;
+  spent_input_tokens: number;
+  spent_output_tokens: number;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+  reverted_at: string | null;
+}
+
+const RECONCILE_RUN_COLUMNS = `id, mode, trigger, status, scanned, retired, folded, questions,
+        conflicts_raised, possible, llm_calls, spent_usd, spent_input_tokens,
+        spent_output_tokens, error, started_at, finished_at, reverted_at`;
+
+function mapReconcileRun(row: ReconcileRunRow): ReconcileRun {
+  return {
+    id: row.id,
+    mode: row.mode,
+    trigger: row.trigger,
+    status: row.status,
+    scanned: Number(row.scanned),
+    retired: Number(row.retired),
+    folded: Number(row.folded),
+    questions: Number(row.questions),
+    conflictsRaised: Number(row.conflicts_raised),
+    possible: Number(row.possible),
+    llmCalls: Number(row.llm_calls),
+    spentUsd: Number(row.spent_usd ?? 0),
+    spentInputTokens: Number(row.spent_input_tokens ?? 0),
+    spentOutputTokens: Number(row.spent_output_tokens ?? 0),
+    error: row.error ?? null,
+    startedAt: toIsoTimestamp(row.started_at),
+    finishedAt: row.finished_at ? toIsoTimestamp(row.finished_at) : null,
+    revertedAt: row.reverted_at ? toIsoTimestamp(row.reverted_at) : null,
+  };
+}
+
+// The configured model's name, for the dry run's spend estimate. LLMProvider is deliberately
+// just complete(); providers that know their model expose it, and the rest are unpriced.
+function modelNameOf(llm: LLMProvider): string {
+  const named = (llm as { model?: unknown }).model;
+  return typeof named === "string" ? named : "unconfigured";
+}
+
 export class Memloom implements MemoryEngine {
   readonly #storage: StorageAdapter;
   readonly #embedding: EmbeddingProvider;
@@ -452,6 +606,25 @@ export class Memloom implements MemoryEngine {
 
   get autoIndexEnabled(): boolean {
     return this.#autoIndex;
+  }
+
+  /** Whether a background index pass is running right now: the reconcile scheduler yields to it. */
+  get indexing(): boolean {
+    return this.#autoIndexRunning;
+  }
+
+  /**
+   * When a run last finished, for the scheduler. Null means never, which is why a fresh install
+   * catches up on its first quiet moment rather than waiting 36 hours to start counting.
+   */
+  async lastReconcileFinishedAt(ownerId: string = SENTINEL_OWNER): Promise<string | null> {
+    const [row] = await this.#storage.query<{ finished_at: string | null }>(
+      `SELECT finished_at FROM memory_reconcile_runs
+       WHERE owner_id = $1 AND status = 'success' AND finished_at IS NOT NULL
+       ORDER BY finished_at DESC LIMIT 1`,
+      [ownerId],
+    );
+    return row?.finished_at ? toIsoTimestamp(row.finished_at) : null;
   }
 
   /**
@@ -3633,11 +3806,51 @@ export class Memloom implements MemoryEngine {
        ORDER BY created_at DESC`,
       [ownerId],
     );
+    return this.#withSimilarity(ownerId, rows);
+  }
+
+  /**
+   * Attach how close each candidate is to the incoming belief.
+   *
+   * Cosine between the two stored vectors, computed on read because it is derived and because a
+   * re-embed would make a stored copy wrong. It is a similarity and not a confidence: nothing
+   * records how sure the classifier was that these two conflict. What it is good for is triage,
+   * since the closer two beliefs are the sharper the disagreement tends to be, and a queue that
+   * can be worked in that order is a queue somebody finishes.
+   *
+   * Null when either side has no vector, which is honest: unranked, not ranked zero.
+   */
+  async #withSimilarity(
+    ownerId: string,
+    rows: Array<{
+      id: string;
+      incoming_id: string;
+      incoming_canonical: string | null;
+      incoming_content: string;
+      candidates: ConflictCandidate[];
+      created_at: string;
+    }>,
+  ): Promise<Conflict[]> {
+    const pairs = rows.flatMap((r) => r.candidates.map((c) => [r.incoming_id, c.id] as const));
+    const scores = new Map<string, number>();
+    if (pairs.length > 0) {
+      const found = await this.#storage.query<{ a: string; b: string; sim: number }>(
+        `SELECT p.a, p.b, 1 - (x.embedding <=> y.embedding) AS sim
+           FROM unnest($2::uuid[], $3::uuid[]) AS p(a, b)
+           JOIN memory_objects x ON x.id = p.a AND x.owner_id = $1 AND x.embedding IS NOT NULL
+           JOIN memory_objects y ON y.id = p.b AND y.owner_id = $1 AND y.embedding IS NOT NULL`,
+        [ownerId, pairs.map((p) => p[0]), pairs.map((p) => p[1])],
+      );
+      for (const row of found) scores.set(`${row.a}|${row.b}`, Number(row.sim));
+    }
     return rows.map((r) => ({
       id: r.id,
       createdAt: r.created_at,
       incoming: { id: r.incoming_id, canonical: r.incoming_canonical, content: r.incoming_content },
-      candidates: r.candidates,
+      candidates: r.candidates.map((c) => ({
+        ...c,
+        similarity: scores.get(`${r.incoming_id}|${c.id}`) ?? null,
+      })),
     }));
   }
 
@@ -3655,11 +3868,15 @@ export class Memloom implements MemoryEngine {
       candidates: ConflictCandidate[];
       resolution_action: "supersede" | "keep_both" | "merge";
       resolution_winner_id: string | null;
+      resolution_by: "auto" | "llm" | "human" | null;
+      resolution_model: string | null;
+      resolution_reason: string | null;
       resolved_at: string;
       created_at: string;
     }>(
       `SELECT id, incoming_id, incoming_canonical, incoming_content, candidates,
-              resolution_action, resolution_winner_id, resolved_at, created_at
+              resolution_action, resolution_winner_id, resolution_by, resolution_model,
+              resolution_reason, resolved_at, created_at
        FROM memory_dedup_decisions
        WHERE owner_id = $1 AND action = 'conflict' AND resolution_action IS NOT NULL
        ORDER BY resolved_at DESC`,
@@ -3677,15 +3894,63 @@ export class Memloom implements MemoryEngine {
             : "keep_existing"
           : r.resolution_action,
       resolvedAt: r.resolved_at,
+      // NULL predates the provenance columns, and everything settled then was clicked.
+      decidedBy: r.resolution_by ?? "human",
+      model: r.resolution_model,
+      reason: r.resolution_reason,
+    }));
+  }
+
+  /**
+   * Entity pairs a decision settled as two different things, newest first.
+   *
+   * These leave no other trace: a fold writes a memory_entity_merges row, and "keep them apart"
+   * writes nothing but the decision itself. Without this list a model that kept thirty-seven
+   * pairs apart did thirty-seven invisible things.
+   */
+  async settledEntityPairs(
+    ownerId: string = SENTINEL_OWNER,
+    limit = 50,
+  ): Promise<SettledEntityPair[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      incoming_content: string;
+      candidates: EntityConflictCandidate[];
+      resolution_by: "auto" | "llm" | "human" | null;
+      resolution_model: string | null;
+      resolution_reason: string | null;
+      resolved_at: string;
+    }>(
+      `SELECT id, incoming_content, candidates, resolution_by, resolution_model,
+              resolution_reason, resolved_at
+         FROM memory_dedup_decisions
+        WHERE owner_id = $1 AND action = $2 AND resolution_action = 'keep_both'
+        ORDER BY resolved_at DESC LIMIT $3`,
+      [ownerId, ENTITY_MERGE_ACTION, limit],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      incomingName: r.incoming_content,
+      candidateName: r.candidates[0]?.name ?? "(gone)",
+      decidedBy: r.resolution_by ?? "human",
+      model: r.resolution_model,
+      reason: r.resolution_reason,
+      resolvedAt: toIsoTimestamp(r.resolved_at),
     }));
   }
 
   /** Resolve a pending conflict. Every action is reversible via revertConflict. */
-  async resolveConflict(conflictId: string, decision: ResolveDecision): Promise<void> {
+  async resolveConflict(
+    conflictId: string,
+    decision: ResolveDecision,
+    // Who decided. Defaults to the human clicking in the viewer; the auto-resolvers name
+    // themselves so a resolution can be read back as theirs months later.
+    provenance: ResolutionProvenance = {},
+  ): Promise<void> {
     // Entity folds share this table, this method and this revert story, but none of the
     // memory semantics below (nothing goes stale, no lineage moves). Dispatch first.
     if (await this.#isEntityDecision(conflictId)) {
-      await this.#resolveEntityConflict(conflictId, decision);
+      await this.#resolveEntityConflict(conflictId, decision, provenance);
       return;
     }
     const [row] = await this.#storage.query<{
@@ -3704,28 +3969,40 @@ export class Memloom implements MemoryEngine {
       case "keep_new": {
         // The incoming belief continues the (primary) existing fact's lineage: a resolved
         // contradiction is a version step, so it shows up in that belief's history().
+        //
+        // The next version comes from the lineage's HEAD, not from the candidate's own
+        // version. Those differ whenever the candidate is not the newest row on its root,
+        // which a batch of resolutions against one lineage produces routinely: resolving
+        // against version 2 of a root whose head is 5 used to write version 3, on top of the
+        // stale row already there. That is the colliding (root, version) shape.
         const primary = candidateIds[0];
         if (primary) {
           const lin = await this.#lineageOf(primary);
-          if (lin) await this.#reparent(incoming, lin.rootId, lin.version + 1);
+          const prior = await this.#lineageOf(incoming);
+          if (lin) {
+            const next = (await this.#lineageHead(lin.rootId)) + 1;
+            await this.#reparent(incoming, lin.rootId, next);
+            // Remember where it was, or revert has to guess. See 0025_conflict_prior_lineage.
+            if (prior) await this.#recordPriorLineage(conflictId, prior);
+          }
         }
         await markStale(this.#storage, candidateIds);
         for (const loser of candidateIds)
           await addEdge(this.#storage, owner, incoming, loser, "replaces");
-        await this.#attachResolution(conflictId, "supersede", incoming, candidateIds);
+        await this.#attachResolution(conflictId, "supersede", incoming, candidateIds, provenance);
         break;
       }
       case "keep_existing": {
         const winner = decision.candidateId;
         await markStale(this.#storage, [incoming]);
         await addEdge(this.#storage, owner, winner, incoming, "replaces");
-        await this.#attachResolution(conflictId, "supersede", winner, [incoming]);
+        await this.#attachResolution(conflictId, "supersede", winner, [incoming], provenance);
         break;
       }
       case "keep_both": {
         for (const cand of candidateIds)
           await addEdge(this.#storage, owner, incoming, cand, "distinct");
-        await this.#attachResolution(conflictId, "keep_both", null, []);
+        await this.#attachResolution(conflictId, "keep_both", null, [], provenance);
         break;
       }
       case "merge": {
@@ -3744,11 +4021,19 @@ export class Memloom implements MemoryEngine {
         // The merged belief continues the primary existing fact's lineage.
         const mergePrimary = candidateIds[0] ?? incoming;
         const mergeLin = await this.#lineageOf(mergePrimary);
-        if (mergeLin) await this.#reparent(winner, mergeLin.rootId, mergeLin.version + 1);
+        // Same head rule as keep_new. The winner is a fresh insert, so there is no prior
+        // lineage to remember: revert stales it rather than moving it back.
+        if (mergeLin) {
+          await this.#reparent(
+            winner,
+            mergeLin.rootId,
+            (await this.#lineageHead(mergeLin.rootId)) + 1,
+          );
+        }
         const losers = [incoming, ...candidateIds];
         await markStale(this.#storage, losers);
         for (const loser of losers) await addEdge(this.#storage, owner, winner, loser, "replaces");
-        await this.#attachResolution(conflictId, "merge", winner, losers);
+        await this.#attachResolution(conflictId, "merge", winner, losers, provenance);
         break;
       }
     }
@@ -3767,8 +4052,11 @@ export class Memloom implements MemoryEngine {
       resolution_action: string | null;
       resolution_winner_id: string | null;
       resolution_loser_ids: string[] | null;
+      prior_root_id: string | null;
+      prior_version: number | null;
     }>(
-      `SELECT owner_id, incoming_id, candidates, resolution_action, resolution_winner_id, resolution_loser_ids
+      `SELECT owner_id, incoming_id, candidates, resolution_action, resolution_winner_id,
+              resolution_loser_ids, prior_root_id, prior_version
        FROM memory_dedup_decisions WHERE id = $1`,
       [conflictId],
     );
@@ -3783,9 +4071,16 @@ export class Memloom implements MemoryEngine {
       case "supersede": {
         await reactivate(this.#storage, losers);
         await deactivateEdgesTouching(this.#storage, owner, "replaces", losers);
-        // keep_new re-parented the incoming onto the losers' lineage; restore it to its own root.
+        // keep_new re-parented the incoming onto the losers' lineage; put it back where it was.
+        // prior_root_id is NULL on every row written before 0025_conflict_prior_lineage, and on
+        // those rows the incoming was always a fresh save-time insert, so (self, 1) is not a
+        // fallback but the right answer. See that migration's comment.
         if (row.resolution_winner_id === row.incoming_id) {
-          await this.#reparent(row.incoming_id, row.incoming_id, 1);
+          await this.#reparent(
+            row.incoming_id,
+            row.prior_root_id ?? row.incoming_id,
+            row.prior_version ?? 1,
+          );
         }
         break;
       }
@@ -3811,10 +4106,1117 @@ export class Memloom implements MemoryEngine {
     await this.#storage.query(
       `UPDATE memory_dedup_decisions
        SET resolution_action = NULL, resolution_winner_id = NULL,
-           resolution_loser_ids = NULL, resolved_at = NULL
+           resolution_loser_ids = NULL, resolved_at = NULL,
+           prior_root_id = NULL, prior_version = NULL
        WHERE id = $1`,
       [conflictId],
     );
+  }
+
+  /**
+   * Reconciliation: the consolidation pass, in up to five passes of increasing cost.
+   *
+   * The first two (invariant repair, deterministic entity resolution) are free and act without
+   * asking, because the ledger can undo everything they do. The last three spend money and stay
+   * off until the user turns them on.
+   *
+   * A dry run never touches memory_objects, memory_edges, memory_entities or
+   * memory_dedup_decisions. It does record itself in the reconcile ledger, because the run record
+   * IS the report and the per-run caps back off based on whether the last run's findings were
+   * acted on.
+   */
+  async reconcile(
+    opts: ReconcileOptions = {},
+    onProgress?: (event: ReconcileProgressEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<ReconcileReport> {
+    const owner = opts.ownerId ?? SENTINEL_OWNER;
+    const mode = opts.mode ?? "dry_run";
+    const trigger = opts.trigger ?? "manual";
+    const model = modelNameOf(this.#llm);
+    const settings = await this.reconcileSettings();
+    const passes = [...(opts.passes ?? RECONCILE_PASSES.filter((p) => settings[p]))];
+    const applying = mode === "apply";
+
+    // A re-check sweep is minutes of sequential model calls, long enough that a second click
+    // looks like the first one did nothing. Two runs would then sweep the same beliefs and bill
+    // twice, so an applying run refuses to start while another is live. A run that died without
+    // finishing would otherwise block every future one, so anything older than the cutoff is
+    // written off as aborted first.
+    if (applying) {
+      await this.#storage.query(
+        `UPDATE memory_reconcile_runs SET status = 'aborted', finished_at = now()
+          WHERE owner_id = $1 AND status = 'running'
+            AND started_at < now() - ($2 || ' minutes')::interval`,
+        [owner, String(RECONCILE_STALE_RUN_MINUTES)],
+      );
+      const [live] = await this.#storage.query<{ id: string }>(
+        "SELECT id FROM memory_reconcile_runs WHERE owner_id = $1 AND status = 'running' LIMIT 1",
+        [owner],
+      );
+      if (live) {
+        throw new Error(
+          "memloom: a reconcile run is already going. Watch it in the Console, or wait for it to finish.",
+        );
+      }
+    }
+
+    let created: { id: string } | undefined;
+    try {
+      [created] = await this.#storage.query<{ id: string }>(
+        `INSERT INTO memory_reconcile_runs (owner_id, mode, trigger, model)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [owner, mode, trigger, model],
+      );
+    } catch (err) {
+      // The partial unique index is what actually enforces one live run. The check above is a
+      // courtesy that gives a readable error; this catches the racing caller that slipped past it
+      // between the check and here.
+      if (applying && /one_live_idx|unique/i.test(err instanceof Error ? err.message : "")) {
+        throw new Error(
+          "memloom: a reconcile run is already going. Watch it in the Console, or wait for it to finish.",
+        );
+      }
+      throw err;
+    }
+    const runId = created?.id;
+    if (!runId) throw new Error("memloom: could not open a reconcile run");
+
+    try {
+      const caps = effectiveCaps(await this.#unactionedReconcileRuns(owner));
+      const retirable: ReconcileFinding[] = [];
+      const questions: ReconcileFinding[] = [];
+
+      if (passes.includes("invariants")) {
+        // A pending conflict already owns these memories' fate; reconciliation does not pre-empt an
+        // answer the user owes. Leaks first, so a row that is both a leak and a duplicate is
+        // recorded under the class that explains it.
+        const blocked = await retirementBlocklist(this.#storage, owner);
+        const seen = new Set<string>();
+        for (const finding of [
+          ...(await findReplacesLeaks(this.#storage, owner)),
+          ...(await findDuplicateContent(this.#storage, owner)),
+        ]) {
+          if (!finding.memoryId || blocked.has(finding.memoryId) || seen.has(finding.memoryId)) {
+            continue;
+          }
+          seen.add(finding.memoryId);
+          retirable.push(finding);
+        }
+        questions.push(
+          ...(await findOrphanStale(this.#storage, owner)),
+          ...(await findEntityInvariants(this.#storage, owner)),
+        );
+      }
+
+      // Multi-head lineages go to the conflicts queue rather than the reconcile ledger. They are a
+      // contradiction the user has to settle ("which of these is still true"), and the queue is
+      // the surface that already knows how to ask that, resolve it, and undo the answer.
+      const lineages = passes.includes("invariants")
+        ? await this.#lineagesToRaise(owner, caps.conflict)
+        : { take: [], total: 0 };
+      const raised = applying ? await this.#raiseLineageConflicts(owner, lineages.take) : [];
+
+      const scanned = await this.#activeMemoryCount(owner);
+      await this.#storage.query("UPDATE memory_reconcile_runs SET scanned = $2 WHERE id = $1", [
+        runId,
+        scanned,
+      ]);
+      // What the re-check owes: beliefs never checked, plus any whose check has gone stale. Read
+      // before the pass runs, so the estimate describes the debt this run inherited rather than
+      // what it left behind.
+      const window = await countDueForRecheck(this.#storage, owner);
+      const estimate = estimateRecheck(
+        window,
+        await meanActiveContentChars(this.#storage, owner),
+        model,
+      );
+
+      // Retire inside one transaction so every row carries the stale_since the revert guard
+      // will compare against, captured from the UPDATE itself rather than read back after.
+      const surfacedRetire = capBuckets(retirable, caps.retire, caps.integrity);
+      const toRetire = retirable.filter((_, i) => surfacedRetire[i]);
+      const staled =
+        applying && toRetire.length > 0
+          ? await this.#storage.tx((tx) =>
+              markStaleReturning(
+                tx,
+                toRetire.map((f) => f.memoryId).filter((id): id is string => Boolean(id)),
+              ),
+            )
+          : new Map<string, string>();
+
+      // Pass 2. resolveEntities owns candidate generation, judging, folding and the fold record;
+      // reconciliation's only job is to remember which merges belonged to this run so revertReconcile can
+      // hand them back to revertEntityMerge.
+      const entities = passes.includes("entities")
+        ? await this.resolveEntities({ ownerId: owner, dryRun: !applying })
+        : undefined;
+      const folds = entities ? await this.#describeFolds(entities.mergeIds) : [];
+
+      // The paid passes never run in dry mode: a preview that called a model
+      // would be charging for a report. What they WOULD have cost is countable and is reported.
+      const arbitrable = passes.includes("llm_entities")
+        ? (await this.entityConflicts(owner)).length
+        : 0;
+      const arbitration =
+        applying && arbitrable > 0
+          ? await this.#arbitrateEntities(owner, model, ENTITY_QUEUE_LIMIT)
+          : undefined;
+      const autoResolved =
+        applying && passes.includes("llm_conflicts") && (await this.conflicts(owner)).length > 0
+          ? await this.autoResolveConflicts(owner)
+          : undefined;
+      // Pass 5, and the only one that sweeps rather than draining a queue, so it is the only one
+      // whose cost grows with how long since the last run. RECHECK_WINDOW_LIMIT is the ceiling.
+      const recheck =
+        applying && passes.includes("llm_recheck")
+          ? await this.#recheckContradictions(
+              owner,
+              model,
+              runId,
+              onProgress,
+              signal,
+              opts.budgetUsd ?? null,
+            )
+          : undefined;
+      const llmCalls =
+        (arbitration?.calls ?? 0) + (autoResolved?.examined ?? 0) + (recheck?.calls ?? 0);
+
+      const rows: Array<{
+        finding: ReconcileFinding;
+        surfaced: boolean;
+        applied: boolean;
+        staledAt: string | null;
+        mergeId: string | null;
+        conflictId?: string;
+      }> = [];
+      for (const [i, finding] of retirable.entries()) {
+        const staledAt = (finding.memoryId && staled.get(finding.memoryId)) || null;
+        rows.push({
+          finding,
+          surfaced: surfacedRetire[i] ?? false,
+          applied: staledAt !== null,
+          staledAt,
+          mergeId: null,
+        });
+      }
+      const surfacedQuestions = capBuckets(questions, caps.question, caps.integrity);
+      for (const [i, finding] of questions.entries()) {
+        rows.push({
+          finding,
+          surfaced: surfacedQuestions[i] ?? false,
+          applied: false,
+          staledAt: null,
+          mergeId: null,
+        });
+      }
+      for (const fold of folds) {
+        rows.push({
+          finding: {
+            kind: "fold",
+            class: "entity_variant",
+            memoryId: null,
+            reason: fold.reason,
+          },
+          surfaced: true,
+          applied: true,
+          staledAt: null,
+          mergeId: fold.mergeId,
+        });
+      }
+      for (const lineage of raised) {
+        rows.push({
+          finding: {
+            kind: "conflict",
+            class: "multi_head",
+            memoryId: lineage.head,
+            reason: lineage.reason,
+          },
+          surfaced: true,
+          applied: true,
+          staledAt: null,
+          mergeId: null,
+          conflictId: lineage.conflictId,
+        });
+      }
+      // A dry run cannot raise anything, so it reports what it would have asked about instead.
+      if (!applying) {
+        for (const lineage of lineages.take) {
+          rows.push({
+            finding: {
+              kind: "question",
+              class: "multi_head",
+              memoryId: lineage.head,
+              reason: lineage.reason,
+            },
+            surfaced: true,
+            applied: false,
+            staledAt: null,
+            mergeId: null,
+          });
+        }
+      }
+      // An arbitrated pair is undone through revertConflict, which puts the fold back AND puts
+      // the question back in the queue. Reverting the merge alone would leave the conflict row
+      // claiming a resolution that no longer exists.
+      for (const settled of arbitration?.settled ?? []) {
+        rows.push({
+          finding: {
+            kind: "conflict",
+            class: settled.class,
+            memoryId: null,
+            reason: settled.reason,
+          },
+          surfaced: true,
+          applied: true,
+          staledAt: null,
+          mergeId: null,
+          conflictId: settled.conflictId,
+        });
+      }
+
+      for (const row of rows) {
+        await this.#storage.query(
+          `INSERT INTO memory_reconcile_actions
+             (owner_id, run_id, kind, class, memory_id, reason, applied, staled_at, surfaced,
+              merge_id, conflict_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+          [
+            owner,
+            runId,
+            row.finding.kind,
+            row.finding.class,
+            row.finding.memoryId,
+            row.finding.reason,
+            row.applied,
+            row.staledAt,
+            row.surfaced,
+            row.mergeId,
+            row.conflictId ?? null,
+          ],
+        );
+      }
+
+      await this.#storage.query(
+        `UPDATE memory_reconcile_runs
+         SET status = CASE WHEN status = 'aborted' THEN 'aborted' ELSE $11 END,
+             finished_at = now(), scanned = $2, retired = $3,
+             folded = $7, questions = $4, conflicts_raised = $8, llm_calls = $9,
+             possible = $10, est_input_tokens = $5, est_output_tokens = $6
+         WHERE id = $1`,
+        [
+          runId,
+          scanned,
+          rows.filter((r) => r.finding.kind === "retire" && r.applied).length,
+          questions.length,
+          estimate.inputTokens,
+          estimate.outputTokens,
+          folds.length + (arbitration?.folded ?? 0),
+          raised.length + (entities?.queued ?? 0),
+          llmCalls,
+          recheck?.findings.length ?? 0,
+          signal?.aborted ? "aborted" : "success",
+        ],
+      );
+
+      const actions = await this.#reconcileActions(runId);
+      return {
+        run: await this.#reconcileRun(runId),
+        actions,
+        estimate,
+        heldBack: {
+          retire: surfacedRetire.filter((s) => !s).length,
+          question: surfacedQuestions.filter((s) => !s).length,
+          conflict: Math.max(0, lineages.total - lineages.take.length),
+        },
+        passes,
+        ...(entities ? { entities } : {}),
+        ...(arbitration ? { arbitration } : {}),
+        ...(autoResolved ? { autoResolved } : {}),
+        ...(recheck
+          ? {
+              recheck: {
+                window: recheck.window,
+                calls: recheck.calls,
+                claimed: recheck.claimed,
+                verified: recheck.findings.length,
+                remaining: recheck.remaining,
+                spentUsd: recheck.spent.usd,
+                spentInputTokens: recheck.spent.inputTokens,
+                spentOutputTokens: recheck.spent.outputTokens,
+                stoppedBy: recheck.stoppedBy,
+              },
+            }
+          : {}),
+      };
+    } catch (err) {
+      await this.#storage.query(
+        "UPDATE memory_reconcile_runs SET status = 'error', finished_at = now(), error = $2 WHERE id = $1",
+        [runId, err instanceof Error ? err.message : String(err)],
+      );
+      throw err;
+    }
+  }
+
+  /**
+   * Pass 3: let a model arbitrate the uncertain folds the rules could not settle.
+   *
+   * It drains the existing entity_merge queue and nothing else. It never scans the entity table,
+   * never generates a candidate, and never sees a pair the lexical rules did not already flag,
+   * so the worst it can do is answer a question the user was going to be asked anyway.
+   *
+   * Its folds are written with decidedBy 'llm' and the model's own confidence, reason and name,
+   * rather than by writing a human-shaped resolution: a fold a model made should not be
+   * indistinguishable from one the user clicked through, six months later.
+   *
+   * A "distinct" verdict is recorded too. Without that the next run asks the same model the same
+   * question forever.
+   */
+  /**
+   * The same pass, on demand. `memloom conflicts auto` exists for memory contradictions and
+   * this is its counterpart for uncertain folds: the button in the Conflicts tab, and the way
+   * to use a model once without turning the nightly pass on.
+   */
+  async autoResolveEntities(
+    ownerId: string = SENTINEL_OWNER,
+    limit = ENTITY_QUEUE_LIMIT,
+    onProgress?: (event: EntityAutoEvent) => void,
+  ): Promise<ReconcileArbitration> {
+    // Without an LLM every pair comes back unsure, and the report would read as "a model was
+    // asked about 50 pairs and would not commit" when nothing was ever asked. Reconciliation's own
+    // call is left alone: a missing key must not fail a whole run over one optional pass.
+    if (this.#llm instanceof NullLLMProvider) {
+      throw new Error(
+        "memloom: deciding uncertain entity pairs needs an LLM and none is configured. " +
+          "Set OPENROUTER_API_KEY in your memloom config and restart the daemon.",
+      );
+    }
+    return this.#arbitrateEntities(ownerId, modelNameOf(this.#llm), limit, onProgress);
+  }
+
+  async #arbitrateEntities(
+    owner: string,
+    model: string,
+    limit: number,
+    onProgress?: (event: EntityAutoEvent) => void,
+  ): Promise<ReconcileArbitration> {
+    const result: ReconcileArbitration = {
+      calls: 0,
+      folded: 0,
+      rejected: 0,
+      unsure: 0,
+      settled: [],
+    };
+    const pending = (await this.entityConflicts(owner)).slice(0, limit);
+    for (const [i, conflict] of pending.entries()) {
+      const input = arbitrationCase(conflict);
+      if (!input) continue;
+      result.calls++;
+      const pair = `"${input.name}" and "${input.candidateName}"`;
+      const report = (verdict: EntityAutoEvent["verdict"], reason: string) =>
+        onProgress?.({
+          conflictId: conflict.id,
+          index: i + 1,
+          total: pending.length,
+          verdict,
+          reason,
+          pair,
+        });
+      const raw = await this.#llm.complete(buildEntityArbiterPrompt(input)).catch(() => "");
+      const verdict = parseEntityVerdict(raw);
+      // No verdict is not a verdict. Leave it pending rather than guessing.
+      if (!verdict || verdict.verdict === "unsure") {
+        result.unsure++;
+        report("unsure", verdict?.reason ?? "no usable answer");
+        continue;
+      }
+      const provenance = {
+        decidedBy: "llm" as const,
+        score: verdict.confidence,
+        reason: verdict.reason,
+        model,
+      };
+      const same = verdict.verdict === "same";
+      const candidateId = conflict.candidates[0]?.id;
+      if (same && !candidateId) continue;
+      const decision: ResolveDecision =
+        same && candidateId ? { action: "keep_existing", candidateId } : { action: "keep_both" };
+      await this.#resolveEntityConflict(conflict.id, decision, provenance);
+      if (same) result.folded++;
+      else result.rejected++;
+      report(same ? "same" : "distinct", verdict.reason);
+      result.settled.push({
+        conflictId: conflict.id,
+        class: same ? "llm_entity_fold" : "llm_entity_distinct",
+        reason: same
+          ? `${model} folded "${input.name}" into "${input.candidateName}": ${verdict.reason}`
+          : `${model} kept "${input.name}" and "${input.candidateName}" apart: ${verdict.reason}`,
+      });
+    }
+    return result;
+  }
+
+  /**
+   * The contradiction re-check. Beliefs that contradict each other now but did not when either
+   * was saved, because save time only ever compared each against the 5 nearest things that
+   * existed at that moment.
+   *
+   * One call per belief in the window, carrying up to 20 neighbours. Findings are written as
+   * 'possible' actions, never as conflicts: measured precision is about 40 percent, so a queue
+   * fed directly from here would be more noise than signal. A human promotes one with a click.
+   *
+   * Findings are written under RECHECK_CLASS, which is what moves the window's left edge.
+   */
+  async #recheckContradictions(
+    owner: string,
+    model: string,
+    runId: string,
+    onProgress?: (event: ReconcileProgressEvent) => void,
+    signal?: AbortSignal,
+    budgetUsd?: number | null,
+  ): Promise<ReconcileRecheckOutcome> {
+    const result: ReconcileRecheckOutcome = {
+      window: 0,
+      calls: 0,
+      claimed: 0,
+      findings: [],
+      spent: { inputTokens: 0, outputTokens: 0, usd: 0 },
+      remaining: 0,
+      stoppedBy: null,
+    };
+    const due = await countDueForRecheck(this.#storage, owner);
+    result.window = due.count;
+
+    // Without a budget this sweeps one page and stops, which is the cost ceiling. With one, it
+    // keeps paging until nothing is due or the money runs out, so a backlog can actually be
+    // cleared in a sitting instead of over fifteen manual runs.
+    for (;;) {
+      const page = await findRecheckSubjects(this.#storage, owner, RECHECK_WINDOW_LIMIT);
+      const { subjects } = page;
+      if (page.windowSize === 0) break;
+
+      // Beliefs with nothing to compare against were examined, so they are checked. Stamping them
+      // is what stops them parking at the head of the order and starving every later run.
+      if (page.noCandidates.length > 0) {
+        await this.#storage.query(
+          `UPDATE memory_objects SET last_rechecked_at = now()
+            WHERE owner_id = $1 AND id = ANY($2::uuid[])`,
+          [owner, page.noCandidates],
+        );
+      }
+      if (subjects.length === 0) {
+        // The whole page was unjudgeable. Without a budget that is the run; with one, page on so
+        // the beliefs behind them still get their turn.
+        if (budgetUsd == null) break;
+        continue;
+      }
+      const callsBeforePage = result.calls;
+
+      for (const subject of subjects) {
+        // Nobody is listening any more, so stop spending.
+        if (signal?.aborted) {
+          result.stoppedBy = "aborted";
+          break;
+        }
+        if (budgetUsd != null && result.spent.usd >= budgetUsd) {
+          result.stoppedBy = "budget";
+          break;
+        }
+
+        let raw: string;
+        try {
+          raw = await this.#llm.complete(buildRecheckPrompt(subject, subject.candidates), {
+            onUsage: (usage) => {
+              result.spent.inputTokens += usage.inputTokens;
+              result.spent.outputTokens += usage.outputTokens;
+              // The provider's own billed figure when it gives one, the price table when it does
+              // not. Either is a real number; what must never happen is a budget silently
+              // measuring nothing.
+              result.spent.usd +=
+                usage.usd ?? estimateUsd(model, usage.inputTokens, usage.outputTokens) ?? 0;
+            },
+          });
+        } catch (err) {
+          // Out of credit or a rejected key stops everything: no later call can succeed, and a
+          // pass that treated it as "no verdict" would stamp every remaining belief as checked
+          // without judging one. Anything else is this belief's problem alone, so it is left
+          // unstamped and comes back on the next run.
+          if (err instanceof LlmSpendError) throw err;
+          continue;
+        }
+        result.calls++;
+
+        const verdicts = parseRecheckVerdicts(raw, subject.candidates);
+        result.claimed += verdicts.filter((v) => v.contradictory).length;
+        // Quotes are checked here rather than trusted. A verdict whose spans are not in the two
+        // memories is dropped and not recorded, so it is asked about again on a later run.
+        for (const finding of verifiedFindings(subject, subject.candidates, verdicts)) {
+          await this.#storage.query(
+            `INSERT INTO memory_reconcile_actions
+               (owner_id, run_id, kind, class, memory_id, candidate_id, reason, new_quote, old_quote,
+                applied, surfaced)
+             VALUES ($1, $2, 'possible', $3, $4, $5, $6, $7, $8, false, true)`,
+            [
+              owner,
+              runId,
+              RECHECK_CLASS,
+              finding.memoryId,
+              finding.candidateId,
+              finding.reason,
+              finding.newQuote,
+              finding.oldQuote,
+            ],
+          );
+          result.findings.push(finding);
+        }
+        // Stamped only after a call that answered, so a belief is never recorded as checked on
+        // the strength of a failure. The stamp is per belief so an interrupted run keeps the work
+        // it paid for and the next one resumes at the next unchecked belief.
+        await this.#storage.query(
+          "UPDATE memory_objects SET last_rechecked_at = now() WHERE id = $1 AND owner_id = $2",
+          [subject.id, owner],
+        );
+        // The run row is the only thing a watcher can see, and the only place the spend survives
+        // a crash. Written per call rather than once at the end.
+        await this.#storage.query(
+          `UPDATE memory_reconcile_runs
+             SET llm_calls = $2, possible = $3, spent_input_tokens = $4,
+                 spent_output_tokens = $5, spent_usd = $6
+           WHERE id = $1`,
+          [
+            runId,
+            result.calls,
+            result.findings.length,
+            result.spent.inputTokens,
+            result.spent.outputTokens,
+            result.spent.usd,
+          ],
+        );
+        onProgress?.({
+          runId,
+          pass: "llm_recheck",
+          checked: result.calls,
+          total: result.window,
+          found: result.findings.length,
+          spentUsd: result.spent.usd,
+        });
+      }
+
+      if (result.stoppedBy || budgetUsd == null) break;
+      // Every call in the page failed for a reason that was not out-of-credit. Nothing was
+      // stamped, so the next page would be the same rows: paging on is an infinite loop against a
+      // provider that is already refusing us.
+      if (result.calls === callsBeforePage) {
+        result.stoppedBy = "failed";
+        break;
+      }
+      // A budget that cannot be measured is not a budget. If a whole page of calls priced at
+      // nothing, the provider is telling us neither a cost nor a known model, so paging on would
+      // spend without a ceiling. Stop at the page boundary instead.
+      if (result.calls > 0 && result.spent.usd === 0) {
+        result.stoppedBy = "unpriced";
+        break;
+      }
+    }
+
+    result.remaining = (await countDueForRecheck(this.#storage, owner)).count;
+    if (!result.stoppedBy && result.remaining > 0) result.stoppedBy = "cap";
+    return result;
+  }
+
+  /**
+   * Mark a run stopped.
+   *
+   * Two jobs in one call. A run still going is aborted by the caller holding its signal, and this
+   * records that; a run whose daemon died mid-sweep has nobody left to abort, and this is the only
+   * way its row ever leaves 'running'. Beliefs the run already checked stay checked, so stopping
+   * costs nothing beyond the calls already paid for.
+   */
+  async stopReconcile(
+    runId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<{ stopped: boolean }> {
+    const rows = await this.#storage.query<{ id: string }>(
+      `UPDATE memory_reconcile_runs SET status = 'aborted', finished_at = now()
+        WHERE id = $1 AND owner_id = $2 AND status = 'running'
+        RETURNING id`,
+      [runId, ownerId],
+    );
+    return { stopped: rows.length > 0 };
+  }
+
+  /**
+   * Unconfirmed contradictions waiting for a yes or no, newest first.
+   *
+   * The quotes were verified against both contents when the row was written, so a surface can show
+   * them as the whole finding: two spans read in three seconds, against two full memories that
+   * have to be read and compared.
+   */
+  async possibleContradictions(
+    ownerId: string = SENTINEL_OWNER,
+    limit = 50,
+  ): Promise<PossibleContradiction[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      run_id: string;
+      memory_id: string;
+      candidate_id: string;
+      new_content: string;
+      old_content: string;
+      new_quote: string | null;
+      old_quote: string | null;
+      reason: string;
+      model: string | null;
+      similarity: number | null;
+      created_at: string;
+    }>(
+      `SELECT a.id, a.run_id, a.memory_id, a.candidate_id, a.new_quote, a.old_quote, a.reason,
+              r.model, a.created_at, n.content AS new_content, o.content AS old_content,
+              CASE WHEN n.embedding IS NULL OR o.embedding IS NULL THEN NULL
+                   ELSE 1 - (n.embedding <=> o.embedding) END AS similarity
+         FROM memory_reconcile_actions a
+         JOIN memory_reconcile_runs r ON r.id = a.run_id
+         JOIN memory_objects n ON n.id = a.memory_id
+         JOIN memory_objects o ON o.id = a.candidate_id
+        WHERE a.owner_id = $1 AND a.kind = 'possible' AND a.decision IS NULL
+          -- A belief retired or superseded since the finding is no longer a live question.
+          AND n.status = 'active' AND o.status = 'active'
+        ORDER BY a.created_at DESC
+        LIMIT $2`,
+      [ownerId, limit],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      runId: r.run_id,
+      newMemory: { id: r.memory_id, content: r.new_content },
+      oldMemory: { id: r.candidate_id, content: r.old_content },
+      newQuote: r.new_quote ?? "",
+      oldQuote: r.old_quote ?? "",
+      reason: r.reason,
+      model: r.model,
+      similarity: r.similarity === null ? null : Number(r.similarity),
+      foundAt: toIsoTimestamp(r.created_at),
+    }));
+  }
+
+  /**
+   * Answer one. 'approved' promotes it into a real conflict and hands it to the queue that already
+   * knows how to resolve and revert; 'rejected' records the pair so it is never asked about again.
+   *
+   * Raising a conflict between two existing beliefs is only safe while resolveConflict versions
+   * from the lineage head and revertConflict restores the incoming's recorded prior lineage.
+   * Without both, this call manufactures the multi-head collisions reconciliation exists to
+   * report.
+   *
+   * A rejection is worth keeping: it is a labelled example of what this user does not consider a
+   * contradiction, and the only path off 40 percent precision that does not mean a more
+   * expensive model.
+   */
+  async answerPossible(
+    actionId: string,
+    decision: Extract<ReconcileDecision, "approved" | "rejected">,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<PossibleAnswer> {
+    const [row] = await this.#storage.query<{
+      memory_id: string;
+      candidate_id: string;
+      reason: string;
+      new_content: string;
+      old_content: string;
+    }>(
+      `SELECT a.memory_id, a.candidate_id, a.reason,
+              n.content AS new_content, o.content AS old_content
+         FROM memory_reconcile_actions a
+         JOIN memory_objects n ON n.id = a.memory_id
+         JOIN memory_objects o ON o.id = a.candidate_id
+        WHERE a.id = $1 AND a.owner_id = $2 AND a.kind = 'possible' AND a.decision IS NULL`,
+      [actionId, ownerId],
+    );
+    if (!row) throw new Error(`memloom: no unanswered possible contradiction ${actionId}`);
+
+    let conflictId: string | null = null;
+    if (decision === "approved") {
+      const [created] = await this.#storage.query<{ id: string }>(
+        `INSERT INTO memory_dedup_decisions
+           (owner_id, action, incoming_id, incoming_canonical, incoming_content, candidates)
+         VALUES ($1, 'conflict', $2, NULL, $3, $4::jsonb) RETURNING id`,
+        [
+          ownerId,
+          row.memory_id,
+          row.new_content,
+          JSON.stringify([
+            {
+              id: row.candidate_id,
+              canonical: null,
+              content: row.old_content,
+              relation: "contradictory",
+              reason: row.reason,
+            },
+          ]),
+        ],
+      );
+      conflictId = created?.id ?? null;
+    }
+    await this.#storage.query(
+      `UPDATE memory_reconcile_actions
+          SET decision = $2, decided_at = now(), conflict_id = $3
+        WHERE id = $1`,
+      [actionId, decision, conflictId],
+    );
+    return { conflictId, decision };
+  }
+
+  /**
+   * Which multi-head lineages this run may ask about: ones nobody has been asked about yet, up
+   * to this run's cap, and none at all once the queue is already deep. Adding to a backlog
+   * nobody is clearing is noise, which is the whole point of the ceiling.
+   */
+  async #lineagesToRaise(
+    owner: string,
+    cap: number,
+  ): Promise<{ take: MultiHeadLineage[]; total: number }> {
+    const already = await raisedLineages(this.#storage, owner);
+    const fresh = (await findMultiHeadLineages(this.#storage, owner)).filter(
+      (lineage) => !already.has(lineage.rootId),
+    );
+    if (cap <= 0) return { take: [], total: fresh.length };
+    const [pending] = await this.#storage.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM memory_dedup_decisions
+       WHERE owner_id = $1 AND action = 'conflict' AND resolution_action IS NULL`,
+      [owner],
+    );
+    const room = CONFLICT_QUEUE_CEILING - Number(pending?.n ?? 0);
+    if (room <= 0) return { take: [], total: fresh.length };
+    return { take: fresh.slice(0, Math.min(cap, room)), total: fresh.length };
+  }
+
+  /**
+   * Write one conflict row per lineage: the newest live head against the others.
+   *
+   * Safe to resolve any of the four ways only while keep_new versions from the lineage head and
+   * revert restores the incoming's recorded prior lineage. Without both, this is the exact shape
+   * that manufactures more of the bug it is reporting.
+   */
+  async #raiseLineageConflicts(
+    owner: string,
+    lineages: MultiHeadLineage[],
+  ): Promise<Array<MultiHeadLineage & { conflictId: string }>> {
+    const raised: Array<MultiHeadLineage & { conflictId: string }> = [];
+    for (const lineage of lineages) {
+      const rows = await this.#storage.query<{ id: string; content: string; version: number }>(
+        `SELECT id, content, version FROM memory_objects
+         WHERE id = ANY($1::uuid[]) AND owner_id = $2`,
+        [[lineage.head, ...lineage.others], owner],
+      );
+      const byId = new Map(rows.map((r) => [r.id, r]));
+      const head = byId.get(lineage.head);
+      if (!head) continue;
+      const candidates = lineage.others
+        .map((id) => byId.get(id))
+        .filter((row): row is { id: string; content: string; version: number } => Boolean(row))
+        .map((row) => ({
+          id: row.id,
+          canonical: null,
+          content: row.content,
+          relation: "contradictory",
+          reason: `version ${row.version} of the same belief, still current`,
+        }));
+      if (candidates.length === 0) continue;
+      const [created] = await this.#storage.query<{ id: string }>(
+        `INSERT INTO memory_dedup_decisions
+           (owner_id, action, incoming_id, incoming_canonical, incoming_content, candidates)
+         VALUES ($1, 'conflict', $2, $3, $4, $5::jsonb) RETURNING id`,
+        [owner, lineage.head, lineageKey(lineage.rootId), head.content, JSON.stringify(candidates)],
+      );
+      if (created) raised.push({ ...lineage, conflictId: created.id });
+    }
+    return raised;
+  }
+
+  /** One line per fold, read back by id so the ledger's reason survives a later rename. */
+  async #describeFolds(mergeIds: string[]): Promise<Array<{ mergeId: string; reason: string }>> {
+    if (mergeIds.length === 0) return [];
+    const rows = await this.#storage.query<{
+      id: string;
+      source_name: string;
+      canonical_name: string | null;
+    }>(
+      `SELECT m.id, m.source_name, e.name AS canonical_name
+         FROM memory_entity_merges m
+         LEFT JOIN memory_entities e ON e.id = m.canonical_id AND e.owner_id = m.owner_id
+        WHERE m.id = ANY($1::uuid[])`,
+      [mergeIds],
+    );
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return mergeIds
+      .map((id) => {
+        const row = byId.get(id);
+        if (!row) return null;
+        return {
+          mergeId: id,
+          reason: `folded "${row.source_name}" into "${row.canonical_name ?? "(removed)"}"`,
+        };
+      })
+      .filter((f): f is { mergeId: string; reason: string } => f !== null);
+  }
+
+  /**
+   * Undo one reconcile run.
+   *
+   * A retirement is reversed only while the memory is still stale AND its stale_since is the one
+   * this run wrote: if a human (or a conflict resolution) staled it since, the undo skips it
+   * rather than overriding a newer decision.
+   *
+   * A fold is handed straight back to revertEntityMerge, which restores the absorbed entity with
+   * its original uuid and vector and is already idempotent, so a fold the user undid by hand in
+   * the viewer is left alone. Reconciliation does not reimplement any of that: two implementations of
+   * fold reversal would be two chances to get it wrong.
+   */
+  async revertReconcile(
+    runId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<ReconcileRevertResult> {
+    const [run] = await this.#storage.query<{ id: string; reverted_at: string | null }>(
+      "SELECT id, reverted_at FROM memory_reconcile_runs WHERE id = $1 AND owner_id = $2",
+      [runId, ownerId],
+    );
+    if (!run) throw new Error(`memloom: no reconcile run ${runId}`);
+    if (run.reverted_at) return { runId, restored: 0, unfolded: 0, skipped: 0 };
+
+    const actions = await this.#storage.query<{
+      id: string;
+      kind: ReconcileActionKind;
+      class: string;
+      memory_id: string | null;
+      staled_at: string | null;
+      merge_id: string | null;
+      conflict_id: string | null;
+    }>(
+      `SELECT id, kind, class, memory_id, staled_at, merge_id, conflict_id
+       FROM memory_reconcile_actions
+       WHERE run_id = $1 AND kind IN ('retire', 'fold', 'conflict') AND applied = true
+       ORDER BY created_at DESC`,
+      [runId],
+    );
+
+    let restored = 0;
+    let unfolded = 0;
+    let skipped = 0;
+    for (const action of actions) {
+      const done = await this.#revertReconcileAction(action, ownerId);
+      if (!done) {
+        skipped++;
+        continue;
+      }
+      if (action.kind === "fold" || action.kind === "conflict") unfolded++;
+      else restored++;
+      await this.#storage.query(
+        "UPDATE memory_reconcile_actions SET applied = false WHERE id = $1",
+        [action.id],
+      );
+    }
+
+    await this.#storage.query(
+      "UPDATE memory_reconcile_runs SET reverted_at = now() WHERE id = $1",
+      [runId],
+    );
+    return { runId, restored, unfolded, skipped };
+  }
+
+  async #revertReconcileAction(
+    action: {
+      kind: ReconcileActionKind;
+      class: string;
+      memory_id: string | null;
+      staled_at: string | null;
+      merge_id: string | null;
+      conflict_id: string | null;
+    },
+    ownerId: string,
+  ): Promise<boolean> {
+    if (action.kind === "conflict") {
+      if (!action.conflict_id) return false;
+      const [row] = await this.#storage.query<{ resolution_action: string | null }>(
+        "SELECT resolution_action FROM memory_dedup_decisions WHERE id = $1",
+        [action.conflict_id],
+      );
+      // Gone already: nothing to undo, and nothing was left behind.
+      if (!row) return true;
+      // Still pending means this run PUT it in the queue and nobody has answered it. Undoing
+      // the run has to take it back out, or "undo" leaves the user with questions they never
+      // asked for. revertConflict cannot do this: it returns early on an unresolved row.
+      if (!row.resolution_action) {
+        await this.#storage.query("DELETE FROM memory_dedup_decisions WHERE id = $1", [
+          action.conflict_id,
+        ]);
+        return true;
+      }
+      // Answered since. The answer is the user's and outranks the undo, exactly as a moved
+      // stale_since outranks a retirement's. The one exception is a fold this run's own model
+      // decided, which nobody else touched, so that goes back through the conflict path.
+      if (action.class.startsWith("llm_entity")) {
+        try {
+          await this.revertConflict(action.conflict_id);
+          return true;
+        } catch {
+          return false;
+        }
+      }
+      return false;
+    }
+    if (action.kind === "fold") {
+      if (!action.merge_id) return false;
+      // Already reverted by hand is not a failure: revertEntityMerge is a no-op on a merge
+      // stamped reverted_at, and a missing merge row means somebody removed it entirely.
+      try {
+        await this.revertEntityMerge(action.merge_id, ownerId);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+    if (!action.memory_id || !action.staled_at) return false;
+    return reactivateIfUntouched(this.#storage, action.memory_id, action.staled_at);
+  }
+
+  /**
+   * Which passes a run does, and whether the daemon catches up on startup. Persisted in the
+   * store's meta table rather than config.env, so the Settings tab takes effect without a
+   * restart, which is the same choice the auto-index toggle made.
+   */
+  async reconcileSettings(): Promise<ReconcileSettings> {
+    const [row] = await this.#storage.query<{ value: string }>(
+      "SELECT value FROM _memloom_meta WHERE key = 'reconcile_settings'",
+    );
+    if (!row?.value) return { ...DEFAULT_RECONCILE_SETTINGS };
+    try {
+      const saved = JSON.parse(row.value) as Partial<ReconcileSettings>;
+      return { ...DEFAULT_RECONCILE_SETTINGS, ...saved };
+    } catch {
+      return { ...DEFAULT_RECONCILE_SETTINGS };
+    }
+  }
+
+  async setReconcileSettings(patch: Partial<ReconcileSettings>): Promise<ReconcileSettings> {
+    const next = { ...(await this.reconcileSettings()), ...patch };
+    await this.#storage.query(
+      `INSERT INTO _memloom_meta (key, value) VALUES ('reconcile_settings', $1)
+       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value, updated_at = now()`,
+      [JSON.stringify(next)],
+    );
+    return next;
+  }
+
+  /** Reconcile runs for the owner, newest first. */
+  async reconcileRuns(ownerId: string = SENTINEL_OWNER, limit = 20): Promise<ReconcileRun[]> {
+    const rows = await this.#storage.query<ReconcileRunRow>(
+      `SELECT ${RECONCILE_RUN_COLUMNS}
+       FROM memory_reconcile_runs WHERE owner_id = $1 ORDER BY started_at DESC LIMIT $2`,
+      [ownerId, limit],
+    );
+    return rows.map(mapReconcileRun);
+  }
+
+  async #reconcileRun(runId: string): Promise<ReconcileRun> {
+    const [row] = await this.#storage.query<ReconcileRunRow>(
+      `SELECT ${RECONCILE_RUN_COLUMNS} FROM memory_reconcile_runs WHERE id = $1`,
+      [runId],
+    );
+    if (!row) throw new Error(`memloom: no reconcile run ${runId}`);
+    return mapReconcileRun(row);
+  }
+
+  /**
+   * One run's findings, for the Console's history. Owner-scoped rather than taking the run id
+   * on trust, so a bad id reads as an empty run instead of another owner's ledger.
+   */
+  async reconcileActions(
+    runId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<ReconcileAction[]> {
+    const [run] = await this.#storage.query<{ id: string }>(
+      "SELECT id FROM memory_reconcile_runs WHERE id = $1 AND owner_id = $2",
+      [runId, ownerId],
+    );
+    return run ? this.#reconcileActions(runId) : [];
+  }
+
+  async #reconcileActions(runId: string): Promise<ReconcileAction[]> {
+    const rows = await this.#storage.query<{
+      id: string;
+      run_id: string;
+      kind: ReconcileActionKind;
+      class: string;
+      memory_id: string | null;
+      reason: string;
+      applied: boolean;
+      staled_at: string | null;
+      surfaced: boolean;
+      decision: ReconcileDecision | null;
+      merge_id: string | null;
+      conflict_id: string | null;
+      candidate_id: string | null;
+      created_at: string;
+    }>(
+      `SELECT id, run_id, kind, class, memory_id, reason, applied, staled_at, surfaced,
+              decision, merge_id, conflict_id, candidate_id, created_at
+       FROM memory_reconcile_actions WHERE run_id = $1 ORDER BY kind, created_at`,
+      [runId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      runId: r.run_id,
+      kind: r.kind,
+      class: r.class,
+      memoryId: r.memory_id,
+      reason: r.reason,
+      applied: Boolean(r.applied),
+      staledAt: r.staled_at ? toIsoTimestamp(r.staled_at) : null,
+      surfaced: Boolean(r.surfaced),
+      decision: r.decision,
+      mergeId: r.merge_id,
+      conflictId: r.conflict_id,
+      candidateId: r.candidate_id,
+      createdAt: toIsoTimestamp(r.created_at),
+    }));
+  }
+
+  /**
+   * How many runs in a row surfaced findings that nobody approved or rejected.
+   *
+   * Dry runs are excluded on purpose. Until there is a surface for approving or rejecting a
+   * finding, "unactioned" says nothing about whether the user is listening, and counting dry
+   * runs would make `memloom reconcile --dry-run` print less every time it is run with no way to
+   * tell it otherwise. Backing off is for a job that acts unattended.
+   */
+  async #unactionedReconcileRuns(ownerId: string): Promise<number> {
+    const rows = await this.#storage.query<{ surfaced: number; decided: number }>(
+      `SELECT count(a.id) FILTER (WHERE a.surfaced)::int AS surfaced,
+              count(a.id) FILTER (WHERE a.surfaced AND a.decision IS NOT NULL)::int AS decided
+       FROM memory_reconcile_runs r
+       LEFT JOIN memory_reconcile_actions a ON a.run_id = r.id
+       WHERE r.owner_id = $1 AND r.status = 'success' AND r.reverted_at IS NULL
+         AND r.mode = 'apply'
+       GROUP BY r.id, r.started_at
+       ORDER BY r.started_at DESC
+       LIMIT $2`,
+      [ownerId, BACKOFF_SILENT_AFTER],
+    );
+    let streak = 0;
+    for (const row of rows) {
+      if (Number(row.surfaced) > 0 && Number(row.decided) === 0) streak++;
+      else break;
+    }
+    return streak;
+  }
+
+  async #activeMemoryCount(ownerId: string): Promise<number> {
+    const [row] = await this.#storage.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM memory_objects WHERE owner_id = $1 AND status = 'active'",
+      [ownerId],
+    );
+    return Number(row?.n ?? 0);
   }
 
   /**
@@ -3858,24 +5260,32 @@ export class Memloom implements MemoryEngine {
       );
       result.examined++;
 
+      // The model's own words go on the decision row, or its reasoning would live only in
+      // this progress stream and vanish the moment the run ends.
+      const decided: ResolutionProvenance = {
+        decidedBy: "llm",
+        model: modelNameOf(this.#llm),
+        reason: verdict.reason,
+      };
       if (verdict.verdict === "keep_new") {
-        await this.resolveConflict(conflict.id, { action: "keep_new" });
+        await this.resolveConflict(conflict.id, { action: "keep_new" }, decided);
         result.keepNew++;
         result.resolved++;
       } else if (verdict.verdict === "keep_existing") {
         const winner = conflict.candidates[verdict.candidateIndex] ?? conflict.candidates[0];
         if (winner) {
-          await this.resolveConflict(conflict.id, {
-            action: "keep_existing",
-            candidateId: winner.id,
-          });
+          await this.resolveConflict(
+            conflict.id,
+            { action: "keep_existing", candidateId: winner.id },
+            decided,
+          );
           result.keepExisting++;
           result.resolved++;
         } else {
           result.unsure++;
         }
       } else if (verdict.verdict === "keep_both") {
-        await this.resolveConflict(conflict.id, { action: "keep_both" });
+        await this.resolveConflict(conflict.id, { action: "keep_both" }, decided);
         result.keepBoth++;
         result.resolved++;
       } else {
@@ -4026,6 +5436,27 @@ export class Memloom implements MemoryEngine {
       [id],
     );
     return row ? { rootId: row.root_id, version: Number(row.version) } : null;
+  }
+
+  // The highest version on a lineage, stale rows included. A new version has to clear every
+  // version the root has ever had, not just the one it is superseding, or it lands on top of
+  // a row that already exists.
+  async #lineageHead(rootId: string): Promise<number> {
+    const [row] = await this.#storage.query<{ head: number | null }>(
+      "SELECT max(version) AS head FROM memory_objects WHERE root_id = $1",
+      [rootId],
+    );
+    return Number(row?.head ?? 0);
+  }
+
+  async #recordPriorLineage(
+    conflictId: string,
+    prior: { rootId: string; version: number },
+  ): Promise<void> {
+    await this.#storage.query(
+      `UPDATE memory_dedup_decisions SET prior_root_id = $2, prior_version = $3 WHERE id = $1`,
+      [conflictId, prior.rootId, prior.version],
+    );
   }
 
   // Extract the graph from one source (memory or context chunk): mention edges to each
@@ -4734,7 +6165,13 @@ export class Memloom implements MemoryEngine {
     sourceId: string,
     targetId: string,
     ownerId: string = SENTINEL_OWNER,
-    provenance: { decidedBy?: "auto" | "llm" | "human"; score?: number; reason?: string } = {},
+    provenance: {
+      decidedBy?: "auto" | "llm" | "human";
+      score?: number;
+      reason?: string;
+      /** Which model decided, when decidedBy is 'llm'. Unattributable folds age badly. */
+      model?: string;
+    } = {},
   ): Promise<string> {
     if (sourceId === targetId) throw new Error("memloom: cannot merge an entity into itself");
     const mergeId = randomUUID();
@@ -4817,8 +6254,9 @@ export class Memloom implements MemoryEngine {
       await tx.query(
         `INSERT INTO memory_entity_merges
            (id, owner_id, canonical_id, source_id, source_name, source_type, source_created_at,
-            decided_by, score, reason, edge_changes)
-         SELECT $1, $2, $3, me.id, me.name, me.entity_type, me.created_at, $4, $5, $6, $7::jsonb
+            decided_by, score, reason, edge_changes, model)
+         SELECT $1, $2, $3, me.id, me.name, me.entity_type, me.created_at, $4, $5, $6, $7::jsonb,
+                $9
            FROM memory_entities me WHERE me.id = $8 AND me.owner_id = $2`,
         [
           mergeId,
@@ -4834,6 +6272,7 @@ export class Memloom implements MemoryEngine {
             aliasesMoved: moved.map((r) => r.id),
           }),
           sourceId,
+          provenance.model ?? null,
         ],
       );
 
@@ -4868,11 +6307,12 @@ export class Memloom implements MemoryEngine {
       decided_by: "auto" | "llm" | "human";
       score: number | null;
       reason: string | null;
+      model: string | null;
       created_at: string;
       reverted_at: string | null;
     }>(
       `SELECT m.id, m.canonical_id, me.name AS canonical_name, m.source_id, m.source_name,
-              m.source_type, m.decided_by, m.score, m.reason, m.created_at, m.reverted_at
+              m.source_type, m.decided_by, m.score, m.reason, m.model, m.created_at, m.reverted_at
          FROM memory_entity_merges m
          LEFT JOIN memory_entities me ON me.id = m.canonical_id AND me.owner_id = m.owner_id
         WHERE m.owner_id = $1
@@ -4889,6 +6329,7 @@ export class Memloom implements MemoryEngine {
       decidedBy: r.decided_by,
       score: r.score === null ? null : Number(r.score),
       reason: r.reason,
+      model: r.model,
       createdAt: r.created_at,
       revertedAt: r.reverted_at,
     }));
@@ -5014,6 +6455,7 @@ export class Memloom implements MemoryEngine {
       queued: 0,
       deferred: 0,
       skipped: 0,
+      mergeIds: [],
     };
     if (entities.length < 2) return result;
 
@@ -5082,11 +6524,12 @@ export class Memloom implements MemoryEngine {
         result.merged++;
         continue;
       }
-      await this.mergeEntities(source.id, canonical.id, ownerId, {
+      const mergeId = await this.mergeEntities(source.id, canonical.id, ownerId, {
         decidedBy: "auto",
         score: judgement.score,
         reason: judgement.reason,
       });
+      result.mergeIds.push(mergeId);
       foldedInto.set(source.id, canonical.id);
       result.merged++;
     }
@@ -5388,7 +6831,18 @@ export class Memloom implements MemoryEngine {
    * keep_new:      the queued spelling is the better name, so fold the candidate into it.
    * keep_both:     they are genuinely different things. Recorded so it never re-queues.
    */
-  async #resolveEntityConflict(conflictId: string, decision: ResolveDecision): Promise<void> {
+  async #resolveEntityConflict(
+    conflictId: string,
+    decision: ResolveDecision,
+    // Who decided, for the fold record. Defaults to the human clicking in the viewer, which is
+    // every caller but reconciliation's arbitration pass.
+    provenance: {
+      decidedBy?: "auto" | "llm" | "human";
+      score?: number;
+      reason?: string;
+      model?: string;
+    } = {},
+  ): Promise<void> {
     const [row] = await this.#storage.query<{
       owner_id: string;
       incoming_id: string;
@@ -5420,26 +6874,29 @@ export class Memloom implements MemoryEngine {
     switch (decision.action) {
       case "keep_existing": {
         const mergeId = await this.mergeEntities(incoming, target, owner, {
-          decidedBy: "human",
-          score: primary?.score,
-          reason: primary?.reason,
+          decidedBy: provenance.decidedBy ?? "human",
+          score: provenance.score ?? primary?.score,
+          reason: provenance.reason ?? primary?.reason,
+          model: provenance.model,
         });
-        await this.#attachResolution(conflictId, "supersede", target, [mergeId]);
+        await this.#attachResolution(conflictId, "supersede", target, [mergeId], provenance);
         break;
       }
       case "keep_new": {
         const mergeId = await this.mergeEntities(target, incoming, owner, {
-          decidedBy: "human",
-          score: primary?.score,
-          reason: primary?.reason,
+          decidedBy: provenance.decidedBy ?? "human",
+          score: provenance.score ?? primary?.score,
+          reason: provenance.reason ?? primary?.reason,
+          model: provenance.model,
         });
-        await this.#attachResolution(conflictId, "supersede", incoming, [mergeId]);
+        await this.#attachResolution(conflictId, "supersede", incoming, [mergeId], provenance);
         break;
       }
       case "keep_both": {
-        // No graph change: the point is the record, which #alreadySettled reads so a later
-        // pass does not ask again.
-        await this.#attachResolution(conflictId, "keep_both", null, []);
+        // No graph change, so this row IS the whole record. It is what #alreadySettled reads
+        // so a later pass does not ask again, and with the provenance it is also the only
+        // place a "these are different things" verdict can be read back.
+        await this.#attachResolution(conflictId, "keep_both", null, [], provenance);
         break;
       }
       case "merge":
@@ -5475,18 +6932,38 @@ export class Memloom implements MemoryEngine {
     );
   }
 
+  /**
+   * Stamp a decision as settled, and record who settled it.
+   *
+   * The provenance matters most for the answers that change nothing: a fold leaves a record in
+   * memory_entity_merges, but "these two are different things" leaves only the absence of one.
+   * Without this, a model that decided fifty pairs was auditable for the eleven it folded and
+   * invisible for the thirty-seven it kept apart. Omitting it means a human decided.
+   */
   async #attachResolution(
     conflictId: string,
     action: "supersede" | "keep_both" | "merge",
     winnerId: string | null,
     loserIds: string[],
+    provenance: ResolutionProvenance = {},
   ): Promise<void> {
     await this.#storage.query(
       `UPDATE memory_dedup_decisions
        SET resolution_action = $2, resolution_winner_id = $3,
-           resolution_loser_ids = $4::jsonb, resolved_at = now()
+           resolution_loser_ids = $4::jsonb, resolved_at = now(),
+           resolution_by = $5, resolution_model = $6, resolution_score = $7,
+           resolution_reason = $8
        WHERE id = $1`,
-      [conflictId, action, winnerId, JSON.stringify(loserIds)],
+      [
+        conflictId,
+        action,
+        winnerId,
+        JSON.stringify(loserIds),
+        provenance.decidedBy ?? "human",
+        provenance.model ?? null,
+        provenance.score ?? null,
+        provenance.reason ?? null,
+      ],
     );
   }
 }

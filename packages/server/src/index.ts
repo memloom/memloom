@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
@@ -11,18 +11,23 @@ import {
   CATALOG,
   type ContextProgressEvent,
   detectKind,
+  FREE_RECONCILE_PASSES,
   findModel,
   hasFfmpeg,
   type IndexProgressEvent,
   IngestQueue,
+  idleRunDue,
   isChatProvider,
   isHttpUrl,
   LinkExtractionError,
   MEMORY_TYPES,
   type Memloom,
   modelStatus,
+  RECONCILE_STARTUP_SETTLE_MS,
+  RECONCILE_TICK_MS,
   selectModel,
   setupModels,
+  startupCatchUpDue,
   supportedExtensions,
   uploadStoreDir,
 } from "@memloom/core";
@@ -36,6 +41,11 @@ import { z } from "zod";
 // any HTTP client) can reach the engine. The CLI/MCP route through this when it holds the
 // store, giving one owner of the single PGLite connection (D1). Same request/response shapes
 // as the hosted public API, so clients can point at local or cloud.
+
+/** When the daemon last served anything: the difference between quiet and asleep. */
+export interface DaemonActivity {
+  lastRequestAt: number;
+}
 
 export interface ServerOptions {
   /** Log each request (method, path, status, timing) to stdout. Off by default (tests). */
@@ -51,6 +61,11 @@ export interface ServerOptions {
    * no API route claims are served from it, so the daemon is API + viewer on one port.
    */
   staticDir?: string;
+  /**
+   * When set, every request stamps `lastRequestAt` on it. The reconcile scheduler reads it to tell
+   * an idle daemon from a busy one; `serve` owns the object, tests leave it undefined.
+   */
+  activity?: DaemonActivity;
   /**
    * Opens a file with the OS default application (the viewer's "Open file" button). Defaults
    * to the platform opener; injectable so tests never actually launch anything.
@@ -170,6 +185,24 @@ async function nativePick(mode: "file" | "folder"): Promise<string[] | null> {
   } catch (err) {
     return (err as { code?: string }).code === "ENOENT" ? null : [];
   }
+}
+
+/**
+ * Resolve a path a person typed or pasted.
+ *
+ * Windows Explorer's "Copy as path" wraps what it copies in double quotes, and a shell would
+ * strip them before the program ever saw them. Pasted into a text box nothing does, so the
+ * quotes stay in the string, resolve() reads it as relative, and an absolute path comes back
+ * as a nonsense one joined to whatever directory the daemon happens to run in. Quotes are
+ * stripped only in matching pairs: a file really can be named with a quote at one end.
+ */
+function userPath(raw: string): string {
+  const trimmed = raw.trim();
+  const quoted =
+    trimmed.length >= 2 &&
+    ((trimmed.startsWith('"') && trimmed.endsWith('"')) ||
+      (trimmed.startsWith("'") && trimmed.endsWith("'")));
+  return resolve(quoted ? trimmed.slice(1, -1).trim() : trimmed);
 }
 
 // Folder ingestion: walk for supported files, bounded so a mistaken "add C:\" cannot
@@ -444,6 +477,40 @@ const resolveSchema = z.discriminatedUnion("action", [
   }),
 ]);
 
+/**
+ * A page size from a query string, clamped.
+ *
+ * `Number.isFinite` alone admits negatives and absurd magnitudes, and both reach the driver: a
+ * negative LIMIT is a Postgres error that surfaces as a 500 carrying the raw message.
+ */
+function pageLimit(raw: string | undefined, fallback: number, max = 200): number {
+  const n = Number(raw ?? fallback);
+  if (!Number.isInteger(n) || n < 1) return fallback;
+  return Math.min(n, max);
+}
+
+const reconcileSchema = z.object({
+  mode: z.enum(["dry_run", "apply"]).default("dry_run"),
+  trigger: z.enum(["manual", "idle", "startup"]).default("manual"),
+  passes: z
+    .array(z.enum(["invariants", "entities", "llm_entities", "llm_conflicts", "llm_recheck"]))
+    .optional(),
+  // Keep re-checking past the per-run ceiling until nothing is due or this much is billed. Capped
+  // low on purpose: a typo in this field spends real money, so it cannot be an open number.
+  budgetUsd: z.number().positive().max(50).optional(),
+});
+
+const reconcileSettingsSchema = z
+  .object({
+    invariants: z.boolean(),
+    entities: z.boolean(),
+    llm_entities: z.boolean(),
+    llm_conflicts: z.boolean(),
+    llm_recheck: z.boolean(),
+    startupCatchUp: z.boolean(),
+  })
+  .partial();
+
 /** Parse + validate a JSON body; returns the typed value or a 400 JSON response. */
 async function parseBody<S extends z.ZodTypeAny>(
   c: Context,
@@ -528,6 +595,18 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       origin: (origin) => (LOCAL_ORIGIN.test(origin) ? origin : null),
     }),
   );
+
+  // The reconcile scheduler's only signal for "is anyone using this daemon". Stamped before the
+  // access-control gate on purpose: a rejected cross-site request is still someone knocking,
+  // and a run that started because the machine looked idle would compete with whatever comes
+  // next. Cheap enough to sit in front of everything.
+  const activity = opts.activity;
+  if (activity) {
+    app.use("*", async (_c, next) => {
+      activity.lastRequestAt = Date.now();
+      await next();
+    });
+  }
 
   // Access-control gate. cors() only sets response headers; it never blocks the request, so
   // without this a cross-site page could still fire a handler's side effects (e.g. a
@@ -879,6 +958,12 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     c.json({ conflicts: await memloom.entityConflicts() }),
   );
 
+  // Pairs a decision kept apart. They leave no other trace, so without this route a model's
+  // "these are different things" verdicts are unreadable.
+  app.get("/memory/entities/settled", async (c) =>
+    c.json({ settled: await memloom.settledEntityPairs() }),
+  );
+
   app.get("/memory/entities/merges", async (c) => c.json({ merges: await memloom.entityMerges() }));
 
   app.post("/memory/entities/resolve", async (c) => {
@@ -886,6 +971,23 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     if (!body.ok) return body.res;
     return c.json(await memloom.resolveEntities({ dryRun: body.data.dryRun }));
   });
+
+  // Let a model settle the pairs the lexical rules could not, once, on demand. The same pass
+  // reconciliation runs when llm_entities is on; this is how to use it without turning that on.
+  // Costs one call per queued pair, so it is never a side effect of anything.
+  app.post("/memory/entities/resolve-auto", async (c) => {
+    // Spends one model call per queued pair, so the kill switch has to reach it too.
+    if (reconcileActingDisabled()) {
+      return c.json({ error: "reconciliation is set to report only (RECONCILE_ENABLED=0)." }, 403);
+    }
+    return c.json(await memloom.autoResolveEntities());
+  });
+
+  // The same pass with progress. One call per pair means a queue of fifty is a minute of
+  // silence, so the button that starts it reads the verdicts as they land.
+  app.post("/memory/entities/resolve-auto/stream", (c) =>
+    streamNdjson(c, (emit) => memloom.autoResolveEntities(undefined, undefined, emit)),
+  );
 
   // "Which people is this person connected to." Query rather than path parameter because the
   // target may be a NAME, and real entity names carry slashes and dots ("@memloom/cli").
@@ -965,6 +1067,138 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/memory/conflicts/:id/revert", async (c) => {
     await memloom.revertConflict(c.req.param("id"));
     return c.json({ ok: true });
+  });
+
+  // Reconciliation. Which passes run is the user's saved setting, not an environment variable, so the
+  // Settings tab takes effect without a restart. RECONCILE_ENABLED is only a kill switch now: set it
+  // to 0 and no run may change anything, for a host that wants the reports and none of the
+  // repairs. The passes that cost money are off by default in the settings themselves.
+  // Every applying run registers its abort controller here, whichever route started it, so a stop
+  // can reach a run the CLI began as well as one the viewer streamed.
+  const liveReconciles = new Map<string, AbortController>();
+
+  app.post("/memory/reconcile", async (c) => {
+    const body = await parseBody(c, reconcileSchema);
+    if (!body.ok) return body.res;
+    if (body.data.mode === "apply" && reconcileActingDisabled()) {
+      return c.json(
+        {
+          error:
+            "reconciliation is set to report only (RECONCILE_ENABLED=0). Remove it from your memloom " +
+            "config and restart the daemon to let a run act.",
+        },
+        403,
+      );
+    }
+    // Registered here as well as on the stream, because the CLI posts to this route and a stop
+    // that cannot reach the run is a stop that silently does nothing while the sweep keeps
+    // billing. The id arrives on the first progress event, same as the stream.
+    const cancel = new AbortController();
+    let runId: string | null = null;
+    try {
+      return c.json(
+        await memloom.reconcile(
+          body.data,
+          (event) => {
+            if (!runId) {
+              runId = event.runId;
+              liveReconciles.set(runId, cancel);
+            }
+          },
+          cancel.signal,
+        ),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      // Already running is the caller's answer to give, not a fault: 409, not 500.
+      return c.json({ error: message }, /already going/.test(message) ? 409 : 500);
+    } finally {
+      if (runId) liveReconciles.delete(runId);
+    }
+  });
+
+  // The same shape indexing uses. A sweep is minutes of model calls, far longer than a request
+  // should be held open, so it reports per belief and the client never waits on one response.
+  // Disconnecting stops the sweep: nobody is watching, so nothing more should be spent.
+  app.post("/memory/reconcile/stream", async (c) => {
+    const body = await parseBody(c, reconcileSchema);
+    if (!body.ok) return body.res;
+    if (body.data.mode === "apply" && reconcileActingDisabled()) {
+      return c.json({ error: "reconciliation is set to report only (RECONCILE_ENABLED=0)." }, 403);
+    }
+    let runId: string | null = null;
+    return streamNdjson(c, async (emit, signal) => {
+      const cancel = new AbortController();
+      signal.addEventListener("abort", () => cancel.abort());
+      try {
+        return await memloom.reconcile(
+          body.data,
+          (event) => {
+            // The first event names the run, which is what a stop button needs to address.
+            if (!runId) {
+              runId = event.runId;
+              liveReconciles.set(runId, cancel);
+            }
+            emit(event);
+          },
+          cancel.signal,
+        );
+      } finally {
+        if (runId) liveReconciles.delete(runId);
+      }
+    });
+  });
+
+  // Stop a run: abort it if this daemon is the one running it, and mark the row either way. A
+  // run whose daemon died has no controller left, and this is the only way it stops being live.
+  app.post("/memory/reconcile/:id/stop", async (c) => {
+    const id = c.req.param("id");
+    liveReconciles.get(id)?.abort();
+    return c.json(await memloom.stopReconcile(id));
+  });
+
+  app.get("/memory/reconcile/runs", async (c) => {
+    const limit = pageLimit(c.req.query("limit"), 20);
+    return c.json({ runs: await memloom.reconcileRuns(undefined, limit) });
+  });
+
+  app.get("/memory/reconcile/runs/:id/actions", async (c) =>
+    c.json({ actions: await memloom.reconcileActions(c.req.param("id")) }),
+  );
+
+  app.get("/memory/reconcile/settings", async (c) => c.json(await memloom.reconcileSettings()));
+
+  // The re-check's findings, and answering one. These are NOT conflicts: the pass runs at about
+  // 40 percent precision, so they wait here where dismissing costs a click. Approving is what
+  // writes the conflict row, which is why this route can return one.
+  app.get("/memory/reconcile/possible", async (c) =>
+    c.json({ possible: await memloom.possibleContradictions() }),
+  );
+
+  app.post("/memory/reconcile/possible/:id/answer", async (c) => {
+    const body = await parseBody(c, z.object({ decision: z.enum(["approved", "rejected"]) }));
+    if (!body.ok) return body.res;
+    try {
+      return c.json(await memloom.answerPossible(c.req.param("id"), body.data.decision));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no unanswered/.test(message) ? 404 : 400);
+    }
+  });
+
+  app.post("/memory/reconcile/settings", async (c) => {
+    const body = await parseBody(c, reconcileSettingsSchema);
+    if (!body.ok) return body.res;
+    return c.json(await memloom.setReconcileSettings(body.data));
+  });
+
+  app.post("/memory/reconcile/:id/revert", async (c) => {
+    try {
+      return c.json(await memloom.revertReconcile(c.req.param("id")));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no reconcile run/.test(message) ? 404 : 409);
+    }
   });
 
   // The auto-resolver: an LLM re-judges every pending conflict with provenance context and
@@ -1150,7 +1384,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     // recording with its own progress and its own cancel, instead of one opaque row.
     const paths: string[] = [];
     for (const raw of body.data.paths) {
-      const target = resolve(raw);
+      const target = userPath(raw);
       const info = await stat(target).catch(() => null);
       if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
       if (info.isDirectory()) paths.push(...(await collectSupportedFiles(target)));
@@ -1264,7 +1498,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/context/add", async (c) => {
     const body = await parseBody(c, contextAddSchema);
     if (!body.ok) return body.res;
-    const target = resolve(body.data.path);
+    const target = userPath(body.data.path);
     const info = await stat(target).catch(() => null);
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
     if (!info.isDirectory()) {
@@ -1319,7 +1553,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/context/add/stream", async (c) => {
     const body = await parseBody(c, contextAddSchema);
     if (!body.ok) return body.res;
-    const target = resolve(body.data.path);
+    const target = userPath(body.data.path);
     const info = await stat(target).catch(() => null);
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
     const files = info.isDirectory() ? await collectSupportedFiles(target) : [target];
@@ -1659,7 +1893,89 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 }
 
 /** Start the server on localhost. Returns the underlying node server handle. */
+/**
+ * Run the free reconcile passes on their own: once shortly after startup if it has been long
+ * enough, and thereafter whenever the daemon has been quiet for a while.
+ *
+ * Only the free passes, and never the settings' choice of them. A trigger nobody watched must
+ * not be able to spend money, so what runs here is FREE_RECONCILE_PASSES verbatim rather than
+ * whatever the user has enabled. The paid passes are the user's to start.
+ *
+ * Returns a stop function. Every timer is unref'd, so a pending run never holds the process
+ * open on its own.
+ */
+/**
+ * RECONCILE_ENABLED=0 stops a run from changing anything, anywhere. It has to be checked wherever
+ * an applying run can start, which is the two routes AND the scheduler. The scheduler calls
+ * reconcile() in process, so a check that lives only in the handlers lets idle and startup runs
+ * keep retiring memories on a host that asked for reports and no repairs.
+ */
+export function reconcileActingDisabled(): boolean {
+  return process.env.RECONCILE_ENABLED === "0";
+}
+
+export function startReconcileScheduler(memloom: Memloom, activity: DaemonActivity): () => void {
+  let running = false;
+  let stopped = false;
+
+  const run = async (trigger: "idle" | "startup") => {
+    if (running || stopped || reconcileActingDisabled()) return;
+    running = true;
+    try {
+      await memloom.reconcile({ mode: "apply", trigger, passes: FREE_RECONCILE_PASSES });
+    } catch (err) {
+      // A background pass that throws must not take the daemon with it. The run row already
+      // records the error, and the next tick tries again.
+      console.error("[reconcile]", err instanceof Error ? err.message : String(err));
+    } finally {
+      running = false;
+    }
+  };
+
+  const lastRunAt = async (): Promise<number | null> => {
+    const iso = await memloom.lastReconcileFinishedAt().catch(() => null);
+    return iso ? new Date(iso).getTime() : null;
+  };
+
+  const startup = setTimeout(async () => {
+    const settings = await memloom.reconcileSettings().catch(() => null);
+    if (!settings) return;
+    if (
+      startupCatchUpDue({
+        now: Date.now(),
+        lastRunAt: await lastRunAt(),
+        enabled: settings.startupCatchUp,
+      })
+    ) {
+      await run("startup");
+    }
+  }, RECONCILE_STARTUP_SETTLE_MS);
+  startup.unref?.();
+
+  const tick = setInterval(async () => {
+    if (
+      idleRunDue({
+        now: Date.now(),
+        lastRunAt: await lastRunAt(),
+        lastRequestAt: activity.lastRequestAt,
+        indexing: memloom.indexing,
+      })
+    ) {
+      await run("idle");
+    }
+  }, RECONCILE_TICK_MS);
+  tick.unref?.();
+
+  return () => {
+    stopped = true;
+    clearTimeout(startup);
+    clearInterval(tick);
+  };
+}
+
 export function serve(memloom: Memloom, port = 4319) {
-  const app = createServer(memloom);
+  const activity: DaemonActivity = { lastRequestAt: Date.now() };
+  const app = createServer(memloom, { activity });
+  startReconcileScheduler(memloom, activity);
   return nodeServe({ fetch: app.fetch, port, hostname: "127.0.0.1" });
 }

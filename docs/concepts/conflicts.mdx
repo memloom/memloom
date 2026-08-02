@@ -1,106 +1,122 @@
 ---
-title: "Conflicts (human-in-the-loop)"
+title: "Conflicts"
 description: "Contradictions are kept, surfaced, and resolved by you, reversibly"
+icon: "scale-balanced"
 ---
 
-## The stance
+## Overview
 
-Most memory systems resolve contradictions silently: last write wins, or an LLM picks a
-winner. memloom's position is that **a contradiction between your memories is information,
-and deciding it is your call**. When an incoming memory can't be true at the same time as an
-existing one, memloom keeps *both* active and records a conflict for you to resolve. Nothing
-is auto-overwritten; nothing is lost while the conflict is pending.
+When an incoming memory cannot be true at the same time as an existing one, memloom keeps both
+active and records a conflict. Nothing is auto-overwritten and nothing is lost while it is
+pending.
 
-## How a conflict is detected
+<CardGroup cols={3}>
+  <Card title="Both are kept" icon="scale-balanced">
+    No last-write-wins, no model picking a winner behind your back.
+  </Card>
+  <Card title="You decide" icon="user-check">
+    Four resolutions, from the CLI, the viewer, or an agent relaying your choice.
+  </Card>
+  <Card title="Always revertable" icon="rotate-left">
+    Losers go stale, never deleted. Change your mind a week later and resolve it the other way.
+  </Card>
+</CardGroup>
 
-On every save (with dedup enabled), memloom:
+***
 
-1. Short-circuits exact duplicates by content hash (no LLM involved).
-2. Finds up to 5 existing active memories with cosine similarity ≥ 0.5 to the incoming one.
-3. Asks the LLM to classify each candidate's relation to the incoming memory:
+## How one is detected
 
-| Relation | Meaning | What happens |
+On every save with dedup enabled:
+
+<Steps>
+  <Step title="Exact duplicates short-circuit" icon="bolt">
+    Matched by content hash, with no model call.
+  </Step>
+  <Step title="Find candidates" icon="magnifying-glass">
+    Up to 5 active memories at cosine similarity 0.5 or above.
+  </Step>
+  <Step title="Classify each one" icon="scale-balanced">
+    The model says how it relates to the incoming memory.
+  </Step>
+</Steps>
+
+| Relation | Meaning | Result |
 | --- | --- | --- |
 | `identical` | The same fact restated | New **version** of the existing belief |
-| `complementary` | Both can be true at once, related or not | Both coexist; the new one is added |
+| `complementary` | Both can be true | Both coexist |
 | `contradictory` | They cannot both be true | **Conflict recorded**, both stay active |
 
-The conflict record stores the incoming memory, every contradicting candidate, and the
-classifier's stated *reason*, so when you look at it later you see why it was flagged.
+The record keeps the incoming memory, every contradicting candidate, and the classifier's stated
+reason, so you can see later why it was flagged.
+
+<Note>
+  Detection needs a model, so it is off in offline mode. Offline saves skip the belief pipeline
+  and always report `added`.
+</Note>
+
+***
 
 ## Resolving
 
-Pending conflicts show up in `memloom conflicts`, the viewer's Conflicts tab, the
-`GET /memory/conflicts` endpoint, and the `list_conflicts` MCP tool (so an agent can say
-*"you have a pending conflict about the staging database"*). Four resolutions:
+Pending conflicts appear in `memloom conflicts`, the viewer's Conflicts tab,
+`GET /memory/conflicts`, and the `list_conflicts` MCP tool.
 
 | Action | Effect |
 | --- | --- |
-| **keep_new** | The incoming memory wins and *continues the existing belief's lineage* (it becomes the next version). The old memories go stale with `replaces` edges. |
-| **keep_existing** | The incoming memory goes stale; the existing one stays current. |
-| **keep_both** | They're genuinely distinct facts. Both stay active, linked with a `distinct` edge so they're never re-flagged against each other. |
-| **merge** | You (or an agent, with your reconciled text) write the sentence that's actually true. It becomes the next version of the belief; both inputs go stale under it. |
+| **keep_new** | The incoming memory continues the existing lineage as its next version. The old one goes stale |
+| **keep_existing** | The incoming memory goes stale, the existing one stays current |
+| **keep_both** | Genuinely distinct. Both stay active, linked `distinct` so they are never re-flagged |
+| **merge** | You write the sentence that is actually true. It becomes the next version, both inputs go stale |
 
-## Auto-resolving with an LLM judge
+Revert reactivates whatever was staled, deactivates the edges the resolution created, undoes any
+lineage re-parenting, and puts the conflict back in the queue.
 
-`memloom conflicts auto` (`POST /memory/conflicts/resolve-auto/stream`) runs the same LLM
-over the pending queue a second time, now with context the dedup classifier never had. The
-classifier only ever compares two pieces of text in isolation; the auto-resolver also sees
-when each side was recorded and, for memories that came from
-[`import sessions`](/concepts/distillation), the transcript excerpt it was distilled
-from. Most import conflicts are a later session recording a state change ("we moved to
-railway") against an older fact ("the deploy target is fly.io"), and with time and context
-in view that resolution is mechanical.
+***
 
-The judge answers one of the same four actions, minus merge (there's no reconciled text for
-an LLM to author on your behalf):
+## Letting a model clear the queue
 
-| Verdict | Meaning |
-| --- | --- |
-| `keep_new` | The incoming memory records a later decision that supersedes the existing one |
-| `keep_existing` | The incoming memory is transient noise or a misreading; the existing one is durable |
-| `keep_both` | They describe different scopes and can coexist |
-| `unsure` | The evidence isn't decisive |
+```bash
+memloom conflicts auto
+```
 
-It is told to prefer `unsure` over guessing: when recording times are close or the excerpts
-don't show which side is current, the conflict stays in the queue untouched. Only a
-decisive verdict calls `resolveConflict`, so an auto-resolution lands in the same revertable
-history as a manual one, and `revert` undoes it exactly the same way.
+Runs the same model over the pending queue a second time, now with context the save-time
+classifier never had: when each side was recorded, and for imported memories the transcript
+excerpt it came from. Most import conflicts are a later session recording a change ("we moved to
+railway") against an older fact ("the deploy target is fly.io"), which is mechanical once you can
+see the dates.
+
+It answers `keep_new`, `keep_existing`, `keep_both`, or `unsure`, and is told to prefer `unsure`
+over guessing. Only a decisive verdict resolves anything, and it lands in the same revertable
+history as a manual one.
 
 <Note>
-This is the same one-shot judge that resolves some conflicts during `import sessions`
-itself (see [Session distillation](/concepts/distillation#belief-pipeline-and-conflicts)).
-`conflicts auto` is how you run it again over whatever is left, on demand, for conflicts
-from any source, not just import.
+  `merge` is not available to the judge. There is no reconciled text for a model to author on your
+  behalf.
 </Note>
 
-## Everything is reversible
+***
 
-No resolution deletes anything. Losers go `status = 'stale'`; the relationships are recorded
-as edges (`replaces`, `distinct`) that can be deactivated. `revert` on a resolved conflict:
+## Three queues, one tab
 
-- reactivates whatever was staled,
-- deactivates the edges the resolution created,
-- undoes any lineage re-parenting,
-- and puts the conflict back in the pending queue.
+The Conflicts tab holds three kinds of question. They share a surface and a revert, but not a
+scope.
 
-You can resolve a conflict, change your mind a week later, revert it, and resolve it the
-other way.
+| Queue | What it is | In `list_conflicts`? |
+| --- | --- | --- |
+| **Memory conflicts** | Two memories that cannot both be true | Yes |
+| **Duplicate entities** | Two spellings that may be one thing. See [Entity resolution](/concepts/entity-resolution) | No |
+| **Possible contradictions** | Unconfirmed findings from [reconciliation](/concepts/reconciliation) | No |
 
-## Duplicate entities use the same queue
+Only memory conflicts reach the CLI and MCP surfaces. An agent asking about pending conflicts is
+never handed a question about spelling, or a finding no human has confirmed.
 
-Two spellings of one thing is the same shape of question as two contradicting memories:
-something is inconsistent and only you can settle it. So uncertain entity folds land in the
-same decision log, the same Conflicts tab, and the same revertable history. The actions read
-slightly differently (there is no reconciled *name* for an agent to author, so `merge` does
-not apply), and they are described in
-[Entity resolution](/concepts/entity-resolution#uncertain-folds-go-to-the-conflicts-queue).
+<Accordion title="Why possible contradictions are separate" icon="circle-question">
+  Save-time detection compares an incoming memory against the 5 nearest that existed at that
+  moment, so a pair at rank 6 is never judged. The re-check goes back over old beliefs against 20
+  neighbours and finds those.
 
-Entity folds never appear in `memloom conflicts` or `list_conflicts`. Those are scoped to
-memory contradictions, so an agent asking about pending conflicts is never handed a question
-about spelling.
-
-<Note>
-Conflict detection requires the LLM, so it's off in offline mode (no `OPENROUTER_API_KEY`).
-Offline saves skip the belief pipeline entirely and always report `added`.
-</Note>
+  Its measured precision is roughly 40 percent, so they wait as findings where dismissing costs a
+  click. Each shows the verbatim clashing sentence from both sides, so it can be judged in
+  seconds. Confirming one writes the real conflict row, and from there it behaves like anything
+  else on this page.
+</Accordion>

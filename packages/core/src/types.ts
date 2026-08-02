@@ -119,6 +119,11 @@ export interface ConflictCandidate {
   content: string;
   relation: string;
   reason: string;
+  /**
+   * Cosine to the incoming belief, for ordering the queue. A similarity, not a confidence:
+   * nothing records how sure the classifier was. Null when either side has no vector.
+   */
+  similarity?: number | null;
 }
 
 export interface Conflict {
@@ -131,6 +136,23 @@ export interface Conflict {
 /** A resolved conflict from the decision log: the revertable history behind the pending queue. */
 export interface ResolvedConflict extends Conflict {
   resolution: "keep_new" | "keep_existing" | "keep_both" | "merge";
+  resolvedAt: string;
+  /** Who decided. 'human' on everything settled before the provenance columns existed. */
+  decidedBy: "auto" | "llm" | "human";
+  /** Which model, when decidedBy is 'llm'. */
+  model: string | null;
+  /** The decider's own words, when it left any. */
+  reason: string | null;
+}
+
+/** An entity pair a decision settled as two different things, with why. */
+export interface SettledEntityPair {
+  id: string;
+  incomingName: string;
+  candidateName: string;
+  decidedBy: "auto" | "llm" | "human";
+  model: string | null;
+  reason: string | null;
   resolvedAt: string;
 }
 
@@ -167,6 +189,8 @@ export interface EntityMerge {
   decidedBy: "auto" | "llm" | "human";
   score: number | null;
   reason: string | null;
+  /** Which model decided, when decidedBy is 'llm'. Null for every other kind of fold. */
+  model: string | null;
   createdAt: string;
   revertedAt: string | null;
 }
@@ -212,6 +236,12 @@ export interface EntityResolutionResult {
   deferred: number;
   /** Pairs skipped because they were already merged, queued, or settled as distinct. */
   skipped: number;
+  /**
+   * The memory_entity_merges rows this pass created, in order. Empty on a dry run. A caller that
+   * has to be able to undo its own pass (reconciliation) needs the ids, and reading them back by
+   * timestamp afterwards would race with a concurrent fold.
+   */
+  mergeIds: string[];
 }
 
 /** One stated relationship between two entities, as seen from the entity being asked about. */
@@ -766,6 +796,35 @@ export interface ConflictAutoResult {
   unsure: number;
 }
 
+/**
+ * Progress from the entity arbiter: one event per pair the model was asked about. The same
+ * shape as ConflictAutoEvent, because both are one paid call per queued item and the wait is
+ * the same wait: a run of fifty is a minute of nothing without it.
+ */
+export interface EntityAutoEvent {
+  conflictId: string;
+  /** 1-based position in this pass. */
+  index: number;
+  total: number;
+  verdict: "same" | "distinct" | "unsure";
+  reason: string;
+  /** The two names, for display. */
+  pair: string;
+}
+
+/**
+ * Who settled a conflict and why. Recorded on the decision row itself, which is the only place
+ * a verdict that changed nothing ("these are different things") can be read back from.
+ */
+export interface ResolutionProvenance {
+  decidedBy?: "auto" | "llm" | "human";
+  /** Which model, when decidedBy is 'llm'. */
+  model?: string;
+  score?: number;
+  /** The decider's own words. */
+  reason?: string;
+}
+
 export type ResolveDecision =
   | { action: "keep_new" } // supersede: the new memory wins, existing ones go stale
   | { action: "keep_existing"; candidateId: string } // an existing memory wins, the new one goes stale
@@ -872,4 +931,246 @@ export interface NotionStatus {
   /** Synced notion:// documents currently in the store, and their chunk total. */
   documents: number;
   chunks: number;
+}
+
+// Reconciliation: the consolidation pass. A pass acts unasked when SQL proves the store is wrong
+// and the ledger can undo it, and asks first whenever it would spend money. Every run is one
+// revertable unit recorded in memory_reconcile_runs / memory_reconcile_actions.
+
+export type ReconcileMode = "dry_run" | "apply";
+export type ReconcileTrigger = "manual" | "idle" | "startup";
+export type ReconcileRunStatus = "running" | "success" | "error" | "aborted";
+/**
+ * retire and fold change state; question and conflict ask the human.
+ *
+ * 'possible' is a contradiction the re-check found and nobody has confirmed. It is not a conflict
+ * on purpose: the pass runs at roughly 40 percent precision, so these wait in the ledger where
+ * dismissing one costs a click, and approving one is what writes the real conflict row.
+ */
+export type ReconcileActionKind = "retire" | "question" | "conflict" | "fold" | "possible";
+export type ReconcileDecision = "approved" | "rejected" | "snoozed";
+
+/**
+ * The five passes, in cost order. The first two are free and act on their own; the rest spend
+ * money and stay off until the user turns them on.
+ */
+export type ReconcilePass =
+  | "invariants"
+  | "entities"
+  | "llm_entities"
+  | "llm_conflicts"
+  | "llm_recheck";
+
+export const RECONCILE_PASSES: readonly ReconcilePass[] = [
+  "invariants",
+  "entities",
+  "llm_entities",
+  "llm_conflicts",
+  "llm_recheck",
+];
+
+/** Passes that cost nothing and therefore need no permission and no scheduling argument. */
+export const FREE_RECONCILE_PASSES: readonly ReconcilePass[] = ["invariants", "entities"];
+
+export type ReconcileSettings = Record<ReconcilePass, boolean> & {
+  /** Run on daemon startup when the last run is older than the catch-up window. */
+  startupCatchUp: boolean;
+};
+
+export interface ReconcileAction {
+  id: string;
+  runId: string;
+  kind: ReconcileActionKind;
+  /** The detector that produced it: 'duplicate_content', 'multi_head', ... */
+  class: string;
+  memoryId: string | null;
+  reason: string;
+  /** True only when a run in 'apply' mode actually changed this memory's status. */
+  applied: boolean;
+  /** The stale_since this run wrote. revertReconcile restores only while it is unchanged. */
+  staledAt: string | null;
+  /** False when the finding was recorded but held back by a per-run cap. */
+  surfaced: boolean;
+  decision: ReconcileDecision | null;
+  /** Set when kind is 'fold': the memory_entity_merges row revertReconcile undoes. */
+  mergeId: string | null;
+  /** Set when kind is 'conflict': the queue row this finding became, so a surface can link it. */
+  conflictId: string | null;
+  /** Set when kind is 'possible': the older belief of the pair. memoryId holds the newer one. */
+  candidateId: string | null;
+  createdAt: string;
+}
+
+/**
+ * One unconfirmed contradiction, with the spans that make it readable without opening either
+ * memory. The quotes were verified against the two contents before this row was written, so they
+ * are guaranteed to occur in them.
+ */
+export interface PossibleContradiction {
+  /** The reconcile action id. Answering quotes this back. */
+  id: string;
+  runId: string;
+  newMemory: { id: string; content: string };
+  oldMemory: { id: string; content: string };
+  /** Verbatim spans from newMemory.content and oldMemory.content. */
+  newQuote: string;
+  oldQuote: string;
+  /** The model's own words, kept short by the prompt. */
+  reason: string;
+  model: string | null;
+  /** Cosine between the two beliefs. The same ordering signal the conflict queue uses. */
+  similarity: number | null;
+  foundAt: string;
+}
+
+/** What answering a possible contradiction did. */
+export interface PossibleAnswer {
+  /** Set when the answer was 'approved': the conflict row it became. */
+  conflictId: string | null;
+  decision: ReconcileDecision;
+}
+
+export interface ReconcileRun {
+  id: string;
+  mode: ReconcileMode;
+  trigger: ReconcileTrigger;
+  status: ReconcileRunStatus;
+  scanned: number;
+  retired: number;
+  /** Entities folded into another. Reversed through revertEntityMerge, not through markStale. */
+  folded: number;
+  questions: number;
+  conflictsRaised: number;
+  /** Unconfirmed contradictions the re-check recorded. Not conflicts until a human says so. */
+  possible: number;
+  llmCalls: number;
+  /** What this run actually cost, written per call so it survives a crash. */
+  spentUsd: number;
+  spentInputTokens: number;
+  spentOutputTokens: number;
+  /** Set when the run failed: the message, so a surface can say why without guessing. */
+  error: string | null;
+  startedAt: string;
+  finishedAt: string | null;
+  revertedAt: string | null;
+}
+
+/**
+ * What the contradiction re-check WOULD cost. A dry run never spends it: the window is counted
+ * and priced, not judged. Tokens are derived from the real dedup prompt template and the actual
+ * content lengths in the window; `usd` is null unless a price for `model` is known.
+ */
+export interface ReconcileEstimate {
+  /** Active memories in the re-check window (saved since the last successful run). */
+  window: number;
+  llmCalls: number;
+  inputTokens: number;
+  outputTokens: number;
+  model: string;
+  usd: number | null;
+}
+
+export interface ReconcileOptions {
+  mode?: ReconcileMode;
+  trigger?: ReconcileTrigger;
+  ownerId?: string;
+  /**
+   * Which passes to run. Defaults to the user's saved settings. A trigger that must stay free
+   * (startup, idle) passes FREE_RECONCILE_PASSES explicitly rather than trusting the settings.
+   */
+  passes?: readonly ReconcilePass[];
+  /**
+   * Keep re-checking past the per-run ceiling until nothing is due or this much has been billed.
+   * Omitted means one page and stop, which is the default cost ceiling.
+   */
+  budgetUsd?: number | null;
+}
+
+/** What the model made of the uncertain entity pairs, when pass 3 ran. */
+export interface ReconcileArbitration {
+  /** Pairs sent to the model. One call each; the queue's own limit is the ceiling. */
+  calls: number;
+  folded: number;
+  /** Pairs the model said are different things. Recorded, so it is never asked again. */
+  rejected: number;
+  /** Left pending for a human: the model said unsure, or gave no usable answer. */
+  unsure: number;
+  settled: Array<{ conflictId: string; class: string; reason: string }>;
+}
+
+/**
+ * One belief checked by the contradiction re-check, emitted as it happens.
+ *
+ * A sweep is one model call per belief and can run for minutes, so the run has to say where it is
+ * rather than going quiet until the end. Only the re-check emits: the other passes finish in
+ * seconds and have nothing to report along the way.
+ */
+export interface ReconcileProgressEvent {
+  runId: string;
+  pass: ReconcilePass;
+  /** 1-based position in this run's sweep. */
+  checked: number;
+  /** Beliefs this run will check. Known up front, unlike a poll of the run row. */
+  total: number;
+  /** Possible contradictions recorded so far. */
+  found: number;
+  /** Billed so far on this run, from the provider's own figures. */
+  spentUsd: number;
+}
+
+export interface ReconcileReport {
+  run: ReconcileRun;
+  /** Every finding, surfaced or held back by a cap. */
+  actions: ReconcileAction[];
+  estimate: ReconcileEstimate;
+  /** Findings recorded but not shown, by kind, because a per-run cap was reached. */
+  heldBack: { retire: number; question: number; conflict: number };
+  /** Which passes actually ran, after settings and mode were applied. */
+  passes: ReconcilePass[];
+  /** Deterministic entity resolution, present when the 'entities' pass ran. */
+  entities?: EntityResolutionResult;
+  /** Model arbitration of uncertain entity pairs, present when the 'llm_entities' pass ran. */
+  arbitration?: ReconcileArbitration;
+  /** The existing conflict auto-resolver, present when the 'llm_conflicts' pass ran. */
+  autoResolved?: ConflictAutoResult;
+  /** The contradiction re-check, present when the 'llm_recheck' pass ran. */
+  recheck?: ReconcileRecheckResult;
+}
+
+/**
+ * What the contradiction re-check did. `claimed` against `verified` is the honest measure of how
+ * much the model asserted versus how much it could back with quotes from both memories.
+ */
+export interface ReconcileRecheckResult {
+  /** Beliefs that were due when the run started. */
+  window: number;
+  /** One per belief actually judged. The only number that costs money. */
+  calls: number;
+  /** Contradictions the model asserted. */
+  claimed: number;
+  /** Of those, the ones whose quotes were found in both memories. Only these are recorded. */
+  verified: number;
+  /** Beliefs still due when the run stopped. */
+  remaining: number;
+  /** What the run actually cost, from the provider's own billed figures. */
+  spentUsd: number;
+  spentInputTokens: number;
+  spentOutputTokens: number;
+  /**
+   * Why it stopped short. 'cap' is the per-run ceiling with no budget set, 'budget' is the spend
+   * limit, 'aborted' is a stop, 'unpriced' means a budget was set but the provider reported no
+   * cost so the run refused to page blind, and 'failed' means every call in a page failed. null
+   * means nothing is due any more.
+   */
+  stoppedBy: "budget" | "aborted" | "cap" | "unpriced" | "failed" | null;
+}
+
+export interface ReconcileRevertResult {
+  runId: string;
+  /** Memories returned to 'active'. */
+  restored: number;
+  /** Entity folds undone through revertEntityMerge. */
+  unfolded: number;
+  /** Actions left alone because the store moved on after the run. */
+  skipped: number;
 }

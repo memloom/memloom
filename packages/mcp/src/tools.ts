@@ -356,6 +356,59 @@ export async function resolveConflict(
   return `Resolved conflict ${args.conflictId} with "${args.action}" (reversible).`;
 }
 
+/**
+ * The re-check pass's unconfirmed findings, rendered so a caller can read the question without
+ * fetching either memory: the two verified quotes, the model's reason, and the id an answer
+ * quotes back. The memory ids trail so recall or history can be used on either side.
+ */
+export async function listPossibleContradictions(memloom: MemoryEngine): Promise<string> {
+  const possible = await memloom.possibleContradictions();
+  if (possible.length === 0) {
+    return "No unconfirmed contradictions are waiting. The consolidation pass raises them when it runs.";
+  }
+  return possible
+    .map((p) => {
+      const similarity = p.similarity === null ? "unknown" : `${Math.round(p.similarity * 100)}%`;
+      return [
+        `Possible contradiction ${p.id} (UNCONFIRMED, similarity ${similarity})`,
+        `  NEW:      ${p.newQuote}`,
+        `  EXISTING: ${p.oldQuote}`,
+        `  REASON:   ${p.reason}${p.model ? ` (${p.model})` : ""}`,
+        `  memories: new ${p.newMemory.id}, existing ${p.oldMemory.id}`,
+      ].join("\n");
+    })
+    .join("\n\n");
+}
+
+/**
+ * Confirm or dismiss one finding. Both answers are one-way for that pair, so a stale or
+ * already-answered id is relayed as a sentence: the caller should re-list rather than retry.
+ */
+export async function answerPossibleContradiction(
+  memloom: MemoryEngine,
+  args: { id: string; answer: "confirm" | "dismiss" },
+): Promise<string> {
+  try {
+    const result = await memloom.answerPossible(
+      args.id,
+      args.answer === "confirm" ? "approved" : "rejected",
+    );
+    if (result.conflictId) {
+      return (
+        `Confirmed: this is now conflict ${result.conflictId}. It needs resolving with ` +
+        "resolve_conflict (keep_new, keep_existing, keep_both, or merge), or the user can do it " +
+        "in the viewer."
+      );
+    }
+    return "Dismissed. That pair is recorded as not a contradiction and will never be raised again.";
+  } catch (err) {
+    if (/no unanswered/.test(failureMessage(err))) {
+      return `Nothing unconfirmed with id ${args.id}. It may have been answered already, or one of its memories has been superseded; call list_possible_contradictions for what is waiting now.`;
+    }
+    throw err;
+  }
+}
+
 export async function setSchemaEntryStatus(
   memloom: MemoryEngine,
   args: { kind: "entity_type" | "predicate"; name: string; status: "active" | "disabled" },

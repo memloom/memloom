@@ -1,0 +1,160 @@
+---
+title: "Reconciliation"
+description: "reconcile and its subcommands: the pass, its findings, and how to take a run back"
+icon: "rotate"
+---
+
+## Overview
+
+| Command | Does |
+| --- | --- |
+| `reconcile [--dry-run]` | Run the pass, or preview it |
+| `reconcile possible` | List the unconfirmed contradictions it found |
+| `reconcile yes <id>` / `no <id>` | Confirm one into a conflict, or dismiss it for good |
+| `reconcile stop <run id>` | End a run that is still going |
+| `reconcile undo <run id>` | Put back exactly what one run did |
+| `reconcile settings` | Print which passes are on |
+
+What each pass does and when a run happens on its own is in
+[Reconciliation](/concepts/reconciliation).
+
+***
+
+## reconcile
+
+```bash
+memloom reconcile [--dry-run]
+```
+
+<Warning>
+  A bare `memloom reconcile` **acts**. `--dry-run` is the preview.
+</Warning>
+
+Which passes run comes from your saved settings, so a bare run is the two free passes unless you
+turned others on. A dry run reports everything, changes nothing, and never calls a model however
+your settings are set, so it is always free.
+
+```
+reconcile (dry run)
+scanned 412 active memories
+
+would retire 2:
+  9f3c1a04  identical content to 41b0e2d8, which is older and stays active
+  c7d5e910  41b0e2d8 replaced this belief but it is still current
+
+entities:
+  would fold 3 name variants (certain)
+  4 uncertain pairs would go to the conflicts tab
+
+412 memories are due a contradiction re-check
+  re-checking all of them is about $1.45
+  one run takes the 200 that have waited longest
+
+no memory was changed. this run is logged as 0f2c7b18-...
+```
+
+The last line always names the run, so undoing one never means looking the id up.
+
+<Note>
+  A price is only shown for a model whose rates memloom knows. Anything else prints tokens and no
+  dollar figure, rather than a confident wrong number.
+</Note>
+
+A run with the contradiction re-check on is minutes of sequential calls and the CLI waits for it.
+Watch it live in the viewer's Settings tab if you want per-belief progress. Only one applying run
+at a time; a second is refused while the first is live.
+
+***
+
+## reconcile possible
+
+```bash
+memloom reconcile possible
+```
+
+```
+3 unconfirmed contradictions. about 2 in 5 are real, so read both quotes before answering.
+
+similarity 71%, judged by google/gemini-2.5-flash
+  NEW:      the release is scheduled for the 14th
+  EXISTING: the release is deferred until the extractor work lands
+  why:      deferred then scheduled
+  id:       8a41c0e2-...
+```
+
+Both quotes were verified against the two memories when the finding was written, so they are the
+whole question. Reading them beats opening two beliefs and comparing.
+
+## reconcile yes, reconcile no
+
+```bash
+memloom reconcile yes <id>    # confirm: creates a real conflict to resolve
+memloom reconcile no <id>     # dismiss: that pair is never raised again
+```
+
+The id comes from `reconcile possible`, not a run id. An id already answered, or one whose
+memories the store has moved on from, prints a pointer back to the list rather than an error.
+
+<Note>
+  A rejection is not waste. It records what you do not consider a contradiction.
+</Note>
+
+***
+
+## reconcile stop
+
+```bash
+memloom reconcile stop <run id>
+```
+
+Whatever the run already checked stays checked, so stopping costs nothing beyond the calls already
+paid for and the next run resumes there.
+
+This also works on a run whose daemon died mid-sweep. That is the only way such a row stops
+counting as live, and until it does a new applying run is refused.
+
+## reconcile undo
+
+```bash
+memloom reconcile undo <run id>
+```
+
+```
+restored 4 memories, unfolded 2 entities, skipped 1 the store moved on from
+```
+
+| What the run did | What undo does |
+| --- | --- |
+| Retired a memory | Restores it, only while still stale and nothing else staled it since |
+| Folded an entity | Returns it with its original id and vector |
+| Raised a conflict nobody answered | Takes it back out of the queue |
+| Raised a conflict you answered | Leaves it, counted as skipped. Your answer outranks the undo |
+
+Possible contradictions are findings rather than changes, so undo leaves them. Undoing twice does
+nothing the second time. The viewer's Console tab has undo and stop next to the run history.
+
+***
+
+## reconcile settings
+
+```bash
+memloom reconcile settings
+```
+
+| Setting | Pass | Cost |
+| --- | --- | --- |
+| `invariants` | Fix memory principle violations | free, on |
+| `entities` | Resolve duplicate entities | free, on |
+| `llm_entities` | Let a model resolve uncertain entity pairs | one call per pair |
+| `llm_conflicts` | Let a model resolve memory conflicts | one call per conflict |
+| `llm_recheck` | Look for contradictions the save path could not see | up to 200 calls per run |
+| `startupCatchUp` | Free passes on startup when the last run is over 36 hours old | free |
+
+The CLI prints them and does not change them. Toggle in the viewer's Settings tab or with
+`POST /memory/reconcile/settings`. They live in the store, not `config.env`, so a change needs no
+restart.
+
+<Note>
+  `RECONCILE_ENABLED=0` is a separate kill switch. It refuses any run that was asked to act and
+  stops automatic runs, leaving previews working. See [Configuration](/guides/configuration).
+</Note>

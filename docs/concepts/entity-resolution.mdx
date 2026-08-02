@@ -1,86 +1,67 @@
 ---
 title: "Entity resolution"
 description: "Fold the several spellings of one thing into one entity, reversibly"
+icon: "diagram-project"
 ---
 
-## The problem
+## Overview
 
-Extraction echoes whatever spelling the text used. Over a few thousand memories the graph
-ends up holding `Claude Opus 4.8` and `Opus 4.8`, `Postgres` and `PostgreSQL`, `Claude Code`
-and `claude-code` as separate entities.
+Extraction echoes whatever spelling the text used, so a graph accumulates `Postgres` and
+`PostgreSQL`, `Claude Code` and `claude-code`, as separate entities. Recall anchors a query to at
+most 10 entities, so every duplicate spends a slot naming something another slot already names.
 
-That is not just untidy. Recall's [entity arm](/concepts/retrieval) anchors a query to at
-most **10** entities, so every duplicate spelling spends one of those slots naming a thing
-another slot already names. Retrieval gets worse as the graph grows.
+<CardGroup cols={3}>
+  <Card title="Lexical, not semantic" icon="spell-check">
+    Rules find the pairs. A model only ever confirms one, and never proposes one.
+  </Card>
+  <Card title="Asks when unsure" icon="circle-question">
+    One rule folds without asking. Everything else becomes a question in the Conflicts tab.
+  </Card>
+  <Card title="Reversible" icon="rotate-left">
+    A merge record stores every edge that moved, so revert restores the original row exactly.
+  </Card>
+</CardGroup>
 
-Name-key resolution catches only the cheapest case (`@memloom/core` and `memloom/core`).
-Everything else needs a decision.
+***
 
-## What a fold is
+## What a fold does
 
-A fold picks one entity as the **canonical** and moves the other into it:
+One entity becomes the **canonical** and the other moves into it:
 
-- every mention edge and typed relationship repoints to the canonical,
-- the absorbed spelling is recorded as an **alias**, with the original row's id and vector,
-- a **merge record** stores exactly which edges moved and which were deactivated.
+- Every mention and relationship repoints to the canonical.
+- The absorbed spelling becomes an **alias**, keeping the original id and vector.
+- A **merge record** stores which edges moved and which were deactivated.
 
-Nothing is destroyed. Edges are deactivated, never deleted, and the merge record is what
-makes revert exact rather than approximate.
+Nothing is deleted. The alias is also what extraction looks up on the next mention, so a new
+memory saying `Opus 4.8` lands on the canonical instead of minting the row again.
 
-The alias row does more than document the fold. It is also the lookup extraction does on
-every mention, so the next memory that says `Opus 4.8` lands on the canonical instead of
-minting the row again. Without it a fold quietly undoes itself as soon as new content
-arrives, which no amount of re-running the backfill would reveal.
+***
 
-## How candidate pairs are found
+## How pairs are judged
 
-Candidate generation is **lexical and deterministic**. Measured against a real 1794-entity
-store, the duplicates a graph accumulates are spelling variants, not synonyms, so an
-embedding is used only to *confirm* a pair the rules already found. It never pairs two
-entities on its own. That keeps precision high and costs nothing per pair.
-
-Entities are bucketed by their words and by the first characters of their normalized key, so
-only plausible pairs are ever compared. Each pair then gets one of three verdicts.
-
-### The rules that say no
-
-These run first, because the pairs that look most similar are often the ones that must stay
-apart.
-
-| Rule | Rejects | Why |
-| --- | --- | --- |
-| Version disagreement | `Claude Opus 4.8` / `Claude Opus 4.7` | Two releases of one family are different things |
-| One-sided version | `Postgres 15` / `Postgres` | A pinned release is a relationship to keep, not a spelling |
-| Extension or domain | `memloom.ts` / `memloom` | A file or domain named after a thing is not the thing |
-
-### The one rule that folds
-
-Two names whose **normalized keys are identical** after casefolding and dropping every
-non-alphanumeric character. `Claude Code`, `claude-code` and `ClaudeCode` all collapse to
-`claudecode`. This is the only case applied without asking, with two escapes:
-
-- keys shorter than 3 characters ask instead (`C#` and `C` collide),
-- a punctuation-prefixed name asks instead (`.next` is a build directory, `Next` is a
-  framework).
-
-### The rules that ask
+Entities are bucketed by their words and key prefix, so only plausible pairs are compared. Each
+pair gets one verdict.
 
 | Rule | Example | Verdict |
 | --- | --- | --- |
-| Contained phrase, two or more contiguous words | `Opus 4.8` inside `Claude Opus 4.8` | review |
-| Spelling variant within a length-scaled edit distance | `Postgres` / `PostgreSQL` | review |
+| Identical normalized key | `Claude Code` / `claude-code` | **fold** |
+| Version disagreement | `Opus 4.8` / `Opus 4.7` | reject |
+| One-sided version | `Postgres 15` / `Postgres` | reject |
+| Extension or domain | `memloom.ts` / `memloom` | reject |
+| Contained phrase, two or more words | `Opus 4.8` in `Claude Opus 4.8` | ask |
+| Spelling variant within edit distance | `Postgres` / `PostgreSQL` | ask |
 
-People are the one exception to the two-word requirement. A human's name is written at
-several lengths and means one human, so `Ada` pairs with `Ada Lovelace`. Both
-sides must be typed `person`, and it still only asks: `John` against both `John Smith` and
-`John Doe` is a real question.
+<Accordion title="The edge cases in those rules" icon="scissors">
+  The identical-key rule casefolds and drops non-alphanumerics, so `ClaudeCode` collapses too. Two
+  escapes send it to review instead: keys under 3 characters (`C#` collides with `C`), and
+  punctuation-prefixed names (`.next` is a directory, `Next` is a framework).
 
-<Note>
-Three of these rules exist because of what a real store did to earlier versions. Naive word
-containment produced **1129** questions, because a one-word name like `memloom` sits inside
-`memloom serve`, `MEMLOOM_HOME` and `@memloom/cli`. Requiring two contiguous words, refusing
-punctuation-prefixed names, and scaling edit tolerance with name length took that to **241**.
-</Note>
+  People are exempt from the two-word requirement, since a human's name is written at several
+  lengths: `Ada` pairs with `Ada Lovelace`. Both sides must be typed `person`, and it still only
+  asks, because `John` against `John Smith` and `John Doe` is a real question.
+</Accordion>
+
+***
 
 ## Running it
 
@@ -89,117 +70,76 @@ POST /memory/entities/resolve  {"dryRun": true}   # what it would do
 POST /memory/entities/resolve  {}                 # do it
 ```
 
-The pass is idempotent and safe to re-run. It reports what it did:
+Idempotent and safe to re-run.
 
 | Field | Meaning |
 | --- | --- |
 | `examined` | Entities considered |
-| `pairs` | Pairs that survived bucketing and were judged |
-| `merged` | Folds applied without asking |
-| `queued` | Uncertain folds written to the review queue |
-| `deferred` | Uncertain folds not written because the queue is already full |
-| `skipped` | Pairs already merged, queued, or settled as distinct |
+| `pairs` | Pairs judged |
+| `merged` | Folded without asking |
+| `queued` | Written to the review queue |
+| `deferred` | Held back because the queue is full |
+| `skipped` | Already merged, queued, or settled |
 
-`deferred` exists so that "nothing queued" never hides "there was more to ask about". The
-queue is capped at 50 pending questions so entity folds cannot bury the memory conflicts the
-surface exists for; the lowest-impact questions wait, ranked by the weaker side's mention
-count, and a later pass picks them up as answers come in.
+The queue caps at 50 pending questions so entity folds cannot bury memory conflicts. `deferred`
+is there so "nothing queued" never hides "there was more to ask".
 
-## Uncertain folds go to the conflicts queue
+***
 
-An uncertain fold is the same shape of question as a contradiction between two memories:
-something is inconsistent and only you can settle it. So it lands in the **same** place, with
-the same reversibility. See [Conflicts](/concepts/conflicts).
+## Reviewing the questions
+
+Uncertain folds land in the [Conflicts](/concepts/conflicts) queue, in the same place and with the
+same reversibility as a contradiction between two memories.
 
 | Action | Effect |
 | --- | --- |
 | **keep_existing** | Fold the queued spelling into the candidate |
 | **keep_new** | Fold the candidate into the queued spelling |
-| **keep_both** | They are different things; stop asking |
-| **merge** | Not applicable to entities; a reconciled *name* is a rename, not a merge |
+| **keep_both** | Different things, stop asking |
 
 <Note>
-On an entity row, `keep_both` means "settled, do not ask again". It is written both by you
-choosing that the two are distinct and by the resolver settling a question that became moot
-because both sides were already folded together. Do not read the decision log as a record of
-human judgment about distinctness.
+  On an entity, `keep_both` means "settled, do not ask again". The resolver also writes it when a
+  question became moot, so the decision log is not purely a record of human judgement.
 </Note>
 
-Answering one question can dissolve another: one entity is often the candidate in many
-queued pairs, and folding it away leaves the rest naming a row that no longer exists. Those
-rows stay answerable, because resolution follows both sides through the alias chain first.
+***
 
-## Recall follows folds
+## Reverting
 
-The fold deletes the absorbed row, so without help a query spelled the old way would stop
-anchoring on anything, and folding would make retrieval **worse**. The absorbed vector is not
-gone, though: it moved to the alias row. The entity arm anchors on entity vectors and alias
-vectors together, mapping every alias hit to its canonical.
+```bash
+POST /memory/entities/merges/{id}/revert
+```
 
-Canonical and alias are deduplicated before the limit is applied, since two spellings of one
-name have close vectors and would otherwise spend two anchor slots naming one entity.
-
-The net effect on a real store: 38 correct automatic folds freed 37 entities from competing
-for the anchor budget, and a query using a folded spelling now reaches everything the
-canonical is attached to.
-
-## Everything is reversible
-
-`POST /memory/entities/merges/{id}/revert` restores the absorbed entity with its **original
-id**, type, vector and creation time, repoints exactly the edges the merge moved, reactivates
-exactly the edges it deactivated, and removes the alias.
-
-The original id matters: deactivated edges still point at it, so a restored row must be the
-same row, not a new one wearing the same name.
+Restores the absorbed entity with its original id, type, vector and creation time, repoints
+exactly the edges the merge moved, and removes the alias. The original id matters because
+deactivated edges still point at it.
 
 <Warning>
-Deleting an entity that an unreverted fold points at is **refused**. The alias row is what
-carries the absorbed entity's id and vector, so deleting the canonical would make the fold
-permanent and sweep the absorbed row's mentions with it. Revert the fold first, then delete
-whichever entity you meant.
+  Deleting an entity that an unreverted fold points at is refused. The alias carries the absorbed
+  entity's id and vector, so deleting the canonical would make the fold permanent. Revert first,
+  then delete.
 </Warning>
 
-## Asking the graph who is connected to what
+***
 
-Once identity is settled, the graph can answer questions about connections rather than
-content:
+## Asking who is connected to what
 
 ```bash
 GET /memory/entities/related?q=Bob&type=person
 ```
 
-The target can be an id, a name, or **a folded-away spelling**: an alias resolves to its
-canonical and the answer says which spelling was asked for. Two kinds of connection come back
-separately, never blended into one score:
+The target can be an id, a name, or a folded-away spelling. Two kinds of connection come back
+separately and are never blended into one score:
 
-- **Stated** relationships are typed predicate edges extraction asserted (`works_on`,
-  `uses`, `part_of`), with their direction and the extractor's confidence.
-- **Co-mention** is entities named by the same sources, with the count. Weaker evidence, so it
-  never outranks a stated link.
+- **Stated** relationships are typed edges extraction asserted, with direction and confidence.
+- **Co-mention** is entities named by the same sources, with a count. Weaker, so it never
+  outranks a stated link.
 
-Folding feeds this directly: because the absorbed spelling's mention edges were repointed, a
-fold makes a neighbourhood more complete rather than merely tidier.
+In the viewer this is the traverse panel on the Graph tab. Agents use
+[`related_entities`](/mcp/tools).
 
-In the Console this is the **traverse** panel on the Graph tab. Searching an entity dims the
-canvas to its neighbourhood, so the answer is the part of the graph still lit; clicking a
-neighbour follows it and the lit region moves one hop. Agents reach the same thing through the
-[`related_entities`](/mcp/tools#related_entities) MCP tool.
+## What it will not do
 
-## What it deliberately will not do
-
-A nickname that shares no letters with the name, like `Bob` against `Robert`, will
-never be proposed. That is not a lexical judgement and no rule here pretends otherwise.
-
-Declaring it yourself works and needs nothing new: `POST /memory/entities/{id}/merge` folds
-any two entities regardless of spelling, records the same reversible merge, and every future
-mention of the alias resolves to the canonical. The missing piece is only a channel that
-*proposes* such a pair, which today is you.
-
-## Where to do this
-
-| Surface | How |
-| --- | --- |
-| Console, Conflicts tab | "Duplicate entities": Find, three actions per card, and a Folded list with Revert |
-| Console, Graph tab | The **traverse** panel: search an entity, and the canvas dims to its neighbourhood |
-| HTTP | `POST /memory/entities/resolve`, `GET /memory/entities/conflicts`, `GET /memory/entities/merges`, `POST /memory/entities/merges/{id}/revert`, `GET /memory/entities/related` |
-| MCP | `related_entities` for traversal; folds are reviewed by a human, not an agent |
+A nickname sharing no letters with the name, `Bob` against `Robert`, is never proposed. That is
+not a lexical judgement. You can still declare it yourself with
+`POST /memory/entities/{id}/merge`, which records the same reversible merge.

@@ -9,6 +9,8 @@ import {
   MEMORY_TYPES,
   type Memory,
   type MemoryType,
+  type PossibleContradiction,
+  type ReconcileReport,
   supportedExtensions,
 } from "@memloom/core";
 import { runAgentMemoryImport } from "./agent-memory.js";
@@ -56,6 +58,165 @@ function describeSource(m: Memory): string | null {
   return parts.join(" ");
 }
 
+function tokens(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
+}
+
+/**
+ * A run's report. Repairs first (what the run acted on), then folds, then what it asked the
+ * user, then what it only noticed, then what the contradiction pass would have spent. The last
+ * line says whether anything changed and names the run, so undoing it never requires going and
+ * looking the id up.
+ */
+export function formatReconcileReport(report: ReconcileReport): string {
+  const dry = report.run.mode === "dry_run";
+  const would = dry ? "would " : "";
+  const retire = report.actions.filter((a) => a.kind === "retire");
+  const folds = report.actions.filter((a) => a.kind === "fold");
+  const questions = report.actions.filter((a) => a.kind === "question" && a.surfaced);
+  // Pairs a model settled are named under arbitration below, so this is what the run put to
+  // the user and left there.
+  const arbitrated = new Set((report.arbitration?.settled ?? []).map((s) => s.conflictId));
+  const raised = report.actions.filter(
+    (a) => a.kind === "conflict" && !arbitrated.has(a.conflictId ?? ""),
+  );
+  const lines: string[] = [];
+
+  lines.push(dry ? "reconcile (dry run)" : "reconcile");
+  lines.push(`scanned ${report.run.scanned} active memories`, "");
+
+  lines.push(retire.length === 0 ? "nothing to retire" : `${would}retire ${retire.length}:`);
+  for (const action of retire.filter((a) => a.surfaced)) {
+    lines.push(`  ${action.memoryId?.slice(0, 8)}  ${action.reason}`);
+  }
+  if (report.heldBack.retire > 0) {
+    lines.push(`  ...and ${report.heldBack.retire} more, held back by this run's cap`);
+  }
+
+  // The entity pass reports counts on a dry run (nothing was folded, so there is nothing to
+  // name) and one line per fold once it has actually run.
+  if (report.entities) {
+    const { merged, queued, deferred } = report.entities;
+    lines.push("", "entities:");
+    if (merged === 0 && queued === 0) lines.push("  no duplicate names found");
+    if (merged > 0 && dry) lines.push(`  would fold ${merged} name variants (certain)`);
+    for (const fold of folds) lines.push(`  ${fold.reason}`);
+    if (queued > 0) {
+      lines.push(`  ${queued} uncertain pairs ${dry ? "would go" : "went"} to the conflicts tab`);
+    }
+    if (deferred > 0) lines.push(`  ${deferred} more are waiting for that queue to drain`);
+  }
+
+  // What the paid passes did, when they are on. Their calls are the only thing a run spends,
+  // so the count is part of the report rather than something to go and look up.
+  if (report.arbitration) {
+    const { calls, folded, rejected, unsure } = report.arbitration;
+    lines.push("", `a model settled ${folded + rejected} uncertain pairs in ${calls} calls:`);
+    lines.push(`  ${folded} folded, ${rejected} kept apart, ${unsure} left for you`);
+  }
+  // The re-check is the only pass that sweeps, so its report says what it cost and what it left.
+  if (report.recheck) {
+    const { calls, claimed, verified, remaining } = report.recheck;
+    lines.push("", `contradiction re-check: swept ${calls} beliefs against their 20 nearest`);
+    lines.push(`  kept ${verified} of ${claimed} the model claimed`);
+    if (claimed > verified) {
+      lines.push(
+        `  ${claimed - verified} dropped: no verbatim quote for the clashing claim on both sides`,
+      );
+    }
+    if (remaining > 0) lines.push(`  ${remaining} beliefs left for the next run`);
+    if (verified > 0) lines.push("  waiting for you in the conflicts tab");
+  }
+  if (report.autoResolved) {
+    const { examined, resolved } = report.autoResolved;
+    lines.push("", `a model re-judged ${examined} pending conflicts and resolved ${resolved}`);
+  }
+
+  if (raised.length > 0) {
+    lines.push("", `asked in the conflicts tab (${raised.length}):`);
+    for (const action of raised) {
+      const id = action.memoryId ? `${action.memoryId.slice(0, 8)}  ` : "";
+      lines.push(`  ${id}${action.reason}`);
+    }
+    if (report.heldBack.conflict > 0) {
+      lines.push(`  ...and ${report.heldBack.conflict} more, left for a later run`);
+    }
+  }
+
+  if (questions.length > 0) {
+    lines.push("", "noticed, not fixed:");
+    for (const action of questions) {
+      const id = action.memoryId ? `${action.memoryId.slice(0, 8)}  ` : "";
+      lines.push(`  ${id}${action.reason}`);
+    }
+    if (report.heldBack.question > 0) {
+      lines.push(`  ...and ${report.heldBack.question} more, held back so this stays readable`);
+    }
+  }
+
+  // Priced only when the pass did not run, since a run that swept reports what it actually did.
+  // A dry run always lands here, which is the point: the bill is stated before it can be spent.
+  const { estimate } = report;
+  if (!report.recheck) {
+    lines.push("", `${estimate.window} memories are due a contradiction re-check`);
+    if (estimate.window > 0) {
+      const price = estimate.usd === null ? "" : `, about $${estimate.usd.toFixed(2)}`;
+      lines.push(
+        `  re-checking all of them would make ${estimate.llmCalls} LLM calls, about ` +
+          `${tokens(estimate.inputTokens)} in / ${tokens(estimate.outputTokens)} out ` +
+          `with ${estimate.model}${price}`,
+        "  one run takes the 200 that have waited longest, so the backlog drains over several",
+      );
+    }
+  }
+
+  const changed = report.run.retired + report.run.folded;
+  lines.push(
+    "",
+    dry || changed === 0
+      ? `no memory was changed. this run is logged as ${report.run.id}`
+      : `changed ${changed}. undo it all with: memloom reconcile undo ${report.run.id}`,
+  );
+  return lines.join("\n");
+}
+
+/**
+ * The unconfirmed contradictions, one block each.
+ *
+ * The two quotes were verified against both memories when the finding was written, so they are
+ * the whole question: reading them is faster than opening two beliefs and comparing them. The
+ * precision warning leads because most of this list is wrong, and answering as if it were not
+ * is how a real conflict queue fills with noise.
+ */
+export function formatPossibleContradictions(possible: PossibleContradiction[]): string {
+  if (possible.length === 0) {
+    return "no unconfirmed contradictions. the contradiction re-check pass raises them when it runs.";
+  }
+  const lines = [
+    `${possible.length} unconfirmed ${possible.length === 1 ? "contradiction" : "contradictions"}. ` +
+      "about 2 in 5 are real, so read both quotes before answering.",
+  ];
+  for (const p of possible) {
+    const similarity =
+      p.similarity === null
+        ? "similarity unknown"
+        : `similarity ${Math.round(p.similarity * 100)}%`;
+    lines.push(
+      "",
+      `${similarity}${p.model ? `, judged by ${p.model}` : ""}`,
+      `  NEW:      ${p.newQuote}`,
+      `  EXISTING: ${p.oldQuote}`,
+      `  why:      ${p.reason}`,
+      `  id:       ${p.id}`,
+    );
+  }
+  lines.push(
+    "",
+    "answer one with: memloom reconcile yes <id> (a real conflict) or memloom reconcile no <id> (never ask again)",
+  );
+  return lines.join("\n");
+}
+
 // A path argument may be a file or a directory: directories are scanned recursively for
 // extensions the extractor registry supports; everything else is ignored.
 function collectContextFiles(path: string): string[] {
@@ -97,6 +258,10 @@ Usage: memloom <command> [args]
                        provider (run after switching providers; daemon must be stopped)
   auto-index [on|off]  show or set background entity extraction after saves/ingests
   conflicts [auto]     list pending conflicts; auto resolves the obvious ones with the LLM
+  reconcile                consolidation pass: repair, fold, and ask about the rest,
+                       changing no memories and spending nothing
+  reconcile possible       the unconfirmed contradictions it found; answer one with
+                       reconcile yes <id> or reconcile no <id>
   import sessions      distill recent agent sessions into memories (--dry-run first)
   import agent-memory  bring in memories your agents already saved on disk (Claude Code
                        memory folders, Copilot); no distillation step
@@ -349,6 +514,48 @@ resolution is reversible.
          memory was recorded and the transcript excerpt it came from. Decisive
          verdicts are applied (one LLM call per conflict, all revertable);
          anything the model is unsure about stays pending for you.`,
+
+  reconcile: `memloom reconcile [--dry-run]
+       memloom reconcile possible
+       memloom reconcile yes <id> | memloom reconcile no <id>
+       memloom reconcile stop <run id>
+       memloom reconcile undo <run id>
+       memloom reconcile settings
+
+The consolidation pass: memloom goes over its own store, repairs what it can
+prove is wrong, folds duplicate entity names, and asks about the rest.
+
+  --dry-run   report everything and change nothing
+  possible    the unconfirmed contradictions the re-check found, with the two
+              quotes that make each one answerable
+  yes <id>    confirm one: it becomes a real conflict you can resolve
+  no <id>     dismiss one: that pair is never raised again
+  stop <id>   stop a run that is still going
+  undo        put back exactly what one run did, and only that run
+  settings    print which passes are on
+
+What it repairs on its own, because SQL proves it and the undo is exact:
+  duplicate content   two identical active memories (the older one is kept)
+  superseded, live    a memory something replaced that is still being recalled
+  entity variants     "Claude Code" and "claude-code" as two entities
+
+What it only asks about, because the fix is a judgment call:
+  live heads          one belief with more than one current version
+  retired, no trail   a memory that is stale with nothing recording why
+  entity invariants   folds the store half-applied
+
+Retiring a memory means status 'stale', never deletion: it stops showing up in
+recall, stays in its version history, and undo puts it back.
+
+The contradiction re-check is right about 2 times in 5, so what it finds never
+touches the conflict queue on its own. Each finding waits in "reconcile possible"
+until you answer it: "yes" promotes it into a real conflict, "no" retires the
+pair for good. A rejection is not waste, it is a labelled example of what you
+do not consider a contradiction.
+
+Two passes can use a model to resolve uncertain entity pairs and pending
+contradictions. They cost money and are off until you turn them on in the
+viewer's Settings tab. Set RECONCILE_ENABLED=0 to stop any run from acting at all.`,
 
   context: `memloom context <add|list|remove>
 
@@ -972,6 +1179,78 @@ export async function run(argv: readonly string[]): Promise<void> {
             "Browse them all in the viewer (memloom ui), or let the LLM take a pass: memloom conflicts auto",
         );
       }
+      return;
+    }
+
+    case "reconcile": {
+      const [sub, ...args] = rest;
+      const id = args[0] ?? "";
+      const subcommands = ["possible", "yes", "no", "stop", "undo", "settings"];
+      // A misspelled subcommand must not reach the run path: with no subcommand this command
+      // retires and folds memories, which is not what a typo asked for. Checked here with the
+      // missing arguments below, before connect(), so neither case starts a daemon.
+      if (sub !== undefined && !sub.startsWith("-") && !subcommands.includes(sub)) {
+        throw new Error(`usage: memloom reconcile [--dry-run|${subcommands.join("|")}]`);
+      }
+      if ((sub === "undo" || sub === "stop") && !id) {
+        console.log(`usage: memloom reconcile ${sub} <run id>`);
+        return;
+      }
+      if ((sub === "yes" || sub === "no") && !id) {
+        console.log(`usage: memloom reconcile ${sub} <id>`);
+        return;
+      }
+      const engine = await connect();
+
+      // The subcommands come first: each takes an id, so none of them may be mistaken for a
+      // mode flag.
+      if (sub === "undo") {
+        const result = await engine.revertReconcile(id);
+        console.log(
+          `restored ${result.restored} memories, unfolded ${result.unfolded} entities` +
+            (result.skipped > 0 ? `, skipped ${result.skipped} the store moved on from` : ""),
+        );
+        return;
+      }
+      if (sub === "stop") {
+        const { stopped } = await engine.stopReconcile(id);
+        console.log(
+          stopped
+            ? `stopped run ${id}. what it already checked stays checked`
+            : `run ${id} was not running, so nothing was stopped`,
+        );
+        return;
+      }
+      if (sub === "possible") {
+        console.log(formatPossibleContradictions(await engine.possibleContradictions()));
+        return;
+      }
+      if (sub === "yes" || sub === "no") {
+        try {
+          const answer = await engine.answerPossible(id, sub === "yes" ? "approved" : "rejected");
+          console.log(
+            answer.conflictId
+              ? `confirmed. it is conflict ${answer.conflictId} now: resolve it in the viewer ` +
+                  "(memloom ui) or over MCP"
+              : "dismissed. that pair will never be raised again",
+          );
+        } catch (err) {
+          // An id that was already answered, or one whose beliefs the store has moved on from,
+          // is a stale copy-paste rather than a failure worth a stack trace.
+          const message = err instanceof Error ? err.message : String(err);
+          if (!/no unanswered/.test(message)) throw err;
+          console.log(
+            `nothing unconfirmed with id ${id}. list what is waiting: memloom reconcile possible`,
+          );
+        }
+        return;
+      }
+      if (sub === "settings") {
+        console.log(JSON.stringify(await engine.reconcileSettings(), null, 2));
+        return;
+      }
+      const mode = rest.includes("--dry-run") ? "dry_run" : "apply";
+      console.log(formatReconcileReport(await engine.reconcile({ mode, trigger: "manual" })));
       return;
     }
 

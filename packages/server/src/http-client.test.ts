@@ -18,6 +18,27 @@ const contradictory = new ScriptedLLMProvider(
   () => '[{"candidate": 1, "relation": "contradictory", "reason": "different"}]',
 );
 
+// The two beliefs the re-check pass is scripted to clash, and a model that quotes both verbatim
+// so the finding survives verification. The save path is answered separately and sees nothing,
+// which is the situation that pass exists for.
+const OLD_BELIEF = "the deploy target is fly.io";
+const NEW_BELIEF = "we run on railway now";
+const recheckArbiter = new ScriptedLLMProvider((prompt) => {
+  if (!prompt.startsWith("You compare a NEW memory")) return "[]";
+  if (!prompt.includes("These ARE contradictions")) {
+    return JSON.stringify([{ candidate: 1, relation: "complementary", reason: "unrelated" }]);
+  }
+  return JSON.stringify([
+    {
+      candidate: 1,
+      relation: "contradictory",
+      reason: "deploy target changed",
+      new_quote: NEW_BELIEF,
+      old_quote: OLD_BELIEF,
+    },
+  ]);
+});
+
 // One store for the whole file, emptied between tests. See test-store.ts: booting PGLite
 // costs about six seconds and the tests themselves cost milliseconds, so a store per test
 // spends effectively all of its wall clock on Postgres startup.
@@ -45,6 +66,36 @@ describe("HttpMemloomClient", () => {
     await memloom.init();
     const app = createServer(memloom);
     // Route the client's fetch at the Hono app directly (no network).
+    const fetchImpl: FetchLike = async (url, init) => app.request(url, init as RequestInit);
+    return new HttpMemloomClient("", fetchImpl);
+  }
+
+  /**
+   * A client over a store holding exactly one unconfirmed contradiction.
+   *
+   * The hashing embedding provider is not semantic, so the two beliefs are made each other's
+   * nearest neighbour by hand: cosine is all the re-check pass sees. The pass is driven on the
+   * engine because which passes run is not something the HTTP reconcile route takes.
+   */
+  async function clientWithPossible() {
+    await truncateAll(storage);
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: recheckArbiter,
+      autoIndexDelayMs: 999_999,
+    });
+    await memloom.init();
+    await memloom.save({ content: OLD_BELIEF });
+    await memloom.save({ content: NEW_BELIEF });
+    await storage.query(
+      `UPDATE memory_objects SET embedding = (
+         SELECT embedding FROM memory_objects WHERE content = $1 LIMIT 1
+       ) WHERE content = $2`,
+      [OLD_BELIEF, NEW_BELIEF],
+    );
+    await memloom.reconcile({ mode: "apply", passes: ["llm_recheck"] });
+    const app = createServer(memloom);
     const fetchImpl: FetchLike = async (url, init) => app.request(url, init as RequestInit);
     return new HttpMemloomClient("", fetchImpl);
   }
@@ -85,6 +136,38 @@ describe("HttpMemloomClient", () => {
     const id = conflicts[0]?.id as string;
     await c.resolveConflict(id, { action: "keep_new" });
     expect(await c.conflicts()).toHaveLength(0);
+  });
+
+  it("possible contradictions and answering one over HTTP", async () => {
+    const c = await clientWithPossible();
+    const possible = await c.possibleContradictions();
+    expect(possible).toHaveLength(1);
+    expect(possible[0]?.newQuote).toBe(NEW_BELIEF);
+    expect(possible[0]?.oldQuote).toBe(OLD_BELIEF);
+    expect(possible[0]?.reason).toContain("deploy target changed");
+    // Approving is what writes the conflict row, so the queue is empty until then.
+    expect(await c.conflicts()).toHaveLength(0);
+
+    const answer = await c.answerPossible(possible[0]?.id as string, "approved");
+    expect(answer.conflictId).toBeTruthy();
+    expect(await c.conflicts()).toHaveLength(1);
+    expect(await c.possibleContradictions()).toHaveLength(0);
+  });
+
+  it("a rejection over HTTP records the pair and raises nothing", async () => {
+    const c = await clientWithPossible();
+    const [finding] = await c.possibleContradictions();
+    const answer = await c.answerPossible(finding?.id as string, "rejected");
+    expect(answer).toEqual({ conflictId: null, decision: "rejected" });
+    expect(await c.possibleContradictions()).toHaveLength(0);
+    expect(await c.conflicts()).toHaveLength(0);
+  });
+
+  it("stopping a run that is not going answers instead of failing", async () => {
+    const c = await client();
+    expect(await c.stopReconcile("00000000-0000-0000-0000-000000000000")).toEqual({
+      stopped: false,
+    });
   });
 });
 

@@ -1,7 +1,7 @@
 {
   "$schema": "https://mintlify.com/docs.json",
   "theme": "mint",
-  "name": "memloom",
+  "name": "memloom docs",
   "colors": {
     "primary": "#d97706",
     "light": "#f59e0b",
@@ -25,13 +25,16 @@
     "tabs": [
       {
         "tab": "Documentation",
+        "icon": "book",
         "groups": [
           {
             "group": "Getting Started",
+            "icon": "rocket",
             "pages": ["index", "features", "use-cases"]
           },
           {
             "group": "Concepts",
+            "icon": "lightbulb",
             "pages": [
               "concepts/architecture",
               "concepts/memory-types",
@@ -39,12 +42,14 @@
               "concepts/distillation",
               "concepts/graph",
               "concepts/entity-resolution",
+              "concepts/reconciliation",
               "concepts/retrieval",
               "concepts/assistant"
             ]
           },
           {
             "group": "Guides",
+            "icon": "map",
             "pages": [
               "guides/agent-setup",
               "guides/extractors",
@@ -57,9 +62,11 @@
       },
       {
         "tab": "API Reference",
+        "icon": "code",
         "groups": [
           {
             "group": "Endpoints",
+            "icon": "code",
             "pages": [
               {
                 "group": "Memory",
@@ -112,7 +119,10 @@
                   "POST /memory/entities/merges/{id}/revert",
                   "PATCH /memory/entities/{id}",
                   "POST /memory/entities/{id}/merge",
-                  "DELETE /memory/entities/{id}"
+                  "DELETE /memory/entities/{id}",
+                  "GET /memory/entities/settled",
+                  "POST /memory/entities/resolve-auto",
+                  "POST /memory/entities/resolve-auto/stream"
                 ]
               },
               {
@@ -160,6 +170,23 @@
                 ]
               },
               {
+                "group": "Reconciliation",
+                "openapi": "openapi.yaml",
+                "expanded": false,
+                "pages": [
+                  "POST /memory/reconcile",
+                  "POST /memory/reconcile/stream",
+                  "GET /memory/reconcile/runs",
+                  "GET /memory/reconcile/runs/{id}/actions",
+                  "GET /memory/reconcile/settings",
+                  "POST /memory/reconcile/settings",
+                  "POST /memory/reconcile/{id}/revert",
+                  "POST /memory/reconcile/{id}/stop",
+                  "GET /memory/reconcile/possible",
+                  "POST /memory/reconcile/possible/{id}/answer"
+                ]
+              },
+              {
                 "group": "Import",
                 "openapi": "openapi.yaml",
                 "expanded": false,
@@ -194,37 +221,45 @@
       },
       {
         "tab": "CLI Reference",
+        "icon": "terminal",
         "groups": [
           {
             "group": "CLI",
+            "icon": "terminal",
             "pages": ["cli/overview"]
           },
           {
             "group": "Commands",
+            "icon": "square-terminal",
             "pages": [
               "cli/daemon",
               "cli/memories",
               "cli/import",
               "cli/graph",
               "cli/context",
-              "cli/conflicts"
+              "cli/conflicts",
+              "cli/reconcile"
             ]
           },
           {
             "group": "Connectors",
+            "icon": "link",
             "pages": ["cli/notion"]
           }
         ]
       },
       {
         "tab": "MCP Reference",
+        "icon": "plug",
         "groups": [
           {
             "group": "MCP",
+            "icon": "plug",
             "pages": ["mcp/setup", "mcp/tools"]
           },
           {
             "group": "Clients",
+            "icon": "laptop",
             "pages": [
               "mcp/clients/claude-code",
               "mcp/clients/claude-desktop",

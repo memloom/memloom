@@ -1,6 +1,7 @@
 ---
 title: "Context"
-description: "context add, list, remove: ingesting files as searchable context"
+description: "context add, list and remove: ingesting files as searchable context"
+icon: "file-lines"
 ---
 
 ## context add
@@ -9,57 +10,51 @@ description: "context add, list, remove: ingesting files as searchable context"
 memloom context add <path...>
 ```
 
-Ingest files or folders as searchable context (folders recurse). Text formats (`.md .txt
-.pdf`), web pages (any `http(s)://` URL), and recordings (`.mp3 .m4a .wav .flac .ogg .opus
-.aac .wma .mp4 .mkv .mov .webm .avi .m4v`) all land in the same store. Chunks are embedded
-into the same recall as memories, and each chunk carries its breadcrumb (file, heading
-path, PDF page, or timestamp and speaker for a recording), so results always say where
-they came from.
+Ingest files or folders, which recurse. Chunks embed into the same recall as memories and each
+carries its breadcrumb, so results always say where they came from.
 
-Recordings are transcribed and diarized on this machine and run through the ingest queue
-with per-stage progress; run `memloom audio setup` once to fetch the models. See
-[Recordings: audio & video](/guides/recordings) and the `audio` commands below.
+| Kind | Extensions |
+| --- | --- |
+| Text | `.md` `.txt` `.pdf` |
+| Web | any `http(s)` URL |
+| Audio | `.mp3` `.m4a` `.wav` `.flac` `.ogg` `.opus` `.aac` `.wma` |
+| Video | `.mp4` `.mkv` `.mov` `.webm` `.avi` `.m4v` |
 
-Documents are mirrors of the files they came from:
-
-- Re-adding an unchanged file is a no-op.
-- A changed file replaces its chunks.
-- When memloom's extraction pipeline improves, the pipeline version bumps and `context add`
-  re-ingests files whose bytes didn't change.
+Documents are mirrors of their files: re-adding an unchanged one is a no-op, a changed one
+replaces its chunks, and a pipeline improvement re-ingests files whose bytes did not change.
 
 <Note>
-A file can enter memloom two ways: linked from disk (this command, stays in sync on re-add)
-or uploaded as a snapshot (the viewer's upload). Linking is the stronger identity: linking a
-file that was previously uploaded absorbs the upload into the link, and uploading a file
-that is already linked is refused with a pointer to the existing document.
+  A file enters two ways: **linked** from disk with this command, or **uploaded** as a snapshot in
+  the viewer. Linking is the stronger identity. Linking a file that was uploaded absorbs the
+  upload; uploading one that is already linked is refused with a pointer to the document.
 </Note>
 
-## context list
+Recordings are transcribed and diarized on this machine through the ingest queue. Run
+`memloom audio setup` once first. See [Recordings](/guides/recordings).
+
+***
+
+## context list, context remove
 
 ```bash
-memloom context list
+memloom context list          # documents with ids and chunk counts
+memloom context remove <id>   # delete a document and its chunks
 ```
 
-List ingested documents with their ids and chunk counts.
+The file on disk is untouched. An uploaded recording's snapshot in memloom's uploads directory is
+deleted with it.
 
-## context remove
+***
 
-```bash
-memloom context remove <id>
-```
-
-Delete a document and its chunks from the store. The file on disk is untouched (an
-uploaded recording's snapshot in memloom's own uploads directory is deleted with it).
-
-## audio setup, models, use, status
+## audio
 
 ```bash
-memloom audio setup          # fetch the default speech model + speaker models, once per machine
-memloom audio models         # the catalog: sizes, languages, what's installed
+memloom audio setup          # fetch the speech and speaker models, once per machine
+memloom audio models         # the catalog: sizes, languages, what is installed
 memloom audio use <id>       # transcribe with a different model from now on
-memloom audio status         # selected model, installed models, speaker models, ffmpeg
+memloom audio status         # selected model, installed models, ffmpeg
 ```
 
-Models live in `~/.memloom/models` and are shared across projects. Transcripts are cached
-by file hash and model, so re-adding a recording, or switching back to a model you used
-before, costs nothing.
+Models live in `~/.memloom/models` and are shared across projects. Transcripts are cached by file
+hash and model, so re-adding a recording or switching back to a model you used before costs
+nothing.

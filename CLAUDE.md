@@ -21,6 +21,7 @@ Key routing rules:
 - Code review/diff check → invoke /review
 - Visual polish → invoke /design-review
 - Ship/deploy/PR → invoke /ship or /land-and-deploy
+- Writing any PR description (including inside /ship) → invoke /pr-description first
 - Save progress → invoke /context-save
 - Resume context → invoke /context-restore
 - Author a backlog-ready spec/issue → invoke /spec

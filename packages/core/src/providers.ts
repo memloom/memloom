@@ -14,9 +14,24 @@ export interface EmbeddingProvider {
   embed(texts: readonly string[]): Promise<number[][]>;
 }
 
+/**
+ * What one call actually cost. `usd` is the provider's own billed figure when it reports one, so
+ * a budget can be enforced against the real bill rather than a price table that goes stale.
+ */
+export interface LlmUsage {
+  inputTokens: number;
+  outputTokens: number;
+  usd: number | null;
+}
+
 export interface LLMProvider {
-  /** Return the model's text completion for a prompt. Structured-JSON helpers layer on top. */
-  complete(prompt: string): Promise<string>;
+  /**
+   * Return the model's text completion for a prompt. Structured-JSON helpers layer on top.
+   *
+   * `onUsage` fires once per call, before the text is returned, for callers that have to keep a
+   * running total while the work is still going.
+   */
+  complete(prompt: string, opts?: { onUsage?: (usage: LlmUsage) => void }): Promise<string>;
 }
 
 // Chat is a separate, optional capability: the assistant needs multi-turn messages with

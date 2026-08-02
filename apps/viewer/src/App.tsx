@@ -3,15 +3,16 @@ import { AssistantView } from "./AssistantView";
 import { api, type Conflict, type Graph } from "./api";
 import { ConflictsView } from "./ConflictsView";
 import { ConnectorsView } from "./ConnectorsView";
-import { ConsoleView } from "./ConsoleView";
+import { ConsoleView, eventsKey } from "./ConsoleView";
 import { DocumentsView } from "./DocumentsView";
-import { EntityFoldsView } from "./EntityFoldsView";
 import { GraphView } from "./GraphView";
 import { graphsEqual } from "./graphEquality";
 import { MemoriesView } from "./MemoriesView";
 import { prefetch } from "./prefetch";
 import { SchemaView } from "./SchemaView";
+import { SettingsView } from "./SettingsView";
 import { ThemeToggle } from "./ThemeToggle";
+import { Toaster } from "./toast";
 
 type Tab =
   | "graph"
@@ -21,7 +22,8 @@ type Tab =
   | "schema"
   | "conflicts"
   | "connectors"
-  | "console";
+  | "console"
+  | "settings";
 
 // Hovering a tab starts its data fetches before the click lands, and the same keys seed
 // each view's first render (see prefetch.ts), so a switch shows data rather than
@@ -42,13 +44,32 @@ const TAB_PREFETCH: Partial<Record<Tab, () => void>> = {
     void prefetch("entity-conflicts", api.entityConflicts).catch(() => {});
     void prefetch("entity-merges", api.entityMerges).catch(() => {});
   },
-  console: () => void prefetch("index-runs", api.indexRuns).catch(() => {}),
+  // The Console holds both histories now, so it warms both. The newest indexing session is
+  // expanded on arrival, so its log is warmed too: without that one chained fetch the Console
+  // still opens on a "loading…" body, which is the whole thing this is here to avoid.
+  console: () => {
+    void prefetch("index-runs", api.indexRuns)
+      .then((runs) => {
+        const newest = runs[0];
+        if (!newest) return;
+        void prefetch(eventsKey(newest.id), () => api.runEvents(newest.id)).catch(() => {});
+      })
+      .catch(() => {});
+    void prefetch("reconcile-runs", api.reconcileRuns).catch(() => {});
+  },
+  settings: () => {
+    void prefetch("reconcile-settings", api.reconcileSettings).catch(() => {});
+    void prefetch("reconcile-runs", api.reconcileRuns).catch(() => {});
+    void prefetch("auto-index", api.autoIndex).catch(() => {});
+  },
 };
 
 export function App() {
   const [tab, setTab] = useState<Tab>("graph");
   // A node the graph should select/center on next time it opens (set from an assistant source).
   const [graphFocus, setGraphFocus] = useState<string | null>(null);
+  // Same idea for the conflicts tab, set when a reconcile run's log line is clicked.
+  const [conflictFocus, setConflictFocus] = useState<string | null>(null);
   const [graph, setGraph] = useState<Graph | null>(null);
   // Once visited, the graph stays mounted (hidden) across tab switches so the canvas,
   // layout, zoom, and selection survive instead of rebuilding on every return.
@@ -106,6 +127,7 @@ export function App() {
               "conflicts",
               "connectors",
               "console",
+              "settings",
             ] as const
           ).map((t) => (
             <button
@@ -181,17 +203,33 @@ export function App() {
         {tab === "memories" && <MemoriesView />}
         {tab === "documents" && <DocumentsView onChanged={refresh} />}
         {tab === "schema" && <SchemaView onChanged={refresh} />}
-        {/* Entity folds sit above the memory conflicts, same tab: both are contradictions
-            the pipeline flagged, one about identity and one about content. */}
+        {/* One inbox for every kind of "you decide": entity folds, memory conflicts, and the
+            unconfirmed pairs reconciliation found. They share a rail so none of them is below the fold. */}
         {tab === "conflicts" && (
-          <>
-            <EntityFoldsView onChanged={refresh} />
-            <ConflictsView conflicts={conflicts} onChanged={refresh} />
-          </>
+          <ConflictsView
+            conflicts={conflicts}
+            onChanged={refresh}
+            focus={conflictFocus}
+            onFocusConsumed={() => setConflictFocus(null)}
+          />
         )}
         {tab === "connectors" && <ConnectorsView onChanged={refresh} />}
-        {tab === "console" && <ConsoleView onChanged={refresh} />}
+        {tab === "console" && (
+          <ConsoleView
+            onChanged={refresh}
+            onOpenConflict={(conflictId) => {
+              setConflictFocus(conflictId);
+              setTab("conflicts");
+            }}
+          />
+        )}
+        {tab === "settings" && <SettingsView onChanged={refresh} />}
       </main>
+      <Toaster
+        position="bottom-right"
+        // Styling lives in styles.css so both themes read from the same tokens as everything else.
+        toastOptions={{ className: "toast" }}
+      />
     </div>
   );
 }

@@ -1,85 +1,84 @@
 ---
 title: "The assistant"
 description: "Chat with your store: grounded answers, cited sources, any OpenRouter model"
+icon: "comments"
 ---
 
-## What it is
+## Overview
 
-`memloom ui` has an **assistant** tab: a chat that answers from your memories and your
-ingested files, and shows you exactly which passages it used. The model is told to answer personal questions only
-from what recall returns, to say plainly when your store has nothing on the subject,
-and to never invent memories.
+`memloom ui` has an assistant tab that answers from your memories and ingested files, and shows
+which passages it used. It is told to answer personal questions only from what recall returns, to
+say plainly when your store has nothing, and never to invent a memory.
 
-Ask *"what are my plans for today?"* and it searches memories asserted on today's date.
-Ask *"how does the ingest worker restart?"* and it pulls the runbook section you
-ingested last month, answers from it, and cites it. Ask *"what day is it?"* and it
-answers directly, with no retrieval.
+Ask "how does the ingest worker restart?" and it pulls the runbook section you ingested last
+month, answers from it, and cites it. Ask "what day is it?" and it just answers.
+
+***
 
 ## How a turn works
 
-One user message runs an agentic loop:
+<Steps>
+  <Step title="Decide whether to search" icon="scale-balanced">
+    The model sees your message, the history, and two tools: `recall_memory` and `read_source`.
+    Small talk and general knowledge get a direct answer with no retrieval.
+  </Step>
+  <Step title="Search" icon="magnifying-glass">
+    The query runs through the same [hybrid retrieval](/concepts/retrieval) as `memloom recall`.
+    Day-specific questions add a calendar filter.
+  </Step>
+  <Step title="Read further if needed" icon="book-open">
+    Passages are injected up to 8,000 characters. When the answer may live in a truncated part,
+    the model calls `read_source(n)`. It can reformulate and search again, capped at three calls,
+    and cannot repeat a query.
+  </Step>
+  <Step title="Answer with citations" icon="quote-left">
+    `[n]` markers follow sentences that used passage `n`. Markers pointing at passages that do not
+    exist are stripped server-side, so every citation is real.
+  </Step>
+</Steps>
 
-1. The model sees your message, the chat history, and two tools: `recall_memory` and
-   `read_source` (the full text of a passage an earlier recall truncated). It decides
-   whether to search at all. Small talk, arithmetic, and general knowledge get a direct
-   answer with no retrieval.
-2. If it searches, the query goes through the same
-   [hybrid retrieval](/concepts/retrieval) as `memloom recall`: vector, keyword, and
-   entity arms fused into one ranking over memories **and** context chunks. Day-specific
-   questions ("today", "yesterday", an exact date) add a calendar filter.
-3. Results come back as numbered passages, each injected up to 8,000 characters. A longer
-   passage (a markdown chunk is a whole heading section, up to 16k) is cut with a marker,
-   and the model calls `read_source(n)` when the answer may live in the cut part. It may
-   also reformulate and search again when the first results look off, capped at three
-   calls, and it cannot repeat a query it already made.
-4. The final answer streams in with `[n]` markers after sentences that used passage `n`.
-   Markers pointing at passages that don't exist are stripped server-side, so every
-   clickable citation points at a real passage.
+Every answer carries its sources: each passage with its similarity, its type, the exact text the
+model saw, and a jump into the graph.
 
-Every answer carries its **sources**: each passage with its similarity, its type
-(a `fact` memory, a `procedure`, a document section), the exact text the model saw, and
-a jump link that opens the source node in the graph tab.
+<Warning>
+  Retrieved passages are data, not instructions. A document saying "ignore your instructions" is
+  quoted like any other text. The assistant has no write tools, so the worst a hostile document
+  can do is word an answer badly.
+</Warning>
 
-Retrieved passages are treated as data. A document that says "ignore
-your instructions" gets quoted like any other text; the instructions inside it are
-never followed. The assistant has no write tools, so the
-worst a hostile document can do is word an answer badly.
+***
 
 ## Picking the model
 
-The composer's model picker lists every **tool-capable** model on OpenRouter, fetched
-live and grouped by provider, with input/output price per million tokens and the
-context window. The filter is tool-capable because the assistant depends on native
-tool calling: a model that can't call `recall_memory` can't ground itself.
+The composer lists every **tool-capable** model on OpenRouter, fetched live, grouped by provider,
+with prices and context windows. Tool calling is the filter because the assistant grounds itself
+by calling `recall_memory`.
 
-Your choice is remembered in the browser and rides each request; the daemon's
-`OPENROUTER_CHAT_MODEL` stays the default (labeled in the picker). Nothing is
-re-configured or restarted when you switch. Pick something cheap for quick lookups and
-something strong when the question is hard; the store underneath is the same.
+Your choice lives in the browser and rides each request. `OPENROUTER_CHAT_MODEL` stays the
+default. Nothing restarts when you switch, and the store underneath is the same.
+
+***
 
 ## Attaching files to a chat
 
-The **+** button uploads `.md`, `.txt`, or `.pdf` files into the current chat. They go
-through the normal pipeline (extract, chunk, embed) but are scoped to that one session:
+The **+** button uploads `.md`, `.txt` or `.pdf` into the current chat. They go through the normal
+pipeline but stay scoped to that session.
 
-- Only that chat's recall searches them, fused into the same ranking as your permanent
-  store. Other chats never see them.
-- They stay out of the documents tab, the graph, and entity extraction. A throwaway
-  PDF you attached to ask one question does not become permanent knowledge.
-- Deleting the chat deletes them. Removing a chip removes one file.
+| | |
+| --- | --- |
+| **Searchable there only** | Fused into that chat's recall. Other chats never see them |
+| **Not permanent** | Out of the documents tab, the graph, and entity extraction |
+| **Deleted with the chat** | Removing a chip removes one file |
 
-Attach before typing and the session is created on the spot; your first message names
-it. If you want a file in your permanent store instead, that's the documents tab.
+For a file you want to keep, use the documents tab instead.
 
 ## Sessions
 
-Chats persist in the store like everything else. The sidebar supports rename, star
-(starred chats sort first), delete, and search: keyword over titles and message text,
-plus embedding similarity over message content, so "that chat about the launch
-window" finds itself even if no message contains those words.
+Chats persist in the store. The sidebar has rename, star, delete, and search: keyword over titles
+and messages, plus embedding similarity, so "that chat about the launch window" finds itself even
+when no message contains those words.
 
-## Offline mode
-
-The assistant needs a chat-capable LLM. Without `OPENROUTER_API_KEY` the tab explains
-what to configure instead of pretending to work. Everything else in the viewer keeps
-running.
+<Note>
+  The assistant needs a chat-capable model. Without `OPENROUTER_API_KEY` the tab explains what to
+  configure instead of pretending to work. Everything else in the viewer keeps running.
+</Note>

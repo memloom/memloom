@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,7 +16,7 @@ import {
   truncateAll,
 } from "@memloom/core";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createServer } from "./index.js";
+import { createServer, reconcileActingDisabled } from "./index.js";
 
 // Exercise the HTTP surface end-to-end via Hono's request helper (no network needed).
 
@@ -377,6 +378,147 @@ describe("server", () => {
     expect(done?.chunks).toBeGreaterThan(0);
   });
 
+  // Windows "Copy as path" hands you the path already wrapped in double quotes. A shell eats
+  // them; a text box in the viewer does not, so they reached resolve(), which read the whole
+  // thing as relative and joined an absolute path onto the daemon's working directory.
+  it("accepts a path pasted with the quotes Explorer copies", async () => {
+    const server = await app();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-ctx-quoted-"));
+    const file = join(dir, "Aug 1, 4.39 PM.md");
+    writeFileSync(file, "# Recording notes\nthe staging database is Postgres");
+
+    const res = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: `"${file}"` }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { outcome: string }).toMatchObject({ outcome: "added" });
+
+    // A quote at one end only is part of the name, not a wrapper, so it is left alone and the
+    // path is still reported as missing rather than silently mangled into a different one.
+    const lopsided = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: `"${join(tmpdir(), "memloom-no-such-file")}` }),
+    });
+    expect(lopsided.status).toBe(400);
+  });
+
+  // The re-check's findings have their own read and their own answer route, deliberately apart
+  // from /memory/conflicts: at about 40 percent precision they must not reach the conflicts list,
+  // the queue-pressure gate, or the tab badge until a human confirms one.
+  it("possible contradictions are answerable and are not conflicts", async () => {
+    const server = await app();
+    const empty = await server.request("/memory/reconcile/possible");
+    expect(empty.status).toBe(200);
+    expect((await empty.json()) as { possible: unknown[] }).toEqual({ possible: [] });
+
+    // Answering something that does not exist is a 404, not a 500.
+    const missing = await server.request(
+      "/memory/reconcile/possible/aaaaaaaa-1111-2222-3333-444444444444/answer",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "rejected" }),
+      },
+    );
+    expect(missing.status).toBe(404);
+
+    // Only the two answers exist. 'snoozed' is a ledger state, not something a click can set.
+    const bad = await server.request(
+      "/memory/reconcile/possible/aaaaaaaa-1111-2222-3333-444444444444/answer",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ decision: "snoozed" }),
+      },
+    );
+    expect(bad.status).toBe(400);
+  });
+
+  // A sweep is minutes of model calls, so it streams like indexing does rather than holding one
+  // request open, and a run can be stopped from the Console.
+  it("reconcile streams NDJSON and a run can be stopped", async () => {
+    const server = await app();
+    const res = await server.request("/memory/reconcile/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "dry_run" }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/x-ndjson");
+    const lines = (await res.text())
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.some((l) => l.type === "error")).toBe(false);
+    const done = lines.at(-1) as { type: string; run?: { id: string; mode: string } };
+    expect(done.type).toBe("done");
+    expect(done.run?.mode).toBe("dry_run");
+
+    // Stopping a run that already finished changes nothing, and says so rather than failing.
+    const stop = await server.request(`/memory/reconcile/${done.run?.id}/stop`, { method: "POST" });
+    expect(stop.status).toBe(200);
+    expect((await stop.json()) as { stopped: boolean }).toEqual({ stopped: false });
+  });
+
+  // The switch promises to stop a run changing anything. It used to be checked only in the two
+  // handlers, so an idle or startup run went straight past it into memloom.reconcile().
+  it("RECONCILE_ENABLED=0 refuses an applying run and stops the scheduler acting", async () => {
+    const server = await app();
+    process.env.RECONCILE_ENABLED = "0";
+    try {
+      const applying = await server.request("/memory/reconcile", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "apply" }),
+      });
+      expect(applying.status).toBe(403);
+      expect(reconcileActingDisabled()).toBe(true);
+
+      // A preview changes nothing, so it is never refused.
+      const preview = await server.request("/memory/reconcile", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "dry_run" }),
+      });
+      expect(preview.status).toBe(200);
+    } finally {
+      delete process.env.RECONCILE_ENABLED;
+    }
+    expect(reconcileActingDisabled()).toBe(false);
+  });
+
+  it("a caller can name the re-check pass explicitly", async () => {
+    const server = await app();
+    const res = await server.request("/memory/reconcile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "dry_run", passes: ["invariants", "llm_recheck"] }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { passes: string[] }).toMatchObject({
+      passes: ["invariants", "llm_recheck"],
+    });
+  });
+
+  it("the fifth pass is off out of the box and settable", async () => {
+    const server = await app();
+    const before = (await (await server.request("/memory/reconcile/settings")).json()) as {
+      llm_recheck: boolean;
+    };
+    expect(before.llm_recheck).toBe(false);
+
+    const set = await server.request("/memory/reconcile/settings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ llm_recheck: true }),
+    });
+    expect(set.status).toBe(200);
+    expect((await set.json()) as { llm_recheck: boolean }).toMatchObject({ llm_recheck: true });
+  });
+
   it("context add stream rejects a missing path up front, not mid-stream", async () => {
     const server = await app();
     const res = await server.request("/context/add/stream", {
@@ -470,6 +612,34 @@ describe("server", () => {
     expect(list.entities).toHaveLength(1);
     const entity = list.entities[0];
     expect(entity).toMatchObject({ name: "Postgres", entityType: "technology", mentions: 1 });
+
+    // The arbitration button's route. Registered ahead of /memory/entities/:id, so it must
+    // answer JSON rather than being read as an entity id, and with nothing queued it makes no
+    // calls at all: this pass costs one per pair and never runs as a side effect.
+    const auto = await server.request("/memory/entities/resolve-auto", { method: "POST" });
+    expect(auto.status).toBe(200);
+    expect((await auto.json()) as { calls: number }).toMatchObject({
+      calls: 0,
+      folded: 0,
+      rejected: 0,
+      unsure: 0,
+    });
+
+    // The streaming variant behind the button's progress counter. Same pass, same result,
+    // delivered as NDJSON, and it must not be read as an entity id either.
+    const stream = await server.request("/memory/entities/resolve-auto/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    expect(stream.status).toBe(200);
+    expect(stream.headers.get("content-type")).toContain("application/x-ndjson");
+    const lines = (await stream.text())
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.some((l) => l.type === "error")).toBe(false);
+    expect(lines.at(-1)).toMatchObject({ type: "done", calls: 0, folded: 0 });
 
     const patched = await server.request(`/memory/entities/${entity?.id}`, {
       method: "PATCH",
@@ -687,6 +857,73 @@ describe("server", () => {
       conflicts: unknown[];
     };
     expect(emptied.conflicts).toHaveLength(0);
+  });
+
+  it("reconciles over HTTP, and RECONCILE_ENABLED=0 stops it acting", async () => {
+    const server = await app();
+    await server.request("/memory/save", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "the staging database runs on Postgres" }),
+    });
+
+    const res = await server.request("/memory/reconcile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    const report = (await res.json()) as {
+      run: { id: string; mode: string; scanned: number };
+      estimate: { window: number; usd: number | null };
+    };
+    expect(report.run.mode).toBe("dry_run");
+    expect(report.run.scanned).toBe(1);
+    expect(report.estimate.window).toBe(1);
+
+    const runs = (await (await server.request("/memory/reconcile/runs")).json()) as {
+      runs: Array<{ id: string }>;
+    };
+    expect(runs.runs.map((r) => r.id)).toEqual([report.run.id]);
+
+    // The Console expands a run by reading its findings back. This has to answer JSON: a path
+    // no route claims falls through to the viewer's index.html, which is a 200 the client
+    // cannot parse, and the row it feeds sits on "loading" forever.
+    const actionsRes = await server.request(`/memory/reconcile/runs/${report.run.id}/actions`);
+    expect(actionsRes.headers.get("content-type")).toContain("application/json");
+    expect((await actionsRes.json()) as { actions: unknown[] }).toHaveProperty("actions");
+    // An unknown id is an empty run, never another owner's ledger.
+    const strangerRes = await server.request(`/memory/reconcile/runs/${randomUUID()}/actions`);
+    expect((await strangerRes.json()) as { actions: unknown[] }).toEqual({ actions: [] });
+
+    // Which passes run is the user's setting, and the two that spend money start off. A host
+    // that wants the reports and none of the repairs sets the kill switch instead.
+    const settings = (await (await server.request("/memory/reconcile/settings")).json()) as Record<
+      string,
+      boolean
+    >;
+    expect(settings).toMatchObject({ invariants: true, entities: true, llm_entities: false });
+
+    const saved = await server.request("/memory/reconcile/settings", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ entities: false }),
+    });
+    expect(((await saved.json()) as { entities: boolean }).entities).toBe(false);
+
+    process.env.RECONCILE_ENABLED = "0";
+    const applied = await server.request("/memory/reconcile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "apply" }),
+    });
+    expect(applied.status).toBe(403);
+    delete process.env.RECONCILE_ENABLED;
+
+    const missing = await server.request(`/memory/reconcile/${randomUUID()}/revert`, {
+      method: "POST",
+    });
+    expect(missing.status).toBe(404);
   });
 
   it("deletes a memory over HTTP; a made-up id maps to 404", async () => {
