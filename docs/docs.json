@@ -208,7 +208,8 @@
               "cli/import",
               "cli/graph",
               "cli/context",
-              "cli/conflicts"
+              "cli/conflicts",
+              "cli/reconcile"
             ]
           },
           {

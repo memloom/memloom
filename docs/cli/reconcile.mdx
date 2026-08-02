@@ -1,0 +1,123 @@
+---
+title: "Reconciliation"
+description: "reconcile, reconcile undo, reconcile settings: the consolidation pass and how to take one back"
+---
+
+## reconcile
+
+```bash
+memloom reconcile [--dry-run]
+```
+
+Run the consolidation pass: memloom goes over its own store, repairs what it can prove is wrong,
+folds duplicate entity names, and asks about the rest. Which passes run comes from your saved
+settings, so a bare `memloom reconcile` is the two free passes unless you have turned others on in the
+viewer.
+
+<Warning>
+`memloom reconcile` with no flag **acts**. `--dry-run` is the preview.
+</Warning>
+
+A dry run reports everything and changes nothing. It never calls a model however your settings are
+set, so it is always free: a preview that spent money would be charging you for a report. What the
+paid passes would have cost is counted and printed instead.
+
+```
+reconcile (dry run)
+scanned 412 active memories
+
+would retire 2:
+  9f3c1a04  identical content to 41b0e2d8, which is older and stays active
+  c7d5e910  41b0e2d8 replaced this belief but it is still current, so both are being recalled
+
+entities:
+  would fold 3 name variants (certain)
+  4 uncertain pairs would go to the conflicts tab
+
+412 memories are due a contradiction re-check
+  re-checking all of them would make 412 LLM calls, about 515k in / 519k out with
+  google/gemini-2.5-flash, about $1.45
+  one run takes the 200 that have waited longest, so the backlog drains over several
+
+no memory was changed. this run is logged as 0f2c7b18-...
+```
+
+The last line always names the run, so undoing one never means going and looking the id up. An
+applying run that changed something prints the undo command instead.
+
+The report is printed in cost order: repairs first, then folds, then what the run asked you, then
+what it only noticed, then the bill for the contradiction re-check when that pass did not run. A
+price is only shown for a model whose rates memloom knows; anything else prints tokens and no dollar
+figure rather than a confident wrong number.
+
+A run with the contradiction re-check on is minutes of sequential model calls, and the CLI waits for
+it. Watch it live in the viewer's Settings tab instead if you want per-belief progress, or in the
+Console, which can also stop a run that is going.
+
+Only one applying run at a time. A second one is refused while the first is live.
+
+## reconcile undo
+
+```bash
+memloom reconcile undo <run id>
+```
+
+Put back exactly what one run did, and only that run.
+
+```
+restored 4 memories, unfolded 2 entities, skipped 1 the store moved on from
+```
+
+A retired memory comes back only while it is still stale and nothing else has staled it since. A
+fold goes back through the same revert entity resolution uses, so the absorbed entity returns with
+its original id and vector. A conflict the run raised and nobody answered is taken back out of the
+queue; one you already answered is left alone and counted as skipped, because your answer outranks
+the undo.
+
+Possible contradictions from the re-check are findings rather than changes, so undo leaves them in
+the Conflicts tab. Undoing the same run twice does nothing the second time.
+
+Undo for older runs is also in the viewer's Console tab, next to the rest of the history.
+
+## reconcile settings
+
+```bash
+memloom reconcile settings
+```
+
+Print which passes are on.
+
+```json
+{
+  "invariants": true,
+  "entities": true,
+  "llm_entities": false,
+  "llm_conflicts": false,
+  "llm_recheck": false,
+  "startupCatchUp": true
+}
+```
+
+| Setting | Pass | Cost |
+| --- | --- | --- |
+| `invariants` | Fix memory principle violations | free, acts on its own |
+| `entities` | Resolve duplicate entities | free, acts on its own |
+| `llm_entities` | Let a model resolve uncertain entity pairs | costs money, one call per pair |
+| `llm_conflicts` | Let a model resolve memory conflicts | costs money, one call per conflict |
+| `llm_recheck` | Look for contradictions the save path could not see | costs money, up to 200 calls per run |
+| `startupCatchUp` | Run the free passes on daemon startup when the last run is more than 36 hours old | free |
+
+The CLI prints them and does not change them. Toggle them in the viewer's Settings tab
+(`memloom ui`), or over HTTP with `POST /memory/reconcile/settings`. They live in the store rather than
+in `config.env`, so a change takes effect without restarting the daemon.
+
+<Note>
+The two free passes are on and the three paid ones are off, by design rather than as a starting
+point somebody picked. A pass whose work the ledger can undo needs no permission; a pass that
+spends money does. `RECONCILE_ENABLED=0` in `~/.memloom/config.env` is a separate kill switch: it
+refuses any run that was asked to act, and leaves dry runs and their reports working. See
+[Configuration](/guides/configuration).
+</Note>
+
+What each pass does, what the contradiction re-check is for, and when a run happens on its own are
+covered in [Reconciliation](/concepts/reconciliation).
