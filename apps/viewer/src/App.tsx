@@ -5,7 +5,6 @@ import { ConflictsView } from "./ConflictsView";
 import { ConnectorsView } from "./ConnectorsView";
 import { ConsoleView, eventsKey } from "./ConsoleView";
 import { DocumentsView } from "./DocumentsView";
-import { EntityFoldsView } from "./EntityFoldsView";
 import { GraphView } from "./GraphView";
 import { graphsEqual } from "./graphEquality";
 import { MemoriesView } from "./MemoriesView";
@@ -203,18 +202,15 @@ export function App() {
         {tab === "memories" && <MemoriesView />}
         {tab === "documents" && <DocumentsView onChanged={refresh} />}
         {tab === "schema" && <SchemaView onChanged={refresh} />}
-        {/* Entity folds sit above the memory conflicts, same tab: both are contradictions
-            the pipeline flagged, one about identity and one about content. */}
+        {/* One inbox for every kind of "you decide": entity folds, memory conflicts, and the
+            unconfirmed pairs reconciliation found. They share a rail so none of them is below the fold. */}
         {tab === "conflicts" && (
-          <>
-            <EntityFoldsView onChanged={refresh} />
-            <ConflictsView
-              conflicts={conflicts}
-              onChanged={refresh}
-              focus={conflictFocus}
-              onFocusConsumed={() => setConflictFocus(null)}
-            />
-          </>
+          <ConflictsView
+            conflicts={conflicts}
+            onChanged={refresh}
+            focus={conflictFocus}
+            onFocusConsumed={() => setConflictFocus(null)}
+          />
         )}
         {tab === "connectors" && <ConnectorsView onChanged={refresh} />}
         {tab === "console" && (
