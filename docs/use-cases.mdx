@@ -4,32 +4,38 @@ description: "What you can do with a local memory engine"
 icon: "compass"
 ---
 
-## Persistent memory for coding agents
+## Memory for coding agents
 
-This is one of the best use cases memloom was built for. Register memloom as an MCP server in Claude Code, Claude Desktop, or
-Cursor ([setup](/mcp/setup)), and the agent gets `save_memory` / `recall_memory` tools backed by *your* store:
+Register memloom as an MCP server ([setup](/mcp/setup)) and the agent gets `save_memory` and
+`recall_memory` backed by your store.
 
-- The agent saves what it learns, like *"deploys go through `scripts/release.sh`, never manual"*
-  (`procedure`) or *"user prefers using vue over next.js for frontend development"* (`preference`), and recalls it in later
-  sessions.
-- Because every agent talks to the **same daemon**, memory saved in Claude Code is there when
-  you switch to Cursor, Codex, or any other MCP-compatible agent/IDE. The memory belongs to you, so you're not locked into any vendor.
-- Dedup means agents can save enthusiastically without flooding the store, and contradiction
-  detection means a confused agent can't silently overwrite a valid fact.
+<CardGroup cols={3}>
+  <Card title="It remembers" icon="brain">
+    "deploys go through `scripts/release.sh`, never manual" saved once, recalled in every later
+    session.
+  </Card>
+  <Card title="Across tools" icon="arrows-left-right">
+    One daemon, one store. What Claude Code saved is there in Cursor or Codex. No vendor owns it.
+  </Card>
+  <Card title="Safe to over-save" icon="shield">
+    Dedup absorbs the noise, and contradiction detection stops a confused agent overwriting a good
+    fact.
+  </Card>
+</CardGroup>
 
-## Personal, unified second brain
+***
 
-Point memloom at your files and they become part of the same memory. If you know
-NotebookLM: this is that idea, but local, open source, and shared with every agent
-you connect.
+## A second brain your agents share
 
 ```bash
 memloom context add ./notes
 ```
 
-- Your .md/.txt/.pdf files are recallable by meaning *and* by exact phrase, with citations
-  back to the file, section, and page.
-- The store is the one place your knowledge lives. Every agent and assistant you connect
-  reads from it, instead of each tool keeping its own partial copy.
-- Edit a file and re-run `context add`: changed files are re-ingested, unchanged files are
-  skipped (content-hash check), so the store stays in step with your folder.
+If you know NotebookLM, this is that idea, but local, open source, and readable by every agent
+you connect.
+
+| | |
+| --- | --- |
+| **Recallable both ways** | By meaning and by exact phrase, cited back to file, section and page |
+| **One copy** | Every tool reads the same store instead of keeping its own partial one |
+| **Stays in step** | Re-run `context add`: changed files re-ingest, unchanged ones are skipped |

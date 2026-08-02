@@ -4,156 +4,141 @@ description: "One graph over memories and context, at two granularities"
 icon: "circle-nodes"
 ---
 
-## One graph, two granularities
+## Overview
 
-Memories and ingested documents live in **one** graph, connected through the entities they
-mention. Your saved belief *"the ingest worker restarts via
-systemd"* and the ops runbook you ingested both mention the entity **ingest worker**, so the
-graph puts them two hops apart, and recall's entity arm follows the same edges.
+Memories and ingested documents live in one graph, connected by the entities they mention. Your
+saved belief "the ingest worker restarts via systemd" and the runbook you ingested both mention
+**ingest worker**, so they sit two hops apart, and recall follows the same edges.
 
-The two granularities:
+<CardGroup cols={2}>
+  <Card title="Stored per chunk" icon="layer-group">
+    Entity edges point at individual chunks, so the engine knows which section mentions what.
+  </Card>
+  <Card title="Shown per document" icon="file">
+    The graph API rolls those up into one weighted edge, so a 300-page PDF is one node, not 300.
+  </Card>
+</CardGroup>
 
-- **Storage links at chunk granularity.** Entity edges point at individual chunks, so the
-  engine knows *which section* of a document mentions what.
-- **Display projects at document granularity.** The graph API rolls chunk-level edges up
-  into one weighted `document → entity` edge (weight = how many chunks mention the entity),
-  so a 300-page PDF shows as one node instead of 300.
+***
 
-## Node and edge types
+## What is in it
 
 | Node | Comes from | In the viewer |
 | --- | --- | --- |
-| **Memory** | Active saved memories | Circle, colored by memory type |
+| **Memory** | Active saved memories | Circle, coloured by type |
 | **Entity** | `memloom index` extraction | Purple circle |
 | **Document** | `memloom context add` | Emerald diamond |
 | **Chunk** | Expanding a document node | Square |
 
 | Edge | Meaning |
 | --- | --- |
-| `mention` | A memory or chunk mentions an entity (document → entity edges carry a `weight`) |
+| `mention` | A memory or chunk mentions an entity |
 | `replaces` | Version lineage: this memory superseded that one |
-| `distinct` | A resolved *keep both*: these two are related but deliberately separate |
+| `distinct` | A resolved *keep both*: related but deliberately separate |
 
-Only **active** memories and edges appear; stale versions and reverted resolutions drop out.
+Only active memories and edges appear. Stale versions and reverted resolutions drop out.
 
-## How indexing works
+***
 
-By default, indexing runs automatically: a few seconds after you save a memory or add a file, the
-daemon extracts entities in the background (debounced, so a folder ingest becomes one
-run), and the runs show up in the Console like any other. Saves and ingests stay fast
-because the LLM work never blocks them. Turn it off with `memloom auto-index off` (or
-the Console's toggle, or `MEMLOOM_AUTO_INDEX=off` as the config default) to make
-indexing explicit again; offline mode has no auto-indexing since extraction needs
-the LLM. Extraction is **schema-constrained and
-precision-first**: it would rather miss an entity than add a wrong one.
+## Indexing
 
-1. Every unindexed memory and context chunk goes to the LLM with an extraction prompt built
-   from the graph schema: a **closed vocabulary of 9 entity types** (`person`,
-   `organization`, `project`, `tool`, `technology`, `agent`, `place`, `event`, and `concept`,
-   which is explicitly a last resort). `agent` is for a named AI model or assistant that does
-   work, the actor itself rather than the company that made it. The prompt instructs the model
-   to abstain when in doubt and caps output at the 5 most salient entities per text.
-2. A deterministic validator checks every extraction: it drops anything with an out-of-vocab
-   type, anything shaped like a math expression (`f(x) = x^3 - 2x^2`), sentence fragments
-   (over 40 characters or 5 words), and names with fewer than two letters.
-3. **Formula-dominated chunks skip the LLM entirely**: a cheap math-density check keeps
-   math worksheets from becoming graphs of equations (those runs log `skipped: math-dense`).
-4. Surviving entities resolve to a node by **name key**: casefolded, trimmed, a leading `@`
-   stripped, whitespace collapsed. `@memloom/core` in one document and `memloom/core` in
-   another land on the same node, and the first-seen spelling and type stay (the node's
-   identity is its name key alone; type is an attribute, so an extractor that says `technology`
-   today and `project` tomorrow cannot fork the node). The lookup also covers folded-away
-   spellings, so once `Opus 4.8` has been folded into `Claude Opus 4.8` every later mention of
-   either lands on the same node. The prompt also lists the names already in your graph, so
-   the model reuses canonical spellings instead of minting variants. A `mention` edge links
-   the source to each resolved entity.
-5. The same call also extracts **typed relationships between entities**, classified against a
-   closed predicate vocabulary: `uses`, `depends_on`, `part_of`, `created_by`, `works_on`,
-   `works_at`, `located_in`, `attended`. Out-of-vocab predicates and claims below 0.7
-   confidence are quarantined as plain `mention` edges.
-
-Indexing is idempotent (rows are stamped `indexed_at`) and incremental: re-running it only
-touches what's new. One LLM call per row, so a large PDF makes an index run proportionally
-longer. `GET /memory/schema` reports the vocabularies with live usage counts.
-
-If an older, noisier pipeline already polluted your graph, rebuild it from scratch:
+Indexing runs automatically a few seconds after you save a memory or add a file, debounced so a
+folder ingest becomes one run. Saves stay fast because the model work never blocks them.
 
 ```bash
-memloom index --rebuild   # wipes all extracted entities/edges, then re-runs indexing
+memloom auto-index off    # make indexing explicit again
+memloom index             # run it now
+memloom index --rebuild   # wipe extracted entities and start over
 ```
 
-Keep in mind that indexing with LLMs is **not deterministic**: the same input can give different extractions every time.
+Extraction is precision-first: it would rather miss an entity than invent one.
 
-Belief edges (`replaces`, `distinct`) are never touched by a rebuild. Note that rebuilding
-needs the LLM: run it offline and the wipe still happens. The store stays consistent
-(everything is unindexed), but nothing is re-extracted until a key is configured.
+<Steps>
+  <Step title="Extract" icon="wand-magic-sparkles">
+    One model call per row against a closed vocabulary of 9 entity types, capped at the 5 most
+    salient entities. The prompt lists names already in your graph so the model reuses them.
+  </Step>
+  <Step title="Validate" icon="filter">
+    A deterministic pass drops out-of-vocabulary types, math expressions, sentence fragments, and
+    names under two letters. Formula-heavy chunks skip the model entirely.
+  </Step>
+  <Step title="Resolve" icon="link">
+    Survivors resolve to a node by name key: casefolded, trimmed, leading `@` dropped. Folded-away
+    spellings resolve too, so `Opus 4.8` lands on `Claude Opus 4.8`.
+  </Step>
+</Steps>
 
-Indexed entities also feed retrieval: the entity arm of hybrid recall anchors a query to
-entities and pulls in whatever mentions them, including document sections whose wording
-shares nothing with your query. See [Retrieval](/concepts/retrieval).
+<Accordion title="Vocabularies and confidence" icon="book">
+  Entity types: `person`, `organization`, `project`, `tool`, `technology`, `agent`, `place`,
+  `event`, and `concept`, which is explicitly a last resort. `agent` means a named AI model or
+  assistant that does work, the actor rather than the company that made it.
+
+  The same call extracts typed relationships against a closed predicate list: `uses`,
+  `depends_on`, `part_of`, `created_by`, `works_on`, `works_at`, `located_in`, `attended`.
+  Out-of-vocabulary predicates and anything under 0.7 confidence are kept as plain `mention`
+  edges.
+
+  A node's identity is its name key alone. Type is an attribute, so an extractor that says
+  `technology` today and `project` tomorrow cannot fork the node.
+</Accordion>
+
+<Warning>
+  Extraction is not deterministic: the same input can extract differently on another run.
+  `--rebuild` also needs a model, so running it offline still wipes, leaving everything unindexed
+  until a key is configured. Belief edges are never touched by a rebuild.
+</Warning>
+
+***
 
 ## The schema
 
-The vocabularies live in a registry (the viewer's **schema** tab, `GET /memory/schema`,
-`memloom schema` in the CLI). There is no code to fork:
+The vocabularies live in a registry, not in code. Edit them in the viewer's Schema tab, with
+`memloom schema`, or at `GET /memory/schema`.
 
-- **Add your own.** A user-tier entity type or predicate (say, `medication`) joins the
-  prompt on the next index run. The description you write is the extraction rule, so write
-  it like one: "a named drug or supplement" rather than "medications".
-- **Proposals.** When the extractor confidently wants a type or predicate the schema lacks,
-  the name is held out of the graph and queued for review. Approve it and it becomes a
-  user entry; dismiss it and the prompt blocklists the name from ever being proposed again.
-  A name only surfaces after two independent extractions asked for it.
-- **Disable** anything, built-in or yours. Disabled entries leave the prompt; entities
-  already extracted under them stay in the graph.
-- **Delete** a disabled user entry when you're sure. Built-ins can only be disabled: the
-  system tier is re-seeded by name, so a deleted built-in would come back active.
-  Proposals can only be approved or dismissed; there is no delete for them.
+| Action | Effect |
+| --- | --- |
+| **Add** | A type or predicate of your own joins the prompt on the next run |
+| **Propose** | The extractor asks for a missing type. Approve or dismiss it |
+| **Disable** | Leaves the prompt. Entities already extracted under it stay |
+| **Delete** | Only for disabled entries you added. Built-ins can only be disabled |
+
+The description you write **is** the extraction rule, so write it like one: "a named drug or
+supplement" rather than "medications". A proposal only surfaces after two independent extractions
+asked for it.
+
+***
 
 ## Managing entities
 
-Extraction is precision-first but not perfect, so the schema tab also lists every entity
-in the graph with its usage (mentions, documents, memories) and the tools to correct it:
+The Schema tab lists every entity with its usage counts and the tools to correct it.
 
-- **Rename.** The node re-embeds under the new name. Renaming onto an existing entity's
-  name is refused; that situation is a merge.
-- **Retype** to any active vocabulary type.
-- **Merge into** another entity: every mention and typed relationship moves to the
-  survivor (duplicates and would-be self-loops are dropped), the absorbed spelling is kept as
-  an alias, and the whole fold is revertable. This is the fix for near-duplicates the name key
-  could not fold, and it works for any two entities, however differently they are spelled.
-- **Delete** an entity and every edge touching it. The memories and documents that
-  mentioned it are untouched. Refused while an unreverted fold points at the entity.
+| Action | Notes |
+| --- | --- |
+| **Rename** | Re-embeds under the new name. Renaming onto an existing name is refused, since that is a merge |
+| **Retype** | To any active vocabulary type |
+| **Merge into** | Moves every mention and relationship to the survivor, keeps an alias, fully revertable |
+| **Delete** | Removes the entity and its edges. Refused while an unreverted fold points at it |
 
-memloom can also find the duplicates for you: see
-[Entity resolution](/concepts/entity-resolution) for the pass that folds the obvious spelling
-variants, queues the uncertain ones for review, and keeps every fold reversible.
+memloom can find the duplicates for you. See [Entity resolution](/concepts/entity-resolution).
 
-## Asking who is connected to what
+***
 
-`GET /memory/entities/related?q=<name or id>&type=<entity type>` walks the graph from one
-entity instead of returning all of it. The target can be a name, an id, or a folded-away
-spelling. Stated relationships come back separately from entities that merely appear in the
-same memories, because those are different kinds of evidence.
+## Traversal
 
-In the viewer this is the **traverse** panel on the Graph tab: search an entity and the canvas
-dims to its neighbourhood, so the answer is whatever stays lit. Agents reach the same thing
-through the [`related_entities`](/mcp/tools#related_entities) MCP tool.
+```bash
+GET /memory/entities/related?q=<name or id>&type=<entity type>
+```
 
-The HTTP surface is `GET /memory/entities`, `GET /memory/entities/related`,
-`PATCH /memory/entities/{id}`, `POST /memory/entities/{id}/merge`, and
-`DELETE /memory/entities/{id}`.
+Walks out from one entity instead of returning the whole graph. Stated relationships come back
+separately from entities that merely co-occur, because those are different kinds of evidence. In
+the viewer it is the traverse panel on the Graph tab; agents use [`related_entities`](/mcp/tools).
 
-## Navigating in the viewer
+## In the viewer
 
-`memloom ui` → the Graph tab:
+Click a document diamond to expand it into chunks with their real chunk-level edges. Click a chunk
+to read it, with breadcrumbs back up. A document's panel has an **Open file** button.
 
-- Click a **document** diamond to expand it: its chunks appear as squares with their real
-  chunk-level entity edges, and the rolled-up document edges swap out.
-- Click a **chunk** to read it in the side panel, with breadcrumb navigation
-  (`document › chunk`) to move back up.
-- A document's side panel lists all its chunks and has an **Open file** button that opens
-  the source file with your OS default app.
-
-The daemon only ever opens files it previously ingested (the lookup is by document id, never
-by a path from the request), so the open button can't be pointed at arbitrary files.
+<Note>
+  The daemon only opens files it previously ingested, looked up by document id and never by a path
+  from the request, so that button cannot be pointed at arbitrary files.
+</Note>

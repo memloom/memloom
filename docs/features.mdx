@@ -4,134 +4,71 @@ description: "What memloom does, in one pass"
 icon: "sparkles"
 ---
 
-memloom is one store with several distinct capabilities layered on it. This page is the tour;
-each section links to the page that explains the mechanism.
+## Overview
 
-## Save runs a belief pipeline
+One local store, several capabilities layered on it. Every card links to the page that explains
+the mechanism.
 
-`save` doesn't just insert a row. With an API key configured, every incoming memory runs
-through the belief pipeline:
+<CardGroup cols={2}>
+  <Card title="Belief pipeline on save" icon="filter" href="/concepts/memory-types">
+    A save is not an insert. Duplicates merge, rewordings become versions, contradictions are kept
+    and raised. Nothing is silently overwritten.
+  </Card>
+  <Card title="Hybrid recall" icon="magnifying-glass" href="/concepts/retrieval">
+    Meaning, exact words, and entity anchoring, fused into one ranking over your memories and your
+    files together.
+  </Card>
+  <Card title="Grounded assistant" icon="comments" href="/concepts/assistant">
+    Chats over your store, answers only from what it found, and cites passages you can open.
+  </Card>
+  <Card title="Your files, cited" icon="file-lines" href="/guides/extractors">
+    Markdown, text and PDF, chunked along real structure so a result is one section, not a blind
+    window.
+  </Card>
+  <Card title="Recordings and web pages" icon="microphone" href="/guides/recordings">
+    Audio and video transcribed and diarized on-device, cited by timestamp. Web pages fetched and
+    parsed in-process.
+  </Card>
+  <Card title="One graph" icon="circle-nodes" href="/concepts/graph">
+    Entities link memories and documents. The vocabulary is a registry you can extend, prune, and
+    correct.
+  </Card>
+  <Card title="Entity resolution" icon="diagram-project" href="/concepts/entity-resolution">
+    Folds duplicate spellings, asks about the uncertain ones, and keeps every fold reversible.
+  </Card>
+  <Card title="Version history" icon="clock-rotate-left" href="/concepts/memory-types">
+    Every memory is a version chain. Nothing is destroyed, and `memloom history` walks it.
+  </Card>
+  <Card title="Conflicts you settle" icon="scale-balanced" href="/concepts/conflicts">
+    When two memories cannot both be true, both are kept and you decide. Every resolution is
+    reversible.
+  </Card>
+  <Card title="Reconciliation" icon="rotate" href="/concepts/reconciliation">
+    The store reviews itself, repairs what SQL proves, and asks about the rest. Automatic runs
+    never spend money.
+  </Card>
+  <Card title="Claude Code history" icon="file-import" href="/concepts/distillation">
+    Import past sessions, or capture new ones continuously, distilled through the same pipeline
+    with provenance back to the line range.
+  </Card>
+  <Card title="Local-first" icon="lock" href="/guides/self-hosting">
+    The store is a folder. Copy it to back it up. The only network calls go to the provider you
+    configure.
+  </Card>
+</CardGroup>
 
-- **Exact duplicate** → merged, nothing stored twice.
-- **Same fact, reworded** → the memory becomes a **new version** of the existing belief
-  (the old version stays in history).
-- **Contradiction** → both memories stay active and a **conflict** is recorded for you to
-  resolve. memloom never silently overwrites what you believed before.
-- **Genuinely new** → added.
-
-See [Memory types & versioning](/concepts/memory-types) and
-[Conflicts](/concepts/conflicts).
-
-## Hybrid recall
-
-`recall` ranks results with three retrieval arms fused together: vector similarity (meaning),
-Postgres full-text search (exact words: file paths, error codes, config keys), and entity
-anchoring (things the query names). One query searches your saved memories **and** your
-ingested files, in one ranking. See [Retrieval](/concepts/retrieval).
-
-## An assistant grounded in your store
-
-The viewer's assistant tab chats over your memories and files. The model decides when to
-search (via the same hybrid recall), answers only from what it found, and cites passages
-you can open: each answer lists its sources with a jump into the graph. Pick any
-tool-capable OpenRouter model from the composer, with prices and context windows shown.
-Attach a file to a chat with **+** and it becomes searchable in that chat only, deleted
-with it. See [The assistant](/concepts/assistant).
-
-## Context: your files, searchable and cited
-
-`memloom context add ./docs` ingests `.md`, `.txt`, and `.pdf` files (directories recurse).
-Files are chunked along their real structure (markdown headings, ALL-CAPS titles, numbered
-points), so a chunk is one definition or one section instead of a blind 1,000-character window.
-Every result from a file says where it came from: `from lecture-notes.pdf › LIMITS OF
-FUNCTIONS > 2. DEFINITION (p. 1)`. Documents are mirrors: re-adding an unchanged file is a no-op, a
-changed file replaces its chunks. See [Extractors & chunking](/guides/extractors).
-
-## Recordings and web pages, same store
-
-Add a web page by URL and memloom fetches and parses it in-process: no reader service,
-nothing about the page leaves your machine. Add an audio or video file and it is
-transcribed locally (Parakeet under sherpa-onnx), diarized into speakers, and cited by
-timestamp: `from standup.mkv › 12:30 - 14:28, Kostek`. Recordings run through a durable
-queue with per-stage progress and cancel; name a voice once and the voice library
-recognizes it in every later recording, entirely on-device. See
-[Recordings: audio & video](/guides/recordings).
-
-## One graph over memories and context
-
-`memloom index` extracts entities (people, projects, tools, concepts) from memories and
-context chunks and links everything through them. The viewer renders it: memories as circles,
-entities as purple circles, documents as diamonds that expand into chunk squares on click.
-A 300-page PDF stays one node: chunk-level links roll up into one weighted document → entity
-edge.
-
-The graph is yours to correct: the extraction vocabulary is a registry you can extend,
-review, and prune, and every entity can be renamed, retyped, merged into another, or
-deleted from the schema tab. See [The graph](/concepts/graph).
-
-Duplicate spellings get folded for you. A graph naturally accumulates `Claude Opus 4.8` and
-`Opus 4.8`, `Postgres` and `PostgreSQL`, and each one quietly costs recall quality by
-competing for the entity arm's ten anchor slots. memloom folds the ones that are obviously
-the same, asks you about the rest in the Conflicts tab, keeps every fold reversible, and
-teaches recall to follow the spellings it folded away. See
-[Entity resolution](/concepts/entity-resolution).
-
-Once identity is settled you can ask the graph about connections rather than content: which
-people are related to this person, what this project uses. The Graph tab's **traverse** panel
-dims the canvas to one entity's neighbourhood and lets you follow it hop by hop. See
-[Asking who is connected to what](/concepts/graph#asking-who-is-connected-to-what).
-
-## Version history for every belief
-
-Every memory is a version chain. Rewording a fact, editing it with `memloom update`, or
-resolving a conflict appends a version; nothing is ever destroyed. `memloom history <id>`
-(or the `memory_history` MCP tool) walks the chain. See
-[Memory types & versioning](/concepts/memory-types).
-
-## Human-in-the-loop conflicts
-
-When two memories can't both be true, memloom keeps both and asks *you*: in the viewer, the
-CLI, or through an agent using the MCP tools. Every resolution (keep new, keep existing, keep
-both, merge) is reversible. See [Conflicts](/concepts/conflicts).
-
-## Reconciliation: the store looks after itself
-
-`memloom reconcile` goes over the store, repairs what SQL proves is wrong, folds duplicate entity
-names, and asks about the rest. Two free passes are on and act on their own, because everything
-they do is undoable. Three passes that spend money are off until you turn them on, one of which
-re-checks old beliefs against 20 neighbours to find contradictions the save path never compared.
-Automatic runs only ever use the free passes, so a run nobody watched cannot cost anything, and
-every run is one unit you can undo with `memloom reconcile undo <run id>`. See
-[Reconciliation](/concepts/reconciliation) and [the CLI page](/cli/reconcile).
-
-## Import your Claude Code history into that same store
-
-`memloom import sessions` reads your local Claude Code sessions, redacts secret-shaped strings, and distills each session into typed
-memories through the exact belief pipeline described above. Every imported memory keeps provenance back to the
-session file and line range it came from. `memloom connect claude-code` makes capture continuous: a session-end hook distills each
-session as it finishes, bounded by a daily budget so nothing runs unattended, and a
-prompt-time hook recalls relevant memories into every Claude Code prompt, so the agent
-uses what it knows without being asked to. Imported or hand-saved, it's the same store: a recall
-doesn't care whether a memory came from typing `memloom save` or from a session you closed
-months ago. See [Session distillation](/concepts/distillation) and [Import](/cli/import).
+***
 
 ## Every client, one store
 
-| Surface | What it's for |
+| Surface | For |
 | --- | --- |
-| **CLI** (`memloom save/recall/...`) | You, in a terminal |
-| **MCP** | Claude Desktop, Claude Code, Cursor: agents that save and recall as they work |
-| **Viewer** (`memloom ui`) | Browsing: graph, assistant, memories, documents, schema, conflicts, console |
-| **HTTP API** (`127.0.0.1:4319`) | Anything else: scripts, editors, your own tools |
-| **Postgres wire** (`127.0.0.1:54329`, `MEMLOOM_PG_PORT` moves it) | Inspecting the raw data with Drizzle Studio or psql (embedded tier; on `MEMLOOM_PG_URL` inspect your server directly) |
+| **CLI** | You, in a terminal |
+| **MCP** | Claude Code, Claude Desktop, Cursor: agents that save and recall as they work |
+| **Viewer** (`memloom ui`) | Graph, assistant, memories, documents, schema, conflicts, console |
+| **HTTP** (`127.0.0.1:4319`) | Scripts, editors, anything else |
+| **Postgres wire** (`127.0.0.1:54329`) | Drizzle Studio or psql against the raw data |
 
-All of them talk to one daemon that owns one store, so an agent's save is instantly visible
-in the viewer and your CLI recall sees what the agent ingested. See
+All of them talk to one daemon that owns one store, so an agent's save is instantly visible in the
+viewer and your CLI recall sees what the agent ingested. See
 [Architecture](/concepts/architecture).
-
-## Local-first, yours
-
-The store is a folder: `~/.memloom/data`. Copy it to back it up. Delete it to start over.
-The only network calls are to the embedding/LLM provider you configure. Without a key,
-memloom runs fully offline in a reduced mode. See [Configuration](/guides/configuration)
-and [Self-hosting](/guides/self-hosting).
