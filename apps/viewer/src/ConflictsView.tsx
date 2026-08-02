@@ -17,9 +17,8 @@ import { toastDone, toastFailed, toastSaid } from "./toast";
 //
 // Three kinds of question share this tab because they are all "you decide": which spelling an
 // entity keeps, which of two beliefs is true, and whether a pair reconciliation flagged is a
-// contradiction at all. Stacking them as three full-width lists meant the third was below the
-// fold and the first thing you saw was whichever had the most rows. A rail fixes the ordering
-// problem and leaves the pane free to show one item properly.
+// contradiction at all. They share one rail so none of them ends up below the fold, and so the
+// pane is free to show a single item properly.
 //
 // Deciding advances to the next item, and the actions are numbered, because a queue is only
 // worth having if it can be emptied in one sitting.

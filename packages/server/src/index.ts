@@ -1872,10 +1872,10 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
  * open on its own.
  */
 /**
- * RECONCILE_ENABLED=0 stops a run from changing anything, anywhere. It has to be checked wherever an
- * applying run can start, which is the two routes AND the scheduler: the scheduler calls reconcile()
- * in process, so a check that lived only in the handlers left idle and startup runs still
- * retiring memories on a host that asked for reports and no repairs.
+ * RECONCILE_ENABLED=0 stops a run from changing anything, anywhere. It has to be checked wherever
+ * an applying run can start, which is the two routes AND the scheduler. The scheduler calls
+ * reconcile() in process, so a check that lives only in the handlers lets idle and startup runs
+ * keep retiring memories on a host that asked for reports and no repairs.
  */
 export function reconcileActingDisabled(): boolean {
   return process.env.RECONCILE_ENABLED === "0";

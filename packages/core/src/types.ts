@@ -933,10 +933,9 @@ export interface NotionStatus {
   chunks: number;
 }
 
-// Reconciliation: the consolidation pass. The rule the whole feature rests on is that reversibility
-// buys autonomy and money buys a prompt: a pass acts unasked when SQL proves the store is wrong
-// and the ledger can undo it, and asks first whenever it would spend. Every run is one revertable
-// unit recorded in memory_reconcile_runs / memory_reconcile_actions.
+// Reconciliation: the consolidation pass. A pass acts unasked when SQL proves the store is wrong
+// and the ledger can undo it, and asks first whenever it would spend money. Every run is one
+// revertable unit recorded in memory_reconcile_runs / memory_reconcile_actions.
 
 export type ReconcileMode = "dry_run" | "apply";
 export type ReconcileTrigger = "manual" | "idle" | "startup";

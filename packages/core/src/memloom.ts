@@ -182,8 +182,8 @@ export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
 const RECHECK_CLASS = "emergent_contradiction";
 
 /**
- * Free passes on, paid passes off, catch-up on. The default is the section 0 rule as a data
- * structure: a pass that cannot spend needs no permission, and one that can does.
+ * Free passes on, paid passes off, catch-up on. A pass that cannot spend money needs no
+ * permission; one that can does.
  */
 export const DEFAULT_RECONCILE_SETTINGS: ReconcileSettings = {
   invariants: true,
@@ -3982,7 +3982,7 @@ export class Memloom implements MemoryEngine {
           if (lin) {
             const next = (await this.#lineageHead(lin.rootId)) + 1;
             await this.#reparent(incoming, lin.rootId, next);
-            // Remember where it was, or revert has to guess. See migration 0032.
+            // Remember where it was, or revert has to guess. See 0025_conflict_prior_lineage.
             if (prior) await this.#recordPriorLineage(conflictId, prior);
           }
         }
@@ -4072,9 +4072,9 @@ export class Memloom implements MemoryEngine {
         await reactivate(this.#storage, losers);
         await deactivateEdgesTouching(this.#storage, owner, "replaces", losers);
         // keep_new re-parented the incoming onto the losers' lineage; put it back where it was.
-        // prior_root_id is NULL on every row written before migration 0032, and on those rows
-        // the incoming was always a fresh save-time insert, so (self, 1) is not a fallback but
-        // the right answer. See the migration's comment.
+        // prior_root_id is NULL on every row written before 0025_conflict_prior_lineage, and on
+        // those rows the incoming was always a fresh save-time insert, so (self, 1) is not a
+        // fallback but the right answer. See that migration's comment.
         if (row.resolution_winner_id === row.incoming_id) {
           await this.#reparent(
             row.incoming_id,
@@ -4114,17 +4114,16 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
-   * Reconciliation: the consolidation pass, in up to four passes of increasing cost.
+   * Reconciliation: the consolidation pass, in up to five passes of increasing cost.
    *
-   * The rule the whole thing rests on is that reversibility buys autonomy and money buys a
-   * prompt. Passes 1 and 2 (invariant repair, deterministic entity resolution) are free and act
-   * without asking, because the ledger can undo everything they do. Passes 3 and 4 spend money
-   * and stay off until the user turns them on.
+   * The first two (invariant repair, deterministic entity resolution) are free and act without
+   * asking, because the ledger can undo everything they do. The last three spend money and stay
+   * off until the user turns them on.
    *
    * A dry run never touches memory_objects, memory_edges, memory_entities or
-   * memory_dedup_decisions. It does record itself in the reconcile ledger, because the run record IS
-   * the report and the per-run caps back off based on whether the last run's findings were acted
-   * on.
+   * memory_dedup_decisions. It does record itself in the reconcile ledger, because the run record
+   * IS the report and the per-run caps back off based on whether the last run's findings were
+   * acted on.
    */
   async reconcile(
     opts: ReconcileOptions = {},
@@ -4242,7 +4241,7 @@ export class Memloom implements MemoryEngine {
         : undefined;
       const folds = entities ? await this.#describeFolds(entities.mergeIds) : [];
 
-      // Passes 3 and 4 spend money, so they never run in dry mode: a preview that called a model
+      // The paid passes never run in dry mode: a preview that called a model
       // would be charging for a report. What they WOULD have cost is countable and is reported.
       const arbitrable = passes.includes("llm_entities")
         ? (await this.entityConflicts(owner)).length
@@ -4553,9 +4552,7 @@ export class Memloom implements MemoryEngine {
    * 'possible' actions, never as conflicts: measured precision is about 40 percent, so a queue
    * fed directly from here would be more noise than signal. A human promotes one with a click.
    *
-   * The findings' class is RECHECK_CLASS, which is what moves the window's left edge. That
-   * bookkeeping was written before this pass existed and starts working now that something writes
-   * the class.
+   * Findings are written under RECHECK_CLASS, which is what moves the window's left edge.
    */
   async #recheckContradictions(
     owner: string,
@@ -4765,14 +4762,14 @@ export class Memloom implements MemoryEngine {
    * Answer one. 'approved' promotes it into a real conflict and hands it to the queue that already
    * knows how to resolve and revert; 'rejected' records the pair so it is never asked about again.
    *
-   * Raising a conflict between two existing beliefs is only safe because resolveConflict now
-   * versions from the lineage head and revertConflict restores the incoming's recorded prior
-   * lineage. Before those two fixes this call would have manufactured the multi-head collisions
-   * reconciliation exists to report.
+   * Raising a conflict between two existing beliefs is only safe while resolveConflict versions
+   * from the lineage head and revertConflict restores the incoming's recorded prior lineage.
+   * Without both, this call manufactures the multi-head collisions reconciliation exists to
+   * report.
    *
-   * A rejection is the asset here, not the leftover: it is a labelled example of what this user
-   * does not consider a contradiction, and the only path off 40 percent precision that does not
-   * mean a more expensive model.
+   * A rejection is worth keeping: it is a labelled example of what this user does not consider a
+   * contradiction, and the only path off 40 percent precision that does not mean a more
+   * expensive model.
    */
   async answerPossible(
     actionId: string,
@@ -4855,9 +4852,9 @@ export class Memloom implements MemoryEngine {
   /**
    * Write one conflict row per lineage: the newest live head against the others.
    *
-   * Safe to resolve any of the four ways now that keep_new versions from the lineage head and
-   * revert restores the incoming's recorded prior lineage. Before those two fixes this was the
-   * exact shape that manufactured more of the bug it is reporting.
+   * Safe to resolve any of the four ways only while keep_new versions from the lineage head and
+   * revert restores the incoming's recorded prior lineage. Without both, this is the exact shape
+   * that manufactures more of the bug it is reporting.
    */
   async #raiseLineageConflicts(
     owner: string,

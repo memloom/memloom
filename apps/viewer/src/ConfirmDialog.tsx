@@ -1,11 +1,8 @@
 import { useEffect, useRef } from "react";
 
-// A modal for the handful of actions that cannot be undone.
-//
-// The pattern it replaces was a button that armed itself on the first click and did the work on
-// the second. That reads as a broken button, it says nothing about what is about to happen, and
-// it is one stray double-click away from wiping something. A dialog has room to say what will be
-// lost and makes the confirm a separate, deliberate target.
+// A modal for the handful of actions that cannot be undone. It has room to say what will be
+// lost, and it makes the confirm a separate, deliberate target rather than a second click on
+// the button that started it.
 //
 // Reserved for the irreversible. Anything with an undo should just do the thing and offer the
 // undo, because a confirmation on a reversible action is a tax on every use to prevent a mistake

@@ -171,10 +171,9 @@ export const PROMPT_OVERHEAD_TOKENS = estimateTokens(buildDedupPrompt({ content:
 /**
  * One classification's JSON reply per candidate.
  *
- * Measured at 63, not the 24 this used to guess: the model explains every verdict and the reasons
- * run long. Output is also the expensive side at these models' prices, so the old constant made the
- * estimate about 5x low, which is the wrong direction for a number a user reads before deciding
- * whether to spend. The re-check prompt caps reasons at 12 words to pull this back down.
+ * Measured at 63: the model explains every verdict and the reasons run long. Output is the
+ * expensive side at these models' prices, so guessing low here understates a figure a user reads
+ * before deciding whether to spend. The re-check prompt caps reasons at 12 words to pull it down.
  */
 const OUTPUT_TOKENS_PER_CANDIDATE = 63;
 
@@ -290,7 +289,7 @@ export async function findOrphanStale(
  * Entity folding has its own invariants, and nothing checks them. Same character as the class
  * above: SQL proves the store is inconsistent, but the fix is not forced, so all four are
  * reported and none is repaired. A repair that guessed would be worse than a loud report, and a
- * non-zero count belongs to whoever owns entity resolution rather than in a reconciliation workaround.
+ * non-zero count is a bug to fix in entity resolution, not to work around here.
  */
 export async function findEntityInvariants(
   storage: StorageAdapter,
@@ -519,10 +518,9 @@ export function estimateRecheck(
  * Memories a run must not retire even when a detector names them: a pending conflict is already
  * deciding their fate, and reconciliation does not get to pre-empt an answer the user owes.
  *
- * This used to also block anything an active `replaces` edge points at, on the grounds that such
- * a row is stale already. That was true of a healthy store and wrong as a rule: when the row is
- * still active, it is a leak and retiring it is exactly the fix. findReplacesLeaks owns that set
- * now, and this one is only about the conflict queue.
+ * Do not add rows an active `replaces` edge points at. Such a row looks stale already, but while
+ * it is still active it is a leak, and retiring it is exactly the fix. findReplacesLeaks owns
+ * that set; this one is only about the conflict queue.
  */
 export async function retirementBlocklist(
   storage: StorageAdapter,

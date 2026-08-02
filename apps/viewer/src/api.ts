@@ -140,8 +140,8 @@ export interface EntityResolutionResult {
   mergeIds: string[];
 }
 
-// Reconciliation: the consolidation pass. Four passes in cost order; the two that call a model are
-// off until the user turns them on, because reversibility buys autonomy and money buys a prompt.
+// Reconciliation: the consolidation pass. Five passes in cost order; the three that call a model
+// are off until the user turns them on, because only they can spend money.
 export type ReconcilePass =
   | "invariants"
   | "entities"
@@ -700,9 +700,9 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
   if (!res.ok) throw new Error(body?.error ?? `${res.status} ${res.statusText}`);
   // A 200 that is not JSON means no API route claimed this path, so the request fell through
   // to the static handler and got index.html back. Every daemon route answers JSON, so the one
-  // way to see this is a viewer bundle newer than the daemon serving it. Worth saying out loud:
-  // returning null here made every caller crash somewhere unrelated, which is how this was
-  // found (a reconcile run's log stuck on "loading" forever).
+  // way to see this is a viewer bundle newer than the daemon serving it. Throw rather than
+  // return null: null crashes some later caller far from the cause, or leaves a view loading
+  // forever.
   if (body === null) {
     throw new Error(
       `${path} is not available on this daemon. It is probably older than this page: ` +

@@ -1,11 +1,12 @@
 import { toast as hot } from "react-hot-toast";
 
 // Every transient outcome goes through here, so the viewer has one voice for "that worked" and
-// "that did not" instead of a notice bar per view.
+// "that did not".
 //
 // What belongs in a toast: the result of something you just pressed. What does not: state you
-// need to keep reading, like a reconcile report or a run that is still going. Those stay on the page,
-// because a message that disappears cannot be the only record of an outcome you have to act on.
+// need to keep reading, like a reconcile report or a run that is still going. Those stay on the
+// page, because a message that disappears cannot be the only record of an outcome you have to
+// act on.
 //
 // Styling is left to CSS on the toast container rather than inline style objects, so the light
 // and dark themes keep working from the same tokens as the rest of the app.

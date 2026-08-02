@@ -15,9 +15,9 @@ import { toastDone, toastFailed, toastSaid } from "./toast";
 // that start it doing so. The Console is the other half, and it is read-only apart from undo:
 // this tab answers "what should happen", that one answers "what happened".
 //
-// Reconciliation's shape is the point: the passes are listed in cost order and labelled by what they
-// cost, because two of them act on their own and two of them spend money. Four identical
-// checkboxes would hide the only distinction that matters.
+// The passes are listed in cost order and labelled by what they cost, because two of them act on
+// their own and three of them spend money. Five identical checkboxes would hide the only
+// distinction that matters.
 
 const PASSES: Array<{ pass: ReconcilePass; label: string; cost: string; free: boolean }> = [
   {
@@ -613,7 +613,7 @@ function ReconcileReportCard({ report }: { report: ReconcileReport }) {
             {estimate.usd !== null && `, about $${estimate.usd.toFixed(2)}`}
           </div>
           <div className="reconcileLine reconcileLineMuted">
-            the contradiction pass is not built yet: this is the estimate, not a result
+            what clearing the whole backlog would cost, not what a run spent
           </div>
         </div>
       )}

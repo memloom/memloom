@@ -1148,10 +1148,10 @@ export function buildMigrations(dims: number): Migration[] {
       // clobbered. `class` + `decision` are also the counters that let a retirement class earn
       // autonomy later.
       //
-      // Every statement in 0023 to 0027 is written to be safe to run twice. `migrate` keys on the
-      // id, so a migration that is renamed, or one whose objects a store already has for any
-      // other reason, is applied again and must be a no-op rather than an error. Rows in
-      // _memloom_migrations for ids no longer in this array are ignored.
+      // Every reconcile migration below is written to be safe to run twice. `migrate` keys on
+      // the id, so one whose objects a store already has for any reason is applied again and
+      // must be a no-op rather than an error. Rows in _memloom_migrations for ids no longer in
+      // this array are ignored.
       id: "0023_reconcile",
       sql: /* sql */ `
       CREATE TABLE IF NOT EXISTS memory_reconcile_runs (

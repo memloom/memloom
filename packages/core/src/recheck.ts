@@ -32,9 +32,8 @@ export const MIN_QUOTE_CHARS = 15;
  * How long a belief stays checked before it is due again.
  *
  * A belief's neighbourhood keeps changing after it is examined, so "checked once" is not
- * "checked forever": the pair that contradicts it may not have been written yet. The design's
- * per-belief quiet period is a neighbourhood hash OR 30 days, whichever comes first. This is the
- * clock half. The hash half is not built, so the clock is doing all the work and 30 days is what
+ * "checked forever": the pair that contradicts it may not have been written yet. Nothing tracks
+ * whether a neighbourhood actually changed, so the clock is the only signal, and 30 days is what
  * stops a store that has caught up from re-paying for the same beliefs every run.
  */
 export const RECHECK_QUIET_DAYS = 30;

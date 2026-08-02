@@ -1156,7 +1156,7 @@ textarea {
   border-bottom: 0;
 }
 
-/* The startup row is a different kind of choice from the four passes above it. */
+/* The startup row is a different kind of choice from the passes above it. */
 .passRow:nth-last-child(1) {
   border-top: 1px solid var(--border);
 }
@@ -1183,7 +1183,7 @@ textarea {
   flex: 1;
 }
 
-/* The whole reason the list is not four checkboxes: which ones spend money is the choice. */
+/* The whole reason the list is not plain checkboxes: which ones spend money is the choice. */
 .passCost {
   color: var(--text-faint);
   font-family: var(--mono);
@@ -2728,8 +2728,8 @@ textarea {
   font-size: 13px;
 }
 
-/* The decision inbox: queue on the left, one item on the right. Three stacked full-width lists
-   put the third below the fold and let whichever had most rows dominate the tab. */
+/* The decision inbox: queue on the left, one item on the right. One rail for all three kinds,
+   so none of them sits below the fold and the longest list does not dominate the tab. */
 .inbox {
   display: grid;
   grid-template-columns: minmax(240px, 320px) 1fr;

@@ -3,7 +3,7 @@ title: "Reconciliation"
 description: "memloom goes over its own store, repairs what it can prove is wrong, and asks about the rest"
 ---
 
-## The stance
+## What it is for
 
 A store that only ever grows drifts. Two saves land on the same content, a resolution leaves a
 memory superseded but still current, two beliefs written months apart contradict each other and
@@ -13,8 +13,7 @@ worse answers.
 Reconciliation is the pass that goes looking. memloom reads its own store, repairs what SQL can prove is
 wrong, and asks you about what it cannot decide alone.
 
-The rule the whole feature rests on: **reversibility buys autonomy, and money buys a prompt**. A
-pass acts unasked when the store contradicts itself and the ledger can undo the fix. A pass that
+A pass acts unasked when the store contradicts itself and the ledger can undo the fix. A pass that
 would spend money stays off until you turn it on, because a wrong retirement is one command to
 reverse and a spent dollar is not.
 
@@ -67,8 +66,8 @@ never repaired.
 
 <Note>
 Entity invariants are **reported only**. Nothing repairs them. A repair that guessed would hide the
-bug that produced them, and a non-zero count belongs to whoever owns
-[entity resolution](/concepts/entity-resolution) rather than to a reconciliation workaround.
+bug that produced them, and a non-zero count is something to fix in
+[entity resolution](/concepts/entity-resolution), not to work around here.
 </Note>
 
 ### The entity pass
@@ -127,8 +126,8 @@ A belief that has been checked comes back around after **30 days**, because its 
 changing and the pair that contradicts it may not have been written yet.
 
 <Note>
-The 30-day clock is the whole quiet period. There is no signal for "this belief's neighbourhood
-changed"; that half of the design is not built.
+The 30-day clock is the whole quiet period. Nothing tracks whether a belief's neighbourhood has
+actually changed, so the clock is the only thing bringing a belief back around.
 </Note>
 
 ### Findings are possible contradictions, not conflicts

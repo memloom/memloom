@@ -164,9 +164,8 @@ describe("reconcile", () => {
     const { memloom } = await openStore();
     await memloom.save({ content: "the deploy target is fly.io" });
 
-    // Nothing has ever re-checked anything (the contradiction pass is not built), so every dry
-    // run must report the same outstanding work. A second preview saying 0 would be claiming
-    // work that was never done.
+    // Nothing has ever re-checked anything, so every dry run must report the same outstanding
+    // work. A second preview saying 0 would be claiming work that was never done.
     expect((await memloom.reconcile()).estimate.window).toBe(1);
     expect((await memloom.reconcile()).estimate.window).toBe(1);
 
