@@ -433,15 +433,13 @@ paths:
     post:
       summary: Distill agent sessions into memories
       description: |
-        What `memloom import sessions` calls. Claude Code is the only supported agent today
-        and the default. Discovers local Claude Code transcripts (fixed to
-        `~/.claude/projects`; the client cannot pass an arbitrary path), then for
-        each session checks the ledger, redacts secret-shaped strings, chunks, distills with
-        the configured LLM into typed memories, embeds, and saves through the belief
-        pipeline. The response streams NDJSON: one `{"type":"item"}` event per session, then
-        a final `{"type":"done"}` event with the run totals and the cost line (extraction,
-        embedding, and classifier calls spent). A dry run makes zero LLM calls and writes
-        nothing.
+        Distills local Claude Code transcripts into typed memories. Per session: check the
+        ledger, redact secret-shaped strings, chunk, distill, embed, and save through the belief
+        pipeline. The path is fixed to `~/.claude/projects`; a client cannot pass an arbitrary
+        one.
+
+        NDJSON: one `{"type":"item"}` per session, then `{"type":"done"}` with totals and the
+        cost line. A dry run makes zero model calls and writes nothing.
       operationId: importSessionsStream
       requestBody:
         required: false
@@ -964,16 +962,13 @@ paths:
     get:
       summary: Walk the graph from one entity
       description: |
-        Everything connected to one entity. The target may be an id, a name, or a spelling
-        that was folded away; an alias resolves to its canonical entity and `matchedAlias`
-        reports which spelling was asked for.
+        Everything connected to one entity. The target may be an id, a name, or a folded-away
+        spelling, which resolves to its canonical with `matchedAlias` naming what was asked for.
+        Matched exactly, not by meaning: this is a graph lookup, not a search.
 
-        Two kinds of connection come back separately and are never blended into one score.
-        Stated links are typed predicate edges extraction asserted, with their direction from
-        the asked-about end. Co-mention is entities named by the same sources, which is weaker
-        evidence and never outranks a stated link.
-
-        The target is matched exactly, not by meaning. This is a graph lookup, not a search.
+        Two kinds of connection come back separately and are never blended. **Stated** links are
+        typed edges extraction asserted, with direction. **Co-mention** is entities named by the
+        same sources, which is weaker and never outranks a stated link.
       operationId: relatedEntities
       parameters:
         - name: q
@@ -1181,14 +1176,13 @@ paths:
     post:
       summary: Merge an entity into another
       description: |
-        Fold this entity into a surviving one: every mention and typed relationship is
-        repointed to the target (would-be duplicates and self-loops are dropped) and the
-        absorbed spelling is kept as an alias, so later mentions of it resolve to the
-        survivor. The survivor keeps its own name and type.
+        Fold this entity into a surviving one. Every mention and relationship repoints to the
+        target, duplicates and self-loops are dropped, and the absorbed spelling is kept as an
+        alias so later mentions resolve to the survivor, which keeps its own name and type.
 
-        The fold is recorded and revertable through /memory/entities/merges. No lexical rule
-        is applied here, so this is also the way to declare that two entities are the same
-        when nothing about their spelling says so, like a nickname and a full name.
+        Recorded and revertable through /memory/entities/merges. No lexical rule is applied, so
+        this is how you declare two entities the same when nothing about their spelling says so,
+        like a nickname and a full name.
       operationId: mergeEntity
       parameters:
         - name: id
@@ -1333,14 +1327,12 @@ paths:
     post:
       summary: Auto-resolve pending conflicts with an LLM judge (NDJSON stream)
       description: |
-        What `memloom conflicts auto` calls. Re-judges every pending conflict with context
-        the dedup classifier never had: when each side was recorded and, for memories
-        distilled from a Claude Code import, the transcript excerpt behind it. Only a
-        decisive verdict resolves anything (`keep_new`, `keep_existing`, or `keep_both`,
-        applied through the same `resolveConflict` path as the manual endpoint above, so it's
-        just as revertable); `unsure` leaves the conflict pending. Streams NDJSON: one
-        `{"type":"item"}` event per examined conflict, then a final `{"type":"done"}` event
-        with the totals. Needs the LLM; unavailable in offline mode.
+        Re-judges every pending conflict with context the save-time classifier never had: when
+        each side was recorded, and for imported memories the transcript excerpt behind it.
+
+        Only a decisive verdict resolves anything, applied through the same path as the manual
+        endpoint and just as revertable. `unsure` leaves the conflict pending. NDJSON: one
+        `{"type":"item"}` per conflict, then `{"type":"done"}` with totals. Needs a model.
       operationId: autoResolveConflictsStream
       requestBody:
         required: false
@@ -1362,22 +1354,18 @@ paths:
     post:
       summary: Run the consolidation pass
       description: |
-        What `memloom reconcile` calls. memloom goes over its own store, repairs what SQL proves
-        is wrong, folds duplicate entity names, and asks about the rest. Every run is one
-        undoable unit: the report names the run id, and `/memory/reconcile/{id}/revert` puts back
-        exactly what it did.
+        Reviews the store, repairs what SQL proves wrong, folds duplicate entity names, and
+        asks about the rest. Every run is one undoable unit: the report names the run id, and
+        `/memory/reconcile/{id}/revert` puts back exactly what it did.
 
-        `mode` defaults to `dry_run`, which changes nothing and never calls a model however
-        the settings are set. What the paid passes would have cost is counted and returned in
-        `estimate` instead. Note that the `memloom reconcile` CLI command defaults the other way
-        and applies.
+        `mode` defaults to `dry_run`, which changes nothing and never calls a model, returning
+        what the paid passes would have cost in `estimate`. **The `memloom reconcile` CLI
+        command defaults the other way and applies.**
 
-        Which passes run comes from the saved settings unless `passes` overrides them. The
-        two free passes are on by default; the three that spend money are off. See
+        Passes come from the saved settings unless `passes` overrides them: two free ones on,
+        three paid ones off. With the contradiction re-check on a run takes minutes, so use the
+        stream variant rather than holding this request open. See
         [Reconciliation](https://docs.memloom.dev/concepts/reconciliation).
-
-        With the contradiction re-check on, a run is minutes of sequential model calls. Use
-        the stream variant below rather than holding this request open.
       operationId: reconcile
       requestBody:
         required: false
@@ -1420,15 +1408,13 @@ paths:
     post:
       summary: Run the consolidation pass (NDJSON stream)
       description: |
-        The same run, reported as it goes. Streams NDJSON: one `{"type":"item"}` event per
-        belief the contradiction re-check checks, a `{"type":"ping"}` every 15 seconds so the
-        pipe never times out, and a final `{"type":"done"}` carrying the whole report. A
-        mid-stream failure arrives as `{"type":"error"}` rather than an HTTP status, because
-        the response has already started.
+        The same run, reported as it goes. NDJSON: one `{"type":"item"}` per belief checked, a
+        `{"type":"ping"}` every 15 seconds so the pipe never times out, and a final
+        `{"type":"done"}` carrying the report. A mid-stream failure arrives as
+        `{"type":"error"}`, since the response has already started.
 
-        Disconnecting stops the run. That is the point rather than a side effect: nobody is
-        watching, so nothing more should be spent, and every belief already checked stays
-        checked. The first event names the run id, which is what a stop button needs.
+        **Disconnecting stops the run**, so nothing more is spent. Every belief already checked
+        stays checked. The first event names the run id.
       operationId: reconcileStream
       requestBody:
         required: false
