@@ -1,203 +1,121 @@
 ---
 title: "Reconciliation"
-description: "memloom goes over its own store, repairs what it can prove is wrong, and asks about the rest"
+description: "memloom reviews its own store, fixes what it can prove is wrong, and asks you about the rest"
+icon: "rotate"
 ---
 
-## What it is for
+## Overview
 
-A store that only ever grows drifts. Two saves land on the same content, a resolution leaves a
-memory superseded but still current, two beliefs written months apart contradict each other and
-nothing ever compares them. None of that shows up in a recall as an error. It shows up as slightly
-worse answers.
+A store that only grows drifts. Duplicates land, resolutions leave loose ends, and beliefs written
+months apart contradict each other with nothing there to notice. Reconciliation is the pass that
+looks.
 
-Reconciliation is the pass that goes looking. memloom reads its own store, repairs what SQL can prove is
-wrong, and asks you about what it cannot decide alone.
+<CardGroup cols={3}>
+  <Card title="Undoable" icon="rotate-left">
+    Every run is one unit with an id. `memloom reconcile undo <id>` takes the whole thing back.
+  </Card>
+  <Card title="Free by default" icon="lock">
+    The two passes that are on can only do what undo reverses. The three that cost money stay off
+    until you turn them on.
+  </Card>
+  <Card title="Never spends unwatched" icon="shield-check">
+    Automatic runs use the free passes only. Money is spent from a command or a button, never a
+    timer.
+  </Card>
+</CardGroup>
 
-A pass acts unasked when the store contradicts itself and the ledger can undo the fix. A pass that
-would spend money stays off until you turn it on, because a wrong retirement is one command to
-reverse and a spent dollar is not.
-
-Every run is one undoable unit. It gets a run id, a ledger of everything it found, and
-`memloom reconcile undo <run id>`.
+***
 
 ## The five passes
 
-They are listed here, in the CLI's report, and in the viewer's Settings tab in the same order:
-cheapest first.
+Cost order, the same order the CLI report and the Settings tab use.
 
-| Pass | What it does | Cost | Default |
-| --- | --- | --- | --- |
-| Fix memory principle violations | Retire what SQL proves obsolete, report what it cannot fix | free, acts on its own | **on** |
-| Resolve duplicate entities | The deterministic fold pass over the graph's entity names | free, acts on its own | **on** |
-| Let a model resolve uncertain entity pairs | Drain the queue of folds the rules would not settle | costs money, one call per pair | off |
-| Let a model resolve memory conflicts | Re-judge the pending conflict queue | costs money, one call per conflict | off |
-| Look for contradictions the save path could not see | The contradiction re-check | costs money, up to 200 calls per run | off |
-
-The split is not about how useful a pass is. It is about whether its work can be taken back. The
-two free passes only ever do things the run's own ledger can reverse, so they need no permission.
-The three paid ones can each cost real money, so they need yours.
-
-### What the first pass repairs on its own
-
-Two classes, both provable in SQL, both with exactly one thing the fix can mean:
-
-| Class | What it is | What happens |
+| Pass | Cost | Default |
 | --- | --- | --- |
-| Duplicate content | Two active memories with the same content | The older one stays active, the rest are retired |
-| Superseded but live | A memory an active `replaces` edge points at that is still active | Retired, because it is being recalled as current |
+| Fix memory principle violations | free | **on** |
+| Resolve duplicate entities | free | **on** |
+| Let a model resolve uncertain entity pairs | one call per pair | off |
+| Let a model resolve memory conflicts | one call per conflict | off |
+| Look for contradictions the save path could not see | up to 200 calls per run | off |
 
-"Retired" means `status = 'stale'`, never deletion. The memory stops coming back from recall,
-stays in its version history, and undo puts it back. A memory a pending conflict is already
-deciding is never retired: reconciliation does not pre-empt an answer you owe.
+<Accordion title="What each pass changes, and what it only reports" icon="list-check">
+  | Pass | Repairs | Reports only |
+  | --- | --- | --- |
+  | Memory principles | Duplicate content, memories left current after a resolution | Orphans, entity invariants |
+  | Duplicate entities | Name variants the rules are certain about | Pairs that need a human |
+  | Uncertain entity pairs | Folds the queue a model can settle | Leaves the rest queued |
+  | Memory conflicts | Re-judges the pending queue | Leaves unsure ones pending |
+  | Contradiction re-check | Nothing. Every finding waits for you | All of them |
 
-On a healthy store the second class is empty. A non-zero count means something wrote an edge
-without staling the row it pointed at.
+  Entity invariants are reported and never repaired. They mean something upstream wrote a bad row,
+  and auto-fixing that hides the bug instead of fixing it.
+</Accordion>
 
-### What it only reports
-
-Three classes where SQL proves the store is inconsistent but the fix is a judgment call. These are
-never repaired.
-
-| Class | What it is | Where it goes |
-| --- | --- | --- |
-| Live heads | One belief with more than one current version | Raised as a conflict, so you say which is still true |
-| Retired with no trail | A memory that is stale with nothing recording what replaced it | Reported in the run's log |
-| Entity invariants | A fold the store half-applied: an alias pointing at nothing, an absorbed row still live, edges left behind | Reported in the run's log |
-
-<Note>
-Entity invariants are **reported only**. Nothing repairs them. A repair that guessed would hide the
-bug that produced them, and a non-zero count is something to fix in
-[entity resolution](/concepts/entity-resolution), not to work around here.
-</Note>
-
-### The entity pass
-
-The second free pass is the deterministic fold pass described in
-[Entity resolution](/concepts/entity-resolution). Reconciliation does not reimplement any of it. It runs
-the same pass, folds the certain pairs, sends the uncertain ones to the Conflicts tab, and records
-which folds belonged to this run so the run's undo can hand them back.
-
-### The two paid passes that drain a queue
-
-Neither of these scans anything. Each one works through a queue that already exists, so the worst
-either can do is answer a question you were going to be asked anyway.
-
-- **Uncertain entity pairs** takes the folds the lexical rules flagged as review and lets a model
-  decide. Folds it makes are recorded as decided by the model, with its reason, so a fold a model
-  made never looks like one you clicked through. A "different things" verdict is recorded too, or
-  the next run would ask the same question forever. This is the pass behind the Conflicts tab's
-  button for duplicate entities.
-- **Memory conflicts** is the same judge as [`memloom conflicts auto`](/cli/conflicts#conflicts-auto),
-  run over whatever is pending. Only a decisive verdict resolves anything, and every resolution
-  lands in the same revertable history as one you made by hand.
+***
 
 ## The contradiction re-check
 
-This is the subtle pass, and the reason it exists is a gap in save-time detection rather than a
-bug in it.
+A save is judged against the **5 nearest** memories that existed at that moment. A pair sitting at
+rank 6 is never compared by anything, and nothing looks again. On a 3000-belief store that is
+around 12 unjudged pairs per belief.
 
-On every save, memloom compares the incoming memory against the **5 nearest** memories that
-existed at that moment. A pair that sat at rank 6 was never judged by anything, and nothing ever
-looks again. Measured on a 3000-belief store: 12.4 unjudged pairs per belief, and 98 percent of
-beliefs have at least one.
+This pass goes back over old beliefs against their **20 nearest** neighbours.
 
-The re-check compares each belief against its **20 nearest** neighbours instead, at the same 0.5
-similarity floor.
+| | |
+| --- | --- |
+| Cost ceiling | 200 beliefs a run, about **$0.55** |
+| Progress | Per belief, oldest first, so a backlog drains across runs with nothing skipped |
+| Repeat | A belief comes back around after 30 days |
+| Precision | About **40 percent** |
 
-<Note>
-Lowering the floor to 0.35 was measured and rejected. It added 266 pairs to the candidate set and
-produced zero contradictions among them. Every real finding cleared 0.5 and was lost to the
-neighbour count, not to the floor.
-</Note>
-
-### What one run costs
-
-A run is capped at **200 beliefs**, which is also its ceiling on model calls: one call per belief,
-each carrying up to 20 neighbours. At roughly a third of a cent per belief that is about **$0.55**
-in the worst case, however large the backlog. Without the cap the first run on an untouched store
-would sweep everything, which on a few thousand beliefs is several dollars arriving unannounced.
-
-Progress is tracked per belief, stamped as each one is checked. A run takes the beliefs that have
-waited longest, and the next run resumes where this one stopped, so a store larger than one run's
-reach drains over several runs with nothing skipped. Ordering decides only which run finds a pair,
-never whether it can be found: an old belief is still compared against the ones written today.
-
-A belief that has been checked comes back around after **30 days**, because its neighbourhood keeps
-changing and the pair that contradicts it may not have been written yet.
+Because it is wrong more often than right, its findings are **possible contradictions**, not
+conflicts. They wait in the Conflicts tab. Confirming one creates the real conflict; dismissing one
+is permanent for that pair.
 
 <Note>
-The 30-day clock is the whole quiet period. Nothing tracks whether a belief's neighbourhood has
-actually changed, so the clock is the only thing bringing a belief back around.
+  The model has to quote the clashing claim from both sides word for word, and the pass drops the
+  finding if either quote is not really there. That is what lets you judge one in three seconds
+  without opening either memory. It is not a precision filter: a real quote can still carry a wrong
+  conclusion.
 </Note>
 
-### Findings are possible contradictions, not conflicts
+Set a budget in the Settings tab to keep going past the 200 ceiling until the backlog is clear or
+that much has been billed.
 
-Measured precision for this pass is roughly **40 percent**. A queue fed directly from it would be
-more noise than signal, so its findings are a separate kind: **possible contradictions**. They wait
-in the Conflicts tab, where dismissing one costs a click.
-
-Confirming one is what creates the real conflict. From that point it is an ordinary conflict with
-the ordinary four resolutions and the ordinary revert. Dismissing records the pair so it is never
-raised again.
-
-### Both sides have to be quoted
-
-When the model answers "contradictory" it must also copy out the clashing claim from each side,
-word for word. The pass then checks both quotes against the two memories and drops the finding if
-either one is not there. Whitespace and case are ignored, so a reflowed line still passes, but a
-reworded one does not.
-
-In practice the model does not fabricate a span. It leaves the fields empty when it cannot find
-one, which is what makes this drop roughly one finding in four.
-
-<Warning>
-The quote check is not a precision filter and must not be read as one. A verbatim quote can carry
-a wrong conclusion. What it buys is a finding you can judge in three seconds, from two spans,
-without opening either memory.
-</Warning>
+***
 
 ## When it runs
 
-On demand, plus two automatic triggers. The daemon checks every 5 minutes whether one is due.
-
-| Trigger | Condition |
-| --- | --- |
-| Manual | You ran `memloom reconcile` or clicked Reconcile now |
-| Startup catch-up | The daemon started, settled for 2 minutes, and the last run is more than 36 hours old |
-| Idle | No run for 20 hours and the daemon has served nothing for 10 minutes |
-| Idle ceiling | No run for 48 hours, idle or not |
-
-Never while indexing: two background passes over the same store is how a laptop gets loud.
+<Steps>
+  <Step title="On demand" icon="play">
+    `memloom reconcile`, or **Reconcile now** in Settings. The only way the paid passes ever run.
+  </Step>
+  <Step title="Startup catch-up" icon="power-off">
+    The daemon starts, settles for two minutes, and runs if the last one is over 36 hours old.
+    Switch it off in Settings.
+  </Step>
+  <Step title="Idle" icon="moon">
+    No run for 20 hours and nothing served for 10 minutes, with a 48 hour ceiling for a busy
+    machine. Never while indexing.
+  </Step>
+</Steps>
 
 <Warning>
-Automatic triggers run **only the free passes**, and not the ones your settings have enabled. The
-free set is passed in verbatim, so a run nobody watched can never spend money. The three paid
-passes only ever run from a manual command or the Settings tab's button.
+  Automatic triggers run the free passes only, whatever your settings say. A run nobody watched
+  cannot spend money.
 </Warning>
 
-Startup catch-up can be switched off in the Settings tab. Idle cannot; it is what makes "nothing is
-missed, it is only late" true on a laptop that sleeps.
+<Accordion title="How a run stays quiet" icon="volume-low">
+  Per run: 10 retirements, 3 reported questions, 5 conflicts raised, 10 integrity findings.
+  Anything past a cap is held for the next run, and the report says how many.
 
-## It gets quieter, not louder
+  No conflicts are raised at all while 20 are already pending. Every consecutive run whose findings
+  you neither approve nor reject halves the next run's caps, and after three of them a run keeps
+  scanning and stops talking. Integrity findings are exempt: quieting an opinion is right, quieting
+  an alarm is not.
+</Accordion>
 
-A background job that surfaces 40 things a week gets turned off in week two. So a run has per-run
-caps, and they are part of the design rather than a setting you have to remember to lower.
-
-| Bucket | Per run |
-| --- | --- |
-| Retirements | 10 |
-| Reported questions | 3 |
-| Conflicts raised | 5 |
-| Store-integrity findings | 10 |
-
-A finding past a cap is recorded and held back, not lost, and the run says how many. A run raises
-no conflicts at all once 20 are already pending, because adding to a backlog nobody is clearing is
-noise.
-
-On top of that, every consecutive run whose findings you neither approved nor rejected halves the
-next run's caps, and after three of them a run keeps scanning and stops talking. The integrity cap
-is deliberately outside that: quieting an opinion nobody answered is right, quieting an alarm is
-not.
+***
 
 ## Undo
 
@@ -205,37 +123,27 @@ not.
 memloom reconcile undo <run id>
 ```
 
-One run, and only that run. It reverses the three things a run can apply:
-
 | What the run did | What undo does |
 | --- | --- |
-| Retired a memory | Reactivates it, if nothing else has touched it since |
-| Folded an entity | Hands the merge back to the same revert entity resolution uses, restoring the absorbed row with its original id and vector |
+| Retired a memory | Reactivates it, unless something else changed it since |
+| Folded an entity | Restores the absorbed entity with its original id |
 | Raised a conflict nobody answered | Removes it from the queue |
 | Raised a conflict you answered | Leaves it alone and counts it as skipped |
 
-The guard on a retirement is exact rather than approximate. A memory is restored only while it is
-still stale **and** its `stale_since` is the one this run wrote. If you (or a conflict resolution)
-staled it since, undo skips it rather than overriding a newer decision. The reply says how many
-were restored, how many entities were unfolded, and how many the store had moved on from.
+Possible contradictions are findings rather than changes, so undo leaves them. Running undo twice
+does nothing the second time.
 
-Possible contradictions are not undone. They are findings, not changes, and they stay in the
-Conflicts tab until you answer them.
-
-Undoing a run twice does nothing the second time.
+***
 
 ## Where you drive it
 
-| Surface | What it is for |
+| Surface | For |
 | --- | --- |
-| Viewer, **Settings** tab | The five toggles with their cost labels, startup catch-up, Reconcile now, Preview only, and undo for the run you just started |
-| Viewer, **Conflicts** tab | The inbox: memory conflicts, duplicate entities, and possible contradictions, one item at a time with numbered keys |
-| Viewer, **Console** tab | Every run in history, expandable into its findings, with stop for a live one and undo for any of them |
+| Settings tab | The toggles, the budget, Reconcile now, Preview only |
+| Conflicts tab | The inbox: one item at a time, numbered keys |
+| Console tab | Every run and its findings, with stop and undo |
 | CLI | [`memloom reconcile`](/cli/reconcile) |
-| HTTP | `POST /memory/reconcile`, `POST /memory/reconcile/stream`, and the rest of the `/memory/reconcile` routes |
-
-The Settings tab answers "what should happen". The Console answers "what happened". Nothing that
-starts work lives in the Console, and nothing that reports history lives in Settings.
+| HTTP | `POST /memory/reconcile` and the rest of `/memory/reconcile` |
 
 ## Turning it off
 
@@ -243,17 +151,6 @@ starts work lives in the Console, and nothing that reports history lives in Sett
 RECONCILE_ENABLED=0
 ```
 
-In `~/.memloom/config.env`, this is a kill switch for a host that wants the reports and none of the
-repairs. A run that was asked to act is refused with a 403 and an explanation; a dry run still
-works and still reports everything.
-
-<Note>
-`RECONCILE_ENABLED` is not an opt-in, and it is not how you choose passes. Reconciliation is on by default
-with its two free passes, and which passes run is a setting in the viewer that takes effect without
-a restart. The switch is also scoped to runs somebody asked for: it guards the HTTP surface the CLI
-and the viewer both go through, and the daemon's own idle and startup runs of the free passes are
-not affected by it.
-</Note>
-
-The three paid passes need `OPENROUTER_API_KEY`. Without one there is no model to ask and they find
-nothing.
+In `~/.memloom/config.env`. Reports still run, repairs do not: an applying run is refused with a
+403, automatic runs stop acting, and a preview still works. The three paid passes also need
+`OPENROUTER_API_KEY`, and find nothing without one.

@@ -15,7 +15,16 @@
       "expanded": "all"
     },
     "examples": {
-      "languages": ["curl", "python", "javascript", "go", "php", "ruby", "java", "csharp"],
+      "languages": [
+        "curl",
+        "python",
+        "javascript",
+        "go",
+        "php",
+        "ruby",
+        "java",
+        "csharp"
+      ],
       "defaults": "required",
       "prefill": true,
       "autogenerate": true
@@ -25,13 +34,20 @@
     "tabs": [
       {
         "tab": "Documentation",
+        "icon": "book",
         "groups": [
           {
             "group": "Getting Started",
-            "pages": ["index", "features", "use-cases"]
+            "icon": "rocket",
+            "pages": [
+              "index",
+              "features",
+              "use-cases"
+            ]
           },
           {
             "group": "Concepts",
+            "icon": "lightbulb",
             "pages": [
               "concepts/architecture",
               "concepts/memory-types",
@@ -46,6 +62,7 @@
           },
           {
             "group": "Guides",
+            "icon": "map",
             "pages": [
               "guides/agent-setup",
               "guides/extractors",
@@ -58,9 +75,11 @@
       },
       {
         "tab": "API Reference",
+        "icon": "code",
         "groups": [
           {
             "group": "Endpoints",
+            "icon": "code",
             "pages": [
               {
                 "group": "Memory",
@@ -204,7 +223,10 @@
                 "group": "Daemon",
                 "openapi": "openapi.yaml",
                 "expanded": false,
-                "pages": ["GET /health", "POST /admin/shutdown"]
+                "pages": [
+                  "GET /health",
+                  "POST /admin/shutdown"
+                ]
               }
             ]
           }
@@ -212,13 +234,18 @@
       },
       {
         "tab": "CLI Reference",
+        "icon": "terminal",
         "groups": [
           {
             "group": "CLI",
-            "pages": ["cli/overview"]
+            "icon": "terminal",
+            "pages": [
+              "cli/overview"
+            ]
           },
           {
             "group": "Commands",
+            "icon": "square-terminal",
             "pages": [
               "cli/daemon",
               "cli/memories",
@@ -231,19 +258,28 @@
           },
           {
             "group": "Connectors",
-            "pages": ["cli/notion"]
+            "icon": "link",
+            "pages": [
+              "cli/notion"
+            ]
           }
         ]
       },
       {
         "tab": "MCP Reference",
+        "icon": "plug",
         "groups": [
           {
             "group": "MCP",
-            "pages": ["mcp/setup", "mcp/tools"]
+            "icon": "plug",
+            "pages": [
+              "mcp/setup",
+              "mcp/tools"
+            ]
           },
           {
             "group": "Clients",
+            "icon": "laptop",
             "pages": [
               "mcp/clients/claude-code",
               "mcp/clients/claude-desktop",
