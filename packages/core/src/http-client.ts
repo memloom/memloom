@@ -14,6 +14,7 @@ import type {
   ContextProgressEvent,
   DocumentChunks,
   ReconcileAction,
+  ReconcileDecision,
   ReconcileOptions,
   ReconcileReport,
   ReconcileRevertResult,
@@ -34,6 +35,8 @@ import type {
   NotionSyncEvent,
   NotionSyncOptions,
   NotionSyncResult,
+  PossibleAnswer,
+  PossibleContradiction,
   RecallOptions,
   RelatedEntities,
   ResolveDecision,
@@ -358,6 +361,10 @@ export class HttpMemloomClient implements MemoryEngine {
     return this.#post<ReconcileRevertResult>(`/memory/reconcile/${runId}/revert`, {});
   }
 
+  stopReconcile(runId: string): Promise<{ stopped: boolean }> {
+    return this.#post<{ stopped: boolean }>(`/memory/reconcile/${runId}/stop`, {});
+  }
+
   reconcileSettings(): Promise<ReconcileSettings> {
     return this.#json<ReconcileSettings>("/memory/reconcile/settings");
   }
@@ -377,6 +384,25 @@ export class HttpMemloomClient implements MemoryEngine {
       `/memory/reconcile/runs/${runId}/actions`,
     );
     return actions;
+  }
+
+  // The route serves the daemon's own page size, so a limit here would only describe a cap the
+  // wire does not carry.
+  async possibleContradictions(
+    _ownerId?: string,
+    _limit?: number,
+  ): Promise<PossibleContradiction[]> {
+    const { possible } = await this.#json<{ possible: PossibleContradiction[] }>(
+      "/memory/reconcile/possible",
+    );
+    return possible;
+  }
+
+  answerPossible(
+    actionId: string,
+    decision: Extract<ReconcileDecision, "approved" | "rejected">,
+  ): Promise<PossibleAnswer> {
+    return this.#post<PossibleAnswer>(`/memory/reconcile/possible/${actionId}/answer`, { decision });
   }
 
   contextAdd(

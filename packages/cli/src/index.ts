@@ -10,6 +10,7 @@ import {
   MEMORY_TYPES,
   type Memory,
   type MemoryType,
+  type PossibleContradiction,
   supportedExtensions,
 } from "@memloom/core";
 import { runAgentMemoryImport } from "./agent-memory.js";
@@ -179,6 +180,43 @@ export function formatReconcileReport(report: ReconcileReport): string {
   return lines.join("\n");
 }
 
+/**
+ * The unconfirmed contradictions, one block each.
+ *
+ * The two quotes were verified against both memories when the finding was written, so they are
+ * the whole question: reading them is faster than opening two beliefs and comparing them. The
+ * precision warning leads because most of this list is wrong, and answering as if it were not
+ * is how a real conflict queue fills with noise.
+ */
+export function formatPossibleContradictions(possible: PossibleContradiction[]): string {
+  if (possible.length === 0) {
+    return "no unconfirmed contradictions. the contradiction re-check pass raises them when it runs.";
+  }
+  const lines = [
+    `${possible.length} unconfirmed ${possible.length === 1 ? "contradiction" : "contradictions"}. ` +
+      "about 2 in 5 are real, so read both quotes before answering.",
+  ];
+  for (const p of possible) {
+    const similarity =
+      p.similarity === null
+        ? "similarity unknown"
+        : `similarity ${Math.round(p.similarity * 100)}%`;
+    lines.push(
+      "",
+      `${similarity}${p.model ? `, judged by ${p.model}` : ""}`,
+      `  NEW:      ${p.newQuote}`,
+      `  EXISTING: ${p.oldQuote}`,
+      `  why:      ${p.reason}`,
+      `  id:       ${p.id}`,
+    );
+  }
+  lines.push(
+    "",
+    "answer one with: memloom reconcile yes <id> (a real conflict) or memloom reconcile no <id> (never ask again)",
+  );
+  return lines.join("\n");
+}
+
 // A path argument may be a file or a directory: directories are scanned recursively for
 // extensions the extractor registry supports; everything else is ignored.
 function collectContextFiles(path: string): string[] {
@@ -222,6 +260,8 @@ Usage: memloom <command> [args]
   conflicts [auto]     list pending conflicts; auto resolves the obvious ones with the LLM
   reconcile                consolidation pass: repair, fold, and ask about the rest,
                        changing no memories and spending nothing
+  reconcile possible       the unconfirmed contradictions it found; answer one with
+                       reconcile yes <id> or reconcile no <id>
   import sessions      distill recent agent sessions into memories (--dry-run first)
   import agent-memory  bring in memories your agents already saved on disk (Claude Code
                        memory folders, Copilot); no distillation step
@@ -476,6 +516,9 @@ resolution is reversible.
          anything the model is unsure about stays pending for you.`,
 
   reconcile: `memloom reconcile [--dry-run]
+       memloom reconcile possible
+       memloom reconcile yes <id> | memloom reconcile no <id>
+       memloom reconcile stop <run id>
        memloom reconcile undo <run id>
        memloom reconcile settings
 
@@ -483,6 +526,11 @@ The consolidation pass: memloom goes over its own store, repairs what it can
 prove is wrong, folds duplicate entity names, and asks about the rest.
 
   --dry-run   report everything and change nothing
+  possible    the unconfirmed contradictions the re-check found, with the two
+              quotes that make each one answerable
+  yes <id>    confirm one: it becomes a real conflict you can resolve
+  no <id>     dismiss one: that pair is never raised again
+  stop <id>   stop a run that is still going
   undo        put back exactly what one run did, and only that run
   settings    print which passes are on
 
@@ -498,6 +546,12 @@ What it only asks about, because the fix is a judgment call:
 
 Retiring a memory means status 'stale', never deletion: it stops showing up in
 recall, stays in its version history, and undo puts it back.
+
+The contradiction re-check is right about 2 times in 5, so what it finds never
+touches the conflict queue on its own. Each finding waits in "reconcile possible"
+until you answer it: "yes" promotes it into a real conflict, "no" retires the
+pair for good. A rejection is not waste, it is a labelled example of what you
+do not consider a contradiction.
 
 Two passes can use a model to resolve uncertain entity pairs and pending
 contradictions. They cost money and are off until you turn them on in the
@@ -1129,22 +1183,63 @@ export async function run(argv: readonly string[]): Promise<void> {
     }
 
     case "reconcile": {
+      const [sub, ...args] = rest;
+      const id = args[0] ?? "";
+      // Missing arguments are caught before connect(), so a typo never starts a daemon.
+      if ((sub === "undo" || sub === "stop") && !id) {
+        console.log(`usage: memloom reconcile ${sub} <run id>`);
+        return;
+      }
+      if ((sub === "yes" || sub === "no") && !id) {
+        console.log(`usage: memloom reconcile ${sub} <id>`);
+        return;
+      }
       const engine = await connect();
-      // `undo` first: it takes a run id, so it must not be mistaken for a mode flag.
-      if (rest[0] === "undo") {
-        const runId = rest[1];
-        if (!runId) {
-          console.log("usage: memloom reconcile undo <run id>");
-          return;
-        }
-        const result = await engine.revertReconcile(runId);
+
+      // The subcommands come first: each takes an id, so none of them may be mistaken for a
+      // mode flag.
+      if (sub === "undo") {
+        const result = await engine.revertReconcile(id);
         console.log(
           `restored ${result.restored} memories, unfolded ${result.unfolded} entities` +
             (result.skipped > 0 ? `, skipped ${result.skipped} the store moved on from` : ""),
         );
         return;
       }
-      if (rest[0] === "settings") {
+      if (sub === "stop") {
+        const { stopped } = await engine.stopReconcile(id);
+        console.log(
+          stopped
+            ? `stopped run ${id}. what it already checked stays checked`
+            : `run ${id} was not running, so nothing was stopped`,
+        );
+        return;
+      }
+      if (sub === "possible") {
+        console.log(formatPossibleContradictions(await engine.possibleContradictions()));
+        return;
+      }
+      if (sub === "yes" || sub === "no") {
+        try {
+          const answer = await engine.answerPossible(id, sub === "yes" ? "approved" : "rejected");
+          console.log(
+            answer.conflictId
+              ? `confirmed. it is conflict ${answer.conflictId} now: resolve it in the viewer ` +
+                  "(memloom ui) or over MCP"
+              : "dismissed. that pair will never be raised again",
+          );
+        } catch (err) {
+          // An id that was already answered, or one whose beliefs the store has moved on from,
+          // is a stale copy-paste rather than a failure worth a stack trace.
+          const message = err instanceof Error ? err.message : String(err);
+          if (!/no unanswered/.test(message)) throw err;
+          console.log(
+            `nothing unconfirmed with id ${id}. list what is waiting: memloom reconcile possible`,
+          );
+        }
+        return;
+      }
+      if (sub === "settings") {
         console.log(JSON.stringify(await engine.reconcileSettings(), null, 2));
         return;
       }

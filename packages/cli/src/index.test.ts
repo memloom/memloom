@@ -1,6 +1,6 @@
-import type { ReconcileReport } from "@memloom/core";
+import type { ReconcileReport, PossibleContradiction } from "@memloom/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { formatReconcileReport, run } from "./index.js";
+import { formatReconcileReport, formatPossibleContradictions, run } from "./index.js";
 
 // The CLI is now a thin router over the daemon (data commands auto-start `memloom serve` and
 // talk to it over HTTP). Here we cover the router itself; save/recall behaviour is tested at
@@ -49,9 +49,70 @@ describe("cli router", () => {
     await expect(run(["save", "--type", "fact"])).rejects.toThrow(/usage: memloom save/);
   });
 
-  it("reconcile undo without a run id explains itself and never runs", async () => {
+  // Every reconcile subcommand that takes an id checks it before connect(), so a typo prints usage
+  // instead of starting a daemon to be told nothing.
+  it("reconcile subcommands missing their id explain themselves and never run", async () => {
     await run(["reconcile", "undo"]);
     expect(logs.join("\n")).toContain("usage: memloom reconcile undo <run id>");
+
+    logs = [];
+    await run(["reconcile", "stop"]);
+    expect(logs.join("\n")).toContain("usage: memloom reconcile stop <run id>");
+
+    logs = [];
+    await run(["reconcile", "yes"]);
+    expect(logs.join("\n")).toContain("usage: memloom reconcile yes <id>");
+
+    logs = [];
+    await run(["reconcile", "no"]);
+    expect(logs.join("\n")).toContain("usage: memloom reconcile no <id>");
+  });
+
+  it("reconcile help names the answering subcommands", async () => {
+    await run(["reconcile", "--help"]);
+    const help = logs.join("\n");
+    expect(help).toContain("memloom reconcile possible");
+    expect(help).toContain("yes <id>");
+    expect(help).toContain("no <id>");
+    expect(help).toContain("memloom reconcile stop <run id>");
+  });
+
+  it("the possible list leads with the precision warning, then the two quotes and the id", () => {
+    const finding: PossibleContradiction = {
+      id: "act-1",
+      runId: "run-9",
+      newMemory: { id: "mem-new", content: "we run on railway now, moved off fly.io in june" },
+      oldMemory: { id: "mem-old", content: "the deploy target is fly.io" },
+      newQuote: "we run on railway now",
+      oldQuote: "the deploy target is fly.io",
+      reason: "deploy target changed",
+      model: "google/gemini-2.5-flash",
+      similarity: 0.8123,
+      foundAt: "2026-08-01T10:00:00.000Z",
+    };
+
+    const out = formatPossibleContradictions([finding]);
+    // Answering as if these were established findings is the failure mode, so the count and the
+    // precision come before anything a reader could act on.
+    expect(out.split("\n")[0]).toContain("1 unconfirmed contradiction");
+    expect(out.split("\n")[0]).toContain("about 2 in 5 are real");
+    expect(out).toContain("similarity 81%, judged by google/gemini-2.5-flash");
+    expect(out).toContain("NEW:      we run on railway now");
+    expect(out).toContain("EXISTING: the deploy target is fly.io");
+    expect(out).toContain("why:      deploy target changed");
+    // The action id is what the answer commands take, so it must be in the block.
+    expect(out).toContain("id:       act-1");
+    expect(out).toContain("memloom reconcile yes <id>");
+
+    // A missing embedding on either side leaves no cosine to print, and the line must not read
+    // as 0 percent similar.
+    const unknown = formatPossibleContradictions([{ ...finding, similarity: null }]);
+    expect(unknown).toContain("similarity unknown");
+  });
+
+  it("an empty possible list says so, and says what fills it", () => {
+    expect(formatPossibleContradictions([])).toContain("no unconfirmed contradictions");
+    expect(formatPossibleContradictions([])).toContain("re-check pass");
   });
 
   it("the reconcile report says what was found and that nothing changed", () => {

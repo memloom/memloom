@@ -4,9 +4,11 @@ import { z } from "zod";
 import {
   addFile,
   addLink,
+  answerPossibleContradiction,
   deleteSchemaEntry,
   listConflicts,
   listDocuments,
+  listPossibleContradictions,
   MAX_INLINE_MEDIA_SECONDS,
   memoryHistory,
   readPassage,
@@ -144,6 +146,38 @@ export function buildServer(memloom: MemoryEngine): McpServer {
       content: z.string().optional(),
     },
     async (args) => ({ content: [{ type: "text", text: await resolveConflict(memloom, args) }] }),
+  );
+
+  server.tool(
+    "list_possible_contradictions",
+    "List UNCONFIRMED possible contradictions: pairs of memories that memloom's consolidation " +
+      "pass thinks clash, each with a verbatim quote from both sides and the reason a model gave. " +
+      "These are NOT conflicts and they are NOT facts about the store. The pass runs at roughly " +
+      "40 percent precision, so most of what this returns is wrong. Treat each one as a question " +
+      "for the user: show it, let them decide, and answer it with " +
+      "answer_possible_contradiction using the id shown. Do not work through the list on your " +
+      "own unless the user asked you to.",
+    {},
+    async () => ({
+      content: [{ type: "text", text: await listPossibleContradictions(memloom) }],
+    }),
+  );
+
+  server.tool(
+    "answer_possible_contradiction",
+    "Answer one finding from list_possible_contradictions. `confirm` turns it into a real " +
+      "conflict, which then has to be resolved with resolve_conflict (keep_new, keep_existing, " +
+      "keep_both, or merge). `dismiss` records that pair as not a contradiction PERMANENTLY: it " +
+      "is never raised again and there is no undo. Because a finding is only about 40 percent " +
+      "likely to be real, ask the user rather than guessing. A wrong confirm puts noise in a " +
+      "queue they have to clear; a wrong dismiss loses a real contradiction for good.",
+    {
+      id: z.string(),
+      answer: z.enum(["confirm", "dismiss"]),
+    },
+    async (args) => ({
+      content: [{ type: "text", text: await answerPossibleContradiction(memloom, args) }],
+    }),
   );
 
   server.tool(
