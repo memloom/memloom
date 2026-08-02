@@ -1053,6 +1053,91 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/EntityConflict"
+  /memory/entities/settled:
+    get:
+      summary: List entity pairs settled as different things
+      description: >-
+        Pairs a human or a model decided are not the same thing. Recorded so the resolver never
+        raises them again. Reverting one puts the question back in the queue.
+      operationId: listSettledEntityPairs
+      responses:
+        "200":
+          description: The settled pairs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  settled:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SettledEntityPair"
+  /memory/entities/resolve-auto:
+    post:
+      summary: Let a model settle the queued entity pairs
+      description: |
+        Asks a model about every pair the lexical rules could not settle, folding the ones it is
+        confident about and leaving the rest queued. One call per pair, so it is never a side
+        effect of anything else.
+
+        This is the same work the `llm_entities` reconcile pass does. Refused with 403 when
+        `RECONCILE_ENABLED=0`, because it spends money.
+      operationId: autoResolveEntities
+      responses:
+        "200":
+          description: What the model settled.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  calls:
+                    type: integer
+                    description: One per pair the model was asked about.
+                  folded:
+                    type: integer
+                  rejected:
+                    type: integer
+                    description: Pairs settled as different things, so they are never asked again.
+                  unsure:
+                    type: integer
+                    description: Left queued for a human.
+        "403":
+          description: Reconciliation is set to report only.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: reconciliation is set to report only (RECONCILE_ENABLED=0).
+  /memory/entities/resolve-auto/stream:
+    post:
+      summary: Let a model settle the queued entity pairs (NDJSON stream)
+      description: >-
+        The same work, reported as it goes. One `{"type":"item"}` per pair judged, a
+        `{"type":"ping"}` every 15 seconds so the pipe never times out, and a final
+        `{"type":"done"}` carrying the totals. A mid-stream failure arrives as
+        `{"type":"error"}`, since the response has already started.
+      operationId: autoResolveEntitiesStream
+      responses:
+        "200":
+          description: NDJSON, one JSON object per line.
+          content:
+            application/x-ndjson:
+              schema:
+                type: string
+        "403":
+          description: Reconciliation is set to report only.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: reconciliation is set to report only (RECONCILE_ENABLED=0).
   /memory/entities/merges:
     get:
       summary: List entity folds
@@ -1555,6 +1640,17 @@ paths:
             type: string
             format: uuid
       responses:
+        "409":
+          description: >-
+            The run exists but the undo could not complete, for example because the store has
+            moved on from what it did.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
         "404":
           description: No such run.
           content:
@@ -2850,6 +2946,30 @@ components:
         skipped:
           type: integer
           description: Pairs already merged, queued, or settled as distinct.
+    SettledEntityPair:
+      type: object
+      description: Two entity spellings decided to be different things.
+      properties:
+        id:
+          type: string
+          format: uuid
+        incomingName:
+          type: string
+        candidateName:
+          type: string
+        decidedBy:
+          type: string
+          enum: [auto, llm, human]
+        model:
+          type: string
+          nullable: true
+          description: Which model decided, when decidedBy is `llm`.
+        reason:
+          type: string
+          nullable: true
+        resolvedAt:
+          type: string
+          format: date-time
     ReconcileInput:
       type: object
       description: What to run. Every field is optional.
@@ -2868,12 +2988,21 @@ components:
         passes:
           type: array
           description: >-
-            Override the saved settings for this run. Omit to use them. The contradiction
-            re-check (`llm_recheck`) is not requestable here; it runs only when the setting is
-            on.
+            Run exactly these passes, ignoring the saved settings. Omit to use the settings,
+            which is what every shipped surface does. This overrides the settings for the three
+            paid passes too, so a caller can start a run that spends money while the Settings
+            toggles are off. `RECONCILE_ENABLED=0` still refuses it.
           items:
             type: string
-            enum: [invariants, entities, llm_entities, llm_conflicts]
+            enum: [invariants, entities, llm_entities, llm_conflicts, llm_recheck]
+        budgetUsd:
+          type: number
+          exclusiveMinimum: 0
+          maximum: 50
+          description: >-
+            Keep re-checking past the per-run ceiling until nothing is due or this much has been
+            billed, measured against the provider's own reported cost. Omit for one page and
+            stop, which is the default. Capped at 50 because a typo here spends real money.
     ReconcileSettings:
       type: object
       description: >-
@@ -2946,6 +3075,19 @@ components:
             so.
         llmCalls:
           type: integer
+        spentUsd:
+          type: number
+          description: >-
+            What the run actually cost, from the provider's own billed figures. Written per call,
+            so it survives a crash mid-sweep.
+        spentInputTokens:
+          type: integer
+        spentOutputTokens:
+          type: integer
+        error:
+          type: string
+          nullable: true
+          description: Why a run with status `error` failed. Null otherwise.
         startedAt:
           type: string
           format: date-time
@@ -3099,7 +3241,23 @@ components:
               description: Findings whose quotes were found in both memories, and were recorded.
             remaining:
               type: integer
-              description: Beliefs the 200 ceiling left for the next run.
+              description: Beliefs still due when the run stopped.
+            spentUsd:
+              type: number
+              description: Billed for this pass, from the provider's own figures.
+            spentInputTokens:
+              type: integer
+            spentOutputTokens:
+              type: integer
+            stoppedBy:
+              type: string
+              nullable: true
+              enum: [budget, aborted, cap, unpriced, failed]
+              description: >-
+                Why it stopped short. `cap` is the per-run ceiling with no budget set, `budget`
+                is the spend limit, `aborted` is a stop, `unpriced` means a budget was set but
+                the provider reported no cost so the run refused to page on blind, and `failed`
+                means every call in a page failed. Null means nothing is due any more.
     PossibleContradiction:
       type: object
       description: >-

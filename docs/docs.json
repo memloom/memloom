@@ -132,7 +132,10 @@
                   "POST /memory/entities/merges/{id}/revert",
                   "PATCH /memory/entities/{id}",
                   "POST /memory/entities/{id}/merge",
-                  "DELETE /memory/entities/{id}"
+                  "DELETE /memory/entities/{id}",
+                  "GET /memory/entities/settled",
+                  "POST /memory/entities/resolve-auto",
+                  "POST /memory/entities/resolve-auto/stream"
                 ]
               },
               {
