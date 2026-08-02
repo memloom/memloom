@@ -1311,5 +1311,19 @@ export function buildMigrations(dims: number): Migration[] {
         WHERE status = 'active';
     `,
     },
+    {
+      // What a run actually spent, as opposed to est_input_tokens and est_output_tokens, which
+      // price work nobody has done yet. Written per call rather than once at the end: a sweep runs
+      // for minutes and a budget that can only be checked afterwards is not a budget.
+      //
+      // spent_usd is the provider's own billed figure, so it matches the invoice rather than a
+      // local price table.
+      id: "0029_reconcile_spend",
+      sql: /* sql */ `
+      ALTER TABLE memory_reconcile_runs ADD COLUMN IF NOT EXISTS spent_input_tokens int NOT NULL DEFAULT 0;
+      ALTER TABLE memory_reconcile_runs ADD COLUMN IF NOT EXISTS spent_output_tokens int NOT NULL DEFAULT 0;
+      ALTER TABLE memory_reconcile_runs ADD COLUMN IF NOT EXISTS spent_usd double precision NOT NULL DEFAULT 0;
+    `,
+    },
   ];
 }

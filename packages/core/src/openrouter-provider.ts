@@ -5,6 +5,7 @@ import type {
   ChatTool,
   ChatToolCall,
   EmbeddingProvider,
+  LlmUsage,
   LLMProvider,
 } from "./providers.js";
 
@@ -47,6 +48,26 @@ function describeNetworkError(err: unknown): string {
   return detail ? `${message} (${detail})` : message;
 }
 
+/**
+ * The provider cannot be paid, so no call will succeed until a human acts.
+ *
+ * Separate from an ordinary failure because the two want opposite handling: a transient error is
+ * worth swallowing per item and moving on, and this one must stop the whole run. A pass that
+ * treats it as "no verdict" marks every item it touched as done without ever judging one.
+ */
+export class LlmSpendError extends Error {
+  readonly code: "no_credit" | "unauthorized";
+  constructor(code: "no_credit" | "unauthorized", detail: string) {
+    super(
+      code === "no_credit"
+        ? `OpenRouter is out of credit: ${detail}`
+        : `OpenRouter rejected the API key: ${detail}`,
+    );
+    this.name = "LlmSpendError";
+    this.code = code;
+  }
+}
+
 async function postJson(url: string, apiKey: string, body: unknown, what: string) {
   for (let attempt = 1; ; attempt++) {
     let res: {
@@ -84,7 +105,12 @@ async function postJson(url: string, apiKey: string, body: unknown, what: string
         await sleep(backoffMs(attempt, retryAfter));
         continue;
       }
-      throw new Error(`OpenRouter ${what} failed: ${res.status} ${await res.text()}`);
+      const detail = await res.text();
+      if (res.status === 402) throw new LlmSpendError("no_credit", detail.slice(0, 300));
+      if (res.status === 401 || res.status === 403) {
+        throw new LlmSpendError("unauthorized", detail.slice(0, 300));
+      }
+      throw new Error(`OpenRouter ${what} failed: ${res.status} ${detail}`);
     }
     return res.json();
   }
@@ -225,7 +251,7 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
    * chat() and chatStream() deliberately do not do this. They carry the assistant's own words,
    * where sampling is the point.
    */
-  async complete(prompt: string): Promise<string> {
+  async complete(prompt: string, opts: { onUsage?: (usage: LlmUsage) => void } = {}): Promise<string> {
     const json = (await postJson(
       `${this.#baseUrl}/chat/completions`,
       this.#apiKey,
@@ -234,9 +260,22 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
         messages: [{ role: "user", content: prompt }],
         max_tokens: MAX_COMPLETION_TOKENS,
         temperature: 0,
+        // Asking for usage gets the provider's own billed cost back on every call, so a budget
+        // is enforced against the real bill instead of a price table that rots.
+        usage: { include: true },
       },
       "completion",
-    )) as { choices: { message: { content: string } }[] };
+    )) as {
+      choices: { message: { content: string } }[];
+      usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
+    };
+    if (opts.onUsage) {
+      opts.onUsage({
+        inputTokens: Number(json.usage?.prompt_tokens ?? 0),
+        outputTokens: Number(json.usage?.completion_tokens ?? 0),
+        usd: typeof json.usage?.cost === "number" ? json.usage.cost : null,
+      });
+    }
     return json.choices[0]?.message.content ?? "";
   }
 

@@ -217,6 +217,9 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
   const [report, setReport] = useState<ReconcileReport | null>(null);
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState<ReconcileProgressEvent | null>(null);
+  // Empty means one page and stop. A number means keep going until the backlog is clear or this
+  // much has been billed.
+  const [budget, setBudget] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   // fresh: after a run, where the cached copy is the pre-run one by definition. On mount the
@@ -269,7 +272,15 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
     try {
       // Streamed, so a sweep of hundreds of beliefs reports as it goes instead of holding one
       // request open past the point the browser gives up on it.
-      setReport(await api.reconcileStream(mode, setProgress));
+      const cap = mode === "apply" ? Number.parseFloat(budget) : Number.NaN;
+      setReport(
+        await api.reconcileStream(
+          mode,
+          setProgress,
+          undefined,
+          Number.isFinite(cap) && cap > 0 ? cap : undefined,
+        ),
+      );
       await load(true);
       // A run that folded or retired something changed the graph the other tabs are showing.
       if (mode === "apply") onChanged();
@@ -296,6 +307,7 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
   // A sweep runs for minutes, so a live one is the thing to show. Reporting the last SUCCESSFUL
   // run instead makes a run you started thirty seconds ago look like it never happened.
   const liveRun = runs.find((r) => r.status === "running") ?? null;
+  const failed = runs.find((r) => r.status === "error" && r.error) ?? null;
   const lastRun = runs.find((r) => r.mode === "apply" && r.status === "success") ?? null;
   // Undo for the run you just started, where you are already looking. Undo for any older run
   // lives in the Console next to the rest of the history.
@@ -305,6 +317,9 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
     <div className="panel">
       <div className="panelInner">
         {error && <div className="notice noticeError">{error}</div>}
+        {!error && failed && runs[0]?.id === failed.id && (
+          <div className="notice noticeError">the last run stopped: {failed.error}</div>
+        )}
 
         <IndexingSection onChanged={onChanged} onError={setError} />
 
@@ -349,6 +364,24 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
           )}
 
           <div className="formRow">
+            <label className="budgetField">
+              keep going until clear, up to
+              <span className="budgetInput">
+                $
+                <input
+                  type="number"
+                  min="0.10"
+                  max="50"
+                  step="0.50"
+                  placeholder="one run only"
+                  value={budget}
+                  onChange={(e) => setBudget(e.target.value)}
+                />
+              </span>
+            </label>
+          </div>
+
+          <div className="formRow">
             <button
               type="button"
               className="btn"
@@ -369,6 +402,7 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
               <span className="cardLabel">
                 checked {progress.checked} of {progress.total}
                 {progress.found > 0 ? `, ${progress.found} found` : ""}
+                {progress.spentUsd > 0 ? `, $${progress.spentUsd.toFixed(3)} spent` : ""}
               </span>
             ) : liveRun ? (
               <span className="cardLabel">{liveSummary(liveRun)}</span>
@@ -472,17 +506,35 @@ function ReconcileReportCard({ report }: { report: ReconcileReport }) {
           <div className="reconcileGroupHead">contradiction re-check</div>
           <div className="reconcileLine">
             swept {report.recheck.calls} beliefs against their 20 nearest, kept{" "}
-            {report.recheck.verified} of {report.recheck.claimed} the model claimed
+            {report.recheck.verified} of {report.recheck.claimed} the model claimed, cost $
+            {report.recheck.spentUsd.toFixed(3)}
           </div>
+          {report.recheck.stoppedBy === "budget" && (
+            <div className="reconcileLine reconcileLineMuted">
+              stopped at your budget. {report.recheck.remaining} still due
+            </div>
+          )}
+          {report.recheck.stoppedBy === "unpriced" && (
+            <div className="reconcileLine reconcileLineMuted">
+              your provider reported no cost, so the budget could not be enforced and the run did
+              one page only
+            </div>
+          )}
+          {report.recheck.stoppedBy === "aborted" && (
+            <div className="reconcileLine reconcileLineMuted">
+              stopped early. {report.recheck.remaining} still due
+            </div>
+          )}
           {report.recheck.claimed > report.recheck.verified && (
             <div className="reconcileLine reconcileLineMuted">
               {report.recheck.claimed - report.recheck.verified} dropped: the model could not quote
               the clashing claim from both memories
             </div>
           )}
-          {report.recheck.remaining > 0 && (
+          {report.recheck.stoppedBy === "cap" && (
             <div className="reconcileLine reconcileLineMuted">
-              {report.recheck.remaining} still due, picked up oldest first by the next run
+              {report.recheck.remaining} still due, picked up oldest first by the next run. Set a
+              budget above to keep going until the backlog is clear
             </div>
           )}
           {report.recheck.verified > 0 && (

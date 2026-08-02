@@ -27,6 +27,7 @@ import {
   type ReconcileFinding,
   effectiveCaps,
   estimateRecheck,
+  estimateUsd,
   findDuplicateContent,
   findEntityInvariants,
   findMultiHeadLineages,
@@ -88,6 +89,7 @@ import {
   type SchemaInfo,
   type SchemaKind,
 } from "./schema.js";
+import { LlmSpendError } from "./openrouter-provider.js";
 import type { StorageAdapter } from "./storage.js";
 import type {
   AgentMemoryFolderEvent,
@@ -211,6 +213,18 @@ export const RECHECK_WINDOW_LIMIT = 200;
  * nobody to finish it, and without this the next run would be blocked forever.
  */
 export const RECONCILE_STALE_RUN_MINUTES = 30;
+
+/** What one re-check pass did, including what it cost and why it stopped. */
+interface ReconcileRecheckOutcome {
+  window: number;
+  calls: number;
+  claimed: number;
+  findings: RecheckFinding[];
+  spent: { inputTokens: number; outputTokens: number; usd: number };
+  remaining: number;
+  /** null means it swept everything that was due. */
+  stoppedBy: "budget" | "aborted" | "cap" | "unpriced" | null;
+}
 
 /**
  * Voice matching: how alike a new voice must be to a stored, named voiceprint before a
@@ -507,13 +521,18 @@ interface ReconcileRunRow {
   conflicts_raised: number;
   possible: number;
   llm_calls: number;
+  spent_usd: number;
+  spent_input_tokens: number;
+  spent_output_tokens: number;
+  error: string | null;
   started_at: string;
   finished_at: string | null;
   reverted_at: string | null;
 }
 
 const RECONCILE_RUN_COLUMNS = `id, mode, trigger, status, scanned, retired, folded, questions,
-        conflicts_raised, possible, llm_calls, started_at, finished_at, reverted_at`;
+        conflicts_raised, possible, llm_calls, spent_usd, spent_input_tokens,
+        spent_output_tokens, error, started_at, finished_at, reverted_at`;
 
 function mapReconcileRun(row: ReconcileRunRow): ReconcileRun {
   return {
@@ -528,6 +547,10 @@ function mapReconcileRun(row: ReconcileRunRow): ReconcileRun {
     conflictsRaised: Number(row.conflicts_raised),
     possible: Number(row.possible),
     llmCalls: Number(row.llm_calls),
+    spentUsd: Number(row.spent_usd ?? 0),
+    spentInputTokens: Number(row.spent_input_tokens ?? 0),
+    spentOutputTokens: Number(row.spent_output_tokens ?? 0),
+    error: row.error ?? null,
     startedAt: toIsoTimestamp(row.started_at),
     finishedAt: row.finished_at ? toIsoTimestamp(row.finished_at) : null,
     revertedAt: row.reverted_at ? toIsoTimestamp(row.reverted_at) : null,
@@ -4236,7 +4259,14 @@ export class Memloom implements MemoryEngine {
       // whose cost grows with how long since the last run. RECHECK_WINDOW_LIMIT is the ceiling.
       const recheck =
         applying && passes.includes("llm_recheck")
-          ? await this.#recheckContradictions(owner, model, runId, onProgress, signal)
+          ? await this.#recheckContradictions(
+              owner,
+              model,
+              runId,
+              onProgress,
+              signal,
+              opts.budgetUsd ?? null,
+            )
           : undefined;
       const llmCalls =
         (arbitration?.calls ?? 0) + (autoResolved?.examined ?? 0) + (recheck?.calls ?? 0);
@@ -4398,9 +4428,11 @@ export class Memloom implements MemoryEngine {
                 calls: recheck.calls,
                 claimed: recheck.claimed,
                 verified: recheck.findings.length,
-                // What the ceiling held back. The next run picks it up, because the window's left
-                // edge only moves for beliefs this run actually paid to check.
-                remaining: Math.max(0, window.count - recheck.calls),
+                remaining: recheck.remaining,
+                spentUsd: recheck.spent.usd,
+                spentInputTokens: recheck.spent.inputTokens,
+                spentOutputTokens: recheck.spent.outputTokens,
+                stoppedBy: recheck.stoppedBy,
               },
             }
           : {}),
@@ -4531,60 +4563,129 @@ export class Memloom implements MemoryEngine {
     runId: string,
     onProgress?: (event: ReconcileProgressEvent) => void,
     signal?: AbortSignal,
-  ): Promise<{ window: number; calls: number; claimed: number; findings: RecheckFinding[] }> {
-    const subjects = await findRecheckSubjects(this.#storage, owner, RECHECK_WINDOW_LIMIT);
-    const result = { window: subjects.length, calls: 0, claimed: 0, findings: [] as RecheckFinding[] };
-    for (const subject of subjects) {
-      // Nobody is listening any more, so stop spending. Checked beliefs are already stamped, so
-      // the next run resumes here rather than repeating what this one paid for.
-      if (signal?.aborted) break;
-      result.calls++;
-      const raw = await this.#llm
-        .complete(buildRecheckPrompt(subject, subject.candidates))
-        .catch(() => "");
-      const verdicts = parseRecheckVerdicts(raw, subject.candidates);
-      result.claimed += verdicts.filter((v) => v.contradictory).length;
-      // Quotes are checked here rather than trusted. A verdict whose spans are not in the two
-      // memories is dropped and not recorded, so it is asked about again on a later run.
-      for (const finding of verifiedFindings(subject, subject.candidates, verdicts)) {
+    budgetUsd?: number | null,
+  ): Promise<ReconcileRecheckOutcome> {
+    const result: ReconcileRecheckOutcome = {
+      window: 0,
+      calls: 0,
+      claimed: 0,
+      findings: [],
+      spent: { inputTokens: 0, outputTokens: 0, usd: 0 },
+      remaining: 0,
+      stoppedBy: null,
+    };
+    const due = await countDueForRecheck(this.#storage, owner);
+    result.window = due.count;
+
+    // Without a budget this sweeps one page and stops, which is the cost ceiling. With one, it
+    // keeps paging until nothing is due or the money runs out, so a backlog can actually be
+    // cleared in a sitting instead of over fifteen manual runs.
+    for (;;) {
+      const subjects = await findRecheckSubjects(this.#storage, owner, RECHECK_WINDOW_LIMIT);
+      if (subjects.length === 0) break;
+
+      for (const subject of subjects) {
+        // Nobody is listening any more, so stop spending.
+        if (signal?.aborted) {
+          result.stoppedBy = "aborted";
+          break;
+        }
+        if (budgetUsd != null && result.spent.usd >= budgetUsd) {
+          result.stoppedBy = "budget";
+          break;
+        }
+
+        let raw: string;
+        try {
+          raw = await this.#llm.complete(buildRecheckPrompt(subject, subject.candidates), {
+            onUsage: (usage) => {
+              result.spent.inputTokens += usage.inputTokens;
+              result.spent.outputTokens += usage.outputTokens;
+              // The provider's own billed figure when it gives one, the price table when it does
+              // not. Either is a real number; what must never happen is a budget silently
+              // measuring nothing.
+              result.spent.usd +=
+                usage.usd ?? estimateUsd(model, usage.inputTokens, usage.outputTokens) ?? 0;
+            },
+          });
+        } catch (err) {
+          // Out of credit or a rejected key stops everything: no later call can succeed, and a
+          // pass that treated it as "no verdict" would stamp every remaining belief as checked
+          // without judging one. Anything else is this belief's problem alone, so it is left
+          // unstamped and comes back on the next run.
+          if (err instanceof LlmSpendError) throw err;
+          continue;
+        }
+        result.calls++;
+
+        const verdicts = parseRecheckVerdicts(raw, subject.candidates);
+        result.claimed += verdicts.filter((v) => v.contradictory).length;
+        // Quotes are checked here rather than trusted. A verdict whose spans are not in the two
+        // memories is dropped and not recorded, so it is asked about again on a later run.
+        for (const finding of verifiedFindings(subject, subject.candidates, verdicts)) {
+          await this.#storage.query(
+            `INSERT INTO memory_reconcile_actions
+               (owner_id, run_id, kind, class, memory_id, candidate_id, reason, new_quote, old_quote,
+                applied, surfaced)
+             VALUES ($1, $2, 'possible', $3, $4, $5, $6, $7, $8, false, true)`,
+            [
+              owner,
+              runId,
+              RECHECK_CLASS,
+              finding.memoryId,
+              finding.candidateId,
+              finding.reason,
+              finding.newQuote,
+              finding.oldQuote,
+            ],
+          );
+          result.findings.push(finding);
+        }
+        // Stamped only after a call that answered, so a belief is never recorded as checked on
+        // the strength of a failure. The stamp is per belief so an interrupted run keeps the work
+        // it paid for and the next one resumes at the next unchecked belief.
         await this.#storage.query(
-          `INSERT INTO memory_reconcile_actions
-             (owner_id, run_id, kind, class, memory_id, candidate_id, reason, new_quote, old_quote,
-              applied, surfaced)
-           VALUES ($1, $2, 'possible', $3, $4, $5, $6, $7, $8, false, true)`,
+          "UPDATE memory_objects SET last_rechecked_at = now() WHERE id = $1 AND owner_id = $2",
+          [subject.id, owner],
+        );
+        // The run row is the only thing a watcher can see, and the only place the spend survives
+        // a crash. Written per call rather than once at the end.
+        await this.#storage.query(
+          `UPDATE memory_reconcile_runs
+             SET llm_calls = $2, possible = $3, spent_input_tokens = $4,
+                 spent_output_tokens = $5, spent_usd = $6
+           WHERE id = $1`,
           [
-            owner,
             runId,
-            RECHECK_CLASS,
-            finding.memoryId,
-            finding.candidateId,
-            finding.reason,
-            finding.newQuote,
-            finding.oldQuote,
+            result.calls,
+            result.findings.length,
+            result.spent.inputTokens,
+            result.spent.outputTokens,
+            result.spent.usd,
           ],
         );
-        result.findings.push(finding);
+        onProgress?.({
+          runId,
+          pass: "llm_recheck",
+          checked: result.calls,
+          total: result.window,
+          found: result.findings.length,
+          spentUsd: result.spent.usd,
+        });
       }
-      // Stamped per belief, after its call, so an aborted run keeps the work it paid for and the
-      // next run resumes at the next unchecked belief rather than starting over.
-      await this.#storage.query(
-        "UPDATE memory_objects SET last_rechecked_at = now() WHERE id = $1 AND owner_id = $2",
-        [subject.id, owner],
-      );
-      // The run row is the only thing a watcher can see. Written per belief rather than once at
-      // the end, or a ten-minute sweep reports nothing until the moment it is over.
-      await this.#storage.query(
-        "UPDATE memory_reconcile_runs SET llm_calls = $2, possible = $3 WHERE id = $1",
-        [runId, result.calls, result.findings.length],
-      );
-      onProgress?.({
-        runId,
-        pass: "llm_recheck",
-        checked: result.calls,
-        total: subjects.length,
-        found: result.findings.length,
-      });
+
+      if (result.stoppedBy || budgetUsd == null) break;
+      // A budget that cannot be measured is not a budget. If a whole page of calls priced at
+      // nothing, the provider is telling us neither a cost nor a known model, so paging on would
+      // spend without a ceiling. Stop at the page boundary instead.
+      if (result.calls > 0 && result.spent.usd === 0) {
+        result.stoppedBy = "unpriced";
+        break;
+      }
     }
+
+    result.remaining = (await countDueForRecheck(this.#storage, owner)).count;
+    if (!result.stoppedBy && result.remaining > 0) result.stoppedBy = "cap";
     return result;
   }
 

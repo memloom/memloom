@@ -483,6 +483,9 @@ const reconcileSchema = z.object({
   passes: z
     .array(z.enum(["invariants", "entities", "llm_entities", "llm_conflicts", "llm_recheck"]))
     .optional(),
+  // Keep re-checking past the per-run ceiling until nothing is due or this much is billed. Capped
+  // low on purpose: a typo in this field spends real money, so it cannot be an open number.
+  budgetUsd: z.number().positive().max(50).optional(),
 });
 
 const reconcileSettingsSchema = z

@@ -295,6 +295,9 @@ export function ConsoleView({
 // deliberately zero on a preview (nothing was done), so a preview says so instead of
 // reciting zeroes as if it had found nothing.
 function reconcileRunSummary(run: ReconcileRun): string {
+  // A failed run has one useful thing to say and it is not the counters. Out of credit is the
+  // case that matters: the sweep stopped because it could not pay, and only the message says so.
+  if (run.status === "error" && run.error) return run.error;
   if (run.status === "running") {
     // A re-check sweep is minutes of model calls. The counters are written per belief, so this
     // moves; without it a long run is indistinguishable from a stuck one.
@@ -315,7 +318,8 @@ function reconcileRunSummary(run: ReconcileRun): string {
   const did = parts.length > 0 ? parts.join(", ") : "nothing to do";
   const prefix = run.trigger === "manual" ? "" : `${run.trigger}: `;
   const calls = run.llmCalls > 0 ? `; ${run.llmCalls} LLM calls` : "";
-  return `${prefix}${did}${calls}`;
+  const cost = run.spentUsd > 0 ? `, $${run.spentUsd.toFixed(3)}` : "";
+  return `${prefix}${did}${calls}${cost}`;
 }
 
 function reconcileRunLevel(run: ReconcileRun): IndexEventLevel {

@@ -2991,3 +2991,31 @@ textarea {
   padding: 0;
   text-decoration: underline;
 }
+
+/* The spend cap. A number here is the difference between one page and clearing a backlog, so it
+   sits next to the buttons rather than behind a settings toggle. */
+.budgetField {
+  align-items: center;
+  color: var(--text-faint);
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+}
+
+.budgetInput {
+  align-items: center;
+  border: 1px solid var(--border-strong);
+  color: var(--text);
+  display: flex;
+  gap: 2px;
+  padding: 2px 6px;
+}
+
+.budgetInput input {
+  background: none;
+  border: none;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+  width: 96px;
+}

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { HashingEmbeddingProvider, ScriptedLLMProvider } from "./hashing-provider.js";
 import { Memloom, SENTINEL_OWNER } from "./memloom.js";
+import { LlmSpendError } from "./openrouter-provider.js";
 import {
   buildRecheckPrompt,
   countDueForRecheck,
@@ -407,6 +408,75 @@ describe("the re-check pass", () => {
     // scanned is written before the slow pass starts, so a watcher never sees a run claiming 0.
     expect(report.run.scanned).toBeGreaterThan(0);
     expect(report.run.llmCalls).toBeGreaterThan(0);
+  });
+
+  // Out of credit is not "no verdict". A pass that treats it as one keeps going, stamps every
+  // belief it touched as checked, and reports finding nothing, so 200 memories go unexamined for
+  // 30 days on the strength of calls that never happened.
+  it("stops on a credit failure and stamps nothing", async () => {
+    const storage = await PgliteFactory.open();
+    cleanups.push(() => storage.close());
+    const broke = new ScriptedLLMProvider((prompt) => {
+      if (prompt.startsWith("You compare a NEW memory") && prompt.includes("These ARE")) {
+        throw new LlmSpendError("no_credit", "402 insufficient credits");
+      }
+      return "[]";
+    });
+    const memloom = new Memloom({
+      storage,
+      embedding: new HashingEmbeddingProvider(1024),
+      llm: broke,
+      autoIndexDelayMs: 999_999,
+    });
+    await memloom.init();
+    await memloom.save({ content: OLD });
+    await memloom.save({ content: NEW });
+    await makeNeighbours(storage, OLD, NEW);
+
+    await expect(memloom.reconcile({ mode: "apply", passes: ["llm_recheck"] })).rejects.toThrow(
+      /out of credit/i,
+    );
+
+    // Nothing was judged, so nothing may be recorded as judged.
+    expect((await countDueForRecheck(storage, SENTINEL_OWNER)).count).toBe(2);
+    // And the run says why, rather than looking like a run that found nothing.
+    const [run] = await memloom.reconcileRuns();
+    expect(run?.status).toBe("error");
+    expect(run?.error).toMatch(/out of credit/i);
+  });
+
+  it("records what each call cost as it goes", async () => {
+    const { memloom, storage } = await openStore(arbiter(NEW, OLD));
+    await memloom.save({ content: OLD });
+    await memloom.save({ content: NEW });
+    await makeNeighbours(storage, OLD, NEW);
+
+    const report = await memloom.reconcile({ mode: "apply", passes: ["llm_recheck"] });
+    // The scripted provider reports no usage, so the totals are zero rather than invented.
+    expect(report.recheck?.spentUsd).toBe(0);
+    expect(report.run.spentUsd).toBe(0);
+    // Nothing is due afterwards, so the pass reports it swept everything.
+    expect(report.recheck?.remaining).toBe(0);
+    expect(report.recheck?.stoppedBy).toBeNull();
+  });
+
+  // A budget can only bound what it can measure. This provider reports no cost and is not a
+  // priced model, so the run does its page and refuses to keep paging blind rather than running
+  // the whole backlog under a ceiling that would never be reached.
+  it("refuses to page on a budget it cannot measure", async () => {
+    const { memloom, storage } = await openStore(arbiter(NEW, OLD));
+    await memloom.save({ content: OLD });
+    await memloom.save({ content: NEW });
+    await makeNeighbours(storage, OLD, NEW);
+
+    const report = await memloom.reconcile({
+      mode: "apply",
+      passes: ["llm_recheck"],
+      budgetUsd: 5,
+    });
+    expect(report.recheck?.calls).toBeGreaterThan(0);
+    expect(report.recheck?.spentUsd).toBe(0);
+    expect(report.recheck?.stoppedBy).toBe("unpriced");
   });
 
   it("skips two versions of one belief, since supersession is not contradiction", async () => {

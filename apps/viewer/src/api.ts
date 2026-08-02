@@ -181,6 +181,10 @@ export interface ReconcileRun {
   conflictsRaised: number;
   possible: number;
   llmCalls: number;
+  spentUsd: number;
+  spentInputTokens: number;
+  spentOutputTokens: number;
+  error: string | null;
   startedAt: string;
   finishedAt: string | null;
   revertedAt: string | null;
@@ -224,6 +228,7 @@ export interface ReconcileProgressEvent {
   checked: number;
   total: number;
   found: number;
+  spentUsd: number;
 }
 
 export interface ReconcileRecheckResult {
@@ -232,6 +237,10 @@ export interface ReconcileRecheckResult {
   claimed: number;
   verified: number;
   remaining: number;
+  spentUsd: number;
+  spentInputTokens: number;
+  spentOutputTokens: number;
+  stoppedBy: "budget" | "aborted" | "cap" | "unpriced" | null;
 }
 
 export interface ReconcileReport {
@@ -971,10 +980,11 @@ export const api = {
     mode: "dry_run" | "apply",
     onEvent: (e: ReconcileProgressEvent) => void,
     signal?: AbortSignal,
+    budgetUsd?: number,
   ) =>
     readNdjson<ReconcileProgressEvent, ReconcileReport>(
       "/memory/reconcile/stream",
-      { mode, trigger: "manual" },
+      { mode, trigger: "manual", ...(budgetUsd ? { budgetUsd } : {}) },
       onEvent,
       signal,
     ),

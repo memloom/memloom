@@ -1045,6 +1045,12 @@ export interface ReconcileRun {
   /** Unconfirmed contradictions the re-check recorded. Not conflicts until a human says so. */
   possible: number;
   llmCalls: number;
+  /** What this run actually cost, written per call so it survives a crash. */
+  spentUsd: number;
+  spentInputTokens: number;
+  spentOutputTokens: number;
+  /** Set when the run failed: the message, so a surface can say why without guessing. */
+  error: string | null;
   startedAt: string;
   finishedAt: string | null;
   revertedAt: string | null;
@@ -1074,6 +1080,11 @@ export interface ReconcileOptions {
    * (startup, idle) passes FREE_RECONCILE_PASSES explicitly rather than trusting the settings.
    */
   passes?: readonly ReconcilePass[];
+  /**
+   * Keep re-checking past the per-run ceiling until nothing is due or this much has been billed.
+   * Omitted means one page and stop, which is the default cost ceiling.
+   */
+  budgetUsd?: number | null;
 }
 
 /** What the model made of the uncertain entity pairs, when pass 3 ran. */
@@ -1104,6 +1115,8 @@ export interface ReconcileProgressEvent {
   total: number;
   /** Possible contradictions recorded so far. */
   found: number;
+  /** Billed so far on this run, from the provider's own figures. */
+  spentUsd: number;
 }
 
 export interface ReconcileReport {
@@ -1130,16 +1143,26 @@ export interface ReconcileReport {
  * much the model asserted versus how much it could back with quotes from both memories.
  */
 export interface ReconcileRecheckResult {
-  /** Beliefs swept. Capped by RECHECK_WINDOW_LIMIT, which is also the cost ceiling. */
+  /** Beliefs that were due when the run started. */
   window: number;
-  /** One per belief swept. The only number that costs money. */
+  /** One per belief actually judged. The only number that costs money. */
   calls: number;
   /** Contradictions the model asserted. */
   claimed: number;
   /** Of those, the ones whose quotes were found in both memories. Only these are recorded. */
   verified: number;
-  /** Beliefs in the window the ceiling left for a later run. */
+  /** Beliefs still due when the run stopped. */
   remaining: number;
+  /** What the run actually cost, from the provider's own billed figures. */
+  spentUsd: number;
+  spentInputTokens: number;
+  spentOutputTokens: number;
+  /**
+   * Why it stopped short. 'cap' is the per-run ceiling with no budget set, 'budget' is the spend
+   * limit, 'aborted' is a stop, and 'unpriced' means a budget was set but the provider reported
+   * no cost, so the run refused to keep paging blind. null means nothing is due any more.
+   */
+  stoppedBy: "budget" | "aborted" | "cap" | "unpriced" | null;
 }
 
 export interface ReconcileRevertResult {
