@@ -1,108 +1,112 @@
 ---
 title: "Tools"
-description: "The tools memloom exposes to MCP clients, and how they chain together"
+description: "The fourteen tools memloom exposes to MCP clients, and how they chain"
 icon: "screwdriver-wrench"
 ---
 
-The tools, split by what they touch: memories, the graph, conflicts, and the graph
-vocabulary. The descriptions the calling agent sees are written so it knows when to reach for
-each one; this page is the human-readable version, with the flows between tools spelled out.
+## Overview
 
-## save_memory
+Fourteen tools in four groups. The descriptions the agent sees are written so it knows when to
+reach for each; this page is the human version, with the flows spelled out.
 
-Save a durable memory the user owns.
+<CardGroup cols={2}>
+  <Card title="Memories" icon="brain">
+    `save_memory`, `recall_memory`, `read_passage`, `memory_history`
+  </Card>
+  <Card title="Source material" icon="file-lines">
+    `add_link`, `add_file`, `list_documents`
+  </Card>
+  <Card title="Decisions" icon="scale-balanced">
+    `list_conflicts`, `resolve_conflict`, `list_possible_contradictions`,
+    `answer_possible_contradiction`
+  </Card>
+  <Card title="Graph vocabulary" icon="diagram-project">
+    `related_entities`, `set_schema_entry_status`, `delete_schema_entry`
+  </Card>
+</CardGroup>
+
+***
+
+## Memories
+
+### save_memory
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
 | `content` | string | required |
-| `canonical` | string | optional short title; becomes the recall result heading |
+| `canonical` | string | Short title, becomes the recall heading |
 | `type` | enum | `fact` (default), `preference`, `episode`, `procedure` |
 
-memloom dedupes automatically and flags contradictions instead of overwriting. The response
-says what happened: saved, merged into an existing memory, or saved WITH a conflict id that
-the user should resolve. A conflict response is the start of the
-[conflict flow](#list_conflicts) below.
+Dedupes automatically and flags contradictions instead of overwriting. The response says which
+happened: saved, merged, or saved with a conflict id.
 
-## recall_memory
-
-Recall memories AND ingested context documents by meaning, ranked by hybrid retrieval
-(semantic, exact keyword, entity). Exact identifiers like file paths, config keys, or error
-codes make excellent queries.
+### recall_memory
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
 | `query` | string | required |
-| `limit` | number | optional, default 10 |
+| `limit` | number | default 10 |
 
-Each result carries a title, the passage, when it was saved, a similarity score, provenance
-for document chunks (file, section, PDF page), and an `id`. Only active memories are
-returned; superseded versions never appear.
+Searches memories and documents together by meaning, exact words and entities. Exact identifiers
+like file paths and error codes make excellent queries. Each result carries a title, the passage,
+a similarity, provenance for chunks, and an `id`. Only active memories come back.
 
-Very long passages are truncated at 8k characters with a marker naming the escape hatch:
+Long passages truncate at 8k with a marker naming the escape hatch:
 
 ```
 ... [truncated: call read_passage with id <id> for the full text]
 ```
 
-## read_passage
+### read_passage
 
-The full text of one recall result, by the `id` shown with it.
+`id` from a recall result. Exists for one flow: a result ended with the truncation marker and the
+answer may be in the cut part. A markdown chunk can be a whole 16k heading section, so the tail is
+always reachable.
 
-| Parameter | Type | Notes |
-| --- | --- | --- |
-| `id` | string | an id from recall_memory results |
+### memory_history
 
-Exists for exactly one flow: a recall result ended with the truncation marker and the answer
-may be in the cut part. Works for memories and document chunks alike. A markdown chunk is a
-whole heading section (up to 16k characters), so the tail of a big section is always
-reachable even though recall injects at most 8k.
+`memoryId` from a recall result. The full version chain, newest first.
 
-## related_entities
+<Note>
+  Read-only. Editing a memory is a human action in the viewer or CLI.
+</Note>
 
-Walk the memory **graph** from one entity: who and what it is connected to. Use it for
-questions about connections rather than content ("which people are related to this person",
-"what does this project use"), where `recall_memory` would return prose the agent still has
-to read.
+***
 
-| Parameter | Type | Notes |
-| --- | --- | --- |
-| `entity` | string | a name, an id, or a known alias |
-| `type` | string | optional filter: `person`, `organization`, `project`, `tool`, `technology`, `agent`, `place`, `event`, `concept` |
-| `limit` | number | optional, default 50 |
+## Source material
 
-The target is matched exactly, not by meaning, so this is a graph lookup rather than a second
-search. A spelling that [entity resolution](/concepts/entity-resolution) folded away resolves
-to its canonical entity and the answer says so, which is often the useful part: asking about
-`Bob` answers about `Robert` and reports that they are the same person.
+Documents are citable source text, not memories. All three are versioned by content hash, so
+re-adding something unchanged is a cheap no-op rather than a duplicate.
 
-Two kinds of connection are printed as separate groups, deliberately:
+### add_link
 
-- **Stated relationships** the extractor asserted, with their direction (`works_on ->`).
-- **Appears together with**, entities named by the same sources, with a shared-source count.
+`url`. Saves a web page permanently as a document, returned by recall with the URL and section it
+came from. The daemon fetches and parses it, so nothing reaches a third party. A page that only
+renders in a browser, or sits behind a login, answers with the reason instead of a document.
 
-An agent relaying the answer should not present the second as the first. The graph asserted
-one and merely observed the other.
+### add_file
 
-## memory_history
+`path`, absolute, on the machine running memloom. Markdown, text, PDF, audio and video. Recordings
+are transcribed locally with timestamps, so a recalled line cites the moment it was said.
 
-Show how a memory changed over time: its full version chain, newest first, with the current
-version and every superseded one.
+<Warning>
+  Recordings over 10 minutes are refused with a message to relay, because transcribing an hour
+  takes 8 to 11 minutes and no tool call should block that long. Whole folders are a CLI job:
+  `memloom context add <folder>`.
+</Warning>
 
-| Parameter | Type | Notes |
-| --- | --- | --- |
-| `memoryId` | string | the `id` shown by recall_memory |
+### list_documents
 
-Read-only: editing memories is a human action in the viewer or CLI.
+`filter` matches a substring of title or path, `limit` defaults to 50. Use it to answer "is this
+already in?" and to see what source material recall can draw on.
 
-## list_conflicts
+***
 
-List pending memory conflicts: contradictions the user has not resolved yet. No parameters.
-Each entry shows the conflict id, the new memory, and the existing memories it clashes with.
+## Decisions
 
-## resolve_conflict
+### list_conflicts, resolve_conflict
 
-Resolve a conflict the way the user decided. The agent relays the choice; it should not
-decide on its own.
+`list_conflicts` takes no parameters and shows each pending contradiction with its id.
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
@@ -111,64 +115,64 @@ decide on its own.
 | `candidateId` | string | required for `keep_existing` |
 | `content` | string | the reconciled text, required for `merge` |
 
-Every resolution is reversible.
+<Warning>
+  The agent relays the user's choice. It should not decide on its own. Every resolution is
+  reversible.
+</Warning>
 
-The full conflict flow: `save_memory` reports "CONTRADICTS an existing memory" with a
-conflict id, `list_conflicts` shows what clashes, the user picks an action, and
-`resolve_conflict` applies it.
+**The flow:** `save_memory` reports a contradiction with an id, `list_conflicts` shows what
+clashes, the user picks, `resolve_conflict` applies it.
 
-## list_possible_contradictions
+### list_possible_contradictions, answer_possible_contradiction
 
-List unconfirmed possible contradictions: pairs of memories the reconcile pass thinks clash but
-nobody has confirmed. No parameters. Each entry shows the id to answer with, a verbatim quote
-from each side, the reason the model gave, and how similar the two memories are.
-
-These are not conflicts. The pass that finds them runs at roughly 40 percent precision, so most
-of what it returns is wrong, which is why they wait here instead of going into the conflict
-queue. Treat each one as a question for the user rather than a fact about the store.
-
-## answer_possible_contradiction
-
-Answer one finding from `list_possible_contradictions`.
+Unconfirmed pairs the reconcile pass flagged. Each shows the id, a verbatim quote from both sides,
+the reason, and the similarity.
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
-| `id` | string | required, from the list |
+| `id` | string | from the list |
 | `answer` | enum | `confirm` or `dismiss` |
 
-`confirm` turns the finding into a real conflict, which then has to be resolved with
-`resolve_conflict` like any other. `dismiss` records that pair as not a contradiction
-permanently: it is never raised again and there is no undo.
+<Warning>
+  These are not conflicts. The pass runs at roughly 40 percent precision, so most of what it
+  returns is wrong. `confirm` creates a real conflict; `dismiss` is permanent with no undo. Ask
+  the user rather than guessing: a wrong confirm makes noise they can clear, a wrong dismiss loses
+  a real contradiction for good.
+</Warning>
 
-Ask the user rather than guessing. A wrong confirm puts noise in a queue they have to clear, and
-a wrong dismiss loses a real contradiction for good.
+See [reconciliation](/concepts/reconciliation) for what the pass costs.
 
-The full flow: `memloom reconcile` finds candidates, `list_possible_contradictions` shows what is
-waiting, the user decides, `answer_possible_contradiction` records it, and a confirmed one
-continues through `list_conflicts` and `resolve_conflict`. See
-[reconciliation](/concepts/reconciliation) for what the pass does and what it costs.
+***
 
-## set_schema_entry_status
+## Graph vocabulary
 
-Enable or disable a graph schema entry (an entity type or predicate). A disabled entry stops
-being used by future extraction, but entities already extracted under it stay in the graph.
+### related_entities
+
+| Parameter | Type | Notes |
+| --- | --- | --- |
+| `entity` | string | a name, an id, or a known alias |
+| `type` | string | optional filter, one of the nine entity types |
+| `limit` | number | default 50 |
+
+For questions about connections rather than content, where recall would return prose the agent
+still has to read. The target is matched exactly, so this is a graph lookup, not a second search.
+A folded-away spelling resolves to its canonical and the answer says so: asking about `Bob`
+answers about `Robert` and reports they are the same.
+
+<Note>
+  Two groups come back separately: **stated relationships** the extractor asserted, and **appears
+  together with**, entities named by the same sources. An agent relaying the answer must not
+  present the second as the first. One was asserted, the other merely observed.
+</Note>
+
+### set_schema_entry_status, delete_schema_entry
 
 | Parameter | Type | Notes |
 | --- | --- | --- |
 | `kind` | enum | `entity_type` or `predicate` |
 | `name` | string | case-insensitive |
-| `status` | enum | `active` or `disabled` |
+| `status` | enum | `active` or `disabled`, for the first tool |
 
-## delete_schema_entry
-
-Permanently remove a DISABLED user-defined vocabulary entry from the graph schema.
-
-| Parameter | Type | Notes |
-| --- | --- | --- |
-| `kind` | enum | `entity_type` or `predicate` |
-| `name` | string | case-insensitive |
-
-Two guard rails, and the response explains any refusal instead of erroring: built-in entries
-can only be disabled, never deleted, and an active entry must be disabled first with
-`set_schema_entry_status`. Entities already extracted under the deleted type stay in the
-graph.
+Disabling stops future extraction using an entry; entities already extracted under it stay.
+Deleting works only on a **disabled** entry you added: built-ins can only be disabled, and an
+active entry must be disabled first. Refusals come back as an explanation, not an error.
