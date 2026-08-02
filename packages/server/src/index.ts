@@ -1074,6 +1074,49 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     }
   });
 
+  // The same shape indexing uses. A sweep is minutes of model calls, far longer than a request
+  // should be held open, so it reports per belief and the client never waits on one response.
+  //
+  // Disconnecting stops the sweep. That is the point rather than a side effect: nobody is
+  // watching, so nothing more should be spent, and every belief already checked stays checked.
+  const liveReconciles = new Map<string, AbortController>();
+  app.post("/memory/reconcile/stream", async (c) => {
+    const body = await parseBody(c, reconcileSchema);
+    if (!body.ok) return body.res;
+    if (body.data.mode === "apply" && process.env.RECONCILE_ENABLED === "0") {
+      return c.json({ error: "reconciliation is set to report only (RECONCILE_ENABLED=0)." }, 403);
+    }
+    let runId: string | null = null;
+    return streamNdjson(c, async (emit, signal) => {
+      const cancel = new AbortController();
+      signal.addEventListener("abort", () => cancel.abort());
+      try {
+        return await memloom.reconcile(
+          body.data,
+          (event) => {
+            // The first event names the run, which is what a stop button needs to address.
+            if (!runId) {
+              runId = event.runId;
+              liveReconciles.set(runId, cancel);
+            }
+            emit(event);
+          },
+          cancel.signal,
+        );
+      } finally {
+        if (runId) liveReconciles.delete(runId);
+      }
+    });
+  });
+
+  // Stop a run: abort it if this daemon is the one running it, and mark the row either way. A
+  // run whose daemon died has no controller left, and this is the only way it stops being live.
+  app.post("/memory/reconcile/:id/stop", async (c) => {
+    const id = c.req.param("id");
+    liveReconciles.get(id)?.abort();
+    return c.json(await memloom.stopReconcile(id));
+  });
+
   app.get("/memory/reconcile/runs", async (c) => {
     const limit = Number(c.req.query("limit") ?? 20);
     return c.json({

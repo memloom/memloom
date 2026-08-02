@@ -437,6 +437,32 @@ describe("server", () => {
     expect(bad.status).toBe(400);
   });
 
+  // A sweep is minutes of model calls, so it streams like indexing does rather than holding one
+  // request open, and a run can be stopped from the Console.
+  it("reconcile streams NDJSON and a run can be stopped", async () => {
+    const server = await app();
+    const res = await server.request("/memory/reconcile/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "dry_run" }),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-type")).toContain("application/x-ndjson");
+    const lines = (await res.text())
+      .split("\n")
+      .filter((l) => l.trim())
+      .map((l) => JSON.parse(l) as Record<string, unknown>);
+    expect(lines.some((l) => l.type === "error")).toBe(false);
+    const done = lines.at(-1) as { type: string; run?: { id: string; mode: string } };
+    expect(done.type).toBe("done");
+    expect(done.run?.mode).toBe("dry_run");
+
+    // Stopping a run that already finished changes nothing, and says so rather than failing.
+    const stop = await server.request(`/memory/reconcile/${done.run?.id}/stop`, { method: "POST" });
+    expect(stop.status).toBe(200);
+    expect((await stop.json()) as { stopped: boolean }).toEqual({ stopped: false });
+  });
+
   it("the fifth pass is off out of the box and settable", async () => {
     const server = await app();
     const before = (await (await server.request("/memory/reconcile/settings")).json()) as {

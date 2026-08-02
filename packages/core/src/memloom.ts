@@ -116,6 +116,7 @@ import type {
   ReconcileDecision,
   ReconcileMode,
   ReconcileOptions,
+  ReconcileProgressEvent,
   ReconcileReport,
   ReconcileRevertResult,
   ReconcileRun,
@@ -4062,7 +4063,11 @@ export class Memloom implements MemoryEngine {
    * the report and the per-run caps back off based on whether the last run's findings were acted
    * on.
    */
-  async reconcile(opts: ReconcileOptions = {}): Promise<ReconcileReport> {
+  async reconcile(
+    opts: ReconcileOptions = {},
+    onProgress?: (event: ReconcileProgressEvent) => void,
+    signal?: AbortSignal,
+  ): Promise<ReconcileReport> {
     const owner = opts.ownerId ?? SENTINEL_OWNER;
     const mode = opts.mode ?? "dry_run";
     const trigger = opts.trigger ?? "manual";
@@ -4191,7 +4196,7 @@ export class Memloom implements MemoryEngine {
       // whose cost grows with how long since the last run. RECHECK_WINDOW_LIMIT is the ceiling.
       const recheck =
         applying && passes.includes("llm_recheck")
-          ? await this.#recheckContradictions(owner, model, runId)
+          ? await this.#recheckContradictions(owner, model, runId, onProgress, signal)
           : undefined;
       const llmCalls =
         (arbitration?.calls ?? 0) + (autoResolved?.examined ?? 0) + (recheck?.calls ?? 0);
@@ -4313,7 +4318,7 @@ export class Memloom implements MemoryEngine {
 
       await this.#storage.query(
         `UPDATE memory_reconcile_runs
-         SET status = 'success', finished_at = now(), scanned = $2, retired = $3,
+         SET status = $11, finished_at = now(), scanned = $2, retired = $3,
              folded = $7, questions = $4, conflicts_raised = $8, llm_calls = $9,
              possible = $10, est_input_tokens = $5, est_output_tokens = $6
          WHERE id = $1`,
@@ -4328,6 +4333,7 @@ export class Memloom implements MemoryEngine {
           raised.length + (entities?.queued ?? 0),
           llmCalls,
           recheck?.findings.length ?? 0,
+          signal?.aborted ? "aborted" : "success",
         ],
       );
 
@@ -4483,10 +4489,15 @@ export class Memloom implements MemoryEngine {
     owner: string,
     model: string,
     runId: string,
+    onProgress?: (event: ReconcileProgressEvent) => void,
+    signal?: AbortSignal,
   ): Promise<{ window: number; calls: number; claimed: number; findings: RecheckFinding[] }> {
     const subjects = await findRecheckSubjects(this.#storage, owner, RECHECK_WINDOW_LIMIT);
     const result = { window: subjects.length, calls: 0, claimed: 0, findings: [] as RecheckFinding[] };
     for (const subject of subjects) {
+      // Nobody is listening any more, so stop spending. Checked beliefs are already stamped, so
+      // the next run resumes here rather than repeating what this one paid for.
+      if (signal?.aborted) break;
       result.calls++;
       const raw = await this.#llm
         .complete(buildRecheckPrompt(subject, subject.candidates))
@@ -4526,8 +4537,33 @@ export class Memloom implements MemoryEngine {
         "UPDATE memory_reconcile_runs SET llm_calls = $2, possible = $3 WHERE id = $1",
         [runId, result.calls, result.findings.length],
       );
+      onProgress?.({
+        runId,
+        pass: "llm_recheck",
+        checked: result.calls,
+        total: subjects.length,
+        found: result.findings.length,
+      });
     }
     return result;
+  }
+
+  /**
+   * Mark a run stopped.
+   *
+   * Two jobs in one call. A run still going is aborted by the caller holding its signal, and this
+   * records that; a run whose daemon died mid-sweep has nobody left to abort, and this is the only
+   * way its row ever leaves 'running'. Beliefs the run already checked stay checked, so stopping
+   * costs nothing beyond the calls already paid for.
+   */
+  async stopReconcile(runId: string, ownerId: string = SENTINEL_OWNER): Promise<{ stopped: boolean }> {
+    const rows = await this.#storage.query<{ id: string }>(
+      `UPDATE memory_reconcile_runs SET status = 'aborted', finished_at = now()
+        WHERE id = $1 AND owner_id = $2 AND status = 'running'
+        RETURNING id`,
+      [runId, ownerId],
+    );
+    return { stopped: rows.length > 0 };
   }
 
   /**

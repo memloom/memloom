@@ -1081,6 +1081,24 @@ export interface ReconcileArbitration {
   settled: Array<{ conflictId: string; class: string; reason: string }>;
 }
 
+/**
+ * One belief checked by the contradiction re-check, emitted as it happens.
+ *
+ * A sweep is one model call per belief and can run for minutes, so the run has to say where it is
+ * rather than going quiet until the end. Only the re-check emits: the other passes finish in
+ * seconds and have nothing to report along the way.
+ */
+export interface ReconcileProgressEvent {
+  runId: string;
+  pass: ReconcilePass;
+  /** 1-based position in this run's sweep. */
+  checked: number;
+  /** Beliefs this run will check. Known up front, unlike a poll of the run row. */
+  total: number;
+  /** Possible contradictions recorded so far. */
+  found: number;
+}
+
 export interface ReconcileReport {
   run: ReconcileRun;
   /** Every finding, surfaced or held back by a cap. */

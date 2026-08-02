@@ -216,6 +216,15 @@ export interface PossibleContradiction {
   foundAt: string;
 }
 
+/** One belief checked by the re-check, as it happens. */
+export interface ReconcileProgressEvent {
+  runId: string;
+  pass: ReconcilePass;
+  checked: number;
+  total: number;
+  found: number;
+}
+
 export interface ReconcileRecheckResult {
   window: number;
   calls: number;
@@ -953,6 +962,20 @@ export const api = {
     json<{ actions: ReconcileAction[] }>(`/memory/reconcile/runs/${runId}/actions`).then((r) => r.actions),
   reconcile: (mode: "dry_run" | "apply" = "apply") =>
     post<ReconcileReport>("/memory/reconcile", { mode, trigger: "manual" }),
+  // A sweep runs for minutes, so it reports per belief over NDJSON rather than holding one
+  // request open to the end. Hanging up stops the run, which is the cheap way to cancel.
+  reconcileStream: (
+    mode: "dry_run" | "apply",
+    onEvent: (e: ReconcileProgressEvent) => void,
+    signal?: AbortSignal,
+  ) =>
+    readNdjson<ReconcileProgressEvent, ReconcileReport>(
+      "/memory/reconcile/stream",
+      { mode, trigger: "manual" },
+      onEvent,
+      signal,
+    ),
+  stopReconcile: (runId: string) => post<{ stopped: boolean }>(`/memory/reconcile/${runId}/stop`),
   revertReconcile: (runId: string) =>
     post<{ runId: string; restored: number; unfolded: number; skipped: number }>(
       `/memory/reconcile/${runId}/revert`,

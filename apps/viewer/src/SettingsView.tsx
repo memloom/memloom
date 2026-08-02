@@ -1,5 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type ReconcilePass, type ReconcileReport, type ReconcileRun, type ReconcileSettings } from "./api";
+import {
+  api,
+  type ReconcilePass,
+  type ReconcileProgressEvent,
+  type ReconcileReport,
+  type ReconcileRun,
+  type ReconcileSettings,
+} from "./api";
 import { cachedData, prefetch, refetch, seed } from "./prefetch";
 
 // Settings: everything that decides what the engine does to itself on its own, and the buttons
@@ -209,6 +216,7 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
   const [runs, setRuns] = useState<ReconcileRun[]>(() => cachedData<ReconcileRun[]>("reconcile-runs") ?? []);
   const [report, setReport] = useState<ReconcileReport | null>(null);
   const [running, setRunning] = useState(false);
+  const [progress, setProgress] = useState<ReconcileProgressEvent | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // fresh: after a run, where the cached copy is the pre-run one by definition. On mount the
@@ -257,8 +265,11 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
   async function run(mode: "dry_run" | "apply") {
     setRunning(true);
     setError(null);
+    setProgress(null);
     try {
-      setReport(await api.reconcile(mode));
+      // Streamed, so a sweep of hundreds of beliefs reports as it goes instead of holding one
+      // request open past the point the browser gives up on it.
+      setReport(await api.reconcileStream(mode, setProgress));
       await load(true);
       // A run that folded or retired something changed the graph the other tabs are showing.
       if (mode === "apply") onChanged();
@@ -266,6 +277,7 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setRunning(false);
+      setProgress(null);
     }
   }
 
@@ -353,7 +365,12 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
             >
               Preview only
             </button>
-            {liveRun ? (
+            {progress ? (
+              <span className="cardLabel">
+                checked {progress.checked} of {progress.total}
+                {progress.found > 0 ? `, ${progress.found} found` : ""}
+              </span>
+            ) : liveRun ? (
               <span className="cardLabel">{liveSummary(liveRun)}</span>
             ) : (
               lastRun && <span className="cardLabel">last run: {runSummary(lastRun)}</span>

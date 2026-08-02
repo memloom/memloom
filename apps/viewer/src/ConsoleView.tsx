@@ -448,6 +448,20 @@ function ReconcileRuns({
     }
   }
 
+  // Stops a live run, and is the only way to clear a row left behind by a daemon that died
+  // mid-sweep. Beliefs already checked stay checked, so stopping never wastes what was paid for.
+  async function stop(runId: string) {
+    setBusy(runId);
+    try {
+      await api.stopReconcile(runId);
+      await refresh(true);
+    } catch (err) {
+      onError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
   async function undo(runId: string) {
     setBusy(runId);
     try {
@@ -500,7 +514,17 @@ function ReconcileRuns({
                     <span className="sessionMeta" title={new Date(run.startedAt).toLocaleString()}>
                       {relativeTime(run.startedAt)}
                     </span>
-                    {run.revertedAt ? (
+                    {run.status === "running" ? (
+                      <button
+                        type="button"
+                        className="btn btnGhost"
+                        disabled={busy === run.id}
+                        onClick={() => void stop(run.id)}
+                        title="Stop this run. What it has already checked stays checked."
+                      >
+                        stop
+                      </button>
+                    ) : run.revertedAt ? (
                       <span className="sessionMeta">undone</span>
                     ) : undoable ? (
                       <button
