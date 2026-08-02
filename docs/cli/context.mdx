@@ -21,7 +21,11 @@ carries its breadcrumb, so results always say where they came from.
 | Video | `.mp4` `.mkv` `.mov` `.webm` `.avi` `.m4v` |
 
 Documents are mirrors of their files: re-adding an unchanged one is a no-op, a changed one
-replaces its chunks, and a pipeline improvement re-ingests files whose bytes did not change.
+replaces the chunks whose text changed and keeps the rest, and a pipeline improvement re-ingests
+files whose bytes did not change.
+
+Linking also starts watching. A folder keeps taking in files that appear in it later, which is what
+makes pointing a recorder at a folder work. See [Watching files and folders](/guides/file-sync).
 
 <Note>
   A file enters two ways: **linked** from disk with this command, or **uploaded** as a snapshot in
@@ -43,6 +47,28 @@ memloom context remove <id>   # delete a document and its chunks
 
 The file on disk is untouched. An uploaded recording's snapshot in memloom's uploads directory is
 deleted with it.
+
+***
+
+## context roots, watch, unwatch, forget
+
+```bash
+memloom context roots              # watched folders, document counts, last check
+memloom context unwatch <path>     # stop syncing a folder or one file
+memloom context watch <path>       # start again
+memloom context forget <folder>    # drop it from the list, keep its documents
+```
+
+`watch` and `unwatch` take the path you linked, not an id, and work on a folder or a single file.
+Nothing already learned is affected either way.
+
+<Warning>
+  `forget` and `remove` read alike and are not the same. `forget` drops a folder from the watch
+  list and keeps every document it produced. `remove` deletes a document and its chunks.
+</Warning>
+
+`MEMLOOM_SYNC=off` disables watching for the whole daemon. Folders are still recorded, so it picks
+up where it left off when switched back on.
 
 ***
 

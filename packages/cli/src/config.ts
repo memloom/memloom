@@ -47,6 +47,17 @@ const CONFIG_TEMPLATE = `# memloom configuration. The daemon (\`memloom serve\`)
 # three that cost money are off until you turn them on. This is a kill switch, not the switch:
 # RECONCILE_ENABLED=0
 
+# Linked files and folders are kept in step with disk: an edited file is re-ingested (only the
+# chunks that changed are re-embedded) and a file that appears in a watched folder is taken in on
+# its own. Set to off to stop watching; folders stay recorded, so it resumes where it left off:
+# MEMLOOM_SYNC=off
+# How often every watched folder is re-walked, as a safety net for dropped OS events
+# (milliseconds, minimum 10000):
+# MEMLOOM_SYNC_RESCAN_MS=60000
+# Poll instead of subscribing to OS events. \`auto\` polls only UNC paths (\\\\server\\share),
+# where events are least likely to arrive; \`on\` forces it, \`off\` forbids it:
+# MEMLOOM_SYNC_POLL=auto
+
 # Notion connector: create an internal integration at notion.so/profile/integrations,
 # share your pages with it, and put the token here. Pick pages with \`memloom notion connect\`.
 # NOTION_TOKEN=ntn_...

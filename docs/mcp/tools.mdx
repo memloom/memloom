@@ -89,6 +89,9 @@ renders in a browser, or sits behind a login, answers with the reason instead of
 `path`, absolute, on the machine running memloom. Markdown, text, PDF, audio and video. Recordings
 are transcribed locally with timestamps, so a recalled line cites the moment it was said.
 
+A linked file is then [watched](/guides/file-sync): edit it on disk and recall follows, with no
+second call.
+
 <Warning>
   Recordings over 10 minutes are refused with a message to relay, because transcribing an hour
   takes 8 to 11 minutes and no tool call should block that long. Whole folders are a CLI job:

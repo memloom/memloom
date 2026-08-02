@@ -231,11 +231,15 @@ function WatchedFolders({ onChanged }: { onChanged: () => void }) {
       {roots.map((r) => (
         <div key={r.id} className="card">
           <div className="docHead">
-            <span className="docTitle">{r.path.split(/[\\/]/).filter(Boolean).pop() ?? r.path}</span>
+            <span className="docTitle">
+              {r.path.split(/[\\/]/).filter(Boolean).pop() ?? r.path}
+            </span>
             <span className="kindTag">{r.watching ? "watching" : "paused"}</span>
             <span className="docMeta">
               {r.documents} {r.documents === 1 ? "document" : "documents"}
-              {r.lastScanAt ? `; checked ${new Date(r.lastScanAt).toLocaleString()}` : "; not yet checked"}
+              {r.lastScanAt
+                ? `; checked ${new Date(r.lastScanAt).toLocaleString()}`
+                : "; not yet checked"}
             </span>
           </div>
           <div className="docPath">{r.path}</div>

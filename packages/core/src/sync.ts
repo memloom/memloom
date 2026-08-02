@@ -148,9 +148,7 @@ export class FileSync {
     const targets = await this.#store.syncTargets(this.#owner());
     // A file inside a watched folder is already covered by the folder's watcher, and watching
     // it again would mean one OS watcher per document. Only files linked on their own get one.
-    const files = targets.files.filter(
-      (f) => !targets.roots.some((r) => under(f.path, r.path)),
-    );
+    const files = targets.files.filter((f) => !targets.roots.some((r) => under(f.path, r.path)));
     this.#stats.roots = targets.roots.length;
     this.#stats.files = files.length;
     return { roots: targets.roots, files };
@@ -184,8 +182,7 @@ export class FileSync {
 
   #open(paths: string[]): FSWatcher {
     const polling =
-      this.#opts.polling === "on" ||
-      (this.#opts.polling === "auto" && paths.some((p) => isUnc(p)));
+      this.#opts.polling === "on" || (this.#opts.polling === "auto" && paths.some((p) => isUnc(p)));
     const watcher = watch(paths, {
       // The initial contents are the rescan's job, which knows what is already in the store.
       // Without this every restart would re-queue every file in every watched folder.

@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- Linked files and folders now stay current on their own. Edit a file and recall follows within
+  seconds; drop a new recording into a linked folder and it is transcribed and becomes recallable
+  without adding it again ([docs](https://docs.memloom.dev/guides/file-sync))
+- Only the chunks whose text changed are re-embedded. Editing one section of a long note costs that
+  section, not the note, and every untouched chunk keeps its embedding and its entity links
+- Linking a folder records the folder, not just the files in it at the time. That is what makes a
+  file arriving later findable, and it is what `memloom context roots` lists
+- Watching is on when you link something, and switches off per folder or per file from the documents
+  tab or with `memloom context unwatch <path>`. `memloom context forget <folder>` drops a folder from
+  the watch list and keeps every document it produced
+- A file deleted from disk is marked "file missing" and keeps its chunks. A temp-file rename, an
+  unmounted drive, and a pipeline that cleans up after itself all look like a deletion, and none of
+  them mean you wanted to forget what the file said
+- OS events give the fast path, and every watched folder is re-walked about once a minute, so a
+  dropped event costs a minute rather than the file. `MEMLOOM_SYNC=off` turns watching off and
+  `MEMLOOM_SYNC_RESCAN_MS` changes the interval
+- A folder walk that hits its 500-file cap now says so, instead of reading like a folder with 500
+  files in it. Rescans of a folder already being watched are unbounded
+
 ## 0.8.0 (2026-08-02)
 
 - Added reconciliation: memloom goes over its own store, repairs what SQL proves is wrong, folds

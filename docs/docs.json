@@ -54,6 +54,7 @@
               "guides/agent-setup",
               "guides/extractors",
               "guides/recordings",
+              "guides/file-sync",
               "guides/configuration",
               "guides/self-hosting"
             ]
@@ -154,7 +155,11 @@
                   "GET /context/documents",
                   "GET /context/documents/{id}/chunks",
                   "POST /context/documents/{id}/open",
-                  "DELETE /context/documents/{id}"
+                  "POST /context/documents/{id}/watch",
+                  "DELETE /context/documents/{id}",
+                  "GET /context/roots",
+                  "POST /context/roots/{id}/watch",
+                  "DELETE /context/roots/{id}"
                 ]
               },
               {
