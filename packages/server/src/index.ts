@@ -480,7 +480,9 @@ const resolveSchema = z.discriminatedUnion("action", [
 const reconcileSchema = z.object({
   mode: z.enum(["dry_run", "apply"]).default("dry_run"),
   trigger: z.enum(["manual", "idle", "startup"]).default("manual"),
-  passes: z.array(z.enum(["invariants", "entities", "llm_entities", "llm_conflicts"])).optional(),
+  passes: z
+    .array(z.enum(["invariants", "entities", "llm_entities", "llm_conflicts", "llm_recheck"]))
+    .optional(),
 });
 
 const reconcileSettingsSchema = z
@@ -1055,7 +1057,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/memory/reconcile", async (c) => {
     const body = await parseBody(c, reconcileSchema);
     if (!body.ok) return body.res;
-    if (body.data.mode === "apply" && process.env.RECONCILE_ENABLED === "0") {
+    if (body.data.mode === "apply" && reconcileActingDisabled()) {
       return c.json(
         {
           error:
@@ -1083,7 +1085,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/memory/reconcile/stream", async (c) => {
     const body = await parseBody(c, reconcileSchema);
     if (!body.ok) return body.res;
-    if (body.data.mode === "apply" && process.env.RECONCILE_ENABLED === "0") {
+    if (body.data.mode === "apply" && reconcileActingDisabled()) {
       return c.json({ error: "reconciliation is set to report only (RECONCILE_ENABLED=0)." }, 403);
     }
     let runId: string | null = null;
@@ -1866,12 +1868,22 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
  * Returns a stop function. Every timer is unref'd, so a pending run never holds the process
  * open on its own.
  */
+/**
+ * RECONCILE_ENABLED=0 stops a run from changing anything, anywhere. It has to be checked wherever an
+ * applying run can start, which is the two routes AND the scheduler: the scheduler calls reconcile()
+ * in process, so a check that lived only in the handlers left idle and startup runs still
+ * retiring memories on a host that asked for reports and no repairs.
+ */
+export function reconcileActingDisabled(): boolean {
+  return process.env.RECONCILE_ENABLED === "0";
+}
+
 export function startReconcileScheduler(memloom: Memloom, activity: DaemonActivity): () => void {
   let running = false;
   let stopped = false;
 
   const run = async (trigger: "idle" | "startup") => {
-    if (running || stopped) return;
+    if (running || stopped || reconcileActingDisabled()) return;
     running = true;
     try {
       await memloom.reconcile({ mode: "apply", trigger, passes: FREE_RECONCILE_PASSES });

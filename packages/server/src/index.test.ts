@@ -16,7 +16,7 @@ import {
   truncateAll,
 } from "@memloom/core";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { createServer } from "./index.js";
+import { createServer, reconcileActingDisabled } from "./index.js";
 
 // Exercise the HTTP surface end-to-end via Hono's request helper (no network needed).
 
@@ -461,6 +461,46 @@ describe("server", () => {
     const stop = await server.request(`/memory/reconcile/${done.run?.id}/stop`, { method: "POST" });
     expect(stop.status).toBe(200);
     expect((await stop.json()) as { stopped: boolean }).toEqual({ stopped: false });
+  });
+
+  // The switch promises to stop a run changing anything. It used to be checked only in the two
+  // handlers, so an idle or startup run went straight past it into memloom.reconcile().
+  it("RECONCILE_ENABLED=0 refuses an applying run and stops the scheduler acting", async () => {
+    const server = await app();
+    process.env.RECONCILE_ENABLED = "0";
+    try {
+      const applying = await server.request("/memory/reconcile", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "apply" }),
+      });
+      expect(applying.status).toBe(403);
+      expect(reconcileActingDisabled()).toBe(true);
+
+      // A preview changes nothing, so it is never refused.
+      const preview = await server.request("/memory/reconcile", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ mode: "dry_run" }),
+      });
+      expect(preview.status).toBe(200);
+    } finally {
+      delete process.env.RECONCILE_ENABLED;
+    }
+    expect(reconcileActingDisabled()).toBe(false);
+  });
+
+  it("a caller can name the re-check pass explicitly", async () => {
+    const server = await app();
+    const res = await server.request("/memory/reconcile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ mode: "dry_run", passes: ["invariants", "llm_recheck"] }),
+    });
+    expect(res.status).toBe(200);
+    expect((await res.json()) as { passes: string[] }).toMatchObject({
+      passes: ["invariants", "llm_recheck"],
+    });
   });
 
   it("the fifth pass is off out of the box and settable", async () => {
