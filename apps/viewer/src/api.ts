@@ -213,6 +213,7 @@ export interface PossibleContradiction {
   oldQuote: string;
   reason: string;
   model: string | null;
+  similarity: number | null;
   foundAt: string;
 }
 
@@ -401,6 +402,8 @@ export interface ConflictCandidate {
   content: string;
   relation: string;
   reason: string;
+  /** Cosine to the incoming belief. Null when either side has no vector. */
+  similarity?: number | null;
 }
 
 export interface Conflict {

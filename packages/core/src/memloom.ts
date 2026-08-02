@@ -3783,11 +3783,51 @@ export class Memloom implements MemoryEngine {
        ORDER BY created_at DESC`,
       [ownerId],
     );
+    return this.#withSimilarity(ownerId, rows);
+  }
+
+  /**
+   * Attach how close each candidate is to the incoming belief.
+   *
+   * Cosine between the two stored vectors, computed on read because it is derived and because a
+   * re-embed would make a stored copy wrong. It is a similarity and not a confidence: nothing
+   * records how sure the classifier was that these two conflict. What it is good for is triage,
+   * since the closer two beliefs are the sharper the disagreement tends to be, and a queue that
+   * can be worked in that order is a queue somebody finishes.
+   *
+   * Null when either side has no vector, which is honest: unranked, not ranked zero.
+   */
+  async #withSimilarity(
+    ownerId: string,
+    rows: Array<{
+      id: string;
+      incoming_id: string;
+      incoming_canonical: string | null;
+      incoming_content: string;
+      candidates: ConflictCandidate[];
+      created_at: string;
+    }>,
+  ): Promise<Conflict[]> {
+    const pairs = rows.flatMap((r) => r.candidates.map((c) => [r.incoming_id, c.id] as const));
+    const scores = new Map<string, number>();
+    if (pairs.length > 0) {
+      const found = await this.#storage.query<{ a: string; b: string; sim: number }>(
+        `SELECT p.a, p.b, 1 - (x.embedding <=> y.embedding) AS sim
+           FROM unnest($2::uuid[], $3::uuid[]) AS p(a, b)
+           JOIN memory_objects x ON x.id = p.a AND x.owner_id = $1 AND x.embedding IS NOT NULL
+           JOIN memory_objects y ON y.id = p.b AND y.owner_id = $1 AND y.embedding IS NOT NULL`,
+        [ownerId, pairs.map((p) => p[0]), pairs.map((p) => p[1])],
+      );
+      for (const row of found) scores.set(`${row.a}|${row.b}`, Number(row.sim));
+    }
     return rows.map((r) => ({
       id: r.id,
       createdAt: r.created_at,
       incoming: { id: r.incoming_id, canonical: r.incoming_canonical, content: r.incoming_content },
-      candidates: r.candidates,
+      candidates: r.candidates.map((c) => ({
+        ...c,
+        similarity: scores.get(`${r.incoming_id}|${c.id}`) ?? null,
+      })),
     }));
   }
 
@@ -4588,10 +4628,13 @@ export class Memloom implements MemoryEngine {
       old_quote: string | null;
       reason: string;
       model: string | null;
+      similarity: number | null;
       created_at: string;
     }>(
       `SELECT a.id, a.run_id, a.memory_id, a.candidate_id, a.new_quote, a.old_quote, a.reason,
-              r.model, a.created_at, n.content AS new_content, o.content AS old_content
+              r.model, a.created_at, n.content AS new_content, o.content AS old_content,
+              CASE WHEN n.embedding IS NULL OR o.embedding IS NULL THEN NULL
+                   ELSE 1 - (n.embedding <=> o.embedding) END AS similarity
          FROM memory_reconcile_actions a
          JOIN memory_reconcile_runs r ON r.id = a.run_id
          JOIN memory_objects n ON n.id = a.memory_id
@@ -4612,6 +4655,7 @@ export class Memloom implements MemoryEngine {
       oldQuote: r.old_quote ?? "",
       reason: r.reason,
       model: r.model,
+      similarity: r.similarity === null ? null : Number(r.similarity),
       foundAt: toIsoTimestamp(r.created_at),
     }));
   }

@@ -119,6 +119,11 @@ export interface ConflictCandidate {
   content: string;
   relation: string;
   reason: string;
+  /**
+   * Cosine to the incoming belief, for ordering the queue. A similarity, not a confidence:
+   * nothing records how sure the classifier was. Null when either side has no vector.
+   */
+  similarity?: number | null;
 }
 
 export interface Conflict {
@@ -1014,6 +1019,8 @@ export interface PossibleContradiction {
   /** The model's own words, kept short by the prompt. */
   reason: string;
   model: string | null;
+  /** Cosine between the two beliefs. The same ordering signal the conflict queue uses. */
+  similarity: number | null;
   foundAt: string;
 }
 
