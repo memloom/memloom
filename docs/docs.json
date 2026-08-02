@@ -15,16 +15,7 @@
       "expanded": "all"
     },
     "examples": {
-      "languages": [
-        "curl",
-        "python",
-        "javascript",
-        "go",
-        "php",
-        "ruby",
-        "java",
-        "csharp"
-      ],
+      "languages": ["curl", "python", "javascript", "go", "php", "ruby", "java", "csharp"],
       "defaults": "required",
       "prefill": true,
       "autogenerate": true
@@ -39,11 +30,7 @@
           {
             "group": "Getting Started",
             "icon": "rocket",
-            "pages": [
-              "index",
-              "features",
-              "use-cases"
-            ]
+            "pages": ["index", "features", "use-cases"]
           },
           {
             "group": "Concepts",
@@ -226,10 +213,7 @@
                 "group": "Daemon",
                 "openapi": "openapi.yaml",
                 "expanded": false,
-                "pages": [
-                  "GET /health",
-                  "POST /admin/shutdown"
-                ]
+                "pages": ["GET /health", "POST /admin/shutdown"]
               }
             ]
           }
@@ -242,9 +226,7 @@
           {
             "group": "CLI",
             "icon": "terminal",
-            "pages": [
-              "cli/overview"
-            ]
+            "pages": ["cli/overview"]
           },
           {
             "group": "Commands",
@@ -262,9 +244,7 @@
           {
             "group": "Connectors",
             "icon": "link",
-            "pages": [
-              "cli/notion"
-            ]
+            "pages": ["cli/notion"]
           }
         ]
       },
@@ -275,10 +255,7 @@
           {
             "group": "MCP",
             "icon": "plug",
-            "pages": [
-              "mcp/setup",
-              "mcp/tools"
-            ]
+            "pages": ["mcp/setup", "mcp/tools"]
           },
           {
             "group": "Clients",

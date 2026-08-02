@@ -1,7 +1,7 @@
 import { execFile, spawn } from "node:child_process";
 import { createReadStream } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, stat, writeFile } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { dirname, extname, join, normalize, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { promisify } from "node:util";
