@@ -1,6 +1,6 @@
 {
   "name": "@memloom/core",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "description": "The memloom engine: hybrid retrieval, a belief pipeline that keeps contradictions instead of overwriting them, context ingestion, and an entity graph.",
   "license": "Apache-2.0",

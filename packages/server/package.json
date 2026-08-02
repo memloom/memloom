@@ -1,6 +1,6 @@
 {
   "name": "@memloom/server",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "description": "The HTTP layer for memloom: a Hono app over @memloom/core that serves the local API and the viewer.",
   "license": "Apache-2.0",

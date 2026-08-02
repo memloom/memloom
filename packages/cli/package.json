@@ -1,6 +1,6 @@
 {
   "name": "memloom",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "type": "module",
   "description": "A local-first memory engine for AI agents. One store on your machine, shared by Claude Code, Cursor, any MCP client, the CLI and a viewer.",
   "license": "Apache-2.0",

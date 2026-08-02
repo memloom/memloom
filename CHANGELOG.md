@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.8.0 (2026-08-02)
 
 - Added reconciliation: memloom goes over its own store, repairs what SQL proves is wrong, folds
   duplicate entity names, and asks about the rest. Run it with `memloom reconcile`, preview it with
