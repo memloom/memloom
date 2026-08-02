@@ -277,6 +277,10 @@ Usage: memloom <command> [args]
                        ${supportedExtensions().join(" ")} and http(s) links
   context list         list ingested context documents
   context remove <id>  remove a context document and its chunks
+  context roots        the linked folders memloom follows for changes
+  context watch <path> keep a linked folder or file in step with disk
+  context unwatch <path>
+                       stop syncing one (its chunks stay)
   audio models         the speech models you can transcribe with, and their sizes
   audio setup [id]     download a speech model, once per machine (default: 465 MB)
   audio use <id>       transcribe with a different model from now on
@@ -557,21 +561,34 @@ Two passes can use a model to resolve uncertain entity pairs and pending
 contradictions. They cost money and are off until you turn them on in the
 viewer's Settings tab. Set RECONCILE_ENABLED=0 to stop any run from acting at all.`,
 
-  context: `memloom context <add|list|remove>
+  context: `memloom context <add|list|remove|roots|watch|unwatch|forget>
 
-  add <target...> ingest files, folders, or web pages as searchable context
-                  (${supportedExtensions().join(" ")}; folders recurse; http(s) URLs are fetched)
-  list            ingested documents with ids and chunk counts
-  remove <id>     delete a document and its chunks (the file on disk is untouched)
+  add <target...>    ingest files, folders, or web pages as searchable context
+                     (${supportedExtensions().join(" ")}; folders recurse; http(s) URLs are fetched)
+  list               ingested documents with ids and chunk counts
+  remove <id>        delete a document and its chunks (the file on disk is untouched)
+  roots              linked folders, whether each is watched, and when it was last checked
+  watch <path>       keep a linked folder or file in step with disk
+  unwatch <path>     stop syncing one; everything already learned from it stays
+  forget <path>      drop a folder from the watch list and keep its documents
 
   memloom context add ./notes ./spec.pdf https://example.com/post
+  memloom context add ~/recordings      links the folder AND starts watching it
 
 A page is fetched and parsed on this machine, never through a reader service, and is
 stored under its own URL so citations link back to the heading they came from. A page
 that renders in the browser (a single-page app, or anything behind a login) yields
 little to a plain fetch and is reported rather than saved half-empty.
 
-Re-adding unchanged content is a no-op; changed content replaces its chunks.`,
+Re-adding unchanged content is a no-op; changed content replaces its chunks. Only the
+chunks that actually changed are re-embedded, so editing one section of a long note
+costs that section.
+
+Linking a folder starts watching it: a file that appears later is ingested on its own,
+which is what makes "point a recorder at this folder" work. The daemon watches for OS
+events and re-walks every watched folder about once a minute, so a dropped event costs
+a minute rather than the file. A file deleted from disk is marked, never forgotten.
+MEMLOOM_SYNC=off turns watching off; MEMLOOM_SYNC_RESCAN_MS changes the interval.`,
 
   schema: `memloom schema [list|disable|enable|delete]
 
@@ -742,10 +759,29 @@ export async function run(argv: readonly string[]): Promise<void> {
 
     case "context": {
       const [sub, ...args] = rest;
+
+      // Checked before connect(), so a typo prints usage instead of starting a daemon to be
+      // told nothing. Seven subcommands are seven words a person can get slightly wrong, and
+      // "unwtach" must never fall through to something that acts.
+      const CONTEXT_SUBS = ["add", "list", "remove", "roots", "watch", "unwatch", "forget"];
+      if (sub === undefined || !CONTEXT_SUBS.includes(sub)) {
+        throw new Error(`usage: memloom context <${CONTEXT_SUBS.join("|")}>`);
+      }
+      if (sub === "add" && args.length === 0) {
+        throw new Error("usage: memloom context add <path-or-url...>");
+      }
+      if (sub === "remove" && !args[0]) {
+        throw new Error("usage: memloom context remove <document-id>");
+      }
+      if ((sub === "watch" || sub === "unwatch" || sub === "forget") && !args[0]) {
+        throw new Error(
+          `usage: memloom context ${sub} <${sub === "forget" ? "folder" : "folder-or-file"}-path>`,
+        );
+      }
+
       const engine = await connect();
 
       if (sub === "add") {
-        if (args.length === 0) throw new Error("usage: memloom context add <path-or-url...>");
         // A URL is not a path: it never touches resolve() or the directory walk.
         const urls = args.filter(isHttpUrl);
         const targets = args.filter((a) => !isHttpUrl(a)).map((a) => resolve(a));
@@ -854,14 +890,67 @@ export async function run(argv: readonly string[]): Promise<void> {
       }
 
       if (sub === "remove") {
-        const id = args[0];
-        if (!id) throw new Error("usage: memloom context remove <document-id>");
+        const id = args[0] ?? "";
         await engine.contextRemove(id);
         console.log(`removed ${id}`);
         return;
       }
 
-      throw new Error("usage: memloom context <add|list|remove>");
+      if (sub === "roots") {
+        const roots = await engine.contextRoots();
+        if (roots.length === 0) {
+          console.log("(no linked folders; `memloom context add <folder>` links one)");
+        }
+        for (const r of roots) {
+          const checked = r.lastScanAt
+            ? `checked ${new Date(r.lastScanAt).toLocaleString()}`
+            : "not yet checked";
+          console.log(
+            `${r.id}  [${r.watching ? "watching" : "paused"}]  ${r.documents} documents; ${checked}\n  ${r.path}`,
+          );
+        }
+        return;
+      }
+
+      // Takes a path rather than an id, because the path is what the person typed to link it
+      // and the only one they have to hand. A folder and a file are told apart by which list
+      // the path is in, so one pair of commands covers both.
+      if (sub === "watch" || sub === "unwatch") {
+        const path = resolve(args[0] ?? "");
+        const watching = sub === "watch";
+
+        const root = (await engine.contextRoots()).find((r) => r.path === path);
+        if (root) {
+          await engine.contextRootWatch(root.id, watching);
+          console.log(`${watching ? "watching" : "no longer watching"} ${path}`);
+          return;
+        }
+        const doc = (await engine.contextList()).find((d) => d.path === path);
+        if (doc) {
+          await engine.contextWatch(doc.id, watching);
+          console.log(`${watching ? "watching" : "no longer watching"} ${path}`);
+          return;
+        }
+        throw new Error(
+          `${path} is not a linked folder or document. ` +
+            "`memloom context roots` lists folders, `memloom context list` lists documents.",
+        );
+      }
+
+      // Forgetting a folder keeps its documents, so it is deliberately not called "remove":
+      // `context remove` deletes a document and its chunks, and confusing the two would cost
+      // memory rather than a watch entry.
+      if (sub === "forget") {
+        const path = resolve(args[0] ?? "");
+        const root = (await engine.contextRoots()).find((r) => r.path === path);
+        if (!root)
+          throw new Error(`${path} is not a linked folder (see \`memloom context roots\`)`);
+        await engine.contextRootRemove(root.id);
+        console.log(`forgot ${path}; its ${root.documents} documents stay`);
+        return;
+      }
+
+      throw new Error("usage: memloom context <add|list|remove|roots|watch|unwatch|forget>");
     }
 
     // Model management only, so it deliberately does not connect to the daemon: setting up

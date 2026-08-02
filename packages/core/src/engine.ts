@@ -11,6 +11,7 @@ import type {
   ContextAddUrlInput,
   ContextDocument,
   ContextProgressEvent,
+  ContextRoot,
   DocumentChunks,
   Graph,
   ImportCaptureScope,
@@ -181,6 +182,14 @@ export interface MemoryEngine {
   /** One document at chunk granularity: chunks in order + their chunk -> entity edges. */
   contextChunks(documentId: string, ownerId?: string): Promise<DocumentChunks>;
   contextRemove(documentId: string, ownerId?: string): Promise<void>;
+  /** The linked folders memloom follows, and whether the daemon is watching at all. */
+  contextRoots(ownerId?: string): Promise<ContextRoot[]>;
+  /** Start or stop watching a linked folder. Its documents are untouched either way. */
+  contextRootWatch(rootId: string, watching: boolean, ownerId?: string): Promise<boolean>;
+  /** Forget a linked folder and keep every document it produced. */
+  contextRootRemove(rootId: string, ownerId?: string): Promise<boolean>;
+  /** Start or stop watching one document, without touching the folder it came from. */
+  contextWatch(documentId: string, watching: boolean, ownerId?: string): Promise<boolean>;
   /** The graph vocabulary (entity types, relations, predicates, proposals) with usage counts. */
   describeSchema(ownerId?: string): Promise<SchemaInfo>;
   /** Enable or disable a vocabulary entry (system or user tier); system rows only disable. */
