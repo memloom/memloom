@@ -4,14 +4,9 @@ description: "A runbook an AI agent can follow to install and configure memloom 
 icon: "robot"
 ---
 
-memloom can be installed by the agent that will use it. This page is written for the agent:
-exact commands, expected output, and the two points where the human must decide. A human
-setting up by hand can follow the same steps.
-
 ## For humans: one prompt
 
-Paste this into your agent (Claude Code, Cursor, or any agent that can run commands and
-fetch a URL):
+Paste this into Claude Code, Cursor, or any agent that can run commands and fetch a URL.
 
 ```text
 Set up memloom on this machine. Fetch https://docs.memloom.dev/guides/agent-setup
@@ -19,144 +14,112 @@ and follow it exactly. Ask me before anything that spends money or captures a
 project. I will give you the API key when you ask.
 ```
 
-If your agent supports skills, you can install memloom's instead:
+If your agent supports skills:
 
 ```bash
 npx skills add memloom/memloom
 ```
 
-That adds two skills: `memloom-setup` (this runbook, condensed) and `memloom-use` (how to
-use memloom well day to day).
+That adds `memloom-setup`, this runbook condensed, and `memloom-use`, how to use memloom well day
+to day.
+
+***
 
 ## For agents: ground rules
 
-Everything below is yours to do autonomously, except two things that belong to the human:
+Everything below is yours to do autonomously, except two things.
 
-1. **The API key.** Ask for `OPENROUTER_API_KEY` when the step comes. If the human
-   declines, continue in offline mode and tell them recall quality is degraded until a key
-   is set. Never print the key into logs, chat, or command output.
-2. **Consent for capture and paid imports.** Never run `memloom connect claude-code` or a
-   non-dry-run `memloom import` without the human naming the scope or approving the run.
+<Warning>
+  **The API key.** Ask for `OPENROUTER_API_KEY` when the step comes. If the human declines,
+  continue offline and say that recall quality is degraded until a key is set. Never print the key
+  into logs, chat, or command output.
 
-Report each step's outcome briefly. If a step fails, check Troubleshooting below before
-improvising.
+  **Consent for capture and paid imports.** Never run `memloom connect claude-code` or a
+  non-dry-run import without the human naming the scope.
+</Warning>
+
+Report each step briefly. If one fails, check Troubleshooting before improvising.
+
+***
 
 ## Steps
 
-### 1. Check Node
+<Steps>
+  <Step title="Check Node" icon="node-js">
+    ```bash
+    node --version
+    ```
+    Expect v20 or later. If older, stop and ask the human to upgrade. npm silently skips the
+    install otherwise.
+  </Step>
 
-```bash
-node --version
-```
+  <Step title="Install and initialize" icon="download">
+    ```bash
+    npm install -g memloom
+    memloom init
+    ```
+    Creates `~/.memloom` and starts the daemon. Expect the config path and
+    `http://127.0.0.1:4319`.
+  </Step>
 
-Expect `v20` or later. If older, stop and ask the human to upgrade Node first; npm will
-silently skip the install otherwise.
+  <Step title="Ask for the API key" icon="key">
+    Add it to `~/.memloom/config.env`, then restart:
+    ```bash
+    OPENROUTER_API_KEY=sk-or-...
+    ```
+    ```bash
+    memloom stop && memloom init
+    ```
+    If anything was saved before the key was set, the daemon refuses to start, because offline and
+    cloud vectors live in different spaces. Run `memloom stop`, `memloom reembed`, `memloom init`.
+  </Step>
 
-### 2. Install and initialize
+  <Step title="Register the MCP server" icon="plug">
+    ```bash
+    claude mcp add memloom -- npx -y @memloom/mcp
+    ```
+    For other clients see the [client pages](/mcp/setup). The shape is always the same: run
+    `npx -y @memloom/mcp` as a stdio server.
+  </Step>
 
-```bash
-npm install -g memloom
-memloom init
-```
+  <Step title="Connect Claude Code" icon="link">
+    Ask which projects may be captured, then:
+    ```bash
+    memloom connect claude-code --project <name>
+    ```
+    Repeat per project, or `--all` only with explicit approval. Installs two hooks: session-end
+    capture and prompt-time recall. Both merge with existing hooks, and a backup is written first.
+  </Step>
 
-`init` creates `~/.memloom` (store and `config.env`) and starts the daemon. Expect output
-naming the config path and the daemon address `http://127.0.0.1:4319`.
+  <Step title="Import what exists" icon="file-import">
+    ```bash
+    memloom import agent-memory --dry-run   # free
+    memloom import sessions --dry-run       # spends model calls
+    ```
+    Show the human each result and get approval before running without `--dry-run`.
+  </Step>
 
-### 3. Ask for the API key
+  <Step title="Verify" icon="circle-check">
+    ```bash
+    memloom save "memloom setup verified on this machine"
+    memloom recall "setup verified"
+    memloom status
+    ```
+    Expect the saved memory as the top hit, the same hit from the MCP client's `recall_memory`,
+    and a status showing the daemon running with the chosen capture scope.
+  </Step>
+</Steps>
 
-Ask the human for their OpenRouter API key. With their key in hand, add this line to
-`~/.memloom/config.env` (on Windows: `%USERPROFILE%\.memloom\config.env`):
-
-```bash
-OPENROUTER_API_KEY=sk-or-...
-```
-
-Then restart the daemon so it picks the key up:
-
-```bash
-memloom stop
-memloom init
-```
-
-If anything was saved before the key was set, the daemon will refuse to start because
-offline and cloud vectors live in different spaces. Run `memloom stop`, then
-`memloom reembed`, then `memloom init`. See [Configuration](/guides/configuration).
-
-If the human declines the key, skip this step. Everything still works offline except
-semantic recall quality, dedup, conflict detection, and entity indexing.
-
-### 4. Register the MCP server
-
-For Claude Code:
-
-```bash
-claude mcp add memloom -- npx -y @memloom/mcp
-```
-
-For other clients, apply the config from the matching page:
-[Claude Desktop](/mcp/clients/claude-desktop), [Cursor](/mcp/clients/cursor),
-[VS Code](/mcp/clients/vs-code), [Codex](/mcp/clients/codex), [Zed](/mcp/clients/zed),
-[Cline](/mcp/clients/cline), [Windsurf](/mcp/clients/windsurf),
-[opencode](/mcp/clients/opencode). The shape is always the same: run `npx -y @memloom/mcp`
-as a stdio server.
-
-### 5. Connect Claude Code (consent required)
-
-Ask the human which projects memloom may capture. Then:
-
-```bash
-memloom connect claude-code --project <name>
-```
-
-Repeat `--project` per project, or `--all` if the human explicitly approves capturing
-everything. This installs two hooks in the Claude Code settings: session-end capture
-(finished sessions are distilled into memories) and prompt-time recall (relevant memories
-are injected into every prompt). Both edits merge with existing hooks and a one-time
-backup is written first. See [Automatic capture](/cli/import#automatic-capture).
-
-### 6. Import what already exists (consent required)
-
-Bring in the memory files agents on this machine already keep:
-
-```bash
-memloom import agent-memory --dry-run
-```
-
-Show the human what it found, then run without `--dry-run`. This import is free of
-distillation calls.
-
-Then session history, which does spend LLM calls:
-
-```bash
-memloom import sessions --dry-run
-```
-
-Show the human the session count, get approval, then run without `--dry-run`.
-
-### 7. Verify
-
-```bash
-memloom save "memloom setup verified on this machine"
-memloom recall "setup verified"
-```
-
-Expect the saved memory back as the top hit. Then, from the MCP client, call
-`recall_memory` with the same query and expect the same hit. Finish with:
-
-```bash
-memloom status
-```
-
-Expect: daemon running, both hooks installed, the capture scope the human chose.
+***
 
 ## Troubleshooting
 
 | Symptom | Cause and fix |
 | --- | --- |
-| `memloom: command not found` after install | Node is older than 20, so npm skipped the package. Upgrade Node, reinstall. |
-| Daemon not reachable | Run `memloom init`. Any CLI command auto-starts it except the hooks, which never do. |
-| API answers 503 "store is locked" | A Postgres client (psql, Drizzle Studio) is connected on the wire port and holds the single-connection lock. Close it. |
-| Daemon refuses to start over an embedding mismatch | The store's vectors do not match the configured provider. `memloom stop`, `memloom reembed`, `memloom init`. |
-| Port 4319 already in use | Another memloom daemon is already running. That is fine; every client shares it. |
-| Daemon starts but says the Postgres wire is OFF | Port 54329 will not bind. On Windows, Hyper-V/WSL/Docker reserve port blocks at boot (`netsh interface ipv4 show excludedportrange protocol=tcp`). Set `MEMLOOM_PG_PORT` to a free port below 49152 and restart. The API and viewer work either way. |
-| `import sessions` refuses to run | Offline mode: distillation needs the LLM, so `OPENROUTER_API_KEY` must be set. |
+| `command not found` after install | Node older than 20, so npm skipped the package. Upgrade and reinstall |
+| Daemon not reachable | Run `memloom init`. Every CLI command auto-starts it except the hooks |
+| 503 "store is locked" | A Postgres client holds the single-connection lock. Close it |
+| Refuses to start on an embedding mismatch | `memloom stop`, `memloom reembed`, `memloom init` |
+| Port 4319 in use | Another daemon is already running. That is fine, every client shares it |
+| Postgres wire says OFF | Port 54329 will not bind. Set `MEMLOOM_PG_PORT` below 49152 and restart. The API and viewer work either way |
+| `import sessions` refuses | Distillation needs a model, so set `OPENROUTER_API_KEY` |
