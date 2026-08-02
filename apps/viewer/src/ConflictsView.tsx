@@ -143,14 +143,24 @@ export function ConflictsView({
     setSelected((prev) => ({ ...prev, [kind]: next?.id ?? null }));
   }, [rows, kind, sort, selected]);
 
-  async function act(id: string, run: () => Promise<unknown>, thenAdvance = true) {
+  /**
+   * Every decision goes through here, so `said` is where the outcome is named. A decision that
+   * advances the queue moves the item off screen, which is exactly when a person needs telling
+   * what they just chose.
+   */
+  async function act(
+    id: string,
+    run: () => Promise<unknown>,
+    opts: { said?: string; thenAdvance?: boolean } = {},
+  ) {
     setBusy(id);
     try {
       await run();
-      if (thenAdvance) advance();
+      if (opts.thenAdvance !== false) advance();
       setMergeText(null);
       load();
       onChanged();
+      if (opts.said) toastDone(opts.said);
     } catch (err) {
       toastFailed(err instanceof Error ? err.message : String(err));
     } finally {
@@ -223,36 +233,62 @@ export function ConflictsView({
       }
       if (e.key === "u") {
         const newest = resolved[0];
-        if (newest) void act(newest.id, () => api.revert(newest.id), false);
+        if (newest) void act(newest.id, () => api.revert(newest.id), { said: "undone", thenAdvance: false });
         return;
       }
       if (!currentId || busy) return;
       if (conflict) {
         const single = conflict.candidates.length === 1 ? conflict.candidates[0] : undefined;
-        if (e.key === "1") void act(currentId, () => api.resolve(currentId, { action: "keep_new" }));
+        if (e.key === "1") {
+          void act(currentId, () => api.resolve(currentId, { action: "keep_new" }), {
+            said: "kept the new memory; the older one is now stale",
+          });
+        }
         if (e.key === "2" && single) {
-          void act(currentId, () =>
-            api.resolve(currentId, { action: "keep_existing", candidateId: single.id }),
+          void act(
+            currentId,
+            () => api.resolve(currentId, { action: "keep_existing", candidateId: single.id }),
+            { said: "kept the existing memory; the new one is now stale" },
           );
         }
-        if (e.key === "3")
-          void act(currentId, () => api.resolve(currentId, { action: "keep_both" }));
+        if (e.key === "3") {
+          void act(currentId, () => api.resolve(currentId, { action: "keep_both" }), {
+            said: "both kept; this pair will not be raised again",
+          });
+        }
         if (e.key === "m") setMergeText(conflict.incoming.content);
       }
       if (entity) {
         const cand = entity.candidates[0];
         if (e.key === "1" && cand) {
-          void act(currentId, () =>
-            api.resolve(currentId, { action: "keep_existing", candidateId: cand.id }),
+          void act(
+            currentId,
+            () => api.resolve(currentId, { action: "keep_existing", candidateId: cand.id }),
+            { said: `folded into "${cand.name}"` },
           );
         }
-        if (e.key === "2") void act(currentId, () => api.resolve(currentId, { action: "keep_new" }));
-        if (e.key === "3")
-          void act(currentId, () => api.resolve(currentId, { action: "keep_both" }));
+        if (e.key === "2") {
+          void act(currentId, () => api.resolve(currentId, { action: "keep_new" }), {
+            said: "folded the other way",
+          });
+        }
+        if (e.key === "3") {
+          void act(currentId, () => api.resolve(currentId, { action: "keep_both" }), {
+            said: "kept apart; this pair will not be raised again",
+          });
+        }
       }
       if (maybe) {
-        if (e.key === "1") void act(currentId, () => api.answerPossible(currentId, "approved"));
-        if (e.key === "2") void act(currentId, () => api.answerPossible(currentId, "rejected"));
+        if (e.key === "1") {
+          void act(currentId, () => api.answerPossible(currentId, "approved"), {
+            said: "moved to conflicts, waiting for you to resolve it",
+          });
+        }
+        if (e.key === "2") {
+          void act(currentId, () => api.answerPossible(currentId, "rejected"), {
+            said: "dismissed as no conflict; this pair will not be raised again",
+          });
+        }
       }
     }
     window.addEventListener("keydown", onKey);
@@ -365,7 +401,7 @@ export function ConflictsView({
                   <button
                     type="button"
                     className="linkBtn"
-                    onClick={() => void act(r.id, () => api.revert(r.id), false)}
+                    onClick={() => void act(r.id, () => api.revert(r.id), { said: "undone", thenAdvance: false })}
                   >
                     undo
                   </button>
@@ -385,7 +421,12 @@ export function ConflictsView({
                     <button
                       type="button"
                       className="linkBtn"
-                      onClick={() => void act(m.id, () => api.revertEntityMerge(m.id), false)}
+                      onClick={() =>
+                        void act(m.id, () => api.revertEntityMerge(m.id), {
+                          said: `"${m.sourceName}" is a separate entity again`,
+                          thenAdvance: false,
+                        })
+                      }
                     >
                       revert
                     </button>
@@ -404,7 +445,12 @@ export function ConflictsView({
                   <button
                     type="button"
                     className="linkBtn"
-                    onClick={() => void act(p.id, () => api.revert(p.id), false)}
+                    onClick={() =>
+                    void act(p.id, () => api.revert(p.id), {
+                      said: "back in the queue to decide again",
+                      thenAdvance: false,
+                    })
+                  }
                   >
                     ask again
                   </button>
@@ -452,8 +498,11 @@ export function ConflictsView({
                   className="btn btnPrimary"
                   disabled={busy === conflict.id || mergeText.trim().length === 0}
                   onClick={() =>
-                    act(conflict.id, () =>
-                      api.resolve(conflict.id, { action: "merge", content: mergeText.trim() }),
+                    act(
+                      conflict.id,
+                      () =>
+                        api.resolve(conflict.id, { action: "merge", content: mergeText.trim() }),
+                      { said: "merged into one memory; both originals are now stale" },
                     )
                   }
                 >
@@ -467,7 +516,9 @@ export function ConflictsView({
                     primary
                     disabled={busy === conflict.id}
                     onClick={() =>
-                      act(conflict.id, () => api.resolve(conflict.id, { action: "keep_new" }))
+                      act(conflict.id, () => api.resolve(conflict.id, { action: "keep_new" }), {
+                        said: "kept the new memory; the older one is now stale",
+                      })
                     }
                   />
                   {conflict.candidates.length === 1 && conflict.candidates[0] && (
@@ -476,11 +527,14 @@ export function ConflictsView({
                       label="keep existing"
                       disabled={busy === conflict.id}
                       onClick={() =>
-                        act(conflict.id, () =>
-                          api.resolve(conflict.id, {
-                            action: "keep_existing",
-                            candidateId: conflict.candidates[0]?.id ?? "",
-                          }),
+                        act(
+                          conflict.id,
+                          () =>
+                            api.resolve(conflict.id, {
+                              action: "keep_existing",
+                              candidateId: conflict.candidates[0]?.id ?? "",
+                            }),
+                          { said: "kept the existing memory; the new one is now stale" },
                         )
                       }
                     />
@@ -490,7 +544,9 @@ export function ConflictsView({
                     label="keep both"
                     disabled={busy === conflict.id}
                     onClick={() =>
-                      act(conflict.id, () => api.resolve(conflict.id, { action: "keep_both" }))
+                      act(conflict.id, () => api.resolve(conflict.id, { action: "keep_both" }), {
+                        said: "both kept; this pair will not be raised again",
+                      })
                     }
                   />
                   <Action
@@ -536,11 +592,14 @@ export function ConflictsView({
                 primary
                 disabled={busy === entity.id}
                 onClick={() =>
-                  act(entity.id, () =>
-                    api.resolve(entity.id, {
-                      action: "keep_existing",
-                      candidateId: entity.candidates[0]?.id ?? "",
-                    }),
+                  act(
+                    entity.id,
+                    () =>
+                      api.resolve(entity.id, {
+                        action: "keep_existing",
+                        candidateId: entity.candidates[0]?.id ?? "",
+                      }),
+                    { said: `folded into "${entity.candidates[0]?.name ?? ""}"` },
                   )
                 }
               />
@@ -548,13 +607,21 @@ export function ConflictsView({
                 k="2"
                 label={`keep "${entity.incoming.name}"`}
                 disabled={busy === entity.id}
-                onClick={() => act(entity.id, () => api.resolve(entity.id, { action: "keep_new" }))}
+                onClick={() =>
+                  act(entity.id, () => api.resolve(entity.id, { action: "keep_new" }), {
+                    said: `folded into "${entity.incoming.name}"`,
+                  })
+                }
               />
               <Action
                 k="3"
                 label="different things"
                 disabled={busy === entity.id}
-                onClick={() => act(entity.id, () => api.resolve(entity.id, { action: "keep_both" }))}
+                onClick={() =>
+                  act(entity.id, () => api.resolve(entity.id, { action: "keep_both" }), {
+                    said: "kept apart; this pair will not be raised again",
+                  })
+                }
               />
               <span className="paneHint">deciding advances to the next</span>
             </footer>
@@ -588,13 +655,21 @@ export function ConflictsView({
                 label="these conflict"
                 primary
                 disabled={busy === maybe.id}
-                onClick={() => act(maybe.id, () => api.answerPossible(maybe.id, "approved"))}
+                onClick={() =>
+                  act(maybe.id, () => api.answerPossible(maybe.id, "approved"), {
+                    said: "moved to conflicts, waiting for you to resolve it",
+                  })
+                }
               />
               <Action
                 k="2"
                 label="no"
                 disabled={busy === maybe.id}
-                onClick={() => act(maybe.id, () => api.answerPossible(maybe.id, "rejected"))}
+                onClick={() =>
+                  act(maybe.id, () => api.answerPossible(maybe.id, "rejected"), {
+                    said: "dismissed as no conflict; this pair will not be raised again",
+                  })
+                }
               />
               <span className="paneHint">
                 confirming makes it a real conflict; dismissing is permanent

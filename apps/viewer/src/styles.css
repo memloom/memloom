@@ -3048,3 +3048,51 @@ textarea {
 .toastSaid {
   border-left: 3px solid var(--memory);
 }
+
+/* Confirmation modal. Same surface language as everything else: square, hairline border, no
+   shadow, and the backdrop only dims rather than blurring. */
+.modalBackdrop {
+  align-items: center;
+  background: rgb(0 0 0 / 55%);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  position: fixed;
+  z-index: 50;
+}
+
+.modal {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-strong);
+  max-width: 460px;
+  padding: 18px 20px 16px;
+  width: calc(100% - 32px);
+}
+
+.modalTitle {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.modalBody {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 16px;
+}
+
+.modalActions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.btnDanger {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.btnDanger:hover {
+  background: var(--danger);
+  color: var(--bg);
+}

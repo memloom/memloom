@@ -7,6 +7,7 @@ import {
   type ReconcileRun,
   type ReconcileSettings,
 } from "./api";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { cachedData, prefetch, refetch, seed } from "./prefetch";
 import { toastDone, toastFailed, toastSaid } from "./toast";
 
@@ -68,6 +69,26 @@ function ago(iso: string): string {
   return `${Math.round(hours / 24)} days ago`;
 }
 
+/**
+ * One line for the toast: what a finished run actually did.
+ *
+ * The report card below the buttons has the detail, but it is easy to miss and it is gone the
+ * moment the tab changes. This is the sentence you would say out loud.
+ */
+function runOutcome(report: ReconcileReport): string {
+  const r = report.run;
+  const parts: string[] = [];
+  if (r.retired > 0) parts.push(`${r.retired} retired`);
+  if (r.folded > 0) parts.push(`${r.folded} folded`);
+  if (r.conflictsRaised > 0) parts.push(`${r.conflictsRaised} raised`);
+  if (r.possible > 0) parts.push(`${r.possible} possible contradictions`);
+  if (r.questions > 0) parts.push(`${r.questions} flagged`);
+  const cost = r.spentUsd > 0 ? `, $${r.spentUsd.toFixed(3)}` : "";
+  const scanned = `scanned ${r.scanned}`;
+  if (parts.length === 0) return `${scanned}, nothing to do${cost}`;
+  return `${scanned}: ${parts.join(", ")}${cost}`;
+}
+
 /** A run still going. The counters are written per belief, so this number moves. */
 function liveSummary(run: ReconcileRun): string {
   if (run.llmCalls === 0) return "running now…";
@@ -104,7 +125,7 @@ function IndexingSection({
     cachedData<AutoIndexState>("auto-index"),
   );
   const [indexing, setIndexing] = useState(false);
-  const [rebuildArmed, setRebuildArmed] = useState(false);
+  const [confirmRebuild, setConfirmRebuild] = useState(false);
 
   useEffect(() => {
     prefetch("auto-index", api.autoIndex)
@@ -129,10 +150,11 @@ function IndexingSection({
     setIndexing(true);
     try {
       const result = rebuild ? await api.reindex() : await api.index();
+      const what = `${result.indexed} memories and ${result.chunksIndexed} chunks`;
       if (result.indexed === 0 && result.chunksIndexed === 0) {
-        toastSaid("everything is already indexed");
+        toastSaid(rebuild ? "re-indexed, but there was nothing to index" : "everything is already indexed");
       } else {
-        toastDone(`indexed ${result.indexed} memories and ${result.chunksIndexed} chunks`);
+        toastDone(rebuild ? `re-indexed ${what} from scratch` : `indexed ${what}`);
       }
       // The run this just wrote is the Console's history, and the Console now seeds from the
       // cache. Without this, walking straight over there shows the list from before the run.
@@ -174,35 +196,32 @@ function IndexingSection({
         )}
 
         <div className="formRow">
-          <button
-            type="button"
-            className="btn"
-            disabled={indexing}
-            onClick={() => {
-              setRebuildArmed(false);
-              void runIndex(false);
-            }}
-          >
+          <button type="button" className="btn" disabled={indexing} onClick={() => void runIndex(false)}>
             {indexing ? "Indexing…" : "Extract entities from unindexed memories & context"}
           </button>
           <button
             type="button"
-            className={`btn ${rebuildArmed ? "btnDangerArmed" : ""}`}
+            className="btn"
             disabled={indexing}
-            onBlur={() => setRebuildArmed(false)}
-            onClick={() => {
-              if (!rebuildArmed) {
-                setRebuildArmed(true);
-                return;
-              }
-              setRebuildArmed(false);
-              void runIndex(true);
-            }}
+            onClick={() => setConfirmRebuild(true)}
           >
-            {rebuildArmed ? "Confirm: wipe all entities & re-index" : "Re-index from scratch"}
+            Re-index from scratch
           </button>
         </div>
       </div>
+
+      <ConfirmDialog
+        open={confirmRebuild}
+        danger
+        title="Re-index from scratch?"
+        body="Every entity and relationship is deleted and extracted again from your memories and documents. Entity folds and the names you have corrected go with them. This costs one model call per memory and cannot be undone."
+        confirmLabel="Wipe and re-index"
+        onCancel={() => setConfirmRebuild(false)}
+        onConfirm={() => {
+          setConfirmRebuild(false);
+          void runIndex(true);
+        }}
+      />
     </>
   );
 }
@@ -273,14 +292,15 @@ export function SettingsView({ onChanged }: { onChanged: () => void }) {
       // Streamed, so a sweep of hundreds of beliefs reports as it goes instead of holding one
       // request open past the point the browser gives up on it.
       const cap = mode === "apply" ? Number.parseFloat(budget) : Number.NaN;
-      setReport(
-        await api.reconcileStream(
-          mode,
-          setProgress,
-          undefined,
-          Number.isFinite(cap) && cap > 0 ? cap : undefined,
-        ),
+      const result = await api.reconcileStream(
+        mode,
+        setProgress,
+        undefined,
+        Number.isFinite(cap) && cap > 0 ? cap : undefined,
       );
+      setReport(result);
+      if (mode === "dry_run") toastSaid(`preview: ${runOutcome(result)}`);
+      else toastDone(runOutcome(result));
       await load(true);
       // A run that folded or retired something changed the graph the other tabs are showing.
       if (mode === "apply") onChanged();
