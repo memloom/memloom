@@ -223,7 +223,7 @@ interface ReconcileRecheckOutcome {
   spent: { inputTokens: number; outputTokens: number; usd: number };
   remaining: number;
   /** null means it swept everything that was due. */
-  stoppedBy: "budget" | "aborted" | "cap" | "unpriced" | null;
+  stoppedBy: "budget" | "aborted" | "cap" | "unpriced" | "failed" | null;
 }
 
 /**
@@ -4161,11 +4161,24 @@ export class Memloom implements MemoryEngine {
       }
     }
 
-    const [created] = await this.#storage.query<{ id: string }>(
-      `INSERT INTO memory_reconcile_runs (owner_id, mode, trigger, model)
-       VALUES ($1, $2, $3, $4) RETURNING id`,
-      [owner, mode, trigger, model],
-    );
+    let created: { id: string } | undefined;
+    try {
+      [created] = await this.#storage.query<{ id: string }>(
+        `INSERT INTO memory_reconcile_runs (owner_id, mode, trigger, model)
+         VALUES ($1, $2, $3, $4) RETURNING id`,
+        [owner, mode, trigger, model],
+      );
+    } catch (err) {
+      // The partial unique index is what actually enforces one live run. The check above is a
+      // courtesy that gives a readable error; this catches the racing caller that slipped past it
+      // between the check and here.
+      if (applying && /one_live_idx|unique/i.test(err instanceof Error ? err.message : "")) {
+        throw new Error(
+          "memloom: a reconcile run is already going. Watch it in the Console, or wait for it to finish.",
+        );
+      }
+      throw err;
+    }
     const runId = created?.id;
     if (!runId) throw new Error("memloom: could not open a reconcile run");
 
@@ -4387,7 +4400,8 @@ export class Memloom implements MemoryEngine {
 
       await this.#storage.query(
         `UPDATE memory_reconcile_runs
-         SET status = $11, finished_at = now(), scanned = $2, retired = $3,
+         SET status = CASE WHEN status = 'aborted' THEN 'aborted' ELSE $11 END,
+             finished_at = now(), scanned = $2, retired = $3,
              folded = $7, questions = $4, conflicts_raised = $8, llm_calls = $9,
              possible = $10, est_input_tokens = $5, est_output_tokens = $6
          WHERE id = $1`,
@@ -4578,8 +4592,26 @@ export class Memloom implements MemoryEngine {
     // keeps paging until nothing is due or the money runs out, so a backlog can actually be
     // cleared in a sitting instead of over fifteen manual runs.
     for (;;) {
-      const subjects = await findRecheckSubjects(this.#storage, owner, RECHECK_WINDOW_LIMIT);
-      if (subjects.length === 0) break;
+      const page = await findRecheckSubjects(this.#storage, owner, RECHECK_WINDOW_LIMIT);
+      const { subjects } = page;
+      if (page.windowSize === 0) break;
+
+      // Beliefs with nothing to compare against were examined, so they are checked. Stamping them
+      // is what stops them parking at the head of the order and starving every later run.
+      if (page.noCandidates.length > 0) {
+        await this.#storage.query(
+          `UPDATE memory_objects SET last_rechecked_at = now()
+            WHERE owner_id = $1 AND id = ANY($2::uuid[])`,
+          [owner, page.noCandidates],
+        );
+      }
+      if (subjects.length === 0) {
+        // The whole page was unjudgeable. Without a budget that is the run; with one, page on so
+        // the beliefs behind them still get their turn.
+        if (budgetUsd == null) break;
+        continue;
+      }
+      const callsBeforePage = result.calls;
 
       for (const subject of subjects) {
         // Nobody is listening any more, so stop spending.
@@ -4672,6 +4704,13 @@ export class Memloom implements MemoryEngine {
       }
 
       if (result.stoppedBy || budgetUsd == null) break;
+      // Every call in the page failed for a reason that was not out-of-credit. Nothing was
+      // stamped, so the next page would be the same rows: paging on is an infinite loop against a
+      // provider that is already refusing us.
+      if (result.calls === callsBeforePage) {
+        result.stoppedBy = "failed";
+        break;
+      }
       // A budget that cannot be measured is not a budget. If a whole page of calls priced at
       // nothing, the provider is telling us neither a cost nor a known model, so paging on would
       // spend without a ceiling. Stop at the page boundary instead.

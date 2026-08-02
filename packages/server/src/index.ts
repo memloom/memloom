@@ -477,6 +477,18 @@ const resolveSchema = z.discriminatedUnion("action", [
   }),
 ]);
 
+/**
+ * A page size from a query string, clamped.
+ *
+ * `Number.isFinite` alone admits negatives and absurd magnitudes, and both reach the driver: a
+ * negative LIMIT is a Postgres error that surfaces as a 500 carrying the raw message.
+ */
+function pageLimit(raw: string | undefined, fallback: number, max = 200): number {
+  const n = Number(raw ?? fallback);
+  if (!Number.isInteger(n) || n < 1) return fallback;
+  return Math.min(n, max);
+}
+
 const reconcileSchema = z.object({
   mode: z.enum(["dry_run", "apply"]).default("dry_run"),
   trigger: z.enum(["manual", "idle", "startup"]).default("manual"),
@@ -963,9 +975,13 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // Let a model settle the pairs the lexical rules could not, once, on demand. The same pass
   // reconciliation runs when llm_entities is on; this is how to use it without turning that on.
   // Costs one call per queued pair, so it is never a side effect of anything.
-  app.post("/memory/entities/resolve-auto", async (c) =>
-    c.json(await memloom.autoResolveEntities()),
-  );
+  app.post("/memory/entities/resolve-auto", async (c) => {
+    // Spends one model call per queued pair, so the kill switch has to reach it too.
+    if (reconcileActingDisabled()) {
+      return c.json({ error: "reconciliation is set to report only (RECONCILE_ENABLED=0)." }, 403);
+    }
+    return c.json(await memloom.autoResolveEntities());
+  });
 
   // The same pass with progress. One call per pair means a queue of fifty is a minute of
   // silence, so the button that starts it reads the verdicts as they land.
@@ -1057,6 +1073,10 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // Settings tab takes effect without a restart. RECONCILE_ENABLED is only a kill switch now: set it
   // to 0 and no run may change anything, for a host that wants the reports and none of the
   // repairs. The passes that cost money are off by default in the settings themselves.
+  // Every applying run registers its abort controller here, whichever route started it, so a stop
+  // can reach a run the CLI began as well as one the viewer streamed.
+  const liveReconciles = new Map<string, AbortController>();
+
   app.post("/memory/reconcile", async (c) => {
     const body = await parseBody(c, reconcileSchema);
     if (!body.ok) return body.res;
@@ -1070,21 +1090,36 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         403,
       );
     }
+    // Registered here as well as on the stream, because the CLI posts to this route and a stop
+    // that cannot reach the run is a stop that silently does nothing while the sweep keeps
+    // billing. The id arrives on the first progress event, same as the stream.
+    const cancel = new AbortController();
+    let runId: string | null = null;
     try {
-      return c.json(await memloom.reconcile(body.data));
+      return c.json(
+        await memloom.reconcile(
+          body.data,
+          (event) => {
+            if (!runId) {
+              runId = event.runId;
+              liveReconciles.set(runId, cancel);
+            }
+          },
+          cancel.signal,
+        ),
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       // Already running is the caller's answer to give, not a fault: 409, not 500.
       return c.json({ error: message }, /already going/.test(message) ? 409 : 500);
+    } finally {
+      if (runId) liveReconciles.delete(runId);
     }
   });
 
   // The same shape indexing uses. A sweep is minutes of model calls, far longer than a request
   // should be held open, so it reports per belief and the client never waits on one response.
-  //
-  // Disconnecting stops the sweep. That is the point rather than a side effect: nobody is
-  // watching, so nothing more should be spent, and every belief already checked stays checked.
-  const liveReconciles = new Map<string, AbortController>();
+  // Disconnecting stops the sweep: nobody is watching, so nothing more should be spent.
   app.post("/memory/reconcile/stream", async (c) => {
     const body = await parseBody(c, reconcileSchema);
     if (!body.ok) return body.res;
@@ -1123,10 +1158,8 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   });
 
   app.get("/memory/reconcile/runs", async (c) => {
-    const limit = Number(c.req.query("limit") ?? 20);
-    return c.json({
-      runs: await memloom.reconcileRuns(undefined, Number.isFinite(limit) ? limit : 20),
-    });
+    const limit = pageLimit(c.req.query("limit"), 20);
+    return c.json({ runs: await memloom.reconcileRuns(undefined, limit) });
   });
 
   app.get("/memory/reconcile/runs/:id/actions", async (c) =>

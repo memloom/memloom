@@ -1158,10 +1158,11 @@ export interface ReconcileRecheckResult {
   spentOutputTokens: number;
   /**
    * Why it stopped short. 'cap' is the per-run ceiling with no budget set, 'budget' is the spend
-   * limit, 'aborted' is a stop, and 'unpriced' means a budget was set but the provider reported
-   * no cost, so the run refused to keep paging blind. null means nothing is due any more.
+   * limit, 'aborted' is a stop, 'unpriced' means a budget was set but the provider reported no
+   * cost so the run refused to page blind, and 'failed' means every call in a page failed. null
+   * means nothing is due any more.
    */
-  stoppedBy: "budget" | "aborted" | "cap" | "unpriced" | null;
+  stoppedBy: "budget" | "aborted" | "cap" | "unpriced" | "failed" | null;
 }
 
 export interface ReconcileRevertResult {

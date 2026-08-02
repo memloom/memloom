@@ -38,6 +38,20 @@ export const MIN_QUOTE_CHARS = 15;
  */
 export const RECHECK_QUIET_DAYS = 30;
 
+/**
+ * One page of the sweep.
+ *
+ * `noCandidates` matters as much as `subjects`: those beliefs were examined and found to have
+ * nothing to compare against, which is a finished check. Leaving them unstamped parks them at the
+ * head of the order permanently.
+ */
+export interface RecheckWindow {
+  subjects: RecheckSubject[];
+  noCandidates: string[];
+  /** Rows the due query returned. Zero means the backlog is genuinely clear. */
+  windowSize: number;
+}
+
 /** One unjudged pair: a newer belief and an older one nothing has compared it against. */
 export interface RecheckPair {
   candidateId: string;
@@ -118,7 +132,7 @@ export async function findRecheckSubjects(
   quietDays: number = RECHECK_QUIET_DAYS,
   k: number = RECHECK_K,
   floor: number = RECHECK_FLOOR,
-): Promise<RecheckSubject[]> {
+): Promise<RecheckWindow> {
   const window = await storage.query<{ id: string; content: string; root_id: string }>(
     `SELECT id, content, root_id FROM memory_objects
       WHERE ${DUE_PREDICATE}
@@ -128,6 +142,7 @@ export async function findRecheckSubjects(
   );
 
   const subjects: RecheckSubject[] = [];
+  const noCandidates: string[] = [];
   for (const row of window) {
     const candidates = await storage.query<{ id: string; content: string; sim: number }>(
       `SELECT c.id, c.content, 1 - (c.embedding <=> s.embedding) AS sim
@@ -157,7 +172,13 @@ export async function findRecheckSubjects(
         LIMIT $5`,
       [ownerId, row.id, row.root_id, floor, k],
     );
-    if (candidates.length === 0) continue;
+    if (candidates.length === 0) {
+      // A scan that found nothing is still a completed scan. Without this the belief keeps its
+      // NULL watermark, stays at the head of the selection order forever, and once a window's
+      // worth of them accumulates the pass selects only these and does nothing on every run.
+      noCandidates.push(row.id);
+      continue;
+    }
     subjects.push({
       id: row.id,
       content: row.content,
@@ -168,7 +189,7 @@ export async function findRecheckSubjects(
       })),
     });
   }
-  return subjects;
+  return { subjects, noCandidates, windowSize: window.length };
 }
 
 /**

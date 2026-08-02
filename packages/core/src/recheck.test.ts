@@ -326,7 +326,7 @@ describe("the re-check pass", () => {
     const oldestTwo = order.slice(0, 2).map((r) => r.content);
 
     // A ceiling of 2 takes the two oldest, and only those two get stamped.
-    const first = await findRecheckSubjects(storage, SENTINEL_OWNER, 2);
+    const first = (await findRecheckSubjects(storage, SENTINEL_OWNER, 2)).subjects;
     expect(first.map((s) => s.content)).toEqual(oldestTwo);
     for (const s of first) {
       await storage.query("UPDATE memory_objects SET last_rechecked_at = now() WHERE id = $1", [
@@ -335,12 +335,12 @@ describe("the re-check pass", () => {
     }
 
     // The next call resumes where that one stopped rather than starting over.
-    const second = await findRecheckSubjects(storage, SENTINEL_OWNER, 2);
+    const second = (await findRecheckSubjects(storage, SENTINEL_OWNER, 2)).subjects;
     expect(second.map((s) => s.content)).toEqual(order.slice(2, 4).map((r) => r.content));
 
     // Stamp the rest, and nothing is due until the quiet period lapses.
     await storage.query("UPDATE memory_objects SET last_rechecked_at = now()");
-    expect(await findRecheckSubjects(storage, SENTINEL_OWNER, 10)).toEqual([]);
+    expect((await findRecheckSubjects(storage, SENTINEL_OWNER, 10)).subjects).toEqual([]);
     expect((await countDueForRecheck(storage, SENTINEL_OWNER)).count).toBe(0);
 
     // A belief checked longer ago than the quiet period is due again: this is how an old belief
@@ -350,7 +350,7 @@ describe("the re-check pass", () => {
       [order[0]?.id],
     );
     expect((await countDueForRecheck(storage, SENTINEL_OWNER)).count).toBe(1);
-    const due = await findRecheckSubjects(storage, SENTINEL_OWNER, 10);
+    const due = (await findRecheckSubjects(storage, SENTINEL_OWNER, 10)).subjects;
     expect(due.map((s) => s.content)).toEqual([order[0]?.content]);
   });
 
@@ -479,6 +479,60 @@ describe("the re-check pass", () => {
     expect(report.recheck?.stoppedBy).toBe("unpriced");
   });
 
+  // A belief with nothing near it is still a belief the pass looked at. Leaving it unstamped
+  // parks it at the head of the order forever, and once a window fills with them the pass selects
+  // only those, produces no subjects, and quietly does nothing on every future run.
+  it("stamps a belief it found nothing to compare against", async () => {
+    const { memloom, storage } = await openStore(arbiter(NEW, OLD));
+    await memloom.save({ content: "an isolated belief with no neighbours at all" });
+
+    expect((await countDueForRecheck(storage, SENTINEL_OWNER)).count).toBe(1);
+    await memloom.reconcile({ mode: "apply", passes: ["llm_recheck"] });
+    expect((await countDueForRecheck(storage, SENTINEL_OWNER)).count).toBe(0);
+  });
+
+  // With a budget the sweep pages. A provider failing every call stamps nothing, so the next page
+  // is the same rows: without a guard that is an infinite loop against a provider already
+  // refusing us.
+  it("ends the sweep when every call in a page fails", { timeout: 30_000 }, async () => {
+    const flaky = new ScriptedLLMProvider((prompt) => {
+      if (prompt.includes("These ARE contradictions")) throw new Error("upstream 503");
+      return "[]";
+    });
+    const { memloom, storage } = await openStore(flaky);
+    await memloom.save({ content: OLD });
+    await memloom.save({ content: NEW });
+    await makeNeighbours(storage, OLD, NEW);
+
+    const report = await memloom.reconcile({
+      mode: "apply",
+      passes: ["llm_recheck"],
+      budgetUsd: 5,
+    });
+    expect(report.recheck?.stoppedBy).toBe("failed");
+    expect(report.recheck?.calls).toBe(0);
+    // Nothing was judged, so nothing may be stamped and both are still due.
+    expect((await countDueForRecheck(storage, SENTINEL_OWNER)).count).toBe(2);
+  });
+
+  it("refuses a second applying run even when both start at once", async () => {
+    const { memloom, storage } = await openStore(arbiter(NEW, OLD));
+    await memloom.save({ content: OLD });
+
+    const results = await Promise.allSettled([
+      memloom.reconcile({ mode: "apply" }),
+      memloom.reconcile({ mode: "apply" }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(String(rejected.reason)).toMatch(/already going/);
+
+    const [runs] = await storage.query<{ n: number }>(
+      "SELECT count(*)::int AS n FROM memory_reconcile_runs WHERE mode = 'apply'",
+    );
+    expect(Number(runs?.n)).toBe(1);
+  });
+
   it("skips two versions of one belief, since supersession is not contradiction", async () => {
     const { memloom, storage } = await openStore(arbiter(NEW, OLD));
     await memloom.save({ content: OLD });
@@ -494,7 +548,7 @@ describe("the re-check pass", () => {
       [oldId, NEW, "hash-for-second-version"],
     );
 
-    const subjects = await findRecheckSubjects(storage, SENTINEL_OWNER, 50);
+    const subjects = (await findRecheckSubjects(storage, SENTINEL_OWNER, 50)).subjects;
     for (const s of subjects) {
       expect(s.candidates.map((c) => c.content)).not.toContain(OLD);
     }

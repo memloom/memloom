@@ -354,6 +354,10 @@ export class HttpMemloomClient implements MemoryEngine {
     return this.#post<ReconcileReport>("/memory/reconcile", {
       mode: opts.mode ?? "dry_run",
       trigger: opts.trigger ?? "manual",
+      // Forwarded, or the same call would run different passes for a different price depending
+      // on which implementation of the interface it reached.
+      ...(opts.passes ? { passes: opts.passes } : {}),
+      ...(opts.budgetUsd != null ? { budgetUsd: opts.budgetUsd } : {}),
     });
   }
 

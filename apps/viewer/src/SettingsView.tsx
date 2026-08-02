@@ -533,6 +533,12 @@ function ReconcileReportCard({ report }: { report: ReconcileReport }) {
               stopped at your budget. {report.recheck.remaining} still due
             </div>
           )}
+          {report.recheck.stoppedBy === "failed" && (
+            <div className="dreamLine dreamLineMuted">
+              every call in the last batch failed, so the run stopped. {report.recheck.remaining}{" "}
+              still due
+            </div>
+          )}
           {report.recheck.stoppedBy === "unpriced" && (
             <div className="reconcileLine reconcileLineMuted">
               your provider reported no cost, so the budget could not be enforced and the run did

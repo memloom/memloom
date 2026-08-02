@@ -240,7 +240,7 @@ export interface ReconcileRecheckResult {
   spentUsd: number;
   spentInputTokens: number;
   spentOutputTokens: number;
-  stoppedBy: "budget" | "aborted" | "cap" | "unpriced" | null;
+  stoppedBy: "budget" | "aborted" | "cap" | "unpriced" | "failed" | null;
 }
 
 export interface ReconcileReport {

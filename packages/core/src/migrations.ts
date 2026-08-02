@@ -1325,5 +1325,18 @@ export function buildMigrations(dims: number): Migration[] {
       ALTER TABLE memory_reconcile_runs ADD COLUMN IF NOT EXISTS spent_usd double precision NOT NULL DEFAULT 0;
     `,
     },
+    {
+      // One applying run at a time, enforced by the database rather than by a read followed by an
+      // insert. The check in reconcile() spans an await, so two concurrent callers could both find
+      // no live run and both start, which is the double spend the check exists to prevent.
+      //
+      // Partial twice over: finished runs are unconstrained so history is unlimited, and dry runs
+      // are unconstrained because a preview spends nothing and must never be refused.
+      id: "0030_one_live_reconcile",
+      sql: /* sql */ `
+      CREATE UNIQUE INDEX IF NOT EXISTS memory_reconcile_runs_one_live_idx
+        ON memory_reconcile_runs (owner_id) WHERE status = 'running' AND mode = 'apply';
+    `,
+    },
   ];
 }
