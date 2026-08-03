@@ -50,6 +50,33 @@ export const MAX_DECODE_CHUNK_SECONDS = 300;
 export const SECTION_SECONDS = 120;
 
 /**
+ * How sure silero has to be that a frame is speech. Its own default, and right for a recording
+ * of someone talking: it keeps VAD useful as a silence-skipper, so an hour with ten minutes of
+ * speech in it decodes ten minutes rather than sixty.
+ *
+ * MEMLOOM_VAD_THRESHOLD overrides it. Lower finds more and sends more non-speech to the
+ * recognizer, which costs decode time and some junk words; higher misses quiet speech.
+ */
+export const VAD_THRESHOLD = 0.5;
+
+/**
+ * The second pass, run only when the first finds nothing at all.
+ *
+ * Speech mixed under continuous loud audio never reaches 0.5, because the model sees a
+ * spectrally busy frame and the speech is a small part of its energy. Measured on a 52-second
+ * phone recording of music with about ten seconds of talking over it: 0.5 found ZERO segments,
+ * 0.4 found 28.8 seconds, 0.3 found 36.4. Nothing about that recording was borderline to a
+ * human, so a single threshold cannot be the last word.
+ */
+export const VAD_RESCUE_THRESHOLD = 0.3;
+
+/**
+ * Peak sample below which a file is taken to be genuinely silent, about -60 dBFS. Peak rather
+ * than average, so one spoken sentence in an hour of room tone still counts as sound.
+ */
+const SILENCE_PEAK = 0.001;
+
+/**
  * A chunk producing far less text per second of speech than its neighbours did not
  * transcribe properly. See `findSuspectChunks` for why this check is not optional.
  */
@@ -80,6 +107,22 @@ export class AudioError extends Error {
 /** Where the ASR models live. Big enough that they are fetched once and shared by all projects. */
 export function modelDir(): string {
   return process.env.MEMLOOM_MODEL_DIR ?? join(homedir(), ".memloom", "models");
+}
+
+/** MEMLOOM_VAD_THRESHOLD, when it parses to a probability. Anything else falls back. */
+export function vadThreshold(): number {
+  const raw = Number(process.env.MEMLOOM_VAD_THRESHOLD);
+  return Number.isFinite(raw) && raw > 0 && raw < 1 ? raw : VAD_THRESHOLD;
+}
+
+/** The loudest sample in the file, so "is this silent" is answered by evidence. */
+export function peakLevel(samples: Float32Array): number {
+  let peak = 0;
+  for (const s of samples) {
+    const abs = s < 0 ? -s : s;
+    if (abs > peak) peak = abs;
+  }
+  return peak;
 }
 
 export interface TimedWord {
@@ -665,74 +708,104 @@ export async function transcribeWav(
   const wave = readWave(wavPath);
 
   // VAD first, and it is close to free: measured RTF 0.006, so it is never worth optimizing.
-  const vad = new (
-    sherpa.Vad as new (
-      c: unknown,
-      b: number,
-    ) => {
-      config: { sileroVad: { windowSize: number } };
-      acceptWaveform(s: Float32Array): void;
-      isEmpty(): boolean;
-      front(): { start: number; samples: Float32Array };
-      pop(): void;
-      flush(): void;
-    }
-  )(
-    {
-      sileroVad: {
-        model: vadModel,
-        threshold: 0.5,
-        minSpeechDuration: 0.25,
-        minSilenceDuration: 0.5,
-        maxSpeechDuration: 20,
-        windowSize: 512,
+  // Built per pass, because a Vad instance carries the threshold and its own stream state.
+  const makeVad = (threshold: number) =>
+    new (
+      sherpa.Vad as new (
+        c: unknown,
+        b: number,
+      ) => {
+        config: { sileroVad: { windowSize: number } };
+        acceptWaveform(s: Float32Array): void;
+        isEmpty(): boolean;
+        front(): { start: number; samples: Float32Array };
+        pop(): void;
+        flush(): void;
+      }
+    )(
+      {
+        sileroVad: {
+          model: vadModel,
+          threshold,
+          minSpeechDuration: 0.25,
+          minSilenceDuration: 0.5,
+          maxSpeechDuration: 20,
+          windowSize: 512,
+        },
+        sampleRate: SAMPLE_RATE,
+        numThreads: 1,
       },
-      sampleRate: SAMPLE_RATE,
-      numThreads: 1,
-    },
-    120,
-  );
+      120,
+    );
 
-  const segments: VadSegment[] = [];
-  const drain = () => {
-    while (!vad.isEmpty()) {
-      const seg = vad.front();
-      vad.pop();
-      // Indices only, never the samples: retaining them would hold the whole file in memory.
-      segments.push({ start: seg.start, end: seg.start + seg.samples.length });
-    }
-  };
+  const totalSamples = wave.samples.length;
+  const audioSeconds = totalSamples / SAMPLE_RATE;
+
   // VAD is cheap per second of audio (measured RTF 0.006) but an hour of it is still about
   // twenty seconds, and it used to pass in silence between the model loading and the first
   // word appearing. Reported every percent, with a yield so the events actually reach the
   // client: acceptWaveform is native and synchronous, so nothing flushes without one.
-  const totalSamples = wave.samples.length;
-  const audioSeconds = totalSamples / SAMPLE_RATE;
-  const windowSize = vad.config.sileroVad.windowSize;
-  let vadPercent = -1;
-  options.onProgress?.({ stage: "detecting", done: 0, total: 100, seconds: 0, audioSeconds });
-  for (let i = 0; i < totalSamples; i += windowSize) {
-    vad.acceptWaveform(wave.samples.subarray(i, i + windowSize));
-    drain();
-    const percent = Math.floor((i / totalSamples) * 100);
-    if (percent !== vadPercent) {
-      vadPercent = percent;
-      options.onProgress?.({
-        stage: "detecting",
-        done: percent,
-        total: 100,
-        seconds: i / SAMPLE_RATE,
-        audioSeconds,
-      });
-      await yieldToEventLoop();
-      throwIfCancelled(options.signal);
+  const runVad = async (threshold: number): Promise<VadSegment[]> => {
+    const vad = makeVad(threshold);
+    const segments: VadSegment[] = [];
+    const drain = () => {
+      while (!vad.isEmpty()) {
+        const seg = vad.front();
+        vad.pop();
+        // Indices only, never the samples: retaining them would hold the whole file in memory.
+        segments.push({ start: seg.start, end: seg.start + seg.samples.length });
+      }
+    };
+    const windowSize = vad.config.sileroVad.windowSize;
+    let vadPercent = -1;
+    options.onProgress?.({ stage: "detecting", done: 0, total: 100, seconds: 0, audioSeconds });
+    for (let i = 0; i < totalSamples; i += windowSize) {
+      vad.acceptWaveform(wave.samples.subarray(i, i + windowSize));
+      drain();
+      const percent = Math.floor((i / totalSamples) * 100);
+      if (percent !== vadPercent) {
+        vadPercent = percent;
+        options.onProgress?.({
+          stage: "detecting",
+          done: percent,
+          total: 100,
+          seconds: i / SAMPLE_RATE,
+          audioSeconds,
+        });
+        await yieldToEventLoop();
+        throwIfCancelled(options.signal);
+      }
     }
-  }
-  vad.flush();
-  drain();
+    vad.flush();
+    drain();
+    return segments;
+  };
 
+  const threshold = vadThreshold();
+  let segments = await runVad(threshold);
+
+  // Nothing found is far more often VAD being wrong than a recording being empty. Speech under
+  // continuous loud audio (music, a car, a fan) never reaches silero's 0.5, because the model
+  // sees a spectrally busy frame and the speech is a small part of its energy. Measured on a
+  // 52-second phone recording of music with ten seconds of talking over it: 0.5 found ZERO
+  // segments, 0.4 found 28.8s and 0.3 found 36.4s. So a second pass runs at a lower bar before
+  // anything is refused. It costs another 0.6% of real time.
+  if (segments.length === 0 && threshold > VAD_RESCUE_THRESHOLD) {
+    segments = await runVad(VAD_RESCUE_THRESHOLD);
+  }
+
+  // Still nothing. VAD is an optimization, not a gate: skipping silence saves decode time, and
+  // being wrong about where speech is must never cost the recording. So unless the audio really
+  // is silent, hand the whole file to the recognizer and let IT decide. Refusing a recording
+  // that plainly contains speech is the worse failure by a distance.
   if (segments.length === 0) {
-    throw new AudioError("no speech found in this recording", "no_speech");
+    if (peakLevel(wave.samples) < SILENCE_PEAK) {
+      throw new AudioError(
+        "this recording is silent: nothing above the noise floor to transcribe",
+        "no_speech",
+      );
+    }
+    segments = [{ start: 0, end: totalSamples }];
   }
 
   // Emitted here rather than at the top of the function because this call is where the
@@ -815,8 +888,22 @@ export async function transcribeWav(
   }
 
   const speechSeconds = segments.reduce((a, s) => a + (s.end - s.start) / SAMPLE_RATE, 0);
+  const words = perChunk.flat();
+
+  // The recognizer heard nothing it could turn into words. Refused rather than stored, because
+  // the alternative is a document whose only chunk is the "Recorded on ..." header: it takes up
+  // a row, it is recallable, and it says nothing. The commonest cause is speech masked by
+  // continuous loud audio, which the recognizer cannot separate out; it is a speech model, not
+  // a source separator.
+  if (words.length === 0) {
+    throw new AudioError(
+      "nothing recognizable as speech in this recording. Music or noise as loud as the " +
+        "talking will mask it; try a recording where the voice is clearly the loudest thing.",
+      "no_speech",
+    );
+  }
   return {
-    words: perChunk.flat(),
+    words,
     audioSeconds,
     speechSeconds,
     suspectChunks: suspects.length,

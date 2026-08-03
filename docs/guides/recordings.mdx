@@ -108,6 +108,7 @@ alternatives. Transcripts are cached per model, so switching back costs nothing.
 <Accordion title="Environment knobs, rarely needed" icon="sliders">
   | Variable | Effect |
   | --- | --- |
+  | `MEMLOOM_VAD_THRESHOLD` | How sure the detector must be that a frame is speech, 0 to 1. Default 0.5 |
   | `MEMLOOM_DIARIZE_SPEAKERS` | Pin the speaker count when you know it |
   | `MEMLOOM_DIARIZE_THRESHOLD` | Clustering cutoff. Smaller finds more speakers. Default 0.6 |
   | `MEMLOOM_VOICE_MATCH_THRESHOLD` | Auto-naming similarity bar. Default 0.8 |
@@ -117,6 +118,34 @@ alternatives. Transcripts are cached per model, so switching back costs nothing.
   diarization setting reprocesses only the minutes-long diarization against the cached words,
   never the much longer transcription.
 </Accordion>
+
+## When there is background noise
+
+Voice detection runs first, to skip silence so an hour with ten minutes of talking decodes ten
+minutes rather than sixty. It is an optimization, not a gate, so being wrong about where speech
+is never costs the recording:
+
+<Steps>
+  <Step title="A second pass at a lower bar">
+    Speech under continuous loud audio never reaches the default threshold, because the detector
+    sees a busy frame and the voice is a small part of its energy. Finding nothing triggers one
+    more pass at 0.3. It costs another 0.6% of real time.
+  </Step>
+  <Step title="Then the whole file">
+    Still nothing, and the file is not silent? The entire recording goes to the recognizer, which
+    is a better judge than the detector.
+  </Step>
+  <Step title="Refused only when there is nothing to keep">
+    A silent file, or one the recognizer turns into no words at all, is refused with the reason.
+    Storing a document whose only chunk is "Recorded on ..." would be worse than saying so.
+  </Step>
+</Steps>
+
+<Warning>
+  Speech as quiet as the music or noise over it usually cannot be recovered. The recognizer is a
+  speech model, not a source separator, and no threshold changes that. For a recording to be
+  usable the voice has to be the loudest thing in it.
+</Warning>
 
 ## Known limits
 

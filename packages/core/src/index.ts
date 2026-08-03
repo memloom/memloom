@@ -46,6 +46,7 @@ export {
   mediaDurationSeconds,
   modelDir,
   packChunks,
+  peakLevel,
   recordingHeader,
   recordingTime,
   SECTION_MIN_SPEECH_CHARS,
@@ -55,6 +56,9 @@ export {
   toMarkdown,
   transcribeMedia,
   transcribeWav,
+  VAD_RESCUE_THRESHOLD,
+  VAD_THRESHOLD,
+  vadThreshold,
 } from "./audio.js";
 export type {
   CatalogModel,
