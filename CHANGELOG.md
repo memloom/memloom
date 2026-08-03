@@ -6,8 +6,9 @@
   threshold is right for someone talking into a phone and wrong for speech under continuous loud
   audio: on a 52-second phone recording of music with talking over it, 0.5 found zero speech,
   0.4 found 28.8 seconds and 0.3 found 36.4. Finding nothing now triggers a second pass at 0.3,
-  and if that finds nothing either the whole file goes to the recognizer, which is a better judge
-  than the detector. Detection is an optimization, not a gate. `MEMLOOM_VAD_THRESHOLD` pins it
+  and if that finds nothing either, a recording under ten minutes goes to the recognizer whole:
+  detection only chooses which spans to decode, and the recognizer is the thing that reads speech.
+  `MEMLOOM_VAD_THRESHOLD` pins the threshold
 - A file is only refused now when there is nothing to keep: silence, or audio the recognizer turns
   into no words at all. The message says which. Before, a file it could not read was either
   refused as having "no speech" when it plainly had some, or stored as a document whose only

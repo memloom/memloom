@@ -77,6 +77,15 @@ export const VAD_RESCUE_THRESHOLD = 0.3;
 const SILENCE_PEAK = 0.001;
 
 /**
+ * How long a recording may be before the last-resort whole-file decode is skipped.
+ *
+ * That fallback is a guess: it runs when both detector passes found nothing, which means the
+ * odds of any words coming back are poor. Ten minutes caps the wasted work at a minute or two
+ * of CPU, where an unbounded version would spend 8 to 11 minutes per hour on a file of music.
+ */
+const WHOLE_FILE_FALLBACK_SECONDS = 600;
+
+/**
  * A chunk producing far less text per second of speech than its neighbours did not
  * transcribe properly. See `findSuspectChunks` for why this check is not optional.
  */
@@ -794,14 +803,25 @@ export async function transcribeWav(
     segments = await runVad(VAD_RESCUE_THRESHOLD);
   }
 
-  // Still nothing. VAD is an optimization, not a gate: skipping silence saves decode time, and
-  // being wrong about where speech is must never cost the recording. So unless the audio really
-  // is silent, hand the whole file to the recognizer and let IT decide. Refusing a recording
-  // that plainly contains speech is the worse failure by a distance.
+  // Still nothing, from a detector that was already demonstrably wrong once on this kind of
+  // audio. VAD only chooses which spans to decode; the recognizer is the thing that actually
+  // reads speech, and it is a 600M-parameter model against silero's 632 KB. So on a file that
+  // is not silent, hand it the lot and let it answer.
+  //
+  // Bounded by length, because this is a guess: an hour of music would otherwise cost 8 to 11
+  // minutes of CPU to produce nothing. Under the bound the worst case is a minute or two, and
+  // the upside is never refusing a short recording that a human can plainly hear speech in.
   if (segments.length === 0) {
     if (peakLevel(wave.samples) < SILENCE_PEAK) {
       throw new AudioError(
         "this recording is silent: nothing above the noise floor to transcribe",
+        "no_speech",
+      );
+    }
+    if (audioSeconds > WHOLE_FILE_FALLBACK_SECONDS) {
+      throw new AudioError(
+        `no speech detected anywhere in ${formatTime(audioSeconds)} of audio, at either ` +
+          "threshold. Set MEMLOOM_VAD_THRESHOLD lower to make the detector less strict.",
         "no_speech",
       );
     }
@@ -892,13 +912,19 @@ export async function transcribeWav(
 
   // The recognizer heard nothing it could turn into words. Refused rather than stored, because
   // the alternative is a document whose only chunk is the "Recorded on ..." header: it takes up
-  // a row, it is recallable, and it says nothing. The commonest cause is speech masked by
-  // continuous loud audio, which the recognizer cannot separate out; it is a speech model, not
-  // a source separator.
+  // a row, it is recallable, and it says nothing.
+  //
+  // It takes a lot of background to get here. Measured by mixing music UNDER a voice note that
+  // transcribes cleanly: at 0.7 of the speech level the transcript came back complete, with a
+  // few words wrong. So this is not "any music defeats it"; it is speech buried far enough below
+  // the background that the log-mel features stop looking like the speech the model learned.
+  // Separating the two needs a source-separation model, which is a different thing from a
+  // speech recognizer and not something memloom carries.
   if (words.length === 0) {
     throw new AudioError(
-      "nothing recognizable as speech in this recording. Music or noise as loud as the " +
-        "talking will mask it; try a recording where the voice is clearly the loudest thing.",
+      "nothing recognizable as speech in this recording. Background much louder than the " +
+        "talking will bury it: for a recording to be usable the voice needs to come through " +
+        "over whatever else is going on.",
       "no_speech",
     );
   }

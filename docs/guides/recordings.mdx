@@ -131,20 +131,31 @@ is never costs the recording:
     sees a busy frame and the voice is a small part of its energy. Finding nothing triggers one
     more pass at 0.3. It costs another 0.6% of real time.
   </Step>
-  <Step title="Then the whole file">
-    Still nothing, and the file is not silent? The entire recording goes to the recognizer, which
-    is a better judge than the detector.
+  <Step title="Then the whole file, if it is short">
+    Still nothing, and the file is not silent? Everything goes to the recognizer, which is a
+    600M-parameter speech model against the detector's 632 KB and a better judge of what it is
+    hearing. Skipped above ten minutes, since by this point the odds are poor and an hour of
+    music would cost 8 to 11 minutes of CPU to return nothing.
   </Step>
   <Step title="Refused only when there is nothing to keep">
-    A silent file, or one the recognizer turns into no words at all, is refused with the reason.
-    Storing a document whose only chunk is "Recorded on ..." would be worse than saying so.
+    A silent file, one too long for the fallback, or one the recognizer turns into no words at
+    all, is refused with the reason. Storing a document whose only chunk is "Recorded on ..."
+    would be worse than saying so.
   </Step>
 </Steps>
 
+<Note>
+  Background music does not by itself defeat transcription. Mixing music under a voice note at
+  0.7 of the speech level still transcribed completely, with a few words wrong. What fails is
+  speech buried far below the background, where the features stop resembling speech at all.
+</Note>
+
 <Warning>
-  Speech as quiet as the music or noise over it usually cannot be recovered. The recognizer is a
-  speech model, not a source separator, and no threshold changes that. For a recording to be
-  usable the voice has to be the loudest thing in it.
+  Pulling a voice out from under louder music needs a source-separation model, which is a
+  different thing from a speech recognizer and not something memloom carries. A denoiser is not a
+  substitute: sherpa's GTCRN enhancement made the same clip WORSE in testing, cutting the
+  transcript short and inventing words, because it is trained on speech plus steady noise and
+  music is neither.
 </Warning>
 
 ## Known limits
