@@ -1061,13 +1061,20 @@ export interface TranscribeFileResult {
 }
 
 /**
- * Bump when anything that shapes the transcript changes: the decode size, the sectioning,
- * the repair pass, the model. Cached transcripts written by an older pipeline are ignored
- * rather than served, because a stale transcript is indistinguishable from a fresh one once
- * it is in the store.
+ * Bump when what the cache HOLDS would be wrong: the decode size, the repair pass, the model,
+ * or the shape of the record itself. Cached transcripts written by an older pipeline are then
+ * ignored rather than served, because a stale transcript is indistinguishable from a fresh one
+ * once it is in the store.
  *
- * v2: speaker diarization. Sections break on speaker turns and multi-voice headings carry
- * a label, so a v1 transcript of the same file is a genuinely different document.
+ * NOT for a sectioning change, however much a sectioning change alters the document. Since v3
+ * the cache holds words and diarization, and `render` cuts sections from them on every read, so
+ * new sectioning rules apply to a cached transcript the moment it is read. Bumping this for one
+ * would throw away every cached transcript and re-run hours of ASR to arrive at the same words.
+ * The extractor `version` in extract.ts is the right knob there: it salts the content hash, so
+ * ingest re-chunks the recording without re-transcribing it.
+ *
+ * v2: speaker diarization. Sections break on speaker turns and headings carry a label, so a v1
+ * transcript of the same file is a genuinely different document.
  *
  * v3: the cache stores the ASR words and the diarization result separately, the latter
  * keyed by its own config signature. Re-tuning diarization re-runs minutes of clustering
