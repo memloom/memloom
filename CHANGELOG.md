@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.9.0 (2026-08-03)
 
 - A recording is no longer refused because voice detection missed the speech. Silero's 0.5
   threshold is right for someone talking into a phone and wrong for speech under continuous loud
