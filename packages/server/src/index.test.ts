@@ -427,6 +427,101 @@ describe("server", () => {
     expect(await ours()).toHaveLength(1);
   });
 
+  // An empty folder is the whole point of watching, not a mistake. Someone pointing a recorder
+  // at a folder links it BEFORE the first file exists, and every add route used to answer 400.
+  it("links an empty folder for watching instead of refusing it", async () => {
+    const server = await app();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-empty-"));
+    cleanups.push(async () => rmSync(dir, { recursive: true, force: true }));
+
+    const added = await server.request("/context/add", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: dir }),
+    });
+    expect(added.status).toBe(200);
+    expect(await added.json()).toMatchObject({ outcome: "watching", documents: 0 });
+
+    const roots = (await (await server.request("/context/roots")).json()) as {
+      roots: Array<{ path: string; watching: boolean; documents: number }>;
+    };
+    expect(roots.roots.find((r) => r.path === dir)).toMatchObject({
+      watching: true,
+      documents: 0,
+    });
+  });
+
+  it("links an empty folder from the queue and the streaming route too", async () => {
+    const server = await app();
+    const viaQueue = mkdtempSync(join(tmpdir(), "memloom-empty-q-"));
+    const viaStream = mkdtempSync(join(tmpdir(), "memloom-empty-s-"));
+    cleanups.push(async () => {
+      rmSync(viaQueue, { recursive: true, force: true });
+      rmSync(viaStream, { recursive: true, force: true });
+    });
+
+    // The queue route is the one the viewer's add card uses for a folder, so this is the exact
+    // request that used to come back as "no supported files".
+    const queued = await server.request("/queue", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ paths: [viaQueue] }),
+    });
+    expect(queued.status).toBe(200);
+    expect(await queued.json()).toMatchObject({ added: 0, watching: [viaQueue] });
+
+    const streamed = await server.request("/context/add/stream", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: viaStream }),
+    });
+    expect(streamed.status).toBe(200);
+    expect(await streamed.json()).toMatchObject({ outcome: "watching", documents: 0 });
+
+    const roots = (await (await server.request("/context/roots")).json()) as {
+      roots: Array<{ path: string }>;
+    };
+    const paths = roots.roots.map((r) => r.path);
+    expect(paths).toContain(viaQueue);
+    expect(paths).toContain(viaStream);
+  });
+
+  // The CLI walks a folder itself and then adds one FILE at a time, so nothing it sends tells
+  // the daemon a folder was involved. This route is how it registers the folder.
+  it("puts a folder on the watch list directly, and refuses a file", async () => {
+    const server = await app();
+    const dir = mkdtempSync(join(tmpdir(), "memloom-root-post-"));
+    cleanups.push(async () => rmSync(dir, { recursive: true, force: true }));
+    writeFileSync(join(dir, "a.md"), "# A\nnotes");
+
+    const res = await server.request("/context/roots", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: dir }),
+    });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ path: dir, watching: true });
+
+    // Idempotent by path: linking the same folder twice is one root, not two.
+    await server.request("/context/roots", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: dir }),
+    });
+    const roots = (await (await server.request("/context/roots")).json()) as {
+      roots: Array<{ path: string }>;
+    };
+    expect(roots.roots.filter((r) => r.path === dir)).toHaveLength(1);
+
+    const file = await server.request("/context/roots", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ path: join(dir, "a.md") }),
+    });
+    expect(file.status).toBe(400);
+    expect(JSON.stringify(await file.json())).toContain("not a folder");
+  });
+
   it("answers 404 for a watch change to something that is not there", async () => {
     const server = await app();
     const missing = "11111111-2222-3333-4444-555555555555";

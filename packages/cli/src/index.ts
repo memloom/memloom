@@ -798,9 +798,30 @@ export async function run(argv: readonly string[]): Promise<void> {
           }
         }
 
+        // A folder goes on the watch list even though this command then adds its files one at a
+        // time. The per-file adds tell the daemon nothing about the folder, so without this the
+        // folder is forgotten and a file arriving in it tomorrow is never noticed. An EMPTY
+        // folder is the case that matters most: linking one before the first file exists is how
+        // a recorder gets pointed at it.
+        const folders = targets.filter((t) =>
+          statSync(t, { throwIfNoEntry: false })?.isDirectory(),
+        );
+        for (const folder of folders) {
+          try {
+            await engine.contextRootAdd(folder);
+            console.log(`watching   ${folder}`);
+          } catch (err) {
+            console.error(
+              `could not watch ${folder}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+
         const files = targets.flatMap(collectContextFiles);
         if (files.length === 0) {
-          if (urls.length === 0) {
+          if (folders.length > 0) {
+            console.log("nothing to take in yet; new files land here on their own.");
+          } else if (urls.length === 0) {
             console.log(`no ingestible files found (${supportedExtensions().join(", ")}).`);
           }
           return;

@@ -1442,6 +1442,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     // A folder is expanded here rather than queued whole, so the list shows one row per
     // recording with its own progress and its own cancel, instead of one opaque row.
     const paths: string[] = [];
+    const watching: string[] = [];
     let capped = false;
     for (const raw of body.data.paths) {
       const target = userPath(raw);
@@ -1454,14 +1455,24 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         // Queueing a folder IS linking it. This is the route the add card uses for recordings,
         // so without this the one flow the watcher exists for would never register a root.
         await memloom.contextRootAdd(target);
+        watching.push(target);
       } else paths.push(target);
     }
-    if (paths.length === 0) {
+    // An EMPTY folder is the whole point of watching, not a mistake: someone pointing a
+    // recorder at a folder links it before the first file exists. It is on the watch list now,
+    // and the next file that lands is ingested on its own. Only a request with no folder in it
+    // at all had nothing to work with.
+    if (paths.length === 0 && watching.length === 0) {
       return c.json({ error: `no supported files (${supportedExtensions().join(", ")})` }, 400);
     }
     const added = await queue.add(paths);
     syncChanged();
-    return c.json({ added: added.length, ...cappedNote(capped), ...queue.snapshot() });
+    return c.json({
+      added: added.length,
+      watching,
+      ...cappedNote(capped),
+      ...queue.snapshot(),
+    });
   });
 
   app.post("/queue/:id/cancel", async (c) => {
@@ -1583,15 +1594,22 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
     const walked = await walkSupportedFiles(target);
     const files = walked.files.map((f) => f.path);
-    if (files.length === 0) {
-      return c.json(
-        { error: `no supported files (${supportedExtensions().join(", ")}) under ${target}` },
-        400,
-      );
-    }
     // Recorded before the ingest, not after: the files in it now are one snapshot, and the
     // root is what makes the ones that arrive tomorrow findable.
     await memloom.contextRootAdd(target);
+    // An empty folder is a watch list entry, not an error. Linking a folder before the first
+    // file exists is exactly how someone sets up a recorder to drop files into.
+    if (files.length === 0) {
+      syncChanged();
+      return c.json({
+        outcome: "watching",
+        title: target,
+        documents: 0,
+        unchanged: 0,
+        chunks: 0,
+        watching: [target],
+      });
+    }
     let added = 0;
     let unchanged = 0;
     let chunks = 0;
@@ -1634,11 +1652,18 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const walked = info.isDirectory() ? await walkSupportedFiles(target) : null;
     const files = walked ? walked.files.map((f) => f.path) : [target];
     if (walked) await memloom.contextRootAdd(target);
+    // As in /context/add: an empty folder joins the watch list rather than failing. Answered
+    // plainly rather than as a stream, since there is no work to report progress on.
     if (files.length === 0) {
-      return c.json(
-        { error: `no supported files (${supportedExtensions().join(", ")}) under ${target}` },
-        400,
-      );
+      syncChanged();
+      return c.json({
+        outcome: "watching",
+        title: target,
+        documents: 0,
+        unchanged: 0,
+        chunks: 0,
+        watching: [target],
+      });
     }
 
     // Both event shapes carry `stage`, so a consumer discriminates on one field instead of
@@ -1874,6 +1899,21 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       roots: await memloom.contextRoots(),
       ...(sync ? { stats: sync.stats() } : {}),
     });
+  });
+
+  // Put a folder on the watch list without ingesting anything. The CLI needs this because it
+  // walks a folder itself (to report per-file progress) and then adds one FILE at a time, so
+  // nothing it sends ever tells the daemon a folder was involved. Idempotent by path.
+  app.post("/context/roots", async (c) => {
+    const body = await parseBody(c, z.object({ path: z.string().min(1) }));
+    if (!body.ok) return body.res;
+    const target = userPath(body.data.path);
+    const info = await stat(target).catch(() => null);
+    if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
+    if (!info.isDirectory()) return c.json({ error: `not a folder: ${target}` }, 400);
+    const root = await memloom.contextRootAdd(target);
+    syncChanged();
+    return c.json(root);
   });
 
   const watchSchema = z.object({ watching: z.boolean() });

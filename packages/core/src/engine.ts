@@ -182,6 +182,8 @@ export interface MemoryEngine {
   /** One document at chunk granularity: chunks in order + their chunk -> entity edges. */
   contextChunks(documentId: string, ownerId?: string): Promise<DocumentChunks>;
   contextRemove(documentId: string, ownerId?: string): Promise<void>;
+  /** Put a folder on the watch list. Idempotent by path; re-adding turns watching back on. */
+  contextRootAdd(path: string, ownerId?: string): Promise<ContextRoot>;
   /** The linked folders memloom follows, and whether the daemon is watching at all. */
   contextRoots(ownerId?: string): Promise<ContextRoot[]>;
   /** Start or stop watching a linked folder. Its documents are untouched either way. */

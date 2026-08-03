@@ -23,6 +23,8 @@
   section, not the note, and every untouched chunk keeps its embedding and its entity links
 - Linking a folder records the folder, not just the files in it at the time. That is what makes a
   file arriving later findable, and it is what `memloom context roots` lists
+- An empty folder can be linked. Make a folder, link it, then point a recorder at it: that is the
+  normal order and every add route used to refuse it with "no supported files"
 - Watching is on when you link something, and switches off per folder or per file from the documents
   tab or with `memloom context unwatch <path>`. `memloom context forget <folder>` drops a folder from
   the watch list and keeps every document it produced

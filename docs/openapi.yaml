@@ -2146,6 +2146,48 @@ paths:
         "404":
           description: No document with that id.
   /context/roots:
+    post:
+      summary: Put a folder on the watch list
+      description: |
+        Adds a folder to the watch list without ingesting anything. Idempotent by path:
+        re-adding a folder already on the list turns watching back on rather than making a
+        second entry.
+
+        Every add route records the folder it was given, so this is only needed when nothing is
+        being ingested. The CLI uses it because it walks a folder itself, to report per-file
+        progress, and then adds one FILE at a time: nothing it sends would otherwise tell the
+        daemon a folder was involved.
+
+        An EMPTY folder is a normal thing to link. Pointing a recorder at a folder means linking
+        it before the first file exists.
+      operationId: addContextRoot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  description: Absolute path of a folder on the machine running memloom.
+      responses:
+        "200":
+          description: On the watch list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  path: { type: string }
+                  watching: { type: boolean }
+                  documents: { type: integer }
+                  lastScanAt: { type: string, format: date-time, nullable: true }
+                  createdAt: { type: string, format: date-time }
+        "400":
+          description: No such path, or the path is a file rather than a folder.
     get:
       summary: List watched folders
       description: |

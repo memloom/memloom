@@ -157,6 +157,7 @@
                   "POST /context/documents/{id}/open",
                   "POST /context/documents/{id}/watch",
                   "DELETE /context/documents/{id}",
+                  "POST /context/roots",
                   "GET /context/roots",
                   "POST /context/roots/{id}/watch",
                   "DELETE /context/roots/{id}"

@@ -847,7 +847,8 @@ export const api = {
   contextAdd: (path: string) =>
     post<{
       documentId?: string;
-      outcome: "added" | "updated" | "unchanged" | "converted";
+      /** "watching": an empty folder joined the watch list and there was nothing to ingest. */
+      outcome: "added" | "updated" | "unchanged" | "converted" | "watching";
       title: string;
       chunks: number;
       /** "converted": false when the upload's chunks were kept as-is (content matched). */
@@ -857,6 +858,9 @@ export const api = {
       /** Present when a folder was ingested: how many files were added/updated. */
       documents?: number;
       unchanged?: number;
+      /** Folders now on the watch list, whether or not anything in them was ingested. */
+      watching?: string[];
+      capped?: string;
       errors?: string[];
     }>("/context/add", { path }),
   // The same ingest, streamed. Media transcribes for minutes, which is far past what a plain
@@ -865,7 +869,10 @@ export const api = {
   // The durable ingest queue. Polled rather than streamed: it changes on the order of once
   // per chunk, and a poll is far less machinery than a second NDJSON reader.
   queue: () => json<QueueSnapshot>("/queue"),
-  queueAdd: (paths: string[]) => post<QueueSnapshot & { added: number }>("/queue", { paths }),
+  queueAdd: (paths: string[]) =>
+    post<QueueSnapshot & { added: number; watching?: string[]; capped?: string }>("/queue", {
+      paths,
+    }),
   queueCancel: (id: string) => post<QueueSnapshot>(`/queue/${id}/cancel`, {}),
   queueResume: (id: string) => post<QueueSnapshot>(`/queue/${id}/resume`, {}),
   queueRemove: (id: string) => json<QueueSnapshot>(`/queue/${id}`, { method: "DELETE" }),

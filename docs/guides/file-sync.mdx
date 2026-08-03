@@ -85,11 +85,12 @@ The case this exists for: a device that writes an audio file into a folder every
     memloom audio setup
     ```
   </Step>
-  <Step title="Link the folder">
+  <Step title="Link the folder, empty or not">
     ```bash
     memloom context add ~/dropbox/recorder
     ```
-    Everything already in it is ingested, and the folder goes on the watch list.
+    Anything already in it is ingested, and the folder goes on the watch list. An **empty folder
+    is fine and expected**: make the folder, link it, then point the recorder at it.
   </Step>
   <Step title="Leave it">
     Each new file is queued, transcribed, and recallable. `memloom context roots` shows the count

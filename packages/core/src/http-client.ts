@@ -444,6 +444,10 @@ export class HttpMemloomClient implements MemoryEngine {
     await this.#json(`/context/documents/${documentId}`, { method: "DELETE" });
   }
 
+  contextRootAdd(path: string): Promise<ContextRoot> {
+    return this.#post<ContextRoot>("/context/roots", { path });
+  }
+
   async contextRoots(): Promise<ContextRoot[]> {
     const { roots } = await this.#json<{ roots: ContextRoot[] }>("/context/roots");
     return roots;
