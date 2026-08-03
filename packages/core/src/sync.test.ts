@@ -27,6 +27,8 @@ interface Doc {
   path: string;
   watching: boolean;
   missing: boolean;
+  /** When its chunks were last written. The rescan compares a file's mtime against this. */
+  updatedAt: string;
 }
 
 /** A store made of arrays. Records every call the watcher makes so tests can assert on them. */
@@ -56,6 +58,8 @@ class FakeStore implements SyncStore {
       path,
       watching: true,
       missing: false,
+      // Far future by default, so a document counts as current unless a test says otherwise.
+      updatedAt: "2099-01-01T00:00:00.000Z",
       ...over,
     };
     this.docs.push(doc);
@@ -65,7 +69,9 @@ class FakeStore implements SyncStore {
   async syncTargets(): Promise<SyncTargets> {
     return {
       roots: this.roots.filter((r) => r.watching),
-      files: this.docs.filter((d) => d.watching).map((d) => ({ id: d.id, path: d.path })),
+      files: this.docs
+        .filter((d) => d.watching)
+        .map((d) => ({ id: d.id, path: d.path, updatedAt: d.updatedAt })),
     };
   }
 
@@ -374,5 +380,63 @@ describe("FileSync counts what the queue took, not what it offered", () => {
     await settle();
 
     expect(watcher.stats().queued).toBe(1);
+  });
+});
+
+// Folders get a catch-up rescan; files linked on their own used to get none at all. Edit a
+// linked file while the daemon is down and the edit was lost permanently: no event fired
+// because nothing was running, and nothing later looked. A file's updated_at is its watermark.
+describe("FileSync rescan of files linked on their own", () => {
+  it("queues a file edited while nothing was watching", async () => {
+    const store = new FakeStore();
+    const path = await write("solo.md", new Date("2026-07-02T00:00:00Z"));
+    // No root: this file is watched on its own. Its chunks were written BEFORE that edit.
+    store.doc(path, { updatedAt: "2026-07-01T00:00:00.000Z" });
+    const queue = recorder();
+
+    await build(store, queue.enqueue).refresh();
+    await settle();
+
+    expect(queue.paths()).toEqual([path]);
+  });
+
+  it("leaves a file alone when the store is already newer than it", async () => {
+    const store = new FakeStore();
+    const path = await write("solo.md", new Date("2026-07-01T00:00:00Z"));
+    store.doc(path, { updatedAt: "2026-07-02T00:00:00.000Z" });
+    const queue = recorder();
+
+    await build(store, queue.enqueue).refresh();
+    await settle();
+
+    expect(queue.paths()).toEqual([]);
+  });
+
+  // The other half the folder rescan already had: a file gone while nothing was watching.
+  it("marks a linked file missing when it vanished unobserved", async () => {
+    const store = new FakeStore();
+    const doc = store.doc(join(dir, "deleted-while-off.md"));
+    const watcher = build(store, recorder().enqueue);
+
+    await watcher.refresh();
+
+    expect(store.marked).toEqual([{ id: doc.id, missing: true }]);
+    expect(watcher.stats().missing).toBe(1);
+  });
+
+  // A file inside a watched folder is the folder's business; doing it twice would offer the
+  // same path from two places on every tick.
+  it("does not rescan a file individually when its folder is watched", async () => {
+    const store = new FakeStore();
+    store.root(dir);
+    const path = await write("inside.md", new Date("2026-07-02T00:00:00Z"));
+    store.doc(path, { updatedAt: "2026-07-01T00:00:00.000Z" });
+    const queue = recorder();
+
+    await build(store, queue.enqueue).refresh();
+    await settle();
+
+    // Offered once, by the folder rescan, not twice.
+    expect(queue.paths()).toEqual([path]);
   });
 });

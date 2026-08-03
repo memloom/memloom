@@ -28,6 +28,21 @@ export function hasDiskPath(path: string): boolean {
   return !/^[A-Za-z][A-Za-z0-9+.-]*:\/\//.test(path);
 }
 
+/**
+ * A folder path with exactly one trailing separator, which is what "inside this folder" means
+ * as a string comparison.
+ *
+ * Appending unconditionally breaks a root that already ends in one: "D:\" became "D:\\", which
+ * is a prefix of no path on earth, so a drive-root watch matched nothing and reported zero
+ * documents. The separator is taken from the path itself, since a Windows path contains a
+ * backslash and a posix one does not.
+ */
+export function folderPrefix(folder: string): string {
+  const last = folder.charAt(folder.length - 1);
+  if (last === "/" || last === "\\") return folder;
+  return folder + (folder.includes("\\") ? "\\" : "/");
+}
+
 export interface WalkedFile {
   path: string;
   /** Carried out of the walk so a rescan can skip untouched files without a second stat. */

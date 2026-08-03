@@ -175,7 +175,7 @@ import type {
 } from "./types.js";
 import { RECONCILE_PASSES } from "./types.js";
 import { toVectorLiteral } from "./vector.js";
-import { hasDiskPath } from "./walk.js";
+import { folderPrefix, hasDiskPath } from "./walk.js";
 
 // The fixed owner for the single-user embedded tier. Multi-tenant hosts pass a real
 // ownerId per call; the column exists everywhere so the schema is sync/cloud-ready.
@@ -1292,12 +1292,22 @@ export class Memloom implements MemoryEngine {
       // otherwise match half the store, and escaping a user-supplied path into a LIKE pattern
       // is the kind of thing that is wrong once and then wrong forever. The separator is part
       // of the prefix, so a root at /a/b does not claim the documents under /a/bc.
+      // p.prefix is the root with exactly one trailing separator, which is what makes the
+      // comparison one equality instead of two and what makes a drive root work: "D:\" already
+      // ends in a separator, and appending another gave "D:\\", which matches no path at all.
       `SELECT r.id, r.path, r.watching, r.last_scan_at, r.created_at,
               (SELECT count(*) FROM context_documents d
                 WHERE d.owner_id = r.owner_id AND d.session_id IS NULL
-                  AND (left(d.path, length(r.path) + 1) = r.path || '/'
-                    OR left(d.path, length(r.path) + 1) = r.path || '\\')) AS documents
-       FROM context_roots r WHERE r.owner_id = $1 ORDER BY r.created_at DESC`,
+                  AND left(d.path, length(p.prefix)) = p.prefix) AS documents
+       FROM context_roots r
+       CROSS JOIN LATERAL (
+         SELECT CASE
+                  WHEN right(r.path, 1) IN ('/', chr(92)) THEN r.path
+                  WHEN position(chr(92) in r.path) > 0 THEN r.path || chr(92)
+                  ELSE r.path || '/'
+                END AS prefix
+       ) p
+       WHERE r.owner_id = $1 ORDER BY r.created_at DESC`,
       [ownerId],
     );
     return rows.map((r) => ({
@@ -1396,14 +1406,20 @@ export class Memloom implements MemoryEngine {
    */
   async syncTargets(ownerId: string = SENTINEL_OWNER): Promise<SyncTargets> {
     const roots = (await this.contextRoots(ownerId)).filter((r) => r.watching);
-    const files = await this.#storage.query<{ id: string; path: string }>(
-      `SELECT id, path FROM context_documents
+    // updated_at travels with each file: it is when its chunks were last written, so a file
+    // whose mtime is newer than it has changed since the last ingest. That is what lets the
+    // rescan catch an edit made while the daemon was down, when no event ever fired.
+    const rows = await this.#storage.query<{ id: string; path: string; updated_at: string }>(
+      `SELECT id, path, updated_at FROM context_documents
        WHERE owner_id = $1 AND session_id IS NULL AND watching = true
          AND path !~ '^[A-Za-z][A-Za-z0-9+.-]*://'
        ORDER BY updated_at DESC`,
       [ownerId],
     );
-    return { roots, files };
+    return {
+      roots,
+      files: rows.map((r) => ({ id: r.id, path: r.path, updatedAt: r.updated_at })),
+    };
   }
 
   /**
@@ -1415,13 +1431,14 @@ export class Memloom implements MemoryEngine {
     prefix: string,
     ownerId: string = SENTINEL_OWNER,
   ): Promise<{ id: string; path: string; watching: boolean }[]> {
-    // The separator is part of the prefix, so a root at /a/b does not sweep up /a/bc/notes.md
-    // and report it missing the moment /a/bc is renamed.
+    // Compared against the folder plus its separator, so a root at /a/b does not sweep up
+    // /a/bc/notes.md and report it missing the moment /a/bc is renamed. Built here rather than
+    // in SQL so no escaping layer can turn one backslash into two.
+    const under = folderPrefix(prefix);
     return await this.#storage.query<{ id: string; path: string; watching: boolean }>(
       `SELECT id, path, watching FROM context_documents
-       WHERE owner_id = $1 AND session_id IS NULL
-         AND (left(path, length($2) + 1) = $2 || '/' OR left(path, length($2) + 1) = $2 || '\\')`,
-      [ownerId, prefix],
+       WHERE owner_id = $1 AND session_id IS NULL AND left(path, length($2)) = $2`,
+      [ownerId, under],
     );
   }
 

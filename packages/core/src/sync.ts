@@ -1,4 +1,5 @@
 import type { Stats } from "node:fs";
+import { stat } from "node:fs/promises";
 import { basename, extname } from "node:path";
 import { type FSWatcher, watch } from "chokidar";
 import { supportedExtensions } from "./extract.js";
@@ -141,12 +142,36 @@ export class FileSync {
     this.#watched.clear();
   }
 
-  /** Re-read the watch list, adjust what chokidar is watching, and rescan every root. */
+  /** Re-read the watch list, adjust what chokidar is watching, and rescan roots and files. */
   async refresh(): Promise<void> {
     if (this.#stopped) return;
     const targets = await this.#targets();
     this.#sync(targets);
     await this.#rescanAll(targets.roots);
+    await this.#rescanFiles(targets.files);
+  }
+
+  /**
+   * The catch-up pass for files linked on their own, which folders get from #rescan and these
+   * would otherwise never get at all.
+   *
+   * Without it, editing a linked file while the daemon is down loses the edit permanently: no
+   * event fires because nothing is running, and nothing later looks. A file's updated_at is when
+   * its chunks were written, so an mtime past that means the file moved on and the store did not.
+   */
+  async #rescanFiles(files: SyncTargets["files"]): Promise<void> {
+    for (const file of files) {
+      if (this.#stopped) return;
+      const info = await stat(file.path).catch(() => null);
+      if (!info) {
+        // Gone while nothing was watching. Marked, never deleted, as everywhere else.
+        if (await this.#store.contextMarkMissing(file.id, true, this.#owner())) {
+          this.#stats.missing += 1;
+        }
+        continue;
+      }
+      if (info.mtimeMs > Date.parse(file.updatedAt)) await this.#queue(file.path);
+    }
   }
 
   async #targets(): Promise<SyncTargets> {

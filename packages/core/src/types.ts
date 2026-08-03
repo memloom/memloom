@@ -589,7 +589,12 @@ export interface ContextRoot {
 /** Everything the watcher has an eye on: linked folders, plus files linked on their own. */
 export interface SyncTargets {
   roots: ContextRoot[];
-  files: { id: string; path: string }[];
+  /**
+   * `updatedAt` is a file's own catch-up watermark, the equivalent of a root's lastScanAt. A
+   * file modified while the daemon was down fires no event, so without something to compare
+   * its mtime against there is nothing that would ever notice the edit.
+   */
+  files: { id: string; path: string; updatedAt: string }[];
 }
 
 // ---- Chat attachments (files uploaded into one assistant session's scope) ----

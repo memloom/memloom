@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { HashingEmbeddingProvider, NullLLMProvider } from "./hashing-provider.js";
 import { Memloom } from "./memloom.js";
@@ -174,5 +174,25 @@ describe("context roots and watch state", () => {
       watching: true,
     });
     expect(await memloom.contextDocumentByPath(join(dir, "nope.md"))).toBeNull();
+  });
+
+  // A drive root ("D:\", "/") already ends in a separator, and appending another produced a
+  // prefix that matches no path at all. Every document under such a root then looked absent:
+  // the count read 0, and the rescan's "already known" set came back empty, which makes it
+  // re-offer every file on the drive every tick and never notice a deletion. Exercised here
+  // with a trailing separator on a real temp dir, which hits the same branch through real SQL.
+  it("counts documents under a root that already ends in a separator", async () => {
+    const { memloom, dir } = await fresh();
+    await memloom.contextAdd({ path: await note(dir, "inside.md", "# In\n\nkept") });
+
+    const withSep = dir.endsWith(sep) ? dir : dir + sep;
+    const root = await memloom.contextRootAdd(withSep);
+    const [listed] = await memloom.contextRoots();
+
+    expect(listed?.id).toBe(root.id);
+    expect(listed?.documents).toBe(1);
+    expect((await memloom.contextDocumentsUnder(withSep)).map((d) => d.path)).toEqual([
+      join(dir, "inside.md"),
+    ]);
   });
 });

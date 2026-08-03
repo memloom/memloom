@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { hasDiskPath, walkSupportedFiles } from "./walk.js";
+import { folderPrefix, hasDiskPath, walkSupportedFiles } from "./walk.js";
 
 let dir: string;
 
@@ -100,5 +100,33 @@ describe("hasDiskPath", () => {
     expect(hasDiskPath("upload://report.pdf")).toBe(false);
     expect(hasDiskPath("attachment://session/notes.md")).toBe(false);
     expect(hasDiskPath("https://example.com/page")).toBe(false);
+  });
+});
+
+// A drive root already ends in a separator, so appending another made "D:\\", a prefix of no
+// path on earth. Every document under that root then looked absent: the count read 0, and the
+// rescan saw an empty "already known" set, so it re-offered every file on the drive every tick
+// and never noticed a deleted one.
+describe("folderPrefix", () => {
+  const B = String.fromCharCode(92);
+
+  it("appends the separator the path already uses", () => {
+    expect(folderPrefix(`D:${B}audio`)).toBe(`D:${B}audio${B}`);
+    expect(folderPrefix("/x/audio")).toBe("/x/audio/");
+  });
+
+  it("leaves a path that already ends in a separator alone", () => {
+    expect(folderPrefix(`D:${B}`)).toBe(`D:${B}`);
+    expect(folderPrefix("/")).toBe("/");
+    expect(folderPrefix(`D:${B}audio${B}`)).toBe(`D:${B}audio${B}`);
+    expect(folderPrefix("/x/audio/")).toBe("/x/audio/");
+  });
+
+  // The whole point of the trailing separator: a sibling whose name merely starts the same is
+  // not inside the folder.
+  it("does not make a look-alike sibling look like it is inside", () => {
+    const prefix = folderPrefix(`D:${B}audio`);
+    expect(`D:${B}audio${B}in.md`.startsWith(prefix)).toBe(true);
+    expect(`D:${B}audio-archive${B}out.md`.startsWith(prefix)).toBe(false);
   });
 });
