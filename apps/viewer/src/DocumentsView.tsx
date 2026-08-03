@@ -196,7 +196,14 @@ function WatchedFolders({ onChanged }: { onChanged: () => void }) {
       .then(setState)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
-  useEffect(load, [load]);
+  // Polled, because the daemon moves these on its own: the rescan stamps a new check time and
+  // a file arriving in a watched folder changes the count. One small query every fifteen
+  // seconds, against a rescan that runs every sixty.
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 15_000);
+    return () => clearInterval(timer);
+  }, [load]);
 
   async function act(id: string, run: () => Promise<unknown>) {
     setBusy(id);
@@ -281,19 +288,39 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
   const [open, setOpen] = useState<Map<string, DocumentChunks>>(new Map());
   const [arming, setArming] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // The document's updatedAt at the moment its chunks were fetched. An open panel is a cache
+  // with no expiry of its own, and the watcher re-ingests behind the user's back, so without
+  // this a saved edit shows a new chunk count above the old chunks.
+  const chunksAt = useRef<Map<string, string>>(new Map());
+
+  /** Re-read the chunks of any open panel whose document has moved on since it was fetched. */
+  const freshenChunks = useCallback((next: ContextDocument[]) => {
+    for (const doc of next) {
+      const at = chunksAt.current.get(doc.id);
+      if (at === undefined || at === doc.updatedAt) continue;
+      chunksAt.current.set(doc.id, doc.updatedAt);
+      api
+        .documentChunks(doc.id)
+        .then((dc) => setOpen((cur) => (cur.has(doc.id) ? new Map(cur).set(doc.id, dc) : cur)))
+        .catch(() => {});
+    }
+    return next;
+  }, []);
 
   // Mount revalidates through the shared cache; every mutation path in this view calls
   // `load` too, so it busts the cache rather than risking a stale readback.
   const revalidate = useCallback(() => {
     prefetch("documents", api.documents)
+      .then(freshenChunks)
       .then(setDocs)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, []);
+  }, [freshenChunks]);
   const load = useCallback(() => {
     refetch("documents", api.documents)
+      .then(freshenChunks)
       .then(setDocs)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, []);
+  }, [freshenChunks]);
   useEffect(revalidate, [revalidate]);
 
   // A rename changed the roster and rewrote chunk breadcrumbs on the daemon: patch the
@@ -312,17 +339,21 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
     });
   }, []);
 
-  async function toggleChunks(id: string) {
-    if (open.has(id)) {
+  async function toggleChunks(doc: ContextDocument) {
+    if (open.has(doc.id)) {
       const next = new Map(open);
-      next.delete(id);
+      next.delete(doc.id);
       setOpen(next);
+      chunksAt.current.delete(doc.id);
       return;
     }
     setError(null);
     try {
-      const dc = await api.documentChunks(id);
-      setOpen((prev) => new Map(prev).set(id, dc));
+      const dc = await api.documentChunks(doc.id);
+      // Stamped with the version these chunks belong to, so the next list refresh can tell
+      // whether they are still the current ones.
+      chunksAt.current.set(doc.id, doc.updatedAt);
+      setOpen((prev) => new Map(prev).set(doc.id, dc));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     }
@@ -442,7 +473,7 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
                 <div className="docPath">{d.path}</div>
               )}
               <div className="actions">
-                <button type="button" className="btn" onClick={() => toggleChunks(d.id)}>
+                <button type="button" className="btn" onClick={() => toggleChunks(d)}>
                   {chunks ? "Hide chunks" : "Show chunks"}
                 </button>
                 {/* A link has no file to hand the OS: open the page it was read from. */}

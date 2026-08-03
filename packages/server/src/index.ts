@@ -1387,15 +1387,19 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   // Keeping linked files current. The watcher never ingests: it finds paths and hands them to
   // the queue above, which is where the settle wait, the serial drain and the restart survival
-  // already live. skipFailed is the watcher's alone, so a file that cannot be read does not
-  // earn a fresh failed row on every rescan.
+  // already live.
+  //
+  // Both flags exist for this caller only. `skipFailed` stops a file that cannot be read from
+  // earning a fresh failed row on every rescan. `silent` clears a row once it succeeds, because
+  // the queue is a list of jobs the person started and re-ingesting an edited note is not one:
+  // saving a file three times would otherwise leave three finished rows behind.
   //
   // MEMLOOM_SYNC=off is the whole kill switch. Everything else stays: linking still works,
   // roots are still recorded, nothing starts syncing again until the flag comes back.
   const syncEnabled =
     opts.fileSync === true && (process.env.MEMLOOM_SYNC ?? "on").toLowerCase() !== "off";
   const sync = syncEnabled
-    ? new FileSync(memloom, (paths) => queue.add(paths, { skipFailed: true }), {
+    ? new FileSync(memloom, (paths) => queue.add(paths, { skipFailed: true, silent: true }), {
         ...(process.env.MEMLOOM_SYNC_RESCAN_MS
           ? { rescanMs: Number(process.env.MEMLOOM_SYNC_RESCAN_MS) }
           : {}),

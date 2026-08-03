@@ -689,18 +689,20 @@ export function IngestQueueCard({ onChanged }: { onChanged: () => void }) {
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  // Held so a finished item can refresh the document list exactly once, rather than on
-  // every poll while it sits there in its done state.
-  const settled = useRef(0);
+  // Held so a finished item refreshes the document list exactly once, rather than on every
+  // poll while it sits there. Counted by the daemon rather than by the rows on screen,
+  // because a watcher's item removes itself the moment it succeeds and would otherwise
+  // finish, update documents, and vanish without the list ever hearing about it.
+  const settled = useRef(-1);
 
   const load = useCallback(async () => {
     try {
       const next = await refetch("queue", api.queue);
       setSnapshot(next);
-      const finished = next.items.filter((i) => i.status === "done").length;
-      if (finished !== settled.current) {
-        settled.current = finished;
-        onChanged();
+      if (next.completed !== settled.current) {
+        const first = settled.current === -1;
+        settled.current = next.completed;
+        if (!first) onChanged();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

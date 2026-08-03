@@ -394,6 +394,12 @@ export interface QueueItem {
 export interface QueueSnapshot {
   items: QueueItem[];
   running: boolean;
+  /**
+   * Items finished since the daemon started, successes and failures alike. Only goes up, so a
+   * poller can tell "something completed" from "the list looks the same" even when the finished
+   * row removed itself.
+   */
+  completed: number;
 }
 /** One file finished inside a streamed ingest, so a folder reports as it goes. */
 export interface ContextFileDone {
