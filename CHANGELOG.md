@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Fixed recall on recordings of a conversation. A back-channel ("Yeah", "Oh") became its own
+  section, so it became its own chunk, and a chunk's text opens with its own heading: two words of
+  speech under 20 characters of "25:46 - 25:47, Alice". That chunk's vector is mostly the
+  speaker's name, so it matched any question naming that person better than the passage answering
+  it did, and a conversation's worth of them filled the results. Sections now need real speech
+  before a change of speaker ends them. On one 34-minute recording that is 145 chunks down to 26,
+  with none left whose speech is shorter than its own heading
+- A recording with one voice now carries that voice's name too. It was left as plain time ranges
+  for readability, which cost the whole recording: the name lived only in the roster, so nothing
+  in any chunk's text said who was talking and asking about that person by name could not reach a
+  word of it. A voice note from one person is exactly what someone searches for by whose voice
+  it is
+- Both change what a chunk means, so recordings ingested before this need re-adding to benefit:
+  `memloom context add <file>`. Neither transcription nor diarization re-runs, both are cached
 - Linked files and folders now stay current on their own. Edit a file and recall follows within
   seconds; drop a new recording into a linked folder and it is transcribed and becomes recallable
   without adding it again ([docs](https://docs.memloom.dev/guides/file-sync))

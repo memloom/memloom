@@ -70,8 +70,15 @@ Recordings never transcribe inside a request. Linking one file or fifty enqueues
 
 ## Speakers
 
-With the speaker models installed, multi-voice recordings are diarized: sections break where the
-speaker changes and headings carry the label. Single-voice recordings stay unlabeled on purpose.
+With the speaker models installed, recordings are diarized: sections break where the speaker
+changes and every heading carries the label, one voice or ten.
+
+A section breaks on a change of speaker only once the current speaker has said enough to be worth
+finding on its own. A back-channel ("Yeah", "Oh") rides along with the speech around it, which is
+how a person reads a transcript. Without that floor each one became its own chunk, and since a
+chunk's text opens with its own heading, two words of speech sat under twenty characters of
+`25:46 - 25:47, Alice`. Those chunks embed as mostly the speaker's NAME, so they beat the
+passage that actually answers a question about that person.
 
 The documents tab shows every recording's speakers with a playable sample and inline rename.
 Renaming rewrites only headings and breadcrumbs, never the spoken words.
@@ -115,5 +122,7 @@ alternatives. Transcripts are cached per model, so switching back costs nothing.
 
 - Very short clips with seconds per voice can merge two speakers.
 - Overlapping speech is attributed to one speaker.
+- A section that absorbed a back-channel contains a word or two from another voice. It is labeled
+  with whoever said most of it, which is the honest attribution but not a perfect one.
 - ffmpeg must be on PATH.
 - Corrupted stretches are skipped by the decoder and can degrade diarization around them.
