@@ -1338,5 +1338,43 @@ export function buildMigrations(dims: number): Migration[] {
         ON memory_reconcile_runs (owner_id) WHERE status = 'running' AND mode = 'apply';
     `,
     },
+    {
+      // File sync: what to watch, and what happened to what we watched.
+      //
+      // context_roots exists because a folder add fans out into one document per file and then
+      // forgets the folder. Without the root, a file that appears later is invisible: no
+      // document names it, so no query finds it. The root is the only record that the user
+      // pointed at a directory rather than at the files that happened to be in it.
+      //
+      // last_scan_at is the catch-up watermark. A watcher misses whatever landed while the
+      // daemon was down, and network shares drop events even while it is up, so every tick
+      // re-walks the root. Walking is cheap; reading and hashing every file in a folder that
+      // grows forever is not, so a rescan only looks at entries modified since this stamp.
+      id: "0031_context_roots",
+      sql: /* sql */ `
+      CREATE TABLE IF NOT EXISTS context_roots (
+        id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id     uuid NOT NULL,
+        path         text NOT NULL,
+        watching     boolean NOT NULL DEFAULT true,
+        last_scan_at timestamptz,
+        created_at   timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS context_roots_owner_path_idx
+        ON context_roots (owner_id, path);
+
+      -- Per-document override, so one noisy file inside a watched folder can be left alone
+      -- without unwatching the folder. Defaults true: linking something is asking for it to
+      -- stay current, and documents with no disk path (upload://, attachment://, URLs) are
+      -- excluded by the sync query rather than by this column.
+      ALTER TABLE context_documents ADD COLUMN IF NOT EXISTS watching boolean NOT NULL DEFAULT true;
+
+      -- The file is gone from disk. Chunks stay: a deleted source must never delete memory,
+      -- because the usual causes are a temp-file rename, an unmounted drive, or a pipeline
+      -- that cleans up after itself. The mark is what the documents tab shows and what a
+      -- reappearance clears.
+      ALTER TABLE context_documents ADD COLUMN IF NOT EXISTS missing_at timestamptz;
+    `,
+    },
   ];
 }

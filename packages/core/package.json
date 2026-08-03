@@ -43,6 +43,7 @@
   },
   "dependencies": {
     "@electric-sql/pglite": "^0.4.6",
+    "chokidar": "^5.0.0",
     "defuddle": "^0.19.2",
     "linkedom": "^0.18.13",
     "proper-lockfile": "^4.1.2",

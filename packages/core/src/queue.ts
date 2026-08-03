@@ -59,6 +59,12 @@ export interface QueueItem {
   total?: number;
   seconds?: number;
   audioSeconds?: number;
+  /**
+   * Nobody asked for this one: the file watcher found a change and queued it. A finished row
+   * for it is noise, so it leaves the queue on success. A FAILED one stays, because a file the
+   * watcher could not read is exactly the thing a person needs told about.
+   */
+  silent?: boolean;
   /** Filled in on completion. */
   outcome?: string;
   chunks?: number;
@@ -69,6 +75,12 @@ export interface QueueSnapshot {
   items: QueueItem[];
   /** True while the worker is mid-item, so a UI can distinguish idle from stalled. */
   running: boolean;
+  /**
+   * Items that have finished since the daemon started, successes and failures alike. Only ever
+   * goes up, so a poller can tell "something completed" from "the list looks the same", which
+   * counting `done` rows cannot do once finished rows start removing themselves.
+   */
+  completed: number;
 }
 
 function queuePath(): string {
@@ -106,6 +118,9 @@ export class IngestQueue {
   /** Serializes writes so two rapid changes cannot interleave and lose one. */
   #writeChain: Promise<void> = Promise.resolve();
   #listeners = new Set<(snapshot: QueueSnapshot) => void>();
+  // In memory rather than persisted: its only job is to let a poller notice a completion, and a
+  // restart is a change too.
+  #completed = 0;
 
   constructor(runner: QueueRunner) {
     this.#runner = runner;
@@ -131,7 +146,11 @@ export class IngestQueue {
   }
 
   snapshot(): QueueSnapshot {
-    return { items: [...this.#items], running: this.#current !== null };
+    return {
+      items: [...this.#items],
+      running: this.#current !== null,
+      completed: this.#completed,
+    };
   }
 
   subscribe(listener: (snapshot: QueueSnapshot) => void): () => void {
@@ -139,11 +158,30 @@ export class IngestQueue {
     return () => this.#listeners.delete(listener);
   }
 
-  /** Add paths to the back of the queue. Already-queued or running paths are not duplicated. */
-  async add(paths: string[], opts: { uploaded?: boolean } = {}): Promise<QueueItem[]> {
+  /**
+   * Add paths to the back of the queue. Already-queued or running paths are not duplicated.
+   *
+   * `skipFailed` also drops paths whose last attempt failed, and exists for the file watcher.
+   * A file that cannot be ingested at all (a truncated recording, an encrypted PDF) still sits
+   * in its folder, so a rescan finds it again every tick and would add a fresh failed row every
+   * tick forever. A person adding the same file by hand is asking for a retry, and gets one.
+   *
+   * `silent` marks work nobody asked for, so its row leaves the queue once it succeeds.
+   */
+  async add(
+    paths: string[],
+    opts: { uploaded?: boolean; skipFailed?: boolean; silent?: boolean } = {},
+  ): Promise<QueueItem[]> {
     await this.load();
     const pending = new Set(
-      this.#items.filter((i) => i.status === "queued" || i.status === "running").map((i) => i.path),
+      this.#items
+        .filter(
+          (i) =>
+            i.status === "queued" ||
+            i.status === "running" ||
+            (opts.skipFailed === true && i.status === "failed"),
+        )
+        .map((i) => i.path),
     );
     const added: QueueItem[] = [];
     for (const path of paths) {
@@ -155,6 +193,7 @@ export class IngestQueue {
         status: "queued",
         addedAt: new Date().toISOString(),
         ...(opts.uploaded ? { uploaded: true } : {}),
+        ...(opts.silent ? { silent: true } : {}),
       };
       this.#items.push(item);
       added.push(item);
@@ -307,6 +346,13 @@ export class IngestQueue {
         item.stage = undefined;
         item.finishedAt = new Date().toISOString();
         this.#current = null;
+        this.#completed += 1;
+        // Work the watcher started, which succeeded, leaves nothing behind. Editing a note
+        // three times would otherwise leave three "done" rows in a list of jobs the person
+        // never started. A failure keeps its row: that is the one outcome worth telling them.
+        if (item.silent && item.status === "done") {
+          this.#items = this.#items.filter((i) => i.id !== item.id);
+        }
         await this.#persist();
       }
     }

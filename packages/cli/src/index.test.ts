@@ -77,6 +77,49 @@ describe("cli router", () => {
     await expect(run(["reconcile", "undoo", "run-1"])).rejects.toThrow(/usage: memloom reconcile/);
   });
 
+  // Seven subcommands, two of which (remove, forget) read like each other while doing very
+  // different things. Every one is checked before connect(), so a typo prints usage instead of
+  // starting a daemon, and "unwtach" never falls through to something that acts.
+  it("an unknown or bare context subcommand is refused before any daemon starts", async () => {
+    await expect(run(["context"])).rejects.toThrow(
+      /usage: memloom context <add\|list\|remove\|roots\|watch\|unwatch\|forget>/,
+    );
+    await expect(run(["context", "unwtach", "./notes"])).rejects.toThrow(
+      /usage: memloom context </,
+    );
+    await expect(run(["context", "roooots"])).rejects.toThrow(/usage: memloom context </);
+  });
+
+  it("context subcommands missing their argument explain themselves and never run", async () => {
+    await expect(run(["context", "add"])).rejects.toThrow(
+      /usage: memloom context add <path-or-url\.\.\.>/,
+    );
+    await expect(run(["context", "remove"])).rejects.toThrow(
+      /usage: memloom context remove <document-id>/,
+    );
+    await expect(run(["context", "watch"])).rejects.toThrow(
+      /usage: memloom context watch <folder-or-file-path>/,
+    );
+    await expect(run(["context", "unwatch"])).rejects.toThrow(
+      /usage: memloom context unwatch <folder-or-file-path>/,
+    );
+    // forget takes a folder, never a file: it drops a watch entry and deletes nothing.
+    await expect(run(["context", "forget"])).rejects.toThrow(
+      /usage: memloom context forget <folder-path>/,
+    );
+  });
+
+  it("context help separates forgetting a folder from removing a document", async () => {
+    await run(["context", "--help"]);
+    const help = logs.join("\n");
+    expect(help).toContain("memloom context <add|list|remove|roots|watch|unwatch|forget>");
+    expect(help).toContain("delete a document and its chunks");
+    expect(help).toContain("drop a folder from the watch list and keep its documents");
+    // The one thing a reader has to know before pointing a recorder at a folder.
+    expect(help).toContain("Linking a folder starts watching it");
+    expect(help).toContain("MEMLOOM_SYNC=off");
+  });
+
   it("reconcile help names the answering subcommands", async () => {
     await run(["reconcile", "--help"]);
     const help = logs.join("\n");

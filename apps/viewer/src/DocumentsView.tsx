@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   api,
   type ContextDocument,
+  type ContextRootsResult,
   type DocumentChunks,
   type DocumentSpeaker,
   type SpeakerRoster,
@@ -175,6 +176,108 @@ function SpeakerPanel({
   );
 }
 
+/**
+ * The folders memloom is following. Linking a folder puts it here and starts watching it, which
+ * is what makes a file dropped in tomorrow become recallable without anyone re-adding it.
+ *
+ * Two separate actions, because they answer different questions. Stop watching leaves the
+ * folder on the list, switched off. Forget removes the folder and keeps every document it
+ * produced, because "stop following this folder" is never "delete what you read in it".
+ */
+function WatchedFolders({ onChanged }: { onChanged: () => void }) {
+  const [state, setState] = useState<ContextRootsResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [arming, setArming] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    api
+      .contextRoots()
+      .then(setState)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, []);
+  // Polled, because the daemon moves these on its own: the rescan stamps a new check time and
+  // a file arriving in a watched folder changes the count. One small query every fifteen
+  // seconds, against a rescan that runs every sixty.
+  useEffect(() => {
+    load();
+    const timer = setInterval(load, 15_000);
+    return () => clearInterval(timer);
+  }, [load]);
+
+  async function act(id: string, run: () => Promise<unknown>) {
+    setBusy(id);
+    setError(null);
+    try {
+      await run();
+      setArming(null);
+      load();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const roots = state?.roots ?? [];
+  if (state && roots.length === 0 && state.enabled) return null;
+
+  return (
+    <>
+      <h2 className="sectionTitle">Watched folders{roots.length > 0 ? `; ${roots.length}` : ""}</h2>
+      {error && <div className="notice noticeError">{error}</div>}
+      {/* Nothing watched and nothing watching are different answers, and a reader who cannot
+          tell them apart will wait forever for a folder that was never going to sync. */}
+      {state && !state.enabled && (
+        <div className="notice">
+          Watching is off in this daemon (<code>MEMLOOM_SYNC=off</code>). Linked folders are
+          recorded, and nothing is re-ingested until it is back on.
+        </div>
+      )}
+      {roots.map((r) => (
+        <div key={r.id} className="card">
+          <div className="docHead">
+            <span className="docTitle">
+              {r.path.split(/[\\/]/).filter(Boolean).pop() ?? r.path}
+            </span>
+            <span className="kindTag">{r.watching ? "watching" : "paused"}</span>
+            <span className="docMeta">
+              {r.documents} {r.documents === 1 ? "document" : "documents"}
+              {r.lastScanAt
+                ? `; checked ${new Date(r.lastScanAt).toLocaleString()}`
+                : "; not yet checked"}
+            </span>
+          </div>
+          <div className="docPath">{r.path}</div>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn"
+              disabled={busy === r.id}
+              onClick={() => act(r.id, () => api.watchRoot(r.id, !r.watching))}
+            >
+              {r.watching ? "Stop watching" : "Start watching"}
+            </button>
+            <button
+              type="button"
+              className={`btn btnDanger ${arming === r.id ? "btnDangerArmed" : ""}`}
+              disabled={busy === r.id}
+              onClick={() => {
+                if (arming !== r.id) setArming(r.id);
+                else void act(r.id, () => api.forgetRoot(r.id));
+              }}
+              onBlur={() => setArming((a) => (a === r.id ? null : a))}
+            >
+              {arming === r.id ? "Confirm forget" : "Forget folder"}
+            </button>
+          </div>
+        </div>
+      ))}
+    </>
+  );
+}
+
 export function DocumentsView({ onChanged }: { onChanged: () => void }) {
   // Seeded from the prefetch cache: a hover on the tab (or an earlier visit) already
   // fetched the list, so the first render shows documents and revalidates behind them.
@@ -185,19 +288,39 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
   const [open, setOpen] = useState<Map<string, DocumentChunks>>(new Map());
   const [arming, setArming] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+  // The document's updatedAt at the moment its chunks were fetched. An open panel is a cache
+  // with no expiry of its own, and the watcher re-ingests behind the user's back, so without
+  // this a saved edit shows a new chunk count above the old chunks.
+  const chunksAt = useRef<Map<string, string>>(new Map());
+
+  /** Re-read the chunks of any open panel whose document has moved on since it was fetched. */
+  const freshenChunks = useCallback((next: ContextDocument[]) => {
+    for (const doc of next) {
+      const at = chunksAt.current.get(doc.id);
+      if (at === undefined || at === doc.updatedAt) continue;
+      chunksAt.current.set(doc.id, doc.updatedAt);
+      api
+        .documentChunks(doc.id)
+        .then((dc) => setOpen((cur) => (cur.has(doc.id) ? new Map(cur).set(doc.id, dc) : cur)))
+        .catch(() => {});
+    }
+    return next;
+  }, []);
 
   // Mount revalidates through the shared cache; every mutation path in this view calls
   // `load` too, so it busts the cache rather than risking a stale readback.
   const revalidate = useCallback(() => {
     prefetch("documents", api.documents)
+      .then(freshenChunks)
       .then(setDocs)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, []);
+  }, [freshenChunks]);
   const load = useCallback(() => {
     refetch("documents", api.documents)
+      .then(freshenChunks)
       .then(setDocs)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, []);
+  }, [freshenChunks]);
   useEffect(revalidate, [revalidate]);
 
   // A rename changed the roster and rewrote chunk breadcrumbs on the daemon: patch the
@@ -216,19 +339,39 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
     });
   }, []);
 
-  async function toggleChunks(id: string) {
-    if (open.has(id)) {
+  async function toggleChunks(doc: ContextDocument) {
+    if (open.has(doc.id)) {
       const next = new Map(open);
-      next.delete(id);
+      next.delete(doc.id);
       setOpen(next);
+      chunksAt.current.delete(doc.id);
       return;
     }
     setError(null);
     try {
-      const dc = await api.documentChunks(id);
-      setOpen((prev) => new Map(prev).set(id, dc));
+      const dc = await api.documentChunks(doc.id);
+      // Stamped with the version these chunks belong to, so the next list refresh can tell
+      // whether they are still the current ones.
+      chunksAt.current.set(doc.id, doc.updatedAt);
+      setOpen((prev) => new Map(prev).set(doc.id, dc));
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  // No confirmation: switching watching off changes nothing that was already learned, and it
+  // switches back on with the same click.
+  async function toggleWatch(doc: ContextDocument) {
+    const next = doc.watching === false;
+    setDocs((prev) =>
+      prev ? prev.map((d) => (d.id === doc.id ? { ...d, watching: next } : d)) : prev,
+    );
+    try {
+      await api.watchDocument(doc.id, next);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      load();
     }
   }
 
@@ -281,6 +424,13 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
         <h2 className="sectionTitle">Recall</h2>
         <RecallCard only="context" />
 
+        <WatchedFolders
+          onChanged={() => {
+            load();
+            onChanged();
+          }}
+        />
+
         <h2 className="sectionTitle">Documents{docs ? `; ${docs.length}` : ""}</h2>
 
         {error && <div className="notice noticeError">{error}</div>}
@@ -303,6 +453,13 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
               <div className="docHead">
                 <span className="docTitle">{d.title}</span>
                 <span className="kindTag">{d.kind}</span>
+                {/* Stated, not warned about. A pipeline that deletes recordings after upload
+                    makes this the normal state for a whole folder, so it reads as a fact next
+                    to the kind rather than as something gone wrong. */}
+                {d.missingAt && <span className="kindTag kindTagMuted">file missing</span>}
+                {d.watchable && d.watching === false && (
+                  <span className="kindTag kindTagMuted">not watching</span>
+                )}
                 <span className="docMeta">
                   {d.chunkCount} {timed ? "passages" : "chunks"}; updated{" "}
                   {new Date(d.updatedAt).toLocaleString()}
@@ -316,7 +473,7 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
                 <div className="docPath">{d.path}</div>
               )}
               <div className="actions">
-                <button type="button" className="btn" onClick={() => toggleChunks(d.id)}>
+                <button type="button" className="btn" onClick={() => toggleChunks(d)}>
                   {chunks ? "Hide chunks" : "Show chunks"}
                 </button>
                 {/* A link has no file to hand the OS: open the page it was read from. */}
@@ -337,6 +494,14 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
                     }
                   >
                     Open file
+                  </button>
+                )}
+                {/* Only where there is a file to watch. An upload or a web page carries the
+                    column's default rather than an answer, so offering the control would be
+                    offering a switch that does nothing. */}
+                {d.watchable && (
+                  <button type="button" className="btn" onClick={() => toggleWatch(d)}>
+                    {d.watching === false ? "Watch" : "Stop watching"}
                   </button>
                 )}
                 <button

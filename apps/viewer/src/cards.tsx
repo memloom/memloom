@@ -224,6 +224,11 @@ function wantsProgress(target: string): boolean {
   return isMedia(target) || !fileName(target).includes(".");
 }
 
+/** Folder names for a notice: the last path segment, which is what a person recognises. */
+function folderList(paths: string[]): string {
+  return paths.map((p) => fileName(p) || p).join(", ");
+}
+
 /** Seconds as "12:30", or "1:12:30" past an hour: the same clock the transcript cites by. */
 function clock(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
@@ -333,18 +338,20 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
         ? ` Removed ${r.absorbed} duplicate ${r.absorbed === 1 ? "upload" : "uploads"}.`
         : "";
       setNotice(
-        r.documents !== undefined
-          ? `ingested ${r.documents} ${r.documents === 1 ? "file" : "files"}` +
+        r.outcome === "watching"
+          ? `watching "${r.title}"; nothing to take in yet. New files land here on their own.`
+          : r.documents !== undefined
+            ? `ingested ${r.documents} ${r.documents === 1 ? "file" : "files"}` +
               `${r.unchanged ? ` (${r.unchanged} unchanged)` : ""}; ${r.chunks} chunks. ` +
               indexHint +
               absorbedNote
-          : r.outcome === "converted"
-            ? r.rechunked
-              ? `linked "${r.title}"; replaced the uploaded snapshot and re-chunked; ${r.chunks} chunks. ${indexHint}${absorbedNote}`
-              : `linked "${r.title}"; replaced the uploaded snapshot, chunks and entities kept.${absorbedNote}`
-            : r.outcome === "unchanged"
-              ? `"${r.title}" is unchanged, nothing to do.${absorbedNote}`
-              : `${r.outcome} "${r.title}"; ${r.chunks} chunks. ${indexHint}${absorbedNote}`,
+            : r.outcome === "converted"
+              ? r.rechunked
+                ? `linked "${r.title}"; replaced the uploaded snapshot and re-chunked; ${r.chunks} chunks. ${indexHint}${absorbedNote}`
+                : `linked "${r.title}"; replaced the uploaded snapshot, chunks and entities kept.${absorbedNote}`
+              : r.outcome === "unchanged"
+                ? `"${r.title}" is unchanged, nothing to do.${absorbedNote}`
+                : `${r.outcome} "${r.title}"; ${r.chunks} chunks. ${indexHint}${absorbedNote}`,
       );
       setPath("");
       onAdded();
@@ -367,10 +374,16 @@ export function AddFileCard({ onAdded }: { onAdded: () => void }) {
       setNotice(null);
       try {
         const result = await api.queueAdd(targets);
+        const watched = result.watching ?? [];
         setNotice(
-          result.added === 0
-            ? "already queued"
-            : `queued ${result.added} ${result.added === 1 ? "file" : "files"}; progress is below`,
+          result.added > 0
+            ? `queued ${result.added} ${result.added === 1 ? "file" : "files"}; progress is below` +
+                (watched.length > 0 ? `. Watching ${folderList(watched)} for new files.` : "")
+            : // Nothing to ingest, but a folder is now watched. Saying "already queued" here
+              // read as a refusal, when in fact the thing the person set up is now set up.
+              watched.length > 0
+              ? `watching ${folderList(watched)}; nothing to take in yet. New files land here on their own.`
+              : "already queued",
         );
         setPath("");
         onAdded();
@@ -689,18 +702,20 @@ export function IngestQueueCard({ onChanged }: { onChanged: () => void }) {
   );
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
-  // Held so a finished item can refresh the document list exactly once, rather than on
-  // every poll while it sits there in its done state.
-  const settled = useRef(0);
+  // Held so a finished item refreshes the document list exactly once, rather than on every
+  // poll while it sits there. Counted by the daemon rather than by the rows on screen,
+  // because a watcher's item removes itself the moment it succeeds and would otherwise
+  // finish, update documents, and vanish without the list ever hearing about it.
+  const settled = useRef(-1);
 
   const load = useCallback(async () => {
     try {
       const next = await refetch("queue", api.queue);
       setSnapshot(next);
-      const finished = next.items.filter((i) => i.status === "done").length;
-      if (finished !== settled.current) {
-        settled.current = finished;
-        onChanged();
+      if (next.completed !== settled.current) {
+        const first = settled.current === -1;
+        settled.current = next.completed;
+        if (!first) onChanged();
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

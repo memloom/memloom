@@ -50,6 +50,42 @@ export const MAX_DECODE_CHUNK_SECONDS = 300;
 export const SECTION_SECONDS = 120;
 
 /**
+ * How sure silero has to be that a frame is speech. Its own default, and right for a recording
+ * of someone talking: it keeps VAD useful as a silence-skipper, so an hour with ten minutes of
+ * speech in it decodes ten minutes rather than sixty.
+ *
+ * MEMLOOM_VAD_THRESHOLD overrides it. Lower finds more and sends more non-speech to the
+ * recognizer, which costs decode time and some junk words; higher misses quiet speech.
+ */
+export const VAD_THRESHOLD = 0.5;
+
+/**
+ * The second pass, run only when the first finds nothing at all.
+ *
+ * Speech mixed under continuous loud audio never reaches 0.5, because the model sees a
+ * spectrally busy frame and the speech is a small part of its energy. Measured on a 52-second
+ * phone recording of music with about ten seconds of talking over it: 0.5 found ZERO segments,
+ * 0.4 found 28.8 seconds, 0.3 found 36.4. Nothing about that recording was borderline to a
+ * human, so a single threshold cannot be the last word.
+ */
+export const VAD_RESCUE_THRESHOLD = 0.3;
+
+/**
+ * Peak sample below which a file is taken to be genuinely silent, about -60 dBFS. Peak rather
+ * than average, so one spoken sentence in an hour of room tone still counts as sound.
+ */
+const SILENCE_PEAK = 0.001;
+
+/**
+ * How long a recording may be before the last-resort whole-file decode is skipped.
+ *
+ * That fallback is a guess: it runs when both detector passes found nothing, which means the
+ * odds of any words coming back are poor. Ten minutes caps the wasted work at a minute or two
+ * of CPU, where an unbounded version would spend 8 to 11 minutes per hour on a file of music.
+ */
+const WHOLE_FILE_FALLBACK_SECONDS = 600;
+
+/**
  * A chunk producing far less text per second of speech than its neighbours did not
  * transcribe properly. See `findSuspectChunks` for why this check is not optional.
  */
@@ -80,6 +116,22 @@ export class AudioError extends Error {
 /** Where the ASR models live. Big enough that they are fetched once and shared by all projects. */
 export function modelDir(): string {
   return process.env.MEMLOOM_MODEL_DIR ?? join(homedir(), ".memloom", "models");
+}
+
+/** MEMLOOM_VAD_THRESHOLD, when it parses to a probability. Anything else falls back. */
+export function vadThreshold(): number {
+  const raw = Number(process.env.MEMLOOM_VAD_THRESHOLD);
+  return Number.isFinite(raw) && raw > 0 && raw < 1 ? raw : VAD_THRESHOLD;
+}
+
+/** The loudest sample in the file, so "is this silent" is answered by evidence. */
+export function peakLevel(samples: Float32Array): number {
+  let peak = 0;
+  for (const s of samples) {
+    const abs = s < 0 ? -s : s;
+    if (abs > peak) peak = abs;
+  }
+  return peak;
 }
 
 export interface TimedWord {
@@ -665,74 +717,115 @@ export async function transcribeWav(
   const wave = readWave(wavPath);
 
   // VAD first, and it is close to free: measured RTF 0.006, so it is never worth optimizing.
-  const vad = new (
-    sherpa.Vad as new (
-      c: unknown,
-      b: number,
-    ) => {
-      config: { sileroVad: { windowSize: number } };
-      acceptWaveform(s: Float32Array): void;
-      isEmpty(): boolean;
-      front(): { start: number; samples: Float32Array };
-      pop(): void;
-      flush(): void;
-    }
-  )(
-    {
-      sileroVad: {
-        model: vadModel,
-        threshold: 0.5,
-        minSpeechDuration: 0.25,
-        minSilenceDuration: 0.5,
-        maxSpeechDuration: 20,
-        windowSize: 512,
+  // Built per pass, because a Vad instance carries the threshold and its own stream state.
+  const makeVad = (threshold: number) =>
+    new (
+      sherpa.Vad as new (
+        c: unknown,
+        b: number,
+      ) => {
+        config: { sileroVad: { windowSize: number } };
+        acceptWaveform(s: Float32Array): void;
+        isEmpty(): boolean;
+        front(): { start: number; samples: Float32Array };
+        pop(): void;
+        flush(): void;
+      }
+    )(
+      {
+        sileroVad: {
+          model: vadModel,
+          threshold,
+          minSpeechDuration: 0.25,
+          minSilenceDuration: 0.5,
+          maxSpeechDuration: 20,
+          windowSize: 512,
+        },
+        sampleRate: SAMPLE_RATE,
+        numThreads: 1,
       },
-      sampleRate: SAMPLE_RATE,
-      numThreads: 1,
-    },
-    120,
-  );
+      120,
+    );
 
-  const segments: VadSegment[] = [];
-  const drain = () => {
-    while (!vad.isEmpty()) {
-      const seg = vad.front();
-      vad.pop();
-      // Indices only, never the samples: retaining them would hold the whole file in memory.
-      segments.push({ start: seg.start, end: seg.start + seg.samples.length });
-    }
-  };
+  const totalSamples = wave.samples.length;
+  const audioSeconds = totalSamples / SAMPLE_RATE;
+
   // VAD is cheap per second of audio (measured RTF 0.006) but an hour of it is still about
   // twenty seconds, and it used to pass in silence between the model loading and the first
   // word appearing. Reported every percent, with a yield so the events actually reach the
   // client: acceptWaveform is native and synchronous, so nothing flushes without one.
-  const totalSamples = wave.samples.length;
-  const audioSeconds = totalSamples / SAMPLE_RATE;
-  const windowSize = vad.config.sileroVad.windowSize;
-  let vadPercent = -1;
-  options.onProgress?.({ stage: "detecting", done: 0, total: 100, seconds: 0, audioSeconds });
-  for (let i = 0; i < totalSamples; i += windowSize) {
-    vad.acceptWaveform(wave.samples.subarray(i, i + windowSize));
-    drain();
-    const percent = Math.floor((i / totalSamples) * 100);
-    if (percent !== vadPercent) {
-      vadPercent = percent;
-      options.onProgress?.({
-        stage: "detecting",
-        done: percent,
-        total: 100,
-        seconds: i / SAMPLE_RATE,
-        audioSeconds,
-      });
-      await yieldToEventLoop();
-      throwIfCancelled(options.signal);
+  const runVad = async (threshold: number): Promise<VadSegment[]> => {
+    const vad = makeVad(threshold);
+    const segments: VadSegment[] = [];
+    const drain = () => {
+      while (!vad.isEmpty()) {
+        const seg = vad.front();
+        vad.pop();
+        // Indices only, never the samples: retaining them would hold the whole file in memory.
+        segments.push({ start: seg.start, end: seg.start + seg.samples.length });
+      }
+    };
+    const windowSize = vad.config.sileroVad.windowSize;
+    let vadPercent = -1;
+    options.onProgress?.({ stage: "detecting", done: 0, total: 100, seconds: 0, audioSeconds });
+    for (let i = 0; i < totalSamples; i += windowSize) {
+      vad.acceptWaveform(wave.samples.subarray(i, i + windowSize));
+      drain();
+      const percent = Math.floor((i / totalSamples) * 100);
+      if (percent !== vadPercent) {
+        vadPercent = percent;
+        options.onProgress?.({
+          stage: "detecting",
+          done: percent,
+          total: 100,
+          seconds: i / SAMPLE_RATE,
+          audioSeconds,
+        });
+        await yieldToEventLoop();
+        throwIfCancelled(options.signal);
+      }
     }
-  }
-  vad.flush();
-  drain();
+    vad.flush();
+    drain();
+    return segments;
+  };
 
+  const threshold = vadThreshold();
+  let segments = await runVad(threshold);
+
+  // Nothing found is far more often VAD being wrong than a recording being empty. Speech under
+  // continuous loud audio (music, a car, a fan) never reaches silero's 0.5, because the model
+  // sees a spectrally busy frame and the speech is a small part of its energy. Measured on a
+  // 52-second phone recording of music with ten seconds of talking over it: 0.5 found ZERO
+  // segments, 0.4 found 28.8s and 0.3 found 36.4s. So a second pass runs at a lower bar before
+  // anything is refused. It costs another 0.6% of real time.
+  if (segments.length === 0 && threshold > VAD_RESCUE_THRESHOLD) {
+    segments = await runVad(VAD_RESCUE_THRESHOLD);
+  }
+
+  // Still nothing, from a detector that was already demonstrably wrong once on this kind of
+  // audio. VAD only chooses which spans to decode; the recognizer is the thing that actually
+  // reads speech, and it is a 600M-parameter model against silero's 632 KB. So on a file that
+  // is not silent, hand it the lot and let it answer.
+  //
+  // Bounded by length, because this is a guess: an hour of music would otherwise cost 8 to 11
+  // minutes of CPU to produce nothing. Under the bound the worst case is a minute or two, and
+  // the upside is never refusing a short recording that a human can plainly hear speech in.
   if (segments.length === 0) {
-    throw new AudioError("no speech found in this recording", "no_speech");
+    if (peakLevel(wave.samples) < SILENCE_PEAK) {
+      throw new AudioError(
+        "this recording is silent: nothing above the noise floor to transcribe",
+        "no_speech",
+      );
+    }
+    if (audioSeconds > WHOLE_FILE_FALLBACK_SECONDS) {
+      throw new AudioError(
+        `no speech detected anywhere in ${formatTime(audioSeconds)} of audio, at either ` +
+          "threshold. Set MEMLOOM_VAD_THRESHOLD lower to make the detector less strict.",
+        "no_speech",
+      );
+    }
+    segments = [{ start: 0, end: totalSamples }];
   }
 
   // Emitted here rather than at the top of the function because this call is where the
@@ -815,8 +908,28 @@ export async function transcribeWav(
   }
 
   const speechSeconds = segments.reduce((a, s) => a + (s.end - s.start) / SAMPLE_RATE, 0);
+  const words = perChunk.flat();
+
+  // The recognizer heard nothing it could turn into words. Refused rather than stored, because
+  // the alternative is a document whose only chunk is the "Recorded on ..." header: it takes up
+  // a row, it is recallable, and it says nothing.
+  //
+  // It takes a lot of background to get here. Measured by mixing music UNDER a voice note that
+  // transcribes cleanly: at 0.7 of the speech level the transcript came back complete, with a
+  // few words wrong. So this is not "any music defeats it"; it is speech buried far enough below
+  // the background that the log-mel features stop looking like the speech the model learned.
+  // Separating the two needs a source-separation model, which is a different thing from a
+  // speech recognizer and not something memloom carries.
+  if (words.length === 0) {
+    throw new AudioError(
+      "nothing recognizable as speech in this recording. Background much louder than the " +
+        "talking will bury it: for a recording to be usable the voice needs to come through " +
+        "over whatever else is going on.",
+      "no_speech",
+    );
+  }
   return {
-    words: perChunk.flat(),
+    words,
     audioSeconds,
     speechSeconds,
     suspectChunks: suspects.length,
@@ -877,36 +990,72 @@ export function sectionize(words: TimedWord[], seconds = SECTION_SECONDS): Trans
 }
 
 /**
- * Group words into sections that follow the diarized turns: a section never spans two
- * speakers, and one voice holding the floor still breaks on the SECTION_SECONDS rules so a
- * monologue does not become a single enormous chunk.
+ * How much speech a section needs before a change of speaker is allowed to end it.
+ *
+ * Below this a section is not a passage anyone can retrieve. Each one becomes its own chunk,
+ * and chunkMarkdown prepends the heading into the chunk's text, so a two-word back-channel
+ * embeds as "25:46 - 25:47, Alice\n\nIt": 20 characters of name and timestamp against 2 of
+ * speech. Its vector is then mostly the speaker's NAME, which makes it a near-perfect match
+ * for any question mentioning that person, and a whole conversation's worth of them crowd the
+ * real answer out of the results. Short chunks do not merely add noise; they outrank content.
+ */
+export const SECTION_MIN_SPEECH_CHARS = 80;
+
+/**
+ * Group words into sections that follow the diarized turns, breaking on a change of speaker
+ * once the current speaker has said enough to be worth retrieving on its own, and on the
+ * SECTION_SECONDS rules so one voice holding the floor does not become a single enormous chunk.
  *
  * A word is assigned to the last turn that started at or before it. Diarization and ASR
  * disagree about boundaries by fractions of a second, and words landing in the silence
  * between turns have to go somewhere; trailing the current speaker is the reading a person
  * would give it.
+ *
+ * Back-channels ride along with the speech around them rather than becoming their own section,
+ * which is how a person reads a transcript: "Yeah" in the middle of someone else's explanation
+ * belongs to that explanation. A section is labeled with whoever said most of it, so the
+ * attribution stays the honest one when it does contain more than one voice.
  */
 export function sectionizeTurns(
   words: TimedWord[],
   turns: SpeakerTurn[],
   seconds = SECTION_SECONDS,
+  minSpeechChars = SECTION_MIN_SPEECH_CHARS,
 ): TranscriptSection[] {
   if (turns.length === 0) return sectionize(words, seconds);
   const sections: TranscriptSection[] = [];
   let current: TimedWord[] = [];
   let sectionStart = words[0]?.start ?? 0;
   let turnIndex = 0;
-  let sectionSpeaker: number | null = null;
+  // Words per speaker in the section being built, so it can be labeled with whoever holds it.
+  let spoken = new Map<number, number>();
+
+  const speechChars = () =>
+    current.reduce((n, w) => n + w.word.length, 0) + Math.max(0, current.length - 1);
+
+  const dominant = (): number | null => {
+    let best: number | null = null;
+    let most = 0;
+    for (const [speaker, count] of spoken) {
+      if (count > most) {
+        most = count;
+        best = speaker;
+      }
+    }
+    return best;
+  };
 
   const flush = (end: number) => {
     if (current.length === 0) return;
+    const speaker = dominant();
     sections.push({
       start: sectionStart,
       end,
       text: current.map((w) => w.word).join(" "),
-      ...(sectionSpeaker === null ? {} : { speaker: sectionSpeaker }),
+      ...(speaker === null ? {} : { speaker }),
     });
     current = [];
+    spoken = new Map();
   };
 
   for (const word of words) {
@@ -914,11 +1063,13 @@ export function sectionizeTurns(
       turnIndex++;
     }
     const speaker = turns[turnIndex]!.speaker;
-    if (sectionSpeaker !== null && speaker !== sectionSpeaker && current.length > 0) {
+    // A voice not yet heard in this section wants to start a new one, and gets to only once
+    // there is a section worth keeping. Otherwise the words so far join what comes next.
+    if (spoken.size > 0 && !spoken.has(speaker) && speechChars() >= minSpeechChars) {
       flush(word.start);
       sectionStart = word.start;
     }
-    sectionSpeaker = speaker;
+    spoken.set(speaker, (spoken.get(speaker) ?? 0) + 1);
     current.push(word);
     const elapsed = word.start - sectionStart;
     const endsSentence = /[.!?]$/.test(word.word);
@@ -927,7 +1078,19 @@ export function sectionizeTurns(
       sectionStart = word.start;
     }
   }
+  // The last section has nothing after it to join, so a short tail folds backwards instead.
+  // Its speaker label stands: whoever held the section keeps it.
+  const tailSpeech = speechChars();
+  const tailSpeaker = dominant();
   flush(words[words.length - 1]?.start ?? sectionStart);
+  const last = sections[sections.length - 1];
+  const previous = sections[sections.length - 2];
+  if (sections.length > 1 && last && previous && tailSpeech < minSpeechChars) {
+    sections.pop();
+    previous.end = last.end;
+    previous.text = `${previous.text} ${last.text}`;
+    if (previous.speaker === undefined && tailSpeaker !== null) previous.speaker = tailSpeaker;
+  }
   return sections;
 }
 
@@ -1011,13 +1174,20 @@ export interface TranscribeFileResult {
 }
 
 /**
- * Bump when anything that shapes the transcript changes: the decode size, the sectioning,
- * the repair pass, the model. Cached transcripts written by an older pipeline are ignored
- * rather than served, because a stale transcript is indistinguishable from a fresh one once
- * it is in the store.
+ * Bump when what the cache HOLDS would be wrong: the decode size, the repair pass, the model,
+ * or the shape of the record itself. Cached transcripts written by an older pipeline are then
+ * ignored rather than served, because a stale transcript is indistinguishable from a fresh one
+ * once it is in the store.
  *
- * v2: speaker diarization. Sections break on speaker turns and multi-voice headings carry
- * a label, so a v1 transcript of the same file is a genuinely different document.
+ * NOT for a sectioning change, however much a sectioning change alters the document. Since v3
+ * the cache holds words and diarization, and `render` cuts sections from them on every read, so
+ * new sectioning rules apply to a cached transcript the moment it is read. Bumping this for one
+ * would throw away every cached transcript and re-run hours of ASR to arrive at the same words.
+ * The extractor `version` in extract.ts is the right knob there: it salts the content hash, so
+ * ingest re-chunks the recording without re-transcribing it.
+ *
+ * v2: speaker diarization. Sections break on speaker turns and headings carry a label, so a v1
+ * transcript of the same file is a genuinely different document.
  *
  * v3: the cache stores the ASR words and the diarization result separately, the latter
  * keyed by its own config signature. Re-tuning diarization re-runs minutes of clustering
@@ -1235,10 +1405,15 @@ export async function transcribeMedia(
     diarize: CachedTranscript["diarize"],
     audioSeconds: number,
   ): string => {
-    // One voice gets no labels: a lecture reads better as plain time ranges, and the
-    // roster still records the voice (and its embedding) for the future library.
+    // One voice is labeled too, which it was not before. Leaving a solo recording as plain
+    // time ranges reads a little cleaner, and costs the whole recording: the name lives only
+    // in the roster, so nothing in any chunk's text says who is talking, and asking about that
+    // person by name cannot reach a word of it. Naming the voice later does not save it either,
+    // because renameSpeaker rewrites the ", Speaker 1" suffix in a heading and a solo recording
+    // has no suffix to rewrite. A voice note from one person is exactly the thing someone
+    // searches for by whose voice it is.
     const sections =
-      diarize.roster && diarize.roster.speakers.length > 1 && diarize.turns.length > 0
+      diarize.roster && diarize.roster.speakers.length > 0 && diarize.turns.length > 0
         ? sectionizeTurns(words, diarize.turns)
         : sectionize(words);
     return `${recordingHeader(recordedAt, audioSeconds)}\n\n${toMarkdown(sections)}`;

@@ -12,6 +12,7 @@ import type {
   ContextAddUrlInput,
   ContextDocument,
   ContextProgressEvent,
+  ContextRoot,
   DocumentChunks,
   Graph,
   ImportCaptureScope,
@@ -441,6 +442,43 @@ export class HttpMemloomClient implements MemoryEngine {
 
   async contextRemove(documentId: string): Promise<void> {
     await this.#json(`/context/documents/${documentId}`, { method: "DELETE" });
+  }
+
+  contextRootAdd(path: string): Promise<ContextRoot> {
+    return this.#post<ContextRoot>("/context/roots", { path });
+  }
+
+  async contextRoots(): Promise<ContextRoot[]> {
+    const { roots } = await this.#json<{ roots: ContextRoot[] }>("/context/roots");
+    return roots;
+  }
+
+  // The routes answer 404 when the id is not there and #json throws on that, so "did anything
+  // change" comes back as a boolean here, matching what the engine returns in process.
+  async contextRootWatch(rootId: string, watching: boolean): Promise<boolean> {
+    return await this.#ok(`/context/roots/${rootId}/watch`, { watching });
+  }
+
+  async contextRootRemove(rootId: string): Promise<boolean> {
+    try {
+      await this.#json(`/context/roots/${rootId}`, { method: "DELETE" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async contextWatch(documentId: string, watching: boolean): Promise<boolean> {
+    return await this.#ok(`/context/documents/${documentId}/watch`, { watching });
+  }
+
+  async #ok(path: string, body: unknown): Promise<boolean> {
+    try {
+      await this.#post(path, body);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   describeSchema(): Promise<SchemaInfo> {

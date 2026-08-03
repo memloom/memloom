@@ -119,3 +119,67 @@ describe("IngestQueue stability", () => {
     expect(sizes.get(path)).toBeGreaterThan(0);
   }, 20_000);
 });
+
+// The queue is the list of jobs a person started. The file watcher puts work on it too, and
+// that work must not read as theirs: saving one note three times would leave three finished
+// rows in a list nobody added to.
+describe("IngestQueue silent items", () => {
+  it("a watcher's item leaves no row behind when it succeeds", async () => {
+    const path = join(dir, "note.md");
+    await writeFile(path, "# a note");
+    const queue = new IngestQueue(sizeRecordingRunner().runner);
+    const done = settled(queue);
+    await queue.add([path], { silent: true });
+    const snapshot = await done;
+    expect(snapshot.items).toEqual([]);
+  }, 20_000);
+
+  it("a watcher's item that FAILED keeps its row, because that is worth telling someone", async () => {
+    const queue = new IngestQueue(sizeRecordingRunner().runner);
+    const done = settled(queue);
+    await queue.add([join(dir, "never-existed.md")], { silent: true });
+    const snapshot = await done;
+    expect(snapshot.items).toHaveLength(1);
+    expect(snapshot.items[0]?.status).toBe("failed");
+  }, 20_000);
+
+  // Counting "done" rows cannot see a completion that removes itself, so the viewer would
+  // never refresh the documents list after a synced re-ingest. This counter can.
+  it("counts every completion, including the ones that removed their own row", async () => {
+    const kept = join(dir, "kept.md");
+    const silent = join(dir, "silent.md");
+    await writeFile(kept, "# kept");
+    await writeFile(silent, "# silent");
+    const queue = new IngestQueue(sizeRecordingRunner().runner);
+    expect(queue.snapshot().completed).toBe(0);
+
+    let done = settled(queue);
+    await queue.add([kept]);
+    expect((await done).completed).toBe(1);
+
+    done = settled(queue);
+    await queue.add([silent], { silent: true });
+    const after = await done;
+    expect(after.completed).toBe(2);
+    expect(after.items).toHaveLength(1);
+  }, 20_000);
+
+  it("does not re-queue a path whose last attempt failed, when the watcher asks", async () => {
+    const missing = join(dir, "gone.md");
+    const queue = new IngestQueue(sizeRecordingRunner().runner);
+    let done = settled(queue);
+    await queue.add([missing], { silent: true });
+    await done;
+
+    // The rescan finds the same unreadable file every tick. Without skipFailed that is a new
+    // failed row every tick, forever.
+    const again = await queue.add([missing], { skipFailed: true, silent: true });
+    expect(again).toEqual([]);
+    expect(queue.snapshot().items).toHaveLength(1);
+
+    // A person adding it by hand is asking for a retry, and gets one.
+    done = settled(queue);
+    await queue.add([missing]);
+    expect((await done).items).toHaveLength(2);
+  }, 20_000);
+});

@@ -556,6 +556,45 @@ export interface ContextDocument {
   updatedAt: string;
   /** Present on diarized recordings; absent on text documents and pre-diarization ingests. */
   speakers?: SpeakerRoster | null;
+  /**
+   * Keep this document current as the file changes. On by default, but only meaningful when
+   * `watchable` is true: an upload or a web page has no file to watch, and the column carries
+   * its default on those rows rather than a considered answer.
+   */
+  watching?: boolean;
+  /** There is a file on disk behind this document, so watching it means something. */
+  watchable?: boolean;
+  /** When the file stopped being findable on disk. The chunks stay either way. */
+  missingAt?: string | null;
+}
+
+// ---- Watched roots (the folders a person linked, as opposed to the files inside them) ----
+
+/**
+ * A folder someone linked. Adding a folder creates one document per file in it and would
+ * otherwise forget the folder itself, which is the only record that files arriving LATER were
+ * asked for too.
+ */
+export interface ContextRoot {
+  id: string;
+  path: string;
+  watching: boolean;
+  /** Documents in the store whose path sits under this root, right now. */
+  documents: number;
+  /** The catch-up watermark: a rescan only looks at entries touched since this. */
+  lastScanAt: string | null;
+  createdAt: string;
+}
+
+/** Everything the watcher has an eye on: linked folders, plus files linked on their own. */
+export interface SyncTargets {
+  roots: ContextRoot[];
+  /**
+   * `updatedAt` is a file's own catch-up watermark, the equivalent of a root's lastScanAt. A
+   * file modified while the daemon was down fires no event, so without something to compare
+   * its mtime against there is nothing that would ever notice the edit.
+   */
+  files: { id: string; path: string; updatedAt: string }[];
 }
 
 // ---- Chat attachments (files uploaded into one assistant session's scope) ----

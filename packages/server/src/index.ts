@@ -11,6 +11,7 @@ import {
   CATALOG,
   type ContextProgressEvent,
   detectKind,
+  FileSync,
   FREE_RECONCILE_PASSES,
   findModel,
   hasFfmpeg,
@@ -30,6 +31,8 @@ import {
   startupCatchUpDue,
   supportedExtensions,
   uploadStoreDir,
+  WALK_MAX_FILES,
+  walkSupportedFiles,
 } from "@memloom/core";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
@@ -61,6 +64,12 @@ export interface ServerOptions {
    * no API route claims are served from it, so the daemon is API + viewer on one port.
    */
   staticDir?: string;
+  /**
+   * Watch linked folders and files, and re-ingest what changes. Off unless the daemon asks for
+   * it: a library or test host that builds a server per case does not want OS watchers and a
+   * rescan timer per instance. MEMLOOM_SYNC=off overrides this to off.
+   */
+  fileSync?: boolean;
   /**
    * When set, every request stamps `lastRequestAt` on it. The reconcile scheduler reads it to tell
    * an idle daemon from a busy one; `serve` owns the object, tests leave it undefined.
@@ -205,24 +214,26 @@ function userPath(raw: string): string {
   return resolve(quoted ? trimmed.slice(1, -1).trim() : trimmed);
 }
 
-// Folder ingestion: walk for supported files, bounded so a mistaken "add C:\" cannot
-// run away. Hidden dirs and dependency/VCS dirs are skipped.
-const WALK_MAX_DEPTH = 5;
-const WALK_MAX_FILES = 500;
-const SKIP_DIRS = new Set(["node_modules", "dist", "build", "__pycache__", "target"]);
+// Folder ingestion walks for supported files, bounded so a mistaken "add C:\" cannot run away.
+// The walk itself lives in core (walk.ts), because the sync rescan needs the same rules with
+// the cap lifted. Here it stays capped, and `capped` is reported rather than swallowed: the
+// first 500 files of a folder look exactly like the whole folder unless something says so.
 
-async function collectSupportedFiles(root: string, depth = 0, out: string[] = []) {
-  if (depth > WALK_MAX_DEPTH || out.length >= WALK_MAX_FILES) return out;
-  const supported = new Set(supportedExtensions());
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-  for (const entry of entries) {
-    if (out.length >= WALK_MAX_FILES) break;
-    if (entry.name.startsWith(".") || SKIP_DIRS.has(entry.name)) continue;
-    const full = join(root, entry.name);
-    if (entry.isDirectory()) await collectSupportedFiles(full, depth + 1, out);
-    else if (supported.has(extname(entry.name).toLowerCase())) out.push(full);
-  }
-  return out;
+/** MEMLOOM_SYNC_POLL, when it says something the watcher understands. */
+function pollingMode(raw: string | undefined): "auto" | "on" | "off" | undefined {
+  const value = raw?.trim().toLowerCase();
+  return value === "auto" || value === "on" || value === "off" ? value : undefined;
+}
+
+/** The note a capped walk adds to a response, so a trimmed folder ingest is visible. */
+function cappedNote(capped: boolean): { capped?: string } {
+  return capped
+    ? {
+        capped:
+          `stopped at the first ${WALK_MAX_FILES} files; ` +
+          "link the subfolders separately to take in the rest",
+      }
+    : {};
 }
 
 const MIME: Record<string, string> = {
@@ -691,8 +702,11 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   if (opts.onShutdown) {
     const shutdown = opts.onShutdown;
     app.post("/admin/shutdown", (c) => {
-      // Respond first, then shut down so the client gets its ack.
-      setTimeout(() => void shutdown(), 100);
+      // Respond first, then shut down so the client gets its ack. The watcher goes first: its
+      // handlers query the store, and one firing mid-teardown would query a closed one.
+      setTimeout(() => {
+        void stopSync().then(shutdown);
+      }, 100);
       return c.json({ ok: true, stopping: true });
     });
   }
@@ -1371,6 +1385,56 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   });
   void queue.load();
 
+  // Keeping linked files current. The watcher never ingests: it finds paths and hands them to
+  // the queue above, which is where the settle wait, the serial drain and the restart survival
+  // already live.
+  //
+  // Both flags exist for this caller only. `skipFailed` stops a file that cannot be read from
+  // earning a fresh failed row on every rescan. `silent` clears a row once it succeeds, because
+  // the queue is a list of jobs the person started and re-ingesting an edited note is not one:
+  // saving a file three times would otherwise leave three finished rows behind.
+  //
+  // MEMLOOM_SYNC=off is the whole kill switch. Everything else stays: linking still works,
+  // roots are still recorded, nothing starts syncing again until the flag comes back.
+  const syncEnabled =
+    opts.fileSync === true && (process.env.MEMLOOM_SYNC ?? "on").toLowerCase() !== "off";
+  const sync = syncEnabled
+    ? new FileSync(
+        memloom,
+        async (paths) =>
+          (await queue.add(paths, { skipFailed: true, silent: true })).map((i) => i.path),
+        {
+          ...(process.env.MEMLOOM_SYNC_RESCAN_MS
+            ? { rescanMs: Number(process.env.MEMLOOM_SYNC_RESCAN_MS) }
+            : {}),
+          ...(pollingMode(process.env.MEMLOOM_SYNC_POLL)
+            ? { polling: pollingMode(process.env.MEMLOOM_SYNC_POLL) }
+            : {}),
+          log: (m) => console.log(`${new Date().toISOString()}  ${m}`),
+        },
+      )
+    : null;
+  // Started off the request path: the first pass walks every watched folder, and a daemon that
+  // took a minute to answer /health because of it would look broken.
+  if (sync) {
+    const kick = setTimeout(() => {
+      void sync.start().catch((err) => {
+        console.log(`sync failed to start: ${err instanceof Error ? err.message : String(err)}`);
+      });
+    }, 2_000);
+    kick.unref?.();
+  }
+
+  /** Tell the watcher its list changed, without making the caller wait for a walk. */
+  function syncChanged(): void {
+    void sync?.refresh().catch(() => {});
+  }
+
+  /** Close the watcher. Called on the way down, before the store goes. */
+  async function stopSync(): Promise<void> {
+    await sync?.stop().catch(() => {});
+  }
+
   app.get("/queue", async (c) => {
     await queue.load();
     return c.json(queue.snapshot());
@@ -1383,18 +1447,37 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     // A folder is expanded here rather than queued whole, so the list shows one row per
     // recording with its own progress and its own cancel, instead of one opaque row.
     const paths: string[] = [];
+    const watching: string[] = [];
+    let capped = false;
     for (const raw of body.data.paths) {
       const target = userPath(raw);
       const info = await stat(target).catch(() => null);
       if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
-      if (info.isDirectory()) paths.push(...(await collectSupportedFiles(target)));
-      else paths.push(target);
+      if (info.isDirectory()) {
+        const walked = await walkSupportedFiles(target);
+        capped ||= walked.capped;
+        paths.push(...walked.files.map((f) => f.path));
+        // Queueing a folder IS linking it. This is the route the add card uses for recordings,
+        // so without this the one flow the watcher exists for would never register a root.
+        await memloom.contextRootAdd(target);
+        watching.push(target);
+      } else paths.push(target);
     }
-    if (paths.length === 0) {
+    // An EMPTY folder is the whole point of watching, not a mistake: someone pointing a
+    // recorder at a folder links it before the first file exists. It is on the watch list now,
+    // and the next file that lands is ingested on its own. Only a request with no folder in it
+    // at all had nothing to work with.
+    if (paths.length === 0 && watching.length === 0) {
       return c.json({ error: `no supported files (${supportedExtensions().join(", ")})` }, 400);
     }
     const added = await queue.add(paths);
-    return c.json({ added: added.length, ...queue.snapshot() });
+    syncChanged();
+    return c.json({
+      added: added.length,
+      watching,
+      ...cappedNote(capped),
+      ...queue.snapshot(),
+    });
   });
 
   app.post("/queue/:id/cancel", async (c) => {
@@ -1503,7 +1586,9 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
     if (!info.isDirectory()) {
       try {
-        return c.json(await memloom.contextAdd({ path: target }));
+        const result = await memloom.contextAdd({ path: target });
+        syncChanged();
+        return c.json(result);
       } catch (err) {
         // A recording whose model was never downloaded, or a machine without ffmpeg, is a
         // setup step the caller has to take, so it answers 400 with its code like
@@ -1512,12 +1597,23 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       }
     }
 
-    const files = await collectSupportedFiles(target);
+    const walked = await walkSupportedFiles(target);
+    const files = walked.files.map((f) => f.path);
+    // Recorded before the ingest, not after: the files in it now are one snapshot, and the
+    // root is what makes the ones that arrive tomorrow findable.
+    await memloom.contextRootAdd(target);
+    // An empty folder is a watch list entry, not an error. Linking a folder before the first
+    // file exists is exactly how someone sets up a recorder to drop files into.
     if (files.length === 0) {
-      return c.json(
-        { error: `no supported files (${supportedExtensions().join(", ")}) under ${target}` },
-        400,
-      );
+      syncChanged();
+      return c.json({
+        outcome: "watching",
+        title: target,
+        documents: 0,
+        unchanged: 0,
+        chunks: 0,
+        watching: [target],
+      });
     }
     let added = 0;
     let unchanged = 0;
@@ -1535,6 +1631,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         errors.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
+    syncChanged();
     return c.json({
       outcome: "added",
       title: target,
@@ -1542,6 +1639,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       unchanged,
       chunks,
       ...(absorbed > 0 ? { absorbed } : {}),
+      ...cappedNote(walked.capped),
       ...(errors.length > 0 ? { errors } : {}),
     });
   });
@@ -1556,12 +1654,21 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const target = userPath(body.data.path);
     const info = await stat(target).catch(() => null);
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
-    const files = info.isDirectory() ? await collectSupportedFiles(target) : [target];
+    const walked = info.isDirectory() ? await walkSupportedFiles(target) : null;
+    const files = walked ? walked.files.map((f) => f.path) : [target];
+    if (walked) await memloom.contextRootAdd(target);
+    // As in /context/add: an empty folder joins the watch list rather than failing. Answered
+    // plainly rather than as a stream, since there is no work to report progress on.
     if (files.length === 0) {
-      return c.json(
-        { error: `no supported files (${supportedExtensions().join(", ")}) under ${target}` },
-        400,
-      );
+      syncChanged();
+      return c.json({
+        outcome: "watching",
+        title: target,
+        documents: 0,
+        unchanged: 0,
+        chunks: 0,
+        watching: [target],
+      });
     }
 
     // Both event shapes carry `stage`, so a consumer discriminates on one field instead of
@@ -1597,6 +1704,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
           errors.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
+      syncChanged();
       // A single file that failed has only its failure to report, and a stream cannot go
       // back and change its status code, so it travels in band.
       //
@@ -1611,6 +1719,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         documents: added,
         unchanged,
         chunks,
+        ...cappedNote(walked?.capped ?? false),
         ...(errors.length > 0 ? { errors } : {}),
       };
     });
@@ -1780,6 +1889,64 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   app.delete("/context/documents/:id", async (c) => {
     await memloom.contextRemove(c.req.param("id"));
+    syncChanged();
+    return c.json({ ok: true });
+  });
+
+  // ---- File sync ----
+
+  // The watch list: linked folders, plus whether the watcher is actually running. `enabled`
+  // is false when MEMLOOM_SYNC=off, which is the difference between "nothing is watched" and
+  // "watching is switched off", and a viewer that cannot tell them apart says the wrong thing.
+  app.get("/context/roots", async (c) => {
+    return c.json({
+      enabled: sync !== null,
+      roots: await memloom.contextRoots(),
+      ...(sync ? { stats: sync.stats() } : {}),
+    });
+  });
+
+  // Put a folder on the watch list without ingesting anything. The CLI needs this because it
+  // walks a folder itself (to report per-file progress) and then adds one FILE at a time, so
+  // nothing it sends ever tells the daemon a folder was involved. Idempotent by path.
+  app.post("/context/roots", async (c) => {
+    const body = await parseBody(c, z.object({ path: z.string().min(1) }));
+    if (!body.ok) return body.res;
+    const target = userPath(body.data.path);
+    const info = await stat(target).catch(() => null);
+    if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
+    if (!info.isDirectory()) return c.json({ error: `not a folder: ${target}` }, 400);
+    const root = await memloom.contextRootAdd(target);
+    syncChanged();
+    return c.json(root);
+  });
+
+  const watchSchema = z.object({ watching: z.boolean() });
+
+  app.post("/context/roots/:id/watch", async (c) => {
+    const body = await parseBody(c, watchSchema);
+    if (!body.ok) return body.res;
+    const ok = await memloom.contextRootWatch(c.req.param("id"), body.data.watching);
+    if (!ok) return c.json({ error: "no such root" }, 404);
+    syncChanged();
+    return c.json({ ok: true });
+  });
+
+  // Forgets the folder, keeps every document it produced. Deleting those is a separate act,
+  // because "stop following this folder" is not "forget what you read in it".
+  app.delete("/context/roots/:id", async (c) => {
+    const ok = await memloom.contextRootRemove(c.req.param("id"));
+    if (!ok) return c.json({ error: "no such root" }, 404);
+    syncChanged();
+    return c.json({ ok: true });
+  });
+
+  app.post("/context/documents/:id/watch", async (c) => {
+    const body = await parseBody(c, watchSchema);
+    if (!body.ok) return body.res;
+    const ok = await memloom.contextWatch(c.req.param("id"), body.data.watching);
+    if (!ok) return c.json({ error: "no such document" }, 404);
+    syncChanged();
     return c.json({ ok: true });
   });
 

@@ -9,13 +9,17 @@ import {
   formatTime,
   MAX_DECODE_CHUNK_SECONDS,
   packChunks,
+  peakLevel,
   recordingHeader,
   recordingTime,
   SAMPLE_RATE,
   sectionize,
   type TimedWord,
   toMarkdown,
+  VAD_RESCUE_THRESHOLD,
+  VAD_THRESHOLD,
   type VadSegment,
+  vadThreshold,
 } from "./audio.js";
 
 /** Build VAD segments from second-pairs, which is how the real ones read on a timeline. */
@@ -298,5 +302,56 @@ describe("recordingHeader", () => {
     expect(chunks[0]?.headingPath).toBeNull();
     expect(chunks[0]?.content).toContain("2026-07-31");
     expect(chunks[1]?.headingPath).toBe("0:00 - 2:00");
+  });
+});
+
+// Silero's threshold is a guess about a frame, not a fact about a recording. The 0.5 default is
+// right for someone talking into a phone and wrong for speech mixed under continuous loud
+// audio: on a real 52-second recording of music with about ten seconds of talking over it,
+// 0.5 found ZERO segments while 0.4 found 28.8s and 0.3 found 36.4s. The pipeline refused that
+// file outright, which is the one outcome worse than transcribing some music.
+describe("voice detection thresholds", () => {
+  it("defaults to silero's own bar, so VAD still earns its keep as a silence skipper", () => {
+    expect(VAD_THRESHOLD).toBe(0.5);
+  });
+
+  it("keeps a rescue pass strictly below the default, or it would find nothing new", () => {
+    expect(VAD_RESCUE_THRESHOLD).toBeLessThan(VAD_THRESHOLD);
+    expect(VAD_RESCUE_THRESHOLD).toBeGreaterThan(0);
+  });
+
+  it("takes MEMLOOM_VAD_THRESHOLD only when it is a probability", () => {
+    const previous = process.env.MEMLOOM_VAD_THRESHOLD;
+    try {
+      process.env.MEMLOOM_VAD_THRESHOLD = "0.35";
+      expect(vadThreshold()).toBe(0.35);
+      // Nonsense falls back rather than disabling detection or accepting everything: a typo
+      // here would otherwise silently change what every recording ingests as.
+      for (const bad of ["0", "1", "-0.2", "1.5", "loud", ""]) {
+        process.env.MEMLOOM_VAD_THRESHOLD = bad;
+        expect(vadThreshold()).toBe(VAD_THRESHOLD);
+      }
+      delete process.env.MEMLOOM_VAD_THRESHOLD;
+      expect(vadThreshold()).toBe(VAD_THRESHOLD);
+    } finally {
+      if (previous === undefined) delete process.env.MEMLOOM_VAD_THRESHOLD;
+      else process.env.MEMLOOM_VAD_THRESHOLD = previous;
+    }
+  });
+
+  // What separates "this file is silent" from "VAD was wrong about this file". Peak rather than
+  // average, so one sentence in an hour of room tone still counts as sound.
+  it("tells silence from sound by the loudest sample, not the average", () => {
+    const silent = new Float32Array(SAMPLE_RATE);
+    expect(peakLevel(silent)).toBe(0);
+
+    const roomTone = new Float32Array(SAMPLE_RATE);
+    for (let i = 0; i < roomTone.length; i++) roomTone[i] = 0.0001;
+    expect(peakLevel(roomTone)).toBeLessThan(0.001);
+
+    // An hour of near-nothing with one loud moment reads as sound, which is the point.
+    const oneSentence = new Float32Array(SAMPLE_RATE * 10);
+    oneSentence[SAMPLE_RATE * 7] = 0.4;
+    expect(peakLevel(oneSentence)).toBeGreaterThan(0.001);
   });
 });

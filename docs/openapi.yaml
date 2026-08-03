@@ -1941,6 +1941,22 @@ paths:
                         updatedAt:
                           type: string
                           format: date-time
+                        watching:
+                          type: boolean
+                          description: |
+                            Re-ingest this document when its file changes. Only meaningful when
+                            `watchable` is true; an upload or a web page carries the column's
+                            default rather than a considered answer.
+                        watchable:
+                          type: boolean
+                          description: There is a file on disk behind this document.
+                        missingAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                          description: |
+                            When the file stopped being findable on disk. The chunks stay either
+                            way: a deleted source never deletes memory.
   /context/documents/{id}/chunks:
     get:
       summary: Get a document's chunks and their entity edges
@@ -2091,6 +2107,204 @@ paths:
                   ok:
                     type: boolean
                     example: true
+  /context/documents/{id}/watch:
+    post:
+      summary: Start or stop watching one document
+      description: |
+        Switches file watching for a single document, without touching the folder it came from.
+        Nothing already learned changes: the chunks, their embeddings and their entity edges stay
+        exactly as they are, and switching it back on re-checks the file on the next pass.
+
+        Only meaningful for a document with a file behind it (`watchable`). Uploads, chat
+        attachments and web pages have no path to watch.
+      operationId: watchContextDocument
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [watching]
+              properties:
+                watching:
+                  type: boolean
+      responses:
+        "200":
+          description: Changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        "404":
+          description: No document with that id.
+  /context/roots:
+    post:
+      summary: Put a folder on the watch list
+      description: |
+        Adds a folder to the watch list without ingesting anything. Idempotent by path:
+        re-adding a folder already on the list turns watching back on rather than making a
+        second entry.
+
+        Every add route records the folder it was given, so this is only needed when nothing is
+        being ingested. The CLI uses it because it walks a folder itself, to report per-file
+        progress, and then adds one FILE at a time: nothing it sends would otherwise tell the
+        daemon a folder was involved.
+
+        An EMPTY folder is a normal thing to link. Pointing a recorder at a folder means linking
+        it before the first file exists.
+      operationId: addContextRoot
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  description: Absolute path of a folder on the machine running memloom.
+      responses:
+        "200":
+          description: On the watch list.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string }
+                  path: { type: string }
+                  watching: { type: boolean }
+                  documents: { type: integer }
+                  lastScanAt: { type: string, format: date-time, nullable: true }
+                  createdAt: { type: string, format: date-time }
+        "400":
+          description: No such path, or the path is a file rather than a folder.
+    get:
+      summary: List watched folders
+      description: |
+        The folders someone linked, as opposed to the documents inside them. Adding a folder
+        creates one document per file and would otherwise forget the folder itself, which is the
+        only record that files arriving LATER were asked for too.
+
+        `enabled` is false when the daemon has watching switched off (`MEMLOOM_SYNC=off`).
+        "Nothing is watched" and "watching is off" are different answers, and a client that
+        cannot tell them apart will report the wrong one.
+      operationId: listContextRoots
+      responses:
+        "200":
+          description: Linked folders, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+                    description: The daemon is watching. False under MEMLOOM_SYNC=off.
+                  roots:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id: { type: string }
+                        path: { type: string }
+                        watching: { type: boolean }
+                        documents:
+                          type: integer
+                          description: Documents in the store whose path sits under this root.
+                        lastScanAt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                          description: |
+                            The catch-up watermark. A rescan only reads entries modified since
+                            this, plus anything the store has never seen.
+                        createdAt: { type: string, format: date-time }
+                  stats:
+                    type: object
+                    description: Present only while watching is enabled.
+                    properties:
+                      roots: { type: integer }
+                      files:
+                        type: integer
+                        description: Files watched individually, outside any watched folder.
+                      queued:
+                        type: integer
+                        description: Paths handed to the ingest queue since the daemon started.
+                      missing:
+                        type: integer
+                        description: Documents marked missing since the daemon started.
+                      capped:
+                        type: boolean
+                        description: The last rescan hit the walk cap.
+  /context/roots/{id}/watch:
+    post:
+      summary: Start or stop watching a folder
+      description: |
+        Its documents and their chunks are untouched either way. Switching it back on re-walks
+        the folder on the next pass, so anything that changed while it was off is picked up.
+      operationId: watchContextRoot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [watching]
+              properties:
+                watching:
+                  type: boolean
+      responses:
+        "200":
+          description: Changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        "404":
+          description: No root with that id.
+  /context/roots/{id}:
+    delete:
+      summary: Forget a watched folder
+      description: |
+        Removes the folder from the watch list and KEEPS every document it produced. "Stop
+        following this folder" is never "delete what was read in it"; deleting those is
+        DELETE /context/documents/{id}, one at a time and deliberately.
+      operationId: removeContextRoot
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Forgotten. Its documents remain.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        "404":
+          description: No root with that id.
   /assistant/chat:
     post:
       summary: One assistant turn (SSE)

@@ -17,5 +17,10 @@ TESTING-claude-code-import.md
 # locally-installed agent skills (fetched via `npx skills add`), vendored
 # per-machine, not part of the project source
 .agents/
-.claude/skills/
 skills-lock.json
+# Contents rather than the directory itself: git never descends into an excluded directory, so
+# `.claude/skills/` would make the negation below impossible.
+.claude/skills/*
+# Except the skills this project wrote about itself, which belong to the repo. Without this a
+# project skill lives in one worktree and silently does not exist in the next.
+!.claude/skills/pr-description/

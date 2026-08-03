@@ -1,5 +1,53 @@
 # Changelog
 
+## Unreleased
+
+- A recording is no longer refused because voice detection missed the speech. Silero's 0.5
+  threshold is right for someone talking into a phone and wrong for speech under continuous loud
+  audio: on a 52-second phone recording of music with talking over it, 0.5 found zero speech,
+  0.4 found 28.8 seconds and 0.3 found 36.4. Finding nothing now triggers a second pass at 0.3,
+  and if that finds nothing either, a recording under ten minutes goes to the recognizer whole:
+  detection only chooses which spans to decode, and the recognizer is the thing that reads speech.
+  `MEMLOOM_VAD_THRESHOLD` pins the threshold
+- A file is only refused now when there is nothing to keep: silence, or audio the recognizer turns
+  into no words at all. The message says which. Before, a file it could not read was either
+  refused as having "no speech" when it plainly had some, or stored as a document whose only
+  chunk was the "Recorded on ..." header
+- Fixed recall on recordings of a conversation. A back-channel ("Yeah", "Oh") became its own
+  section, so it became its own chunk, and a chunk's text opens with its own heading: two words of
+  speech under 20 characters of "25:46 - 25:47, Alice". That chunk's vector is mostly the
+  speaker's name, so it matched any question naming that person better than the passage answering
+  it did, and a conversation's worth of them filled the results. Sections now need real speech
+  before a change of speaker ends them. On one 34-minute recording that is 145 chunks down to 26,
+  with none left whose speech is shorter than its own heading
+- A recording with one voice now carries that voice's name too. It was left as plain time ranges
+  for readability, which cost the whole recording: the name lived only in the roster, so nothing
+  in any chunk's text said who was talking and asking about that person by name could not reach a
+  word of it. A voice note from one person is exactly what someone searches for by whose voice
+  it is
+- Both change what a chunk means, so recordings ingested before this need re-adding to benefit:
+  `memloom context add <file>`. Neither transcription nor diarization re-runs, both are cached
+- Linked files and folders now stay current on their own. Edit a file and recall follows within
+  seconds; drop a new recording into a linked folder and it is transcribed and becomes recallable
+  without adding it again ([docs](https://docs.memloom.dev/guides/file-sync))
+- Only the chunks whose text changed are re-embedded. Editing one section of a long note costs that
+  section, not the note, and every untouched chunk keeps its embedding and its entity links
+- Linking a folder records the folder, not just the files in it at the time. That is what makes a
+  file arriving later findable, and it is what `memloom context roots` lists
+- An empty folder can be linked. Make a folder, link it, then point a recorder at it: that is the
+  normal order and every add route used to refuse it with "no supported files"
+- Watching is on when you link something, and switches off per folder or per file from the documents
+  tab or with `memloom context unwatch <path>`. `memloom context forget <folder>` drops a folder from
+  the watch list and keeps every document it produced
+- A file deleted from disk is marked "file missing" and keeps its chunks. A temp-file rename, an
+  unmounted drive, and a pipeline that cleans up after itself all look like a deletion, and none of
+  them mean you wanted to forget what the file said
+- OS events give the fast path, and every watched folder is re-walked about once a minute, so a
+  dropped event costs a minute rather than the file. `MEMLOOM_SYNC=off` turns watching off and
+  `MEMLOOM_SYNC_RESCAN_MS` changes the interval
+- A folder walk that hits its 500-file cap now says so, instead of reading like a folder with 500
+  files in it. Rescans of a folder already being watched are unbounded
+
 ## 0.8.0 (2026-08-02)
 
 - Added reconciliation: memloom goes over its own store, repairs what SQL proves is wrong, folds

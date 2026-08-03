@@ -290,6 +290,29 @@ export interface ContextDocument {
   updatedAt: string;
   /** Present on diarized recordings; absent on text documents and older ingests. */
   speakers?: SpeakerRoster | null;
+  /** Re-ingest this document when its file changes. Only meaningful when watchable. */
+  watching?: boolean;
+  /** There is a file on disk behind this document, so watching it means something. */
+  watchable?: boolean;
+  /** When its file stopped being findable on disk. The chunks stay regardless. */
+  missingAt?: string | null;
+}
+
+/** A linked folder. Files that appear inside it get ingested while it is watched. */
+export interface ContextRoot {
+  id: string;
+  path: string;
+  watching: boolean;
+  documents: number;
+  lastScanAt: string | null;
+  createdAt: string;
+}
+
+export interface ContextRootsResult {
+  /** False when the daemon has watching switched off (MEMLOOM_SYNC=off). */
+  enabled: boolean;
+  roots: ContextRoot[];
+  stats?: { roots: number; files: number; queued: number; missing: number; capped: boolean };
 }
 
 export interface ContextChunk {
@@ -371,6 +394,12 @@ export interface QueueItem {
 export interface QueueSnapshot {
   items: QueueItem[];
   running: boolean;
+  /**
+   * Items finished since the daemon started, successes and failures alike. Only goes up, so a
+   * poller can tell "something completed" from "the list looks the same" even when the finished
+   * row removed itself.
+   */
+  completed: number;
 }
 /** One file finished inside a streamed ingest, so a folder reports as it goes. */
 export interface ContextFileDone {
@@ -799,10 +828,27 @@ export const api = {
     }),
   removeDocument: (id: string) =>
     json<{ ok: boolean }>(`/context/documents/${id}`, { method: "DELETE" }),
+  contextRoots: () => json<ContextRootsResult>("/context/roots"),
+  watchRoot: (id: string, watching: boolean) =>
+    json<{ ok: boolean }>(`/context/roots/${id}/watch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ watching }),
+    }),
+  // Forgets the folder. The documents it produced stay: stop following a folder is not the
+  // same request as forget what was read in it.
+  forgetRoot: (id: string) => json<{ ok: boolean }>(`/context/roots/${id}`, { method: "DELETE" }),
+  watchDocument: (id: string, watching: boolean) =>
+    json<{ ok: boolean }>(`/context/documents/${id}/watch`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ watching }),
+    }),
   contextAdd: (path: string) =>
     post<{
       documentId?: string;
-      outcome: "added" | "updated" | "unchanged" | "converted";
+      /** "watching": an empty folder joined the watch list and there was nothing to ingest. */
+      outcome: "added" | "updated" | "unchanged" | "converted" | "watching";
       title: string;
       chunks: number;
       /** "converted": false when the upload's chunks were kept as-is (content matched). */
@@ -812,6 +858,9 @@ export const api = {
       /** Present when a folder was ingested: how many files were added/updated. */
       documents?: number;
       unchanged?: number;
+      /** Folders now on the watch list, whether or not anything in them was ingested. */
+      watching?: string[];
+      capped?: string;
       errors?: string[];
     }>("/context/add", { path }),
   // The same ingest, streamed. Media transcribes for minutes, which is far past what a plain
@@ -820,7 +869,10 @@ export const api = {
   // The durable ingest queue. Polled rather than streamed: it changes on the order of once
   // per chunk, and a poll is far less machinery than a second NDJSON reader.
   queue: () => json<QueueSnapshot>("/queue"),
-  queueAdd: (paths: string[]) => post<QueueSnapshot & { added: number }>("/queue", { paths }),
+  queueAdd: (paths: string[]) =>
+    post<QueueSnapshot & { added: number; watching?: string[]; capped?: string }>("/queue", {
+      paths,
+    }),
   queueCancel: (id: string) => post<QueueSnapshot>(`/queue/${id}/cancel`, {}),
   queueResume: (id: string) => post<QueueSnapshot>(`/queue/${id}/resume`, {}),
   queueRemove: (id: string) => json<QueueSnapshot>(`/queue/${id}`, { method: "DELETE" }),
