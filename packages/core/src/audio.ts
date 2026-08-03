@@ -877,36 +877,72 @@ export function sectionize(words: TimedWord[], seconds = SECTION_SECONDS): Trans
 }
 
 /**
- * Group words into sections that follow the diarized turns: a section never spans two
- * speakers, and one voice holding the floor still breaks on the SECTION_SECONDS rules so a
- * monologue does not become a single enormous chunk.
+ * How much speech a section needs before a change of speaker is allowed to end it.
+ *
+ * Below this a section is not a passage anyone can retrieve. Each one becomes its own chunk,
+ * and chunkMarkdown prepends the heading into the chunk's text, so a two-word back-channel
+ * embeds as "25:46 - 25:47, Alice\n\nIt": 20 characters of name and timestamp against 2 of
+ * speech. Its vector is then mostly the speaker's NAME, which makes it a near-perfect match
+ * for any question mentioning that person, and a whole conversation's worth of them crowd the
+ * real answer out of the results. Short chunks do not merely add noise; they outrank content.
+ */
+export const SECTION_MIN_SPEECH_CHARS = 80;
+
+/**
+ * Group words into sections that follow the diarized turns, breaking on a change of speaker
+ * once the current speaker has said enough to be worth retrieving on its own, and on the
+ * SECTION_SECONDS rules so one voice holding the floor does not become a single enormous chunk.
  *
  * A word is assigned to the last turn that started at or before it. Diarization and ASR
  * disagree about boundaries by fractions of a second, and words landing in the silence
  * between turns have to go somewhere; trailing the current speaker is the reading a person
  * would give it.
+ *
+ * Back-channels ride along with the speech around them rather than becoming their own section,
+ * which is how a person reads a transcript: "Yeah" in the middle of someone else's explanation
+ * belongs to that explanation. A section is labeled with whoever said most of it, so the
+ * attribution stays the honest one when it does contain more than one voice.
  */
 export function sectionizeTurns(
   words: TimedWord[],
   turns: SpeakerTurn[],
   seconds = SECTION_SECONDS,
+  minSpeechChars = SECTION_MIN_SPEECH_CHARS,
 ): TranscriptSection[] {
   if (turns.length === 0) return sectionize(words, seconds);
   const sections: TranscriptSection[] = [];
   let current: TimedWord[] = [];
   let sectionStart = words[0]?.start ?? 0;
   let turnIndex = 0;
-  let sectionSpeaker: number | null = null;
+  // Words per speaker in the section being built, so it can be labeled with whoever holds it.
+  let spoken = new Map<number, number>();
+
+  const speechChars = () =>
+    current.reduce((n, w) => n + w.word.length, 0) + Math.max(0, current.length - 1);
+
+  const dominant = (): number | null => {
+    let best: number | null = null;
+    let most = 0;
+    for (const [speaker, count] of spoken) {
+      if (count > most) {
+        most = count;
+        best = speaker;
+      }
+    }
+    return best;
+  };
 
   const flush = (end: number) => {
     if (current.length === 0) return;
+    const speaker = dominant();
     sections.push({
       start: sectionStart,
       end,
       text: current.map((w) => w.word).join(" "),
-      ...(sectionSpeaker === null ? {} : { speaker: sectionSpeaker }),
+      ...(speaker === null ? {} : { speaker }),
     });
     current = [];
+    spoken = new Map();
   };
 
   for (const word of words) {
@@ -914,11 +950,13 @@ export function sectionizeTurns(
       turnIndex++;
     }
     const speaker = turns[turnIndex]!.speaker;
-    if (sectionSpeaker !== null && speaker !== sectionSpeaker && current.length > 0) {
+    // A voice not yet heard in this section wants to start a new one, and gets to only once
+    // there is a section worth keeping. Otherwise the words so far join what comes next.
+    if (spoken.size > 0 && !spoken.has(speaker) && speechChars() >= minSpeechChars) {
       flush(word.start);
       sectionStart = word.start;
     }
-    sectionSpeaker = speaker;
+    spoken.set(speaker, (spoken.get(speaker) ?? 0) + 1);
     current.push(word);
     const elapsed = word.start - sectionStart;
     const endsSentence = /[.!?]$/.test(word.word);
@@ -927,7 +965,19 @@ export function sectionizeTurns(
       sectionStart = word.start;
     }
   }
+  // The last section has nothing after it to join, so a short tail folds backwards instead.
+  // Its speaker label stands: whoever held the section keeps it.
+  const tailSpeech = speechChars();
+  const tailSpeaker = dominant();
   flush(words[words.length - 1]?.start ?? sectionStart);
+  const last = sections[sections.length - 1];
+  const previous = sections[sections.length - 2];
+  if (sections.length > 1 && last && previous && tailSpeech < minSpeechChars) {
+    sections.pop();
+    previous.end = last.end;
+    previous.text = `${previous.text} ${last.text}`;
+    if (previous.speaker === undefined && tailSpeaker !== null) previous.speaker = tailSpeaker;
+  }
   return sections;
 }
 
@@ -1235,10 +1285,15 @@ export async function transcribeMedia(
     diarize: CachedTranscript["diarize"],
     audioSeconds: number,
   ): string => {
-    // One voice gets no labels: a lecture reads better as plain time ranges, and the
-    // roster still records the voice (and its embedding) for the future library.
+    // One voice is labeled too, which it was not before. Leaving a solo recording as plain
+    // time ranges reads a little cleaner, and costs the whole recording: the name lives only
+    // in the roster, so nothing in any chunk's text says who is talking, and asking about that
+    // person by name cannot reach a word of it. Naming the voice later does not save it either,
+    // because renameSpeaker rewrites the ", Speaker 1" suffix in a heading and a solo recording
+    // has no suffix to rewrite. A voice note from one person is exactly the thing someone
+    // searches for by whose voice it is.
     const sections =
-      diarize.roster && diarize.roster.speakers.length > 1 && diarize.turns.length > 0
+      diarize.roster && diarize.roster.speakers.length > 0 && diarize.turns.length > 0
         ? sectionizeTurns(words, diarize.turns)
         : sectionize(words);
     return `${recordingHeader(recordedAt, audioSeconds)}\n\n${toMarkdown(sections)}`;

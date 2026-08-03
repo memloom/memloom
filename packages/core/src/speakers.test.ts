@@ -19,6 +19,10 @@ import type { SpeakerRoster } from "./types.js";
 const words = (...pairs: Array<[string, number]>): TimedWord[] =>
   pairs.map(([word, start]) => ({ word, start }));
 
+/** A real sentence as timed words, one every half second, for tests about section length. */
+const longWords = (sentence: string, start: number): Array<[string, number]> =>
+  sentence.split(" ").map((word, i): [string, number] => [word, start + i * 0.5]);
+
 describe("relabelByAppearance", () => {
   it("makes the first voice heard speaker 1, whatever the clusterer called it", () => {
     const out = relabelByAppearance([
@@ -112,10 +116,14 @@ describe("sectionizeTurns", () => {
     { start: 5, end: 10, speaker: 2 },
   ];
 
+  // A tiny minimum here, so this covers the turn boundary itself rather than the floor. The
+  // floor gets its own tests below.
   it("breaks a section exactly where the speaker changes", () => {
     const sections = sectionizeTurns(
       words(["Hello", 0], ["there.", 2], ["Thanks", 6], ["Kostek.", 8]),
       turns,
+      120,
+      1,
     );
     expect(sections).toHaveLength(2);
     expect(sections[0]).toMatchObject({ speaker: 1, text: "Hello there." });
@@ -135,8 +143,71 @@ describe("sectionizeTurns", () => {
   });
 
   it("lets words in the silence between turns trail the current speaker", () => {
-    const sections = sectionizeTurns(words(["One.", 0], ["straggler", 4.8], ["Two.", 6]), turns);
+    const sections = sectionizeTurns(
+      words(["One.", 0], ["straggler", 4.8], ["Two.", 6]),
+      turns,
+      120,
+      1,
+    );
     expect(sections[0]?.text).toBe("One. straggler");
+  });
+
+  // The recall bug this floor exists for. A back-channel became its own section, so it became
+  // its own chunk, and chunkMarkdown prepends the heading into the chunk's text: two words of
+  // speech under 20 characters of "25:46 - 25:47, Alice". The vector is then mostly the
+  // speaker's NAME, so it matches any question naming that person better than the passage that
+  // answers it does, and a conversation's worth of them fills the results.
+  it("does not let a back-channel become its own section", () => {
+    const long = "I made the changes to the classes page for the day and weekend program.";
+    const sections = sectionizeTurns(
+      words(["Right,", 0], ["so.", 1], ...longWords(long, 6), ["Yeah", 40], ...longWords(long, 44)),
+      [
+        { start: 0, end: 6, speaker: 1 },
+        { start: 6, end: 40, speaker: 2 },
+        { start: 40, end: 44, speaker: 1 },
+        { start: 44, end: 90, speaker: 2 },
+      ],
+    );
+    // "Right, so." (10 chars) cannot end a section, and neither can "Yeah": both ride along
+    // with the speech after them.
+    for (const s of sections) {
+      expect(s.text.length).toBeGreaterThanOrEqual(80);
+    }
+    expect(sections.some((s) => s.text.includes("Right, so."))).toBe(true);
+    expect(sections.some((s) => s.text.includes("Yeah"))).toBe(true);
+  });
+
+  it("labels a mixed section with whoever said most of it", () => {
+    const long = "I made the changes to the classes page for the day and weekend program.";
+    const sections = sectionizeTurns(words(["Yeah", 0], ...longWords(long, 2)), [
+      { start: 0, end: 2, speaker: 1 },
+      { start: 2, end: 60, speaker: 2 },
+    ]);
+    expect(sections).toHaveLength(1);
+    // Speaker 1 opened it with one word; speaker 2 said the rest, so it is speaker 2's section.
+    expect(sections[0]?.speaker).toBe(2);
+  });
+
+  // Nothing follows the last section, so a short tail folds backwards instead of standing alone.
+  it("folds a short tail into the section before it", () => {
+    const long = "I made the changes to the classes page for the day and weekend program.";
+    const sections = sectionizeTurns(words(...longWords(long, 0), ["Okay.", 60]), [
+      { start: 0, end: 60, speaker: 1 },
+      { start: 60, end: 62, speaker: 2 },
+    ]);
+    expect(sections).toHaveLength(1);
+    expect(sections[0]?.text).toContain("Okay.");
+  });
+
+  it("keeps a solo recording as one labeled section per time window", () => {
+    const long = "I made the changes to the classes page for the day and weekend program.";
+    const sections = sectionizeTurns(words(...longWords(long, 0)), [
+      { start: 0, end: 60, speaker: 1 },
+    ]);
+    expect(sections).toHaveLength(1);
+    // The label is what makes a voice note findable by whose voice it is: renameSpeaker
+    // rewrites the ", Speaker 1" suffix in the heading, and there has to be one to rewrite.
+    expect(sections[0]?.speaker).toBe(1);
   });
 });
 

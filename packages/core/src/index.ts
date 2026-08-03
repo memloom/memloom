@@ -48,6 +48,7 @@ export {
   packChunks,
   recordingHeader,
   recordingTime,
+  SECTION_MIN_SPEECH_CHARS,
   SECTION_SECONDS,
   sectionize,
   sectionizeTurns,

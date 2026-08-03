@@ -201,7 +201,11 @@ for (const [kind, extensions] of [
     // A diarization change MUST bump this too: the transcript cache re-diarizes on its own
     // version, but without the hash salt changing, ingest compares source hashes, answers
     // "unchanged", and throws the corrected roster away. Verified the hard way.
-    version: 5,
+    // v6 = sections carry enough speech to be worth retrieving, and a solo recording carries
+    // its speaker's name like every other. Both are about what a chunk's vector ends up
+    // meaning, so every recording ingested before this needs re-chunking to benefit. Cheap:
+    // the words and the diarization are both cached, so this re-runs neither.
+    version: 6,
     chunker: "markdown",
     async extractPath(path, opts) {
       const { transcribeMedia, hashFile } = await import("./audio.js");
