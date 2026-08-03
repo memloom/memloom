@@ -66,6 +66,15 @@ export interface SyncStats {
   capped: boolean;
 }
 
+/**
+ * Hands paths to the ingest queue and answers with the ones it ACCEPTED.
+ *
+ * The return value matters: a file being transcribed has no document row until the ingest ends,
+ * so every rescan in between finds it again and offers it again. The queue refuses the
+ * duplicate, and only it knows that, so the watcher counts and reports what came back.
+ */
+export type EnqueuePaths = (paths: string[]) => Promise<string[]>;
+
 const MIN_RESCAN_MS = 10_000;
 
 function isUnc(path: string): boolean {
@@ -81,7 +90,7 @@ function isUnc(path: string): boolean {
  */
 export class FileSync {
   readonly #store: SyncStore;
-  readonly #enqueue: (paths: string[]) => Promise<unknown>;
+  readonly #enqueue: EnqueuePaths;
   readonly #opts: Required<Omit<SyncOptions, "log">> & { log: (m: string) => void };
   readonly #supported = new Set(supportedExtensions());
 
@@ -95,11 +104,7 @@ export class FileSync {
   #stopped = false;
   #stats: SyncStats = { roots: 0, files: 0, queued: 0, missing: 0, capped: false };
 
-  constructor(
-    store: SyncStore,
-    enqueue: (paths: string[]) => Promise<unknown>,
-    opts: SyncOptions = {},
-  ) {
+  constructor(store: SyncStore, enqueue: EnqueuePaths, opts: SyncOptions = {}) {
     this.#store = store;
     this.#enqueue = enqueue;
     this.#opts = {
@@ -262,8 +267,15 @@ export class FileSync {
     const paths = [...this.#pending];
     this.#pending.clear();
     try {
-      await this.#enqueue(paths);
-      this.#stats.queued += paths.length;
+      // Counted and reported from what the queue ACCEPTED, not from what was offered. A file
+      // being transcribed has no document row yet, so every rescan finds it again and offers it
+      // again; the queue refuses the duplicate, and reporting the offer instead announced the
+      // same recording once a tick for the ten minutes it took to transcribe.
+      const accepted = await this.#enqueue(paths);
+      if (accepted.length > 0) {
+        this.#stats.queued += accepted.length;
+        this.#opts.log(`sync: ${accepted.length} file(s) queued`);
+      }
     } catch (err) {
       this.#opts.log(`sync could not queue ${paths.length} file(s): ${message(err)}`);
     }
@@ -340,10 +352,8 @@ export class FileSync {
       }
     }
 
-    if (fresh.length > 0) {
-      for (const path of fresh) await this.#queue(path);
-      this.#opts.log(`sync: ${fresh.length} file(s) from ${root.path}`);
-    }
+    // Reported from #flush, once the queue has said which of these were actually new.
+    for (const path of fresh) await this.#queue(path);
     // Stamped with the time the walk STARTED, not finished. A file written during a long walk
     // is either seen by it or falls inside the next window; stamping the end would drop it.
     await this.#store.contextRootScanned(root.id, startedAt, this.#owner());

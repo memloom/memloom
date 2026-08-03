@@ -1399,15 +1399,20 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   const syncEnabled =
     opts.fileSync === true && (process.env.MEMLOOM_SYNC ?? "on").toLowerCase() !== "off";
   const sync = syncEnabled
-    ? new FileSync(memloom, (paths) => queue.add(paths, { skipFailed: true, silent: true }), {
-        ...(process.env.MEMLOOM_SYNC_RESCAN_MS
-          ? { rescanMs: Number(process.env.MEMLOOM_SYNC_RESCAN_MS) }
-          : {}),
-        ...(pollingMode(process.env.MEMLOOM_SYNC_POLL)
-          ? { polling: pollingMode(process.env.MEMLOOM_SYNC_POLL) }
-          : {}),
-        log: (m) => console.log(`${new Date().toISOString()}  ${m}`),
-      })
+    ? new FileSync(
+        memloom,
+        async (paths) =>
+          (await queue.add(paths, { skipFailed: true, silent: true })).map((i) => i.path),
+        {
+          ...(process.env.MEMLOOM_SYNC_RESCAN_MS
+            ? { rescanMs: Number(process.env.MEMLOOM_SYNC_RESCAN_MS) }
+            : {}),
+          ...(pollingMode(process.env.MEMLOOM_SYNC_POLL)
+            ? { polling: pollingMode(process.env.MEMLOOM_SYNC_POLL) }
+            : {}),
+          log: (m) => console.log(`${new Date().toISOString()}  ${m}`),
+        },
+      )
     : null;
   // Started off the request path: the first pass walks every watched folder, and a daemon that
   // took a minute to answer /health because of it would look broken.

@@ -309,7 +309,7 @@ export {
 export type { FileStability, StabilityOptions } from "./stability.js";
 export { waitUntilStable } from "./stability.js";
 export type { StorageAdapter } from "./storage.js";
-export type { SyncOptions, SyncStats, SyncStore } from "./sync.js";
+export type { EnqueuePaths, SyncOptions, SyncStats, SyncStore } from "./sync.js";
 export { FileSync } from "./sync.js";
 // Test-only helper, exported for the same reason PgliteAdapter is: the server and MCP test
 // suites build stores too, and reaching into core/src across packages breaks their rootDir.

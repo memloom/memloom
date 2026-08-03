@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { FileSync, type SyncStore } from "./sync.js";
+import { type EnqueuePaths, FileSync, type SyncStore } from "./sync.js";
 import type { ContextRoot, SyncTargets } from "./types.js";
 
 // The watcher is tested through refresh(), which is the rescan: deterministic, and the path
@@ -100,11 +100,16 @@ class FakeStore implements SyncStore {
 /** Collects the paths handed to the queue. Flushing is debounced, so tests await settle(). */
 function recorder() {
   const batches: string[][] = [];
+  const refused = new Set<string>();
   return {
     batches,
+    // Answers with everything offered, like a queue that had none of it yet. `refuse` models the
+    // real one, which turns down a path it is already working on.
     enqueue: async (paths: string[]) => {
       batches.push(paths);
+      return paths.filter((p) => !refused.has(p));
     },
+    refuse: (path: string) => refused.add(path),
     paths: () => batches.flat(),
   };
 }
@@ -122,7 +127,7 @@ async function write(relative: string, mtime?: Date): Promise<string> {
   return path;
 }
 
-function build(store: FakeStore, enqueue: (paths: string[]) => Promise<unknown>): FileSync {
+function build(store: FakeStore, enqueue: EnqueuePaths): FileSync {
   sync = new FileSync(store, enqueue, { debounceMs: 10, rescanMs: 60_000 });
   return sync;
 }
@@ -334,5 +339,40 @@ describe("FileSync watch set", () => {
     await settle();
 
     expect(queue.paths()).toEqual([]);
+  });
+});
+
+// Found by running the whole flow against a real daemon: while a recording transcribed, the
+// rescan announced "1 file(s)" once a tick for the full ten minutes. The queue was refusing the
+// duplicate correctly; the watcher was reporting the offer instead of the acceptance.
+describe("FileSync counts what the queue took, not what it offered", () => {
+  it("does not count a path the queue already has", async () => {
+    const store = new FakeStore();
+    store.root(dir);
+    const path = await write("in-flight.md");
+    const queue = recorder();
+    queue.refuse(path);
+
+    const watcher = build(store, queue.enqueue);
+    await watcher.refresh();
+    await settle();
+
+    // Offered, because the file has no document row until its ingest finishes.
+    expect(queue.paths()).toEqual([path]);
+    // Not counted, because the queue was already working on it.
+    expect(watcher.stats().queued).toBe(0);
+  });
+
+  it("counts a path the queue accepted", async () => {
+    const store = new FakeStore();
+    store.root(dir);
+    await write("new.md");
+    const queue = recorder();
+
+    const watcher = build(store, queue.enqueue);
+    await watcher.refresh();
+    await settle();
+
+    expect(watcher.stats().queued).toBe(1);
   });
 });
