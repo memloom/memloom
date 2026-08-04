@@ -6,6 +6,7 @@ import {
   DECODE_CHUNK_SECONDS,
   type DecodeChunk,
   findSuspectChunks,
+  findTruncatedChunks,
   formatTime,
   MAX_DECODE_CHUNK_SECONDS,
   packChunks,
@@ -15,6 +16,7 @@ import {
   SAMPLE_RATE,
   sectionize,
   type TimedWord,
+  TRUNCATION_GAP_SECONDS,
   toMarkdown,
   VAD_RESCUE_THRESHOLD,
   VAD_THRESHOLD,
@@ -353,5 +355,67 @@ describe("voice detection thresholds", () => {
     const oneSentence = new Float32Array(SAMPLE_RATE * 10);
     oneSentence[SAMPLE_RATE * 7] = 0.4;
     expect(peakLevel(oneSentence)).toBeGreaterThan(0.001);
+  });
+});
+
+// A language switch inside one decode call. Parakeet picks the language per call, so a chunk
+// holding English then Russian commits to English and returns nothing for the rest: on the
+// reference recording the words stopped at 40s of a 60s chunk and the Russian was simply gone.
+// The same span decoded on its own transcribes perfectly, so repacking recovers it.
+//
+// Detected without reference to neighbours on purpose. findSuspectChunks needs three chunks to
+// learn a normal word rate, so a one-minute recording decoded as a single chunk can never be
+// flagged by it, and one minute is exactly what an always-on wearable writes.
+describe("findTruncatedChunks", () => {
+  const chunk = (fromSec: number, toSec: number): DecodeChunk => ({
+    start: fromSec * SAMPLE_RATE,
+    end: toSec * SAMPLE_RATE,
+    speechSamples: (toSec - fromSec) * SAMPLE_RATE,
+  });
+  const words = (...atSeconds: number[]): TimedWord[] =>
+    atSeconds.map((s) => ({ word: "word", start: s }));
+
+  it("flags a chunk whose words stop long before its speech does", () => {
+    // The measured shape: speech across the whole minute, words ending at 40s.
+    const speech = segs([0, 20], [20, 40], [40, 60]);
+    const flagged = findTruncatedChunks([chunk(0, 60)], [words(1, 20, 39)], speech);
+    expect(flagged).toEqual([0]);
+  });
+
+  it("leaves a chunk alone when its words run to the end", () => {
+    const speech = segs([0, 20], [20, 40], [40, 60]);
+    const flagged = findTruncatedChunks([chunk(0, 60)], [words(1, 30, 59)], speech);
+    expect(flagged).toEqual([]);
+  });
+
+  // Trailing silence is not a truncation: the gap has to be unaccounted SPEECH, which is why
+  // the check reads VAD segments rather than wall-clock time to the chunk's end.
+  it("does not flag a chunk that simply ends in silence", () => {
+    const speech = segs([0, 10]);
+    const flagged = findTruncatedChunks([chunk(0, 60)], [words(1, 5, 9)], speech);
+    expect(flagged).toEqual([]);
+  });
+
+  it("ignores a gap smaller than the threshold", () => {
+    const speech = segs([0, 30], [30, 32]);
+    const flagged = findTruncatedChunks([chunk(0, 40)], [words(1, 29)], speech);
+    expect(TRUNCATION_GAP_SECONDS).toBeGreaterThan(2);
+    expect(flagged).toEqual([]);
+  });
+
+  // No words at all is the no-speech case: reported to the user with a reason, never repaired.
+  it("leaves a chunk with no words to the no-speech path", () => {
+    const flagged = findTruncatedChunks([chunk(0, 60)], [[]], segs([0, 60]));
+    expect(flagged).toEqual([]);
+  });
+
+  it("flags only the truncated chunk when others are fine", () => {
+    const speech = segs([0, 30], [30, 60], [60, 90]);
+    const flagged = findTruncatedChunks(
+      [chunk(0, 30), chunk(30, 60), chunk(60, 90)],
+      [words(1, 29), words(31, 35), words(61, 89)],
+      speech,
+    );
+    expect(flagged).toEqual([1]);
   });
 });

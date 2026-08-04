@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.9.1 (2026-08-04)
+
+- Switching language part way through a recording no longer loses the second one. The speech model
+  picks a language per decode call, so a call holding English and then Russian committed to English
+  and returned nothing for the rest, with no error: the words stopped at the switch. A chunk whose
+  transcript ends while its speech carries on is now repacked smaller and decoded again, which is
+  enough for each piece to hold one language. Measured on a one-minute recording that switched half
+  way: 0 Cyrillic characters before, 203 after, English unchanged
+- Only the chunk that needs it pays for the second pass, so a single-language recording costs
+  nothing. The check reads one chunk on its own rather than comparing it against its neighbours,
+  because a one-minute recording is a single chunk and there is nothing to compare it with
+
 ## 0.9.0 (2026-08-03)
 
 - A recording is no longer refused because voice detection missed the speech. Silero's 0.5

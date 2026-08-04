@@ -119,6 +119,26 @@ alternatives. Transcripts are cached per model, so switching back costs nothing.
   never the much longer transcription.
 </Accordion>
 
+## Switching language mid-recording
+
+The speech model picks a language per decode call, and a call holding two of them commits to the
+first. Say a sentence in English and the next in Russian inside the same minute and the Russian
+came back empty, with no error: the words simply stopped at the switch.
+
+A chunk whose transcript ends while its speech carries on is now repacked into smaller pieces and
+decoded again, which is enough for each piece to hold one language. Measured on a one-minute
+recording that switched half way: 0 Cyrillic characters before, 203 after, with the English
+unchanged. Only the chunk that needs it pays for the second pass, so a single-language recording
+costs nothing.
+
+<Note>
+  This is also why the check does not compare a chunk against its neighbours: a one-minute
+  recording is a single chunk, which is exactly what an always-on wearable writes, and there is
+  nothing to compare it with.
+</Note>
+
+***
+
 ## When there is background noise
 
 Voice detection runs first, to skip silence so an hour with ten minutes of talking decodes ten

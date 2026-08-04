@@ -559,6 +559,57 @@ export function packChunks(
  * the median is the signal. Deliberately compared against the median rather than the mean:
  * one badly broken chunk would drag a mean down toward itself and hide.
  */
+/**
+ * Speech left unaccounted for after a chunk's last word before the chunk is called truncated.
+ *
+ * Measured on two 60-second recordings from the same mic, decoded as one chunk each: the one
+ * where the speaker switched from English to Russian half way left 20 seconds of VAD-marked
+ * speech after its last word, and the single-language one left 1.1 seconds. Five is clear of
+ * both, and unaccounted SPEECH rather than wall time means trailing silence never counts.
+ */
+export const TRUNCATION_GAP_SECONDS = 5;
+
+/** What a truncated chunk is repacked to. 30 recovered part of the second language, 20 all. */
+export const TRUNCATION_REPAIR_SECONDS = 20;
+
+/**
+ * Chunks whose transcript stops well before their speech does.
+ *
+ * This is the shape of a language switch. Parakeet decides the language per decode call, so one
+ * call holding English and then Russian commits to English and silently returns nothing for the
+ * rest: the words end at 40 seconds of a 60-second chunk and the Russian is simply absent. The
+ * same span decoded on its own transcribes perfectly, which is what makes repacking a fix.
+ *
+ * Detected per chunk with no reference to its neighbours, deliberately. findSuspectChunks needs
+ * three chunks to know what a normal word rate looks like, so a one-minute recording decoded as
+ * a single chunk could never be flagged by it, and one minute is exactly what an always-on
+ * wearable writes.
+ */
+export function findTruncatedChunks(
+  chunks: DecodeChunk[],
+  perChunk: TimedWord[][],
+  segments: VadSegment[],
+): number[] {
+  const flagged: number[] = [];
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i]!;
+    const words = perChunk[i] ?? [];
+    // A chunk with no words at all is the no-speech case, which is reported rather than repaired.
+    if (words.length === 0) continue;
+    const lastWordSample = Math.round((words[words.length - 1]?.start ?? 0) * SAMPLE_RATE);
+    // Overlap, not containment. The last word sits INSIDE a speech segment, so requiring
+    // segments to fall wholly after it drops the very segment the words stopped part way
+    // through, and the gap then measures zero on exactly the chunks worth flagging.
+    const tailSpeech = segments.reduce((total, s) => {
+      const from = Math.max(s.start, lastWordSample);
+      const to = Math.min(s.end, chunk.end);
+      return total + Math.max(0, to - from);
+    }, 0);
+    if (tailSpeech / SAMPLE_RATE >= TRUNCATION_GAP_SECONDS) flagged.push(i);
+  }
+  return flagged;
+}
+
 export function findSuspectChunks(chunks: DecodeChunk[], wordCounts: number[]): number[] {
   const rates: Array<{ index: number; rate: number }> = [];
   for (let i = 0; i < chunks.length; i++) {
@@ -865,12 +916,19 @@ export async function transcribeWav(
     throwIfCancelled(options.signal);
   }
 
-  // The repair pass. A flagged chunk is decoded again at half the length, which changes the
+  // The repair pass. A flagged chunk is decoded again in smaller pieces, which changes the
   // boundaries and the amount of context the decoder carries, and that alone was enough to
-  // make the observed drop disappear. Only kept if it actually recovers text, so a genuinely
+  // make the observed drops disappear. Only kept if it actually recovers text, so a genuinely
   // quiet stretch is never made worse.
+  //
+  // Two detectors, because there are two ways a chunk comes back short. A low word rate against
+  // its neighbours needs neighbours to compare with; a truncated chunk is visible on its own,
+  // which is what catches the single-chunk file no ratio could ever flag.
   let repaired = 0;
-  const suspects = findSuspectChunks(chunks, counts);
+  const truncated = findTruncatedChunks(chunks, perChunk, segments);
+  const suspects = [...new Set([...findSuspectChunks(chunks, counts), ...truncated])].sort(
+    (a, b) => a - b,
+  );
   if (suspects.length > 0) {
     options.onProgress?.({
       stage: "checking",
@@ -882,10 +940,13 @@ export async function transcribeWav(
   }
   for (const index of suspects) {
     const c = chunks[index]!;
-    const halved = packChunks(
-      segmentsWithin(segments, c.start, c.end),
-      Math.max(10, chunkSeconds / 2),
-    );
+    // A truncated chunk is repacked at the size measured to recover a language switch in full,
+    // not merely at half: on the reference recording 30 seconds got part of the second language
+    // back and 20 seconds got all of it.
+    const target = truncated.includes(index)
+      ? Math.min(TRUNCATION_REPAIR_SECONDS, Math.max(10, chunkSeconds / 2))
+      : Math.max(10, chunkSeconds / 2);
+    const halved = packChunks(segmentsWithin(segments, c.start, c.end), target);
     if (halved.length < 2) continue;
     options.onProgress?.({
       stage: "repairing",
