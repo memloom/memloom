@@ -220,6 +220,8 @@ export type {
   OpenRouterLLMOptions,
 } from "./openrouter-provider.js";
 export { OpenRouterEmbeddings, OpenRouterLLM } from "./openrouter-provider.js";
+// The multi-tenant surface: one owner-bound handle per user, from Memloom.forOwner()
+export type { OwnedMemloom } from "./owned.js";
 export type { PdfTextItem } from "./pdf-layout.js";
 export { assemblePageText } from "./pdf-layout.js";
 export { PgAdapter } from "./pg-adapter.js";
@@ -338,6 +340,7 @@ export type {
   ContextDocument,
   ContextProgressEvent,
   ContextRoot,
+  DeleteOwnerResult,
   DocumentChunks,
   DocumentSpeaker,
   Entity,

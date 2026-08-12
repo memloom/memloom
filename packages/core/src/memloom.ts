@@ -38,6 +38,7 @@ import type { NotionBlockNode } from "./notion.js";
 import { dataSourceTitle, expandsInline, NotionClient, pageTitle } from "./notion.js";
 import { blocksToMarkdown, rowsToMarkdown } from "./notion-markdown.js";
 import { LlmSpendError } from "./openrouter-provider.js";
+import { bindOwner, type OwnedMemloom } from "./owned.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
 import { uploadStoreDir } from "./queue.js";
 import {
@@ -112,6 +113,7 @@ import type {
   ContextDocument,
   ContextProgressEvent,
   ContextRoot,
+  DeleteOwnerResult,
   DocumentChunks,
   Entity,
   EntityAutoEvent,
@@ -747,6 +749,37 @@ export class Memloom implements MemoryEngine {
           "directory.",
       );
     }
+  }
+
+  /**
+   * A handle scoped to one owner, for hosts that serve many people from one store: a chatbot
+   * keyed by its auth user id, a team server, anything where "whose memory is this" has more
+   * than one answer.
+   *
+   * Every method on the engine defaults ownerId to SENTINEL_OWNER, so a forgotten argument in
+   * a multi-tenant host silently reads and writes a shared owner instead of erroring. Bind
+   * the owner once, per request, and that class of mistake stops being expressible:
+   *
+   *   const mem = memloom.forOwner(session.userId)
+   *   await mem.save({ content: "prefers short answers" })
+   *   const hits = await mem.recall("how do they like their answers?")
+   *
+   * The sentinel is rejected here on purpose. In a host it is never a real tenant; it is what
+   * an unset user id looks like, arriving as everyone's shared account. Single-owner callers
+   * (the CLI, the daemon, your own store) use the engine directly, where it is the default.
+   */
+  forOwner(ownerId: string): OwnedMemloom {
+    if (!UUID_PATTERN.test(ownerId.toLowerCase())) {
+      throw new Error(`memloom: forOwner needs a uuid owner id, got ${JSON.stringify(ownerId)}`);
+    }
+    if (ownerId === SENTINEL_OWNER) {
+      throw new Error(
+        "memloom: forOwner was given the sentinel owner, which in a multi-tenant host is what " +
+          "a missing user id looks like — every caller would share one account. Pass a real " +
+          "per-user id, or call the engine directly for the single-owner tier.",
+      );
+    }
+    return bindOwner(this, ownerId);
   }
 
   /**
@@ -2915,6 +2948,57 @@ export class Memloom implements MemoryEngine {
         ownerId,
         row.root_id,
       ]);
+    });
+  }
+
+  /**
+   * Erase one owner completely: every row this owner has in every table, in one transaction.
+   * The account-deletion primitive a multi-tenant host needs — where deleteMemory() removes
+   * one belief, this removes the tenant. Irreversible, and deliberately so: "delete my data"
+   * has to mean it.
+   *
+   * The table list is discovered from the catalog (every table in the current schema with an
+   * owner_id column) rather than written down. A hard-coded list stops covering a table the
+   * moment someone adds one, and that failure mode is a tenant's data surviving their own
+   * deletion request — the exact bug this exists to prevent.
+   *
+   * Untouched: tables with no owner_id (the migration ledger, the embedding fingerprint, and
+   * the other store-wide settings), because they belong to the store, not to any tenant. Also
+   * untouched: files outside Postgres. Uploads and transcripts the daemon wrote to disk are
+   * the daemon's to remove; core does not know where they live.
+   *
+   * Per-table counts are diagnostics, not a contract. Cascades mean a child row can already
+   * be gone by the time its own table's delete runs, so a count of zero there means "nothing
+   * left", not "nothing existed".
+   */
+  async deleteOwner(ownerId: string): Promise<DeleteOwnerResult> {
+    if (!UUID_PATTERN.test(ownerId.toLowerCase())) {
+      throw new Error(`memloom: deleteOwner needs a uuid owner id, got ${JSON.stringify(ownerId)}`);
+    }
+    return this.#storage.tx(async (tx) => {
+      const owned = await tx.query<{ name: string }>(
+        `SELECT c.relname AS name
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = current_schema()
+           JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'owner_id'
+                              AND NOT a.attisdropped
+          WHERE c.relkind = 'r'
+          ORDER BY c.relname`,
+      );
+      const tables: Record<string, number> = {};
+      let rows = 0;
+      for (const { name } of owned) {
+        // RETURNING because StorageAdapter.query yields rows, not a row count. Owner-sized
+        // deletes are small enough that materializing one marker per row is free.
+        const deleted = await tx.query(`DELETE FROM "${name}" WHERE owner_id = $1 RETURNING 1`, [
+          ownerId,
+        ]);
+        if (deleted.length > 0) {
+          tables[name] = deleted.length;
+          rows += deleted.length;
+        }
+      }
+      return { rows, tables };
     });
   }
 
