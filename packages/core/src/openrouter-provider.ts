@@ -112,8 +112,24 @@ async function postJson(url: string, apiKey: string, body: unknown, what: string
       }
       throw new Error(`OpenRouter ${what} failed: ${res.status} ${detail}`);
     }
-    return res.json();
+
+    // A 200 whose body is an error instead of a result. OpenRouter reports an
+    // upstream rate limit this way — "temporarily rate-limited upstream,
+    // please retry shortly" — with a success status, so none of the handling
+    // above sees it and the caller gets a response with no choices in it. The
+    // upstream is asking for the same backoff a 429 would get; give it that.
+    const json = (await res.json()) as { error?: { message?: string } } | null;
+    if (json?.error && isTransient(json.error.message) && attempt < MAX_ATTEMPTS) {
+      await sleep(backoffMs(attempt));
+      continue;
+    }
+    return json;
   }
+}
+
+/** Upstream capacity language, as opposed to "your prompt was rejected". */
+function isTransient(message: string | undefined): boolean {
+  return /rate.?limit|temporarily|overloaded|try again|retry/i.test(message ?? "");
 }
 
 /**

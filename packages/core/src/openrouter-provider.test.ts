@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OpenRouterEmbeddings, OpenRouterLLM } from "./openrouter-provider.js";
 
 // Assert the exact request body we send OpenRouter: the dimensions param (Matryoshka
@@ -269,5 +269,51 @@ describe("a 200 that carries no result", () => {
     respond({ choices: [{ message: {} }] });
 
     await expect(new OpenRouterLLM({ apiKey: "k" }).complete("hi")).resolves.toBe("");
+  });
+});
+
+// An upstream rate limit arrives as HTTP 200 with an error body, so the !res.ok
+// retry path never sees it. It is the same "come back shortly" a 429 means.
+describe("a 200 that is really a rate limit", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function reply(json: unknown) {
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      text: async () => "",
+      json: async () => json,
+    };
+  }
+
+  it("backs off and retries, then returns the eventual result", async () => {
+    const limited = reply({
+      error: { message: "some/model is temporarily rate-limited upstream. Please retry shortly" },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(limited)
+      .mockResolvedValue(reply({ choices: [{ message: { content: "ok" } }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = new OpenRouterLLM({ apiKey: "k" }).complete("hi");
+    await vi.runAllTimersAsync();
+    await expect(pending).resolves.toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a body that is not asking to be retried", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(reply({ error: { message: "prompt rejected" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = new OpenRouterLLM({ apiKey: "k" }).complete("hi");
+    await vi.runAllTimersAsync();
+    await expect(pending).rejects.toThrow(/prompt rejected/);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
