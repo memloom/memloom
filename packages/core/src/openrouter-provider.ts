@@ -116,6 +116,21 @@ async function postJson(url: string, apiKey: string, body: unknown, what: string
   }
 }
 
+/**
+ * OpenRouter answers 200 with an error object in the body often enough to
+ * matter: an upstream provider hiccup, a moderation stop, a model that returns
+ * no choice. Reading straight through that shape yields
+ * "Cannot read properties of undefined (reading '0')" from somewhere three
+ * frames deep, which says nothing about the model or the provider. Name it.
+ */
+function malformed(what: string, model: string, json: unknown): Error {
+  const upstream = (json as { error?: { message?: string } } | null)?.error?.message;
+  return new Error(
+    `OpenRouter ${what} returned no result for "${model}"` +
+      (upstream ? `: ${upstream}` : ` (body: ${JSON.stringify(json).slice(0, 200)})`)
+  );
+}
+
 export interface OpenRouterEmbeddingsOptions {
   apiKey: string;
   model?: string;
@@ -170,7 +185,8 @@ export class OpenRouterEmbeddings implements EmbeddingProvider {
             : {}),
         },
         "embeddings",
-      )) as { data: { embedding: number[] }[] };
+      )) as { data?: { embedding: number[] }[] };
+      if (!Array.isArray(json.data)) throw malformed("embeddings", this.#model, json);
       for (const item of json.data) out.push(item.embedding);
     }
     return out;
@@ -269,9 +285,10 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
       },
       "completion",
     )) as {
-      choices: { message: { content: string } }[];
+      choices?: { message?: { content?: string } }[];
       usage?: { prompt_tokens?: number; completion_tokens?: number; cost?: number };
     };
+    if (!Array.isArray(json.choices)) throw malformed("completion", this.#model, json);
     if (opts.onUsage) {
       opts.onUsage({
         inputTokens: Number(json.usage?.prompt_tokens ?? 0),
@@ -279,7 +296,7 @@ export class OpenRouterLLM implements LLMProvider, ChatProvider {
         usd: typeof json.usage?.cost === "number" ? json.usage.cost : null,
       });
     }
-    return json.choices[0]?.message.content ?? "";
+    return json.choices[0]?.message?.content ?? "";
   }
 
   async chat(

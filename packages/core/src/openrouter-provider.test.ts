@@ -222,3 +222,52 @@ describe("postJson retry behavior", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });
+
+// OpenRouter answers 200 with an error object and no choices/data often enough to matter: an
+// upstream hiccup, a moderation stop, a model that produced nothing. Reading straight through
+// that shape used to throw "Cannot read properties of undefined (reading '0')" from three
+// frames deep, naming neither the model nor the provider.
+describe("a 200 that carries no result", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function respond(json: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        text: async () => "",
+        json: async () => json,
+      }),
+    );
+  }
+
+  it("names the model when a completion comes back without choices", async () => {
+    respond({ error: { message: "upstream provider returned nothing" } });
+
+    await expect(
+      new OpenRouterLLM({ apiKey: "k", model: "some/model" }).complete("hi"),
+    ).rejects.toThrow(/no result for "some\/model": upstream provider returned nothing/);
+  });
+
+  it("quotes the body when there is no upstream message", async () => {
+    respond({ unexpected: true });
+
+    await expect(new OpenRouterLLM({ apiKey: "k" }).complete("hi")).rejects.toThrow(/unexpected/);
+  });
+
+  it("does the same for embeddings", async () => {
+    respond({ error: { message: "rate limited upstream" } });
+
+    await expect(new OpenRouterEmbeddings({ apiKey: "k" }).embed(["hi"])).rejects.toThrow(
+      /embeddings returned no result .*rate limited upstream/,
+    );
+  });
+
+  it("still tolerates a choice whose message is empty", async () => {
+    respond({ choices: [{ message: {} }] });
+
+    await expect(new OpenRouterLLM({ apiKey: "k" }).complete("hi")).resolves.toBe("");
+  });
+});
