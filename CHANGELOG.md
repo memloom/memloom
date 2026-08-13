@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.10.0 (2026-08-13)
+
+- One store can now hold many people's memories apart. An app that serves more than one user calls
+  `memloom.forOwner(userId)` once per request and works through the handle it gets back, where the
+  owner is bound and there is no argument left to forget. That matters because every engine method
+  already took an optional owner and defaulted it: a single missed argument read and wrote a shared
+  account, silently, with every call still compiling and every test still passing
+- `deleteOwner()` erases one person completely: every row they have in every table, in one
+  transaction. The table list comes from the database catalog rather than a list in the code, so a
+  table somebody adds next year is covered the day it exists instead of the day someone remembers
+  this function. It covers Postgres rows only; uploads and transcripts on disk stay the host's to
+  remove
+- The daemon serves many owners too, so an agent and a person sharing one machine need not share
+  memories. A client binds one owner and sends it on every request; every owner-scoped route reads
+  it, reads as well as writes. Reads were the gap: `/memory/save` accepted an owner while
+  `/memory/query`, `/memory/list`, history and passages all answered for the default one, which is
+  worse than no separation because it looks like separation. Set `MEMLOOM_OWNER_ID` in a shell
+  profile or an MCP registration to pick who a process is; leave it unset and nothing changes
+- The Console follows the daemon's own owner, so it shows the memories the CLI and your agent are
+  writing rather than an empty list with nothing to explain it. `GET /health` reports which owner
+  that is
+- Background work covers every owner instead of only the default one. Reconciliation asks whether
+  each owner is due separately, the file watcher runs per owner against that owner's linked
+  folders, and queued ingests carry the owner who asked for them so a job that outlives a restart
+  still lands on the right person. A store whose memories are saved per person but maintained for
+  one of them looks fine for weeks and then does not
+- Fixed: with two people writing, only the last one's memories were being indexed. Entity
+  extraction ran on one engine-wide timer carrying one owner, so a second person's save cancelled
+  the first person's pending run and nothing rescheduled it. Everyone but the most recent writer
+  accumulated unindexed memories, which shows up as a graph that quietly stops being true rather
+  than as an error
+- Fixed: resolving or reverting a conflict acted on whoever owned the row rather than on whoever
+  asked. Correct when a store holds one person, a write into somebody else's queue otherwise. A
+  conflict belonging to another owner now answers exactly as one that does not exist, because
+  saying which of the two it is would confirm that somebody else's data is there
+- An OpenRouter rate limit that arrives as HTTP 200 with an error in the body is now retried like
+  the 429 it means. It used to fall through as a response with no choices in it, and the error
+  three frames later named neither the model nor the provider
+- New guide: memory per person, covering the owner handle, account deletion, the daemon and MCP
+  setup, and why the bar for treating two people as one is deliberately high
+
 ## 0.9.1 (2026-08-04)
 
 - Switching language part way through a recording no longer loses the second one. The speech model
