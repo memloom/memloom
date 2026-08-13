@@ -47,6 +47,11 @@ export interface QueueItem {
   id: string;
   /** Absolute path on this machine, or a temp path an upload landed at. */
   path: string;
+  /**
+   * Who the ingested document belongs to. Absent on rows written before the queue knew about
+   * owners, and on a single-owner daemon, where the engine's own default is the answer.
+   */
+  ownerId?: string;
   /** Set when the bytes were uploaded rather than linked, so the temp file can be cleaned up. */
   uploaded?: boolean;
   status: QueueStatus;
@@ -92,6 +97,7 @@ function queuePath(): string {
 export interface QueueRunner {
   ingest(
     path: string,
+    ownerId: string | undefined,
     onProgress: (event: {
       stage: string;
       done: number;
@@ -170,9 +176,12 @@ export class IngestQueue {
    */
   async add(
     paths: string[],
-    opts: { uploaded?: boolean; skipFailed?: boolean; silent?: boolean } = {},
+    opts: { uploaded?: boolean; skipFailed?: boolean; silent?: boolean; ownerId?: string } = {},
   ): Promise<QueueItem[]> {
     await this.load();
+    // Keyed by owner AND path: two people linking the same file are two jobs, and deduping
+    // them to one would give whichever of them queued second nothing at all.
+    const key = (i: { ownerId?: string; path: string }) => `${i.ownerId ?? ""}\u0000${i.path}`;
     const pending = new Set(
       this.#items
         .filter(
@@ -181,17 +190,18 @@ export class IngestQueue {
             i.status === "running" ||
             (opts.skipFailed === true && i.status === "failed"),
         )
-        .map((i) => i.path),
+        .map(key),
     );
     const added: QueueItem[] = [];
     for (const path of paths) {
-      if (pending.has(path)) continue;
-      pending.add(path);
+      if (pending.has(key({ ownerId: opts.ownerId, path }))) continue;
+      pending.add(key({ ownerId: opts.ownerId, path }));
       const item: QueueItem = {
         id: randomUUID(),
         path,
         status: "queued",
         addedAt: new Date().toISOString(),
+        ...(opts.ownerId ? { ownerId: opts.ownerId } : {}),
         ...(opts.uploaded ? { uploaded: true } : {}),
         ...(opts.silent ? { silent: true } : {}),
       };
@@ -321,6 +331,7 @@ export class IngestQueue {
 
         const result = await this.#runner.ingest(
           item.path,
+          item.ownerId,
           (event) => {
             // Kept on the item so a viewer opened mid-run renders the real state instead of
             // an empty bar. Not persisted per event: that would be a disk write per chunk.

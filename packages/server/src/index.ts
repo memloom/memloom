@@ -20,12 +20,15 @@ import {
   idleRunDue,
   isChatProvider,
   isHttpUrl,
+  isOwnerId,
   LinkExtractionError,
   MEMORY_TYPES,
   type Memloom,
   modelStatus,
+  OWNER_HEADER,
   RECONCILE_STARTUP_SETTLE_MS,
   RECONCILE_TICK_MS,
+  SENTINEL_OWNER,
   selectModel,
   setupModels,
   startupCatchUpDue,
@@ -75,6 +78,12 @@ export interface ServerOptions {
    * an idle daemon from a busy one; `serve` owns the object, tests leave it undefined.
    */
   activity?: DaemonActivity;
+  /**
+   * Who a request that sends no owner header acts for. Defaults to MEMLOOM_OWNER_ID from the
+   * daemon's own environment, and to the sentinel owner when that is unset. This is what the
+   * Console gets: it is served by the daemon and has no way to name an owner itself.
+   */
+  defaultOwnerId?: string;
   /**
    * Opens a file with the OS default application (the viewer's "Open file" button). Defaults
    * to the platform opener; injectable so tests never actually launch anything.
@@ -549,7 +558,55 @@ async function parseBody<S extends z.ZodTypeAny>(
       ),
     };
   }
+  // The three routes whose body still carries an ownerId can now also receive one in the
+  // header. Two different owners in one request is a client bug, and quietly serving either
+  // one is how a write lands on the wrong person, so it is a 400 rather than a precedence
+  // rule nobody remembers.
+  const bodyOwner = (parsed.data as { ownerId?: unknown } | null)?.ownerId;
+  const headerOwner = c.req.header(OWNER_HEADER);
+  if (
+    typeof bodyOwner === "string" &&
+    headerOwner &&
+    bodyOwner.toLowerCase() !== headerOwner.toLowerCase()
+  ) {
+    return {
+      ok: false,
+      res: c.json(
+        {
+          error:
+            `owner mismatch: the ${OWNER_HEADER} header says ${headerOwner} and the body ` +
+            `says ${bodyOwner}. Send one or the other.`,
+        },
+        400,
+      ),
+    };
+  }
   return { ok: true, data: parsed.data };
+}
+
+/**
+ * The daemon's own default owner: who a request that names nobody acts for.
+ *
+ * Read from the daemon's environment because the browser-based Console cannot send a header of
+ * its own. It is served BY the daemon and has no owner concept, so without a default it would
+ * ask for "no owner", get the sentinel, and show an empty store to someone whose CLI and agent
+ * are happily saving memories under a real id. An empty Console with no error is exactly the
+ * silent half-feature this whole change exists to avoid.
+ *
+ * The daemon inherits this from whatever started it: the shell that ran `memloom serve`, or the
+ * CLI/MCP process that auto-started it (connect() spawns with the parent's env). Fixed at
+ * startup, so changing MEMLOOM_OWNER_ID means restarting the daemon.
+ */
+function daemonDefaultOwner(explicit?: string): string {
+  const raw = explicit ?? process.env.MEMLOOM_OWNER_ID?.trim();
+  if (!raw) return SENTINEL_OWNER;
+  if (!isOwnerId(raw)) {
+    throw new Error(
+      `memloom: MEMLOOM_OWNER_ID must be a uuid, got ${JSON.stringify(raw)}. ` +
+        "Leave it unset for a single-owner store.",
+    );
+  }
+  return raw.toLowerCase();
 }
 
 /**
@@ -597,6 +654,21 @@ function isLoopbackHost(host: string): boolean {
 
 export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   const app = new Hono();
+  const defaultOwner = daemonDefaultOwner(opts.defaultOwnerId);
+
+  /**
+   * The owner this request acts for. Clients bind one owner per connection and send it as a
+   * header; a request without one gets the daemon's default, which on a single-owner install is
+   * the sentinel it has always been.
+   *
+   * This is a SEPARATION mechanism, not an authentication one. The daemon binds loopback and
+   * asks for no credentials, so any local process can name any owner. It keeps two agents or
+   * two people on one machine out of each other's memories. It is not a boundary between
+   * untrusted users: that tier embeds the engine and calls forOwner() in its own process.
+   *
+   * Validated once in middleware, so this only reads.
+   */
+  const ownerOf = (c: Context): string => c.req.header(OWNER_HEADER)?.toLowerCase() ?? defaultOwner;
 
   // Browser clients (the viewer in dev, docs playground) run on another localhost port. Allow
   // only local origins; a permissive `*` would let any public web page drive the daemon.
@@ -667,7 +739,23 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     });
   }
 
-  app.get("/health", (c) => c.json({ ok: true }));
+  // Validate the owner header once, here, so no handler has to. Malformed is refused rather
+  // than coerced: silently falling back to the sentinel would serve a typo'd user id everyone
+  // else's memories, which is the failure this whole header exists to prevent.
+  app.use("*", async (c, next) => {
+    const raw = c.req.header(OWNER_HEADER);
+    if (raw !== undefined && !isOwnerId(raw)) {
+      return c.json(
+        { error: `invalid ${OWNER_HEADER}: expected a uuid, got ${JSON.stringify(raw)}` },
+        400,
+      );
+    }
+    await next();
+  });
+
+  // `owner` so a client can see which owner it gets when it sends no header, without guessing
+  // from an empty list. connect() only reads `ok`, so the extra field costs nothing.
+  app.get("/health", (c) => c.json({ ok: true, owner: defaultOwner }));
 
   // Fail fast when the store is unreachable: a connected Postgres wire client (Drizzle Studio,
   // psql) holds PGLite's exclusive lock and every query queues behind it. Probing BEFORE the
@@ -714,16 +802,21 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/memory/save", async (c) => {
     const body = await parseBody(c, saveSchema);
     if (!body.ok) return body.res;
-    return c.json(await memloom.save(body.data));
+    // parseBody has already refused a body owner that disagrees with the header, so either
+    // one is the answer when both are there.
+    return c.json(await memloom.save({ ...body.data, ownerId: body.data.ownerId ?? ownerOf(c) }));
   });
 
   // Browsing counterpart to /memory/query: all active memories, newest first.
-  app.get("/memory/list", async (c) => c.json({ memories: await memloom.memories() }));
+  app.get("/memory/list", async (c) => c.json({ memories: await memloom.memories(ownerOf(c)) }));
 
   app.post("/memory/query", async (c) => {
     const body = await parseBody(c, querySchema);
     if (!body.ok) return body.res;
-    const memories = await memloom.recall(body.data.query, { limit: body.data.limit });
+    const memories = await memloom.recall(body.data.query, {
+      limit: body.data.limit,
+      ownerId: ownerOf(c),
+    });
     return c.json({ memories });
   });
 
@@ -735,18 +828,19 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         id: c.req.param("id"),
         content: body.data.content,
         canonical: body.data.canonical,
+        ownerId: ownerOf(c),
       }),
     );
   });
 
   app.get("/memory/:id/history", async (c) =>
-    c.json({ versions: await memloom.history(c.req.param("id")) }),
+    c.json({ versions: await memloom.history(c.req.param("id"), ownerOf(c)) }),
   );
 
   // Deletes the whole belief: every version, its edges, and pending conflicts naming it.
   app.delete("/memory/:id", async (c) => {
     try {
-      await memloom.deleteMemory(c.req.param("id"));
+      await memloom.deleteMemory(c.req.param("id"), ownerOf(c));
       return c.json({ ok: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -757,12 +851,12 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // The full text of one recall hit (memory or context chunk): the fetch-the-rest path
   // behind truncated recall passages (MCP read_passage, assistant read_source).
   app.get("/memory/passage/:id", async (c) => {
-    const content = await memloom.passage(c.req.param("id"));
+    const content = await memloom.passage(c.req.param("id"), ownerOf(c));
     if (content === null) return c.json({ error: "no such passage" }, 404);
     return c.json({ content });
   });
 
-  app.post("/memory/index", async (c) => c.json(await memloom.index()));
+  app.post("/memory/index", async (c) => c.json(await memloom.index(ownerOf(c))));
 
   // Indexing runs one LLM call per unindexed row (minutes for a big PDF). The stream
   // variants respond with NDJSON progress ({type:"item"} per row, {type:"done"} with the
@@ -808,7 +902,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   ) => Promise<{ indexed: number; chunksIndexed: number }>;
   const streamRun = (c: Context, run: ProgressRun) => streamNdjson(c, run);
 
-  app.post("/memory/index/stream", (c) => streamRun(c, (p) => memloom.index(undefined, p)));
+  app.post("/memory/index/stream", (c) => streamRun(c, (p) => memloom.index(ownerOf(c), p)));
 
   // Hook capture surface. The notify endpoint takes only a transcript path and must confine
   // it: any local process can reach the daemon, and without this check one could make the
@@ -835,7 +929,9 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     return c.json({ accepted: true }, 202);
   });
 
-  app.get("/import/claude-code/status", async (c) => c.json(await memloom.importStatus()));
+  app.get("/import/claude-code/status", async (c) =>
+    c.json(await memloom.importStatus(ownerOf(c))),
+  );
 
   app.put("/import/claude-code/scope", async (c) => {
     const body = await parseBody(c, importScopeSchema);
@@ -850,7 +946,9 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/import/sessions/stream", async (c) => {
     const body = await parseBody(c, importSchema);
     if (!body.ok) return body.res;
-    const opts = body.data as Parameters<typeof memloom.importSessions>[0];
+    const opts = { ...body.data, ownerId: ownerOf(c) } as Parameters<
+      typeof memloom.importSessions
+    >[0];
     return streamNdjson(c, (emit) => memloom.importSessions(opts, emit));
   });
 
@@ -860,7 +958,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/import/agent-memory/stream", async (c) => {
     const body = await parseBody(c, agentMemoryImportSchema);
     if (!body.ok) return body.res;
-    const opts = body.data;
+    const opts = { ...body.data, ownerId: ownerOf(c) };
     return streamNdjson(c, (emit) => memloom.importAgentMemories(opts, emit));
   });
 
@@ -869,7 +967,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // API: the daemon reads NOTION_TOKEN from its own environment.
   app.get("/notion/pages", async (c) => c.json(await memloom.notionListPages()));
 
-  app.get("/notion/status", async (c) => c.json(await memloom.notionStatus()));
+  app.get("/notion/status", async (c) => c.json(await memloom.notionStatus(ownerOf(c))));
 
   app.put("/notion/scope", async (c) => {
     const body = await parseBody(c, notionScopeSchema);
@@ -881,50 +979,57 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/notion/sync/stream", async (c) => {
     const body = await parseBody(c, notionSyncSchema);
     if (!body.ok) return body.res;
-    const opts = body.data;
+    const opts = { ...body.data, ownerId: ownerOf(c) };
     return streamNdjson(c, (emit) => memloom.notionSync(opts, emit));
   });
 
   // Index sessions: the persistent, session-grouped log the Console tab renders. Runs are
   // listed newest-first; a run's per-item events load on expand. History is user-managed:
   // per-run delete and clear-all instead of an automatic cap.
-  app.get("/memory/index/runs", async (c) => c.json({ runs: await memloom.listIndexRuns() }));
+  app.get("/memory/index/runs", async (c) =>
+    c.json({ runs: await memloom.listIndexRuns(ownerOf(c)) }),
+  );
   app.get("/memory/index/runs/:id/events", async (c) =>
-    c.json({ events: await memloom.indexRunEvents(c.req.param("id")) }),
+    c.json({ events: await memloom.indexRunEvents(c.req.param("id"), ownerOf(c)) }),
   );
   app.delete("/memory/index/runs/:id", async (c) => {
-    await memloom.deleteIndexRun(c.req.param("id"));
+    await memloom.deleteIndexRun(c.req.param("id"), ownerOf(c));
     return c.json({ ok: true });
   });
   app.delete("/memory/index/runs", async (c) => {
-    await memloom.clearIndexRuns();
+    await memloom.clearIndexRuns(ownerOf(c));
     return c.json({ ok: true });
   });
 
   // Recovery: wipe every extracted entity/edge and re-run indexing from scratch.
-  app.post("/memory/reindex", async (c) => c.json(await memloom.reindex()));
-  app.post("/memory/reindex/stream", (c) => streamRun(c, (p) => memloom.reindex(undefined, p)));
+  app.post("/memory/reindex", async (c) => c.json(await memloom.reindex(ownerOf(c))));
+  app.post("/memory/reindex/stream", (c) => streamRun(c, (p) => memloom.reindex(ownerOf(c), p)));
 
   // The graph schema registry: vocabularies with live usage counts + the proposal queue.
-  app.get("/memory/schema", async (c) => c.json(await memloom.describeSchema()));
+  app.get("/memory/schema", async (c) => c.json(await memloom.describeSchema(ownerOf(c))));
 
   // Add a user-tier vocabulary entry (entity type or predicate).
   app.post("/memory/schema", async (c) => {
     const body = await parseBody(c, schemaEntrySchema);
     if (!body.ok) return body.res;
     return c.json(
-      await memloom.addSchemaEntry(body.data.kind, body.data.name, body.data.description ?? ""),
+      await memloom.addSchemaEntry(
+        body.data.kind,
+        body.data.name,
+        body.data.description ?? "",
+        ownerOf(c),
+      ),
     );
   });
 
   // Review a proposal: approve promotes it to the user tier AND links its saved
   // occurrences into the graph (no re-index); dismiss blocklists the name.
   app.post("/memory/schema/:id/approve", async (c) => {
-    const linked = await memloom.approveProposal(c.req.param("id"));
+    const linked = await memloom.approveProposal(c.req.param("id"), ownerOf(c));
     return c.json({ ok: true, ...linked });
   });
   app.post("/memory/schema/:id/dismiss", async (c) => {
-    await memloom.dismissProposal(c.req.param("id"));
+    await memloom.dismissProposal(c.req.param("id"), ownerOf(c));
     return c.json({ ok: true });
   });
 
@@ -932,14 +1037,14 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.patch("/memory/schema/:id", async (c) => {
     const body = await parseBody(c, schemaStatusSchema);
     if (!body.ok) return body.res;
-    await memloom.setSchemaStatus(c.req.param("id"), body.data.status);
+    await memloom.setSchemaStatus(c.req.param("id"), body.data.status, ownerOf(c));
     return c.json({ ok: true });
   });
 
   // Permanently remove a disabled user-tier entry (the engine enforces the guards).
   app.delete("/memory/schema/:id", async (c) => {
     try {
-      await memloom.deleteSchemaEntry(c.req.param("id"));
+      await memloom.deleteSchemaEntry(c.req.param("id"), ownerOf(c));
       return c.json({ ok: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -964,26 +1069,30 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   });
 
   // Entity instances (the schema tab's management list): rename/retype, merge, delete.
-  app.get("/memory/entities", async (c) => c.json({ entities: await memloom.listEntities() }));
+  app.get("/memory/entities", async (c) =>
+    c.json({ entities: await memloom.listEntities(ownerOf(c)) }),
+  );
 
   // Entity resolution. These sit ABOVE the /:id routes on purpose: Hono matches in
   // registration order, so "conflicts" would otherwise be read as an entity id.
   app.get("/memory/entities/conflicts", async (c) =>
-    c.json({ conflicts: await memloom.entityConflicts() }),
+    c.json({ conflicts: await memloom.entityConflicts(ownerOf(c)) }),
   );
 
   // Pairs a decision kept apart. They leave no other trace, so without this route a model's
   // "these are different things" verdicts are unreadable.
   app.get("/memory/entities/settled", async (c) =>
-    c.json({ settled: await memloom.settledEntityPairs() }),
+    c.json({ settled: await memloom.settledEntityPairs(ownerOf(c)) }),
   );
 
-  app.get("/memory/entities/merges", async (c) => c.json({ merges: await memloom.entityMerges() }));
+  app.get("/memory/entities/merges", async (c) =>
+    c.json({ merges: await memloom.entityMerges(ownerOf(c)) }),
+  );
 
   app.post("/memory/entities/resolve", async (c) => {
     const body = await parseBody(c, entityResolveSchema);
     if (!body.ok) return body.res;
-    return c.json(await memloom.resolveEntities({ dryRun: body.data.dryRun }));
+    return c.json(await memloom.resolveEntities({ dryRun: body.data.dryRun, ownerId: ownerOf(c) }));
   });
 
   // Let a model settle the pairs the lexical rules could not, once, on demand. The same pass
@@ -994,13 +1103,13 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     if (reconcileActingDisabled()) {
       return c.json({ error: "reconciliation is set to report only (RECONCILE_ENABLED=0)." }, 403);
     }
-    return c.json(await memloom.autoResolveEntities());
+    return c.json(await memloom.autoResolveEntities(ownerOf(c)));
   });
 
   // The same pass with progress. One call per pair means a queue of fifty is a minute of
   // silence, so the button that starts it reads the verdicts as they land.
   app.post("/memory/entities/resolve-auto/stream", (c) =>
-    streamNdjson(c, (emit) => memloom.autoResolveEntities(undefined, undefined, emit)),
+    streamNdjson(c, (emit) => memloom.autoResolveEntities(ownerOf(c), undefined, emit)),
   );
 
   // "Which people is this person connected to." Query rather than path parameter because the
@@ -1010,6 +1119,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     if (!target) return c.json({ error: "q is required (an entity id, name, or alias)" }, 400);
     const limit = Number(c.req.query("limit") ?? 50);
     const result = await memloom.relatedEntities(target, {
+      ownerId: ownerOf(c),
       ...(c.req.query("type") ? { entityType: c.req.query("type") as string } : {}),
       ...(Number.isFinite(limit) ? { limit } : {}),
     });
@@ -1019,7 +1129,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   app.post("/memory/entities/merges/:id/revert", async (c) => {
     try {
-      await memloom.revertEntityMerge(c.req.param("id"));
+      await memloom.revertEntityMerge(c.req.param("id"), ownerOf(c));
       return c.json({ ok: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1031,7 +1141,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const body = await parseBody(c, entityPatchSchema);
     if (!body.ok) return body.res;
     try {
-      await memloom.updateEntity(c.req.param("id"), body.data);
+      await memloom.updateEntity(c.req.param("id"), body.data, ownerOf(c));
       return c.json({ ok: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1044,7 +1154,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const body = await parseBody(c, entityMergeSchema);
     if (!body.ok) return body.res;
     try {
-      await memloom.mergeEntities(c.req.param("id"), body.data.into);
+      await memloom.mergeEntities(c.req.param("id"), body.data.into, ownerOf(c));
       return c.json({ ok: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1054,7 +1164,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   app.delete("/memory/entities/:id", async (c) => {
     try {
-      await memloom.deleteEntity(c.req.param("id"));
+      await memloom.deleteEntity(c.req.param("id"), ownerOf(c));
       return c.json({ ok: true });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
@@ -1062,25 +1172,39 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     }
   });
 
-  app.get("/memory/graph", async (c) => c.json(await memloom.graph()));
+  app.get("/memory/graph", async (c) => c.json(await memloom.graph(ownerOf(c))));
 
-  app.get("/memory/conflicts", async (c) => c.json({ conflicts: await memloom.conflicts() }));
+  app.get("/memory/conflicts", async (c) =>
+    c.json({ conflicts: await memloom.conflicts(ownerOf(c)) }),
+  );
 
   // The revertable history behind the pending queue: resolved conflicts, newest first.
   app.get("/memory/conflicts/resolved", async (c) =>
-    c.json({ conflicts: await memloom.resolvedConflicts() }),
+    c.json({ conflicts: await memloom.resolvedConflicts(ownerOf(c)) }),
   );
 
+  // The owner argument is the ownership check: without it these act on whoever owns the row,
+  // which over a wire any local process can reach is a write into another tenant's queue.
   app.post("/memory/conflicts/:id/resolve", async (c) => {
     const body = await parseBody(c, resolveSchema);
     if (!body.ok) return body.res;
-    await memloom.resolveConflict(c.req.param("id"), body.data);
-    return c.json({ ok: true });
+    try {
+      await memloom.resolveConflict(c.req.param("id"), body.data, {}, ownerOf(c));
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no conflict/.test(message) ? 404 : 400);
+    }
   });
 
   app.post("/memory/conflicts/:id/revert", async (c) => {
-    await memloom.revertConflict(c.req.param("id"));
-    return c.json({ ok: true });
+    try {
+      await memloom.revertConflict(c.req.param("id"), ownerOf(c));
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no conflict/.test(message) ? 404 : 400);
+    }
   });
 
   // Reconciliation. Which passes run is the user's saved setting, not an environment variable, so the
@@ -1112,7 +1236,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     try {
       return c.json(
         await memloom.reconcile(
-          body.data,
+          { ...body.data, ownerId: ownerOf(c) },
           (event) => {
             if (!runId) {
               runId = event.runId;
@@ -1146,7 +1270,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       signal.addEventListener("abort", () => cancel.abort());
       try {
         return await memloom.reconcile(
-          body.data,
+          { ...body.data, ownerId: ownerOf(c) },
           (event) => {
             // The first event names the run, which is what a stop button needs to address.
             if (!runId) {
@@ -1168,16 +1292,16 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/memory/reconcile/:id/stop", async (c) => {
     const id = c.req.param("id");
     liveReconciles.get(id)?.abort();
-    return c.json(await memloom.stopReconcile(id));
+    return c.json(await memloom.stopReconcile(id, ownerOf(c)));
   });
 
   app.get("/memory/reconcile/runs", async (c) => {
     const limit = pageLimit(c.req.query("limit"), 20);
-    return c.json({ runs: await memloom.reconcileRuns(undefined, limit) });
+    return c.json({ runs: await memloom.reconcileRuns(ownerOf(c), limit) });
   });
 
   app.get("/memory/reconcile/runs/:id/actions", async (c) =>
-    c.json({ actions: await memloom.reconcileActions(c.req.param("id")) }),
+    c.json({ actions: await memloom.reconcileActions(c.req.param("id"), ownerOf(c)) }),
   );
 
   app.get("/memory/reconcile/settings", async (c) => c.json(await memloom.reconcileSettings()));
@@ -1186,14 +1310,16 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // 40 percent precision, so they wait here where dismissing costs a click. Approving is what
   // writes the conflict row, which is why this route can return one.
   app.get("/memory/reconcile/possible", async (c) =>
-    c.json({ possible: await memloom.possibleContradictions() }),
+    c.json({ possible: await memloom.possibleContradictions(ownerOf(c)) }),
   );
 
   app.post("/memory/reconcile/possible/:id/answer", async (c) => {
     const body = await parseBody(c, z.object({ decision: z.enum(["approved", "rejected"]) }));
     if (!body.ok) return body.res;
     try {
-      return c.json(await memloom.answerPossible(c.req.param("id"), body.data.decision));
+      return c.json(
+        await memloom.answerPossible(c.req.param("id"), body.data.decision, ownerOf(c)),
+      );
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, /no unanswered/.test(message) ? 404 : 400);
@@ -1208,7 +1334,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   app.post("/memory/reconcile/:id/revert", async (c) => {
     try {
-      return c.json(await memloom.revertReconcile(c.req.param("id")));
+      return c.json(await memloom.revertReconcile(c.req.param("id"), ownerOf(c)));
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, /no reconcile run/.test(message) ? 404 : 409);
@@ -1218,7 +1344,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // The auto-resolver: an LLM re-judges every pending conflict with provenance context and
   // applies the decisive verdicts (revertably). Streams one item per conflict.
   app.post("/memory/conflicts/resolve-auto/stream", (c) =>
-    streamNdjson(c, (emit) => memloom.autoResolveConflicts(undefined, emit)),
+    streamNdjson(c, (emit) => memloom.autoResolveConflicts(ownerOf(c), emit)),
   );
 
   // The assistant tab: one agentic turn streamed as SSE (tool activity + answer deltas +
@@ -1246,7 +1372,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         });
       };
       try {
-        const result = await memloom.assistantChat(body.data, send);
+        const result = await memloom.assistantChat({ ...body.data, ownerId: ownerOf(c) }, send);
         send({ type: "done", ...result });
       } catch (err) {
         send({ type: "error", message: err instanceof Error ? err.message : String(err) });
@@ -1256,28 +1382,35 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   });
 
   app.get("/assistant/sessions", async (c) =>
-    c.json({ sessions: await memloom.assistantSessions() }),
+    c.json({ sessions: await memloom.assistantSessions(ownerOf(c)) }),
   );
   app.get("/assistant/sessions/search", async (c) =>
-    c.json({ sessions: await memloom.searchAssistantSessions(c.req.query("q") ?? "") }),
+    c.json({
+      sessions: await memloom.searchAssistantSessions(c.req.query("q") ?? "", ownerOf(c)),
+    }),
   );
   app.get("/assistant/sessions/:id/messages", async (c) =>
-    c.json({ messages: await memloom.assistantMessages(c.req.param("id")) }),
+    c.json({ messages: await memloom.assistantMessages(c.req.param("id"), ownerOf(c)) }),
   );
   app.patch("/assistant/sessions/:id", async (c) => {
     const body = await parseBody(c, assistantSessionPatchSchema);
     if (!body.ok) return body.res;
     const id = c.req.param("id");
-    if (body.data.title !== undefined) await memloom.renameAssistantSession(id, body.data.title);
-    if (body.data.starred !== undefined) await memloom.starAssistantSession(id, body.data.starred);
+    const owner = ownerOf(c);
+    if (body.data.title !== undefined) {
+      await memloom.renameAssistantSession(id, body.data.title, owner);
+    }
+    if (body.data.starred !== undefined) {
+      await memloom.starAssistantSession(id, body.data.starred, owner);
+    }
     return c.json({ ok: true });
   });
   app.delete("/assistant/sessions/:id", async (c) => {
-    await memloom.deleteAssistantSession(c.req.param("id"));
+    await memloom.deleteAssistantSession(c.req.param("id"), ownerOf(c));
     return c.json({ ok: true });
   });
   app.delete("/assistant/sessions", async (c) => {
-    await memloom.clearAssistantSessions();
+    await memloom.clearAssistantSessions(ownerOf(c));
     return c.json({ ok: true });
   });
 
@@ -1358,6 +1491,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         const result = await memloom.contextAttach({
           filename,
           bytes,
+          ownerId: ownerOf(c),
           ...(body.data.sessionId ? { sessionId: body.data.sessionId } : {}),
         });
         return c.json(result);
@@ -1369,7 +1503,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   );
 
   app.get("/assistant/sessions/:id/attachments", async (c) =>
-    c.json({ attachments: await memloom.sessionAttachments(c.req.param("id")) }),
+    c.json({ attachments: await memloom.sessionAttachments(c.req.param("id"), ownerOf(c)) }),
   );
 
   // Ingest bytes uploaded from the browser's own file dialog (the viewer's Browse/Folder
@@ -1378,8 +1512,14 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // what makes "point it at a folder of recordings and walk away" possible, and the queue
   // outlives the daemon because a run that long routinely spans a restart.
   const queue = new IngestQueue({
-    ingest: async (path, onProgress, signal) => {
-      const result = await memloom.contextAdd({ path }, (event) => onProgress(event), signal);
+    ingest: async (path, ownerId, onProgress, signal) => {
+      // The owner rides on the queued item, so a job that outlives a restart still lands on
+      // the person who asked for it rather than on the daemon's default.
+      const result = await memloom.contextAdd(
+        { path, ...(ownerId ? { ownerId } : {}) },
+        (event) => onProgress(event),
+        signal,
+      );
       return { outcome: result.outcome, chunks: result.chunks };
     },
   });
@@ -1398,41 +1538,86 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // roots are still recorded, nothing starts syncing again until the flag comes back.
   const syncEnabled =
     opts.fileSync === true && (process.env.MEMLOOM_SYNC ?? "on").toLowerCase() !== "off";
-  const sync = syncEnabled
-    ? new FileSync(
-        memloom,
-        async (paths) =>
-          (await queue.add(paths, { skipFailed: true, silent: true })).map((i) => i.path),
-        {
-          ...(process.env.MEMLOOM_SYNC_RESCAN_MS
-            ? { rescanMs: Number(process.env.MEMLOOM_SYNC_RESCAN_MS) }
-            : {}),
-          ...(pollingMode(process.env.MEMLOOM_SYNC_POLL)
-            ? { polling: pollingMode(process.env.MEMLOOM_SYNC_POLL) }
-            : {}),
-          log: (m) => console.log(`${new Date().toISOString()}  ${m}`),
-        },
-      )
-    : null;
+
+  // One watcher per owner, because a FileSync reads ONE owner's watch list. A single instance
+  // on a multi-owner store would follow the sentinel's folders and silently ignore everyone
+  // else's: their linked folders would sit there looking watched and never re-ingest a thing.
+  const syncs = new Map<string, FileSync>();
+  const syncStarted = new Set<string>();
+  function watcherFor(owner: string): FileSync | null {
+    if (!syncEnabled) return null;
+    const existing = syncs.get(owner);
+    if (existing) return existing;
+    const created = new FileSync(
+      memloom,
+      async (paths) =>
+        (await queue.add(paths, { skipFailed: true, silent: true, ownerId: owner })).map(
+          (i) => i.path,
+        ),
+      {
+        ownerId: owner,
+        ...(process.env.MEMLOOM_SYNC_RESCAN_MS
+          ? { rescanMs: Number(process.env.MEMLOOM_SYNC_RESCAN_MS) }
+          : {}),
+        ...(pollingMode(process.env.MEMLOOM_SYNC_POLL)
+          ? { polling: pollingMode(process.env.MEMLOOM_SYNC_POLL) }
+          : {}),
+        log: (m) => console.log(`${new Date().toISOString()}  ${m}`),
+      },
+    );
+    syncs.set(owner, created);
+    return created;
+  }
+
   // Started off the request path: the first pass walks every watched folder, and a daemon that
   // took a minute to answer /health because of it would look broken.
-  if (sync) {
+  if (syncEnabled) {
     const kick = setTimeout(() => {
-      void sync.start().catch((err) => {
-        console.log(`sync failed to start: ${err instanceof Error ? err.message : String(err)}`);
-      });
+      void (async () => {
+        // Every owner already in the store, not just the default one. A tenant whose folders
+        // were linked before this restart has to be picked back up without them touching
+        // anything.
+        const owners = await memloom.owners().catch(() => [SENTINEL_OWNER]);
+        for (const owner of owners.length > 0 ? owners : [SENTINEL_OWNER]) {
+          syncStarted.add(owner);
+          await watcherFor(owner)
+            ?.start()
+            .catch((err) => {
+              syncStarted.delete(owner);
+              const detail = err instanceof Error ? err.message : String(err);
+              console.log(`sync failed to start for ${owner}: ${detail}`);
+            });
+        }
+      })();
     }, 2_000);
     kick.unref?.();
   }
 
-  /** Tell the watcher its list changed, without making the caller wait for a walk. */
-  function syncChanged(): void {
-    void sync?.refresh().catch(() => {});
+  /**
+   * Tell an owner's watcher its list changed, without making the caller wait for a walk. Also
+   * the only place a watcher appears for an owner who had none: linking their first folder is
+   * exactly when one becomes necessary.
+   */
+  function syncChanged(owner: string): void {
+    const watcher = watcherFor(owner);
+    if (!watcher) return;
+    // refresh() on a watcher that was never started has no chokidar to adjust, so the first
+    // touch for an owner starts it instead. Both paths end with the list re-read.
+    if (!syncStarted.has(owner)) {
+      syncStarted.add(owner);
+      void watcher.start().catch((err) => {
+        syncStarted.delete(owner);
+        const detail = err instanceof Error ? err.message : String(err);
+        console.log(`sync failed to start for ${owner}: ${detail}`);
+      });
+      return;
+    }
+    void watcher.refresh().catch(() => {});
   }
 
-  /** Close the watcher. Called on the way down, before the store goes. */
+  /** Close the watchers. Called on the way down, before the store goes. */
   async function stopSync(): Promise<void> {
-    await sync?.stop().catch(() => {});
+    await Promise.all([...syncs.values()].map((s) => s.stop().catch(() => {})));
   }
 
   app.get("/queue", async (c) => {
@@ -1459,7 +1644,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         paths.push(...walked.files.map((f) => f.path));
         // Queueing a folder IS linking it. This is the route the add card uses for recordings,
         // so without this the one flow the watcher exists for would never register a root.
-        await memloom.contextRootAdd(target);
+        await memloom.contextRootAdd(target, ownerOf(c));
         watching.push(target);
       } else paths.push(target);
     }
@@ -1470,8 +1655,8 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     if (paths.length === 0 && watching.length === 0) {
       return c.json({ error: `no supported files (${supportedExtensions().join(", ")})` }, 400);
     }
-    const added = await queue.add(paths);
-    syncChanged();
+    const added = await queue.add(paths, { ownerId: ownerOf(c) });
+    syncChanged(ownerOf(c));
     return c.json({
       added: added.length,
       watching,
@@ -1544,12 +1729,12 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         const dir = await mkdtemp(join(uploadStoreDir(), "u-"));
         const file = join(dir, filename);
         await writeFile(file, bytes);
-        const [item] = await queue.add([file], { uploaded: true });
+        const [item] = await queue.add([file], { uploaded: true, ownerId: ownerOf(c) });
         return c.json({ outcome: "queued", title: filename, chunks: 0, queueId: item?.id });
       }
 
       try {
-        return c.json(await memloom.contextUpload({ filename, bytes }));
+        return c.json(await memloom.contextUpload({ filename, bytes, ownerId: ownerOf(c) }));
       } catch (err) {
         // An uploaded recording transcribes too, so it hits the same setup wall.
         return audioFailure(c, err);
@@ -1565,7 +1750,9 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const body = await parseBody(c, contextUrlSchema);
     if (!body.ok) return body.res;
     try {
-      return c.json(await memloom.contextAddUrl(body.data));
+      return c.json(
+        await memloom.contextAddUrl({ ...body.data, ownerId: body.data.ownerId ?? ownerOf(c) }),
+      );
     } catch (err) {
       // Extraction failures are the caller's problem to act on (try the extension, the page
       // is a PDF, the site blocked us), so they answer 400 with a stable code, not a 500.
@@ -1581,13 +1768,16 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/context/add", async (c) => {
     const body = await parseBody(c, contextAddSchema);
     if (!body.ok) return body.res;
+    // Honours a body ownerId like /memory/save and /context/url do, because the schema
+    // advertises the field. parseBody has already refused one that disagrees with the header.
+    const owner = body.data.ownerId ?? ownerOf(c);
     const target = userPath(body.data.path);
     const info = await stat(target).catch(() => null);
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
     if (!info.isDirectory()) {
       try {
-        const result = await memloom.contextAdd({ path: target });
-        syncChanged();
+        const result = await memloom.contextAdd({ path: target, ownerId: owner });
+        syncChanged(owner);
         return c.json(result);
       } catch (err) {
         // A recording whose model was never downloaded, or a machine without ffmpeg, is a
@@ -1601,11 +1791,11 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const files = walked.files.map((f) => f.path);
     // Recorded before the ingest, not after: the files in it now are one snapshot, and the
     // root is what makes the ones that arrive tomorrow findable.
-    await memloom.contextRootAdd(target);
+    await memloom.contextRootAdd(target, owner);
     // An empty folder is a watch list entry, not an error. Linking a folder before the first
     // file exists is exactly how someone sets up a recorder to drop files into.
     if (files.length === 0) {
-      syncChanged();
+      syncChanged(owner);
       return c.json({
         outcome: "watching",
         title: target,
@@ -1622,7 +1812,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const errors: string[] = [];
     for (const file of files) {
       try {
-        const r = await memloom.contextAdd({ path: file });
+        const r = await memloom.contextAdd({ path: file, ownerId: owner });
         chunks += r.chunks;
         absorbed += r.absorbed ?? 0;
         if (r.outcome === "unchanged") unchanged += 1;
@@ -1631,7 +1821,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         errors.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    syncChanged();
+    syncChanged(owner);
     return c.json({
       outcome: "added",
       title: target,
@@ -1651,16 +1841,17 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/context/add/stream", async (c) => {
     const body = await parseBody(c, contextAddSchema);
     if (!body.ok) return body.res;
+    const owner = body.data.ownerId ?? ownerOf(c);
     const target = userPath(body.data.path);
     const info = await stat(target).catch(() => null);
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
     const walked = info.isDirectory() ? await walkSupportedFiles(target) : null;
     const files = walked ? walked.files.map((f) => f.path) : [target];
-    if (walked) await memloom.contextRootAdd(target);
+    if (walked) await memloom.contextRootAdd(target, owner);
     // As in /context/add: an empty folder joins the watch list rather than failing. Answered
     // plainly rather than as a stream, since there is no work to report progress on.
     if (files.length === 0) {
-      syncChanged();
+      syncChanged(owner);
       return c.json({
         outcome: "watching",
         title: target,
@@ -1692,7 +1883,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       for (const file of files) {
         if (signal.aborted) break;
         try {
-          const r = await memloom.contextAdd({ path: file }, emit, signal);
+          const r = await memloom.contextAdd({ path: file, ownerId: owner }, emit, signal);
           lastResult = r;
           chunks += r.chunks;
           if (r.outcome === "unchanged") unchanged += 1;
@@ -1704,7 +1895,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
           errors.push(`${file}: ${err instanceof Error ? err.message : String(err)}`);
         }
       }
-      syncChanged();
+      syncChanged(owner);
       // A single file that failed has only its failure to report, and a stream cannot go
       // back and change its status code, so it travels in band.
       //
@@ -1765,11 +1956,13 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     return c.json({ path: dir, parent: parent === dir ? null : parent, entries: list });
   });
 
-  app.get("/context/documents", async (c) => c.json({ documents: await memloom.contextList() }));
+  app.get("/context/documents", async (c) =>
+    c.json({ documents: await memloom.contextList(ownerOf(c)) }),
+  );
 
   // Drill-down for an expanded document node in the viewer: chunks + chunk-level edges.
   app.get("/context/documents/:id/chunks", async (c) =>
-    c.json(await memloom.contextChunks(c.req.param("id"))),
+    c.json(await memloom.contextChunks(c.req.param("id"), ownerOf(c))),
   );
 
   // Open the source file with the OS default app. Only paths already ingested by the owner
@@ -1777,7 +1970,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   const openPath = opts.openPath ?? platformOpen;
   app.post("/context/documents/:id/open", async (c) => {
     const id = c.req.param("id");
-    const doc = (await memloom.contextList()).find((d) => d.id === id);
+    const doc = (await memloom.contextList(ownerOf(c))).find((d) => d.id === id);
     if (!doc) return c.json({ error: `no context document ${id}` }, 404);
     if (doc.path.startsWith("upload://")) {
       return c.json({ error: "this document was uploaded from the browser; no file on disk" }, 400);
@@ -1792,7 +1985,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // because <audio> seeking sends them, and Safari refuses media from servers that don't.
   app.get("/context/documents/:id/media", async (c) => {
     const id = c.req.param("id");
-    const doc = (await memloom.contextList()).find((d) => d.id === id);
+    const doc = (await memloom.contextList(ownerOf(c))).find((d) => d.id === id);
     if (!doc) return c.json({ error: `no context document ${id}` }, 404);
     if (doc.kind !== "audio" && doc.kind !== "video") {
       return c.json({ error: "not a media document" }, 400);
@@ -1844,7 +2037,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     // The cap bounds the buffered WAV (30 s of 16 kHz mono is under 1 MB), and no voice
     // sample legitimately needs more.
     if (end - start > 30) return c.json({ error: "a sample is at most 30 seconds" }, 400);
-    const doc = (await memloom.contextList()).find((d) => d.id === id);
+    const doc = (await memloom.contextList(ownerOf(c))).find((d) => d.id === id);
     if (!doc) return c.json({ error: `no context document ${id}` }, 404);
     if (doc.kind !== "audio" && doc.kind !== "video") {
       return c.json({ error: "not a media document" }, 400);
@@ -1873,6 +2066,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         c.req.param("id"),
         body.data.speakerId,
         body.data.name,
+        ownerOf(c),
       );
       return c.json({ ok: true, speakers: roster });
     } catch (err) {
@@ -1884,12 +2078,12 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // Run the voice matcher over every document that still has numbered speakers: how
   // recordings ingested before a person was labeled catch up, without re-ingesting.
   app.post("/context/speakers/match", async (c) => {
-    return c.json(await memloom.autoNameAllSpeakers());
+    return c.json(await memloom.autoNameAllSpeakers(ownerOf(c)));
   });
 
   app.delete("/context/documents/:id", async (c) => {
-    await memloom.contextRemove(c.req.param("id"));
-    syncChanged();
+    await memloom.contextRemove(c.req.param("id"), ownerOf(c));
+    syncChanged(ownerOf(c));
     return c.json({ ok: true });
   });
 
@@ -1899,10 +2093,14 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   // is false when MEMLOOM_SYNC=off, which is the difference between "nothing is watched" and
   // "watching is switched off", and a viewer that cannot tell them apart says the wrong thing.
   app.get("/context/roots", async (c) => {
+    // Reads never create a watcher. The owner comes off a request header, so allocating one
+    // here would let any caller grow the map by naming uuids that own nothing. An owner with
+    // no watcher yet has no stats to report, which is the truth.
+    const watcher = syncs.get(ownerOf(c));
     return c.json({
-      enabled: sync !== null,
-      roots: await memloom.contextRoots(),
-      ...(sync ? { stats: sync.stats() } : {}),
+      enabled: syncEnabled,
+      roots: await memloom.contextRoots(ownerOf(c)),
+      ...(watcher ? { stats: watcher.stats() } : {}),
     });
   });
 
@@ -1916,8 +2114,8 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const info = await stat(target).catch(() => null);
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
     if (!info.isDirectory()) return c.json({ error: `not a folder: ${target}` }, 400);
-    const root = await memloom.contextRootAdd(target);
-    syncChanged();
+    const root = await memloom.contextRootAdd(target, ownerOf(c));
+    syncChanged(ownerOf(c));
     return c.json(root);
   });
 
@@ -1926,27 +2124,27 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/context/roots/:id/watch", async (c) => {
     const body = await parseBody(c, watchSchema);
     if (!body.ok) return body.res;
-    const ok = await memloom.contextRootWatch(c.req.param("id"), body.data.watching);
+    const ok = await memloom.contextRootWatch(c.req.param("id"), body.data.watching, ownerOf(c));
     if (!ok) return c.json({ error: "no such root" }, 404);
-    syncChanged();
+    syncChanged(ownerOf(c));
     return c.json({ ok: true });
   });
 
   // Forgets the folder, keeps every document it produced. Deleting those is a separate act,
   // because "stop following this folder" is not "forget what you read in it".
   app.delete("/context/roots/:id", async (c) => {
-    const ok = await memloom.contextRootRemove(c.req.param("id"));
+    const ok = await memloom.contextRootRemove(c.req.param("id"), ownerOf(c));
     if (!ok) return c.json({ error: "no such root" }, 404);
-    syncChanged();
+    syncChanged(ownerOf(c));
     return c.json({ ok: true });
   });
 
   app.post("/context/documents/:id/watch", async (c) => {
     const body = await parseBody(c, watchSchema);
     if (!body.ok) return body.res;
-    const ok = await memloom.contextWatch(c.req.param("id"), body.data.watching);
+    const ok = await memloom.contextWatch(c.req.param("id"), body.data.watching, ownerOf(c));
     if (!ok) return c.json({ error: "no such document" }, 404);
-    syncChanged();
+    syncChanged(ownerOf(c));
     return c.json({ ok: true });
   });
 
@@ -2081,56 +2279,86 @@ export function reconcileActingDisabled(): boolean {
   return process.env.RECONCILE_ENABLED === "0";
 }
 
+/**
+ * How long the scheduler trusts its owner list. Long enough that the 5-minute tick is not
+ * paying for a catalog scan it almost never needs, short enough that a tenant who arrived
+ * during the window waits one window, not a restart.
+ */
+const OWNERS_TTL_MS = 30 * 60_000;
+
 export function startReconcileScheduler(memloom: Memloom, activity: DaemonActivity): () => void {
   let running = false;
   let stopped = false;
+
+  // Every owner in the store, not just the default one. A reconcile pass is per owner (it reads
+  // that owner's memories and repairs that owner's graph), so a scheduler that only ever ran
+  // the default left every other tenant's memories saved and never maintained: no invariant
+  // repairs, no entity folds, nothing, and no error anywhere saying so.
+  //
+  // Cached, because owners() walks the catalog and reads every owner-scoped table, and the tick
+  // fires whether or not anything is due. PGLite has one connection and it is also serving
+  // requests; a per-tick catalog scan is rent this pays for nothing most of the time.
+  let ownersCache: { at: number; list: string[] } | null = null;
+  const owners = async (): Promise<string[]> => {
+    if (ownersCache && Date.now() - ownersCache.at < OWNERS_TTL_MS) return ownersCache.list;
+    const found = await memloom.owners().catch(() => []);
+    const list = found.length > 0 ? found : [SENTINEL_OWNER];
+    ownersCache = { at: Date.now(), list };
+    return list;
+  };
+
+  // Per owner, not for the daemon as a whole. Taking the oldest finish across everyone made one
+  // never-reconciled owner read as "infinitely overdue" for the entire store, which trips the
+  // ceiling rule and fires a full sweep on every tick until that owner completes. Asked per
+  // owner, a new tenant gets their own first pass and nobody else is dragged along.
+  const due = async (ownerId: string, trigger: "idle" | "startup"): Promise<boolean> => {
+    const iso = await memloom.lastReconcileFinishedAt(ownerId).catch(() => null);
+    const lastRunAt = iso ? new Date(iso).getTime() : null;
+    if (trigger === "startup") {
+      const settings = await memloom.reconcileSettings().catch(() => null);
+      if (!settings) return false;
+      return startupCatchUpDue({ now: Date.now(), lastRunAt, enabled: settings.startupCatchUp });
+    }
+    return idleRunDue({
+      now: Date.now(),
+      lastRunAt,
+      lastRequestAt: activity.lastRequestAt,
+      indexing: memloom.indexing,
+    });
+  };
 
   const run = async (trigger: "idle" | "startup") => {
     if (running || stopped || reconcileActingDisabled()) return;
     running = true;
     try {
-      await memloom.reconcile({ mode: "apply", trigger, passes: FREE_RECONCILE_PASSES });
-    } catch (err) {
-      // A background pass that throws must not take the daemon with it. The run row already
-      // records the error, and the next tick tries again.
-      console.error("[reconcile]", err instanceof Error ? err.message : String(err));
+      // Serially, one owner at a time. These passes are the ones that run while nobody asked,
+      // so they yield to real work rather than fanning out across a machine someone is using.
+      for (const ownerId of await owners()) {
+        if (stopped) break;
+        if (!(await due(ownerId, trigger))) continue;
+        try {
+          await memloom.reconcile({
+            mode: "apply",
+            trigger,
+            passes: FREE_RECONCILE_PASSES,
+            ownerId,
+          });
+        } catch (err) {
+          // A background pass that throws must not take the daemon with it, nor stop the
+          // owners behind it in the queue. The run row already records the error, and the
+          // next tick tries again.
+          console.error("[reconcile]", ownerId, err instanceof Error ? err.message : String(err));
+        }
+      }
     } finally {
       running = false;
     }
   };
 
-  const lastRunAt = async (): Promise<number | null> => {
-    const iso = await memloom.lastReconcileFinishedAt().catch(() => null);
-    return iso ? new Date(iso).getTime() : null;
-  };
-
-  const startup = setTimeout(async () => {
-    const settings = await memloom.reconcileSettings().catch(() => null);
-    if (!settings) return;
-    if (
-      startupCatchUpDue({
-        now: Date.now(),
-        lastRunAt: await lastRunAt(),
-        enabled: settings.startupCatchUp,
-      })
-    ) {
-      await run("startup");
-    }
-  }, RECONCILE_STARTUP_SETTLE_MS);
+  const startup = setTimeout(() => void run("startup"), RECONCILE_STARTUP_SETTLE_MS);
   startup.unref?.();
 
-  const tick = setInterval(async () => {
-    if (
-      idleRunDue({
-        now: Date.now(),
-        lastRunAt: await lastRunAt(),
-        lastRequestAt: activity.lastRequestAt,
-        indexing: memloom.indexing,
-      })
-    ) {
-      await run("idle");
-    }
-  }, RECONCILE_TICK_MS);
+  const tick = setInterval(() => void run("idle"), RECONCILE_TICK_MS);
   tick.unref?.();
 
   return () => {
@@ -2142,6 +2370,7 @@ export function startReconcileScheduler(memloom: Memloom, activity: DaemonActivi
 
 export function serve(memloom: Memloom, port = 4319) {
   const activity: DaemonActivity = { lastRequestAt: Date.now() };
+  // defaultOwnerId is left to createServer, which reads MEMLOOM_OWNER_ID from this process.
   const app = createServer(memloom, { activity });
   startReconcileScheduler(memloom, activity);
   return nodeServe({ fetch: app.fetch, port, hostname: "127.0.0.1" });

@@ -13,6 +13,7 @@ import {
   PgliteAdapter,
   registerExtractor,
   ScriptedLLMProvider,
+  SENTINEL_OWNER,
   truncateAll,
 } from "@memloom/core";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -70,7 +71,9 @@ describe("server", () => {
   it("health check", async () => {
     const res = await (await app()).request("/health");
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true });
+    // `owner` is the owner a request that sends no header acts for, so a client can see which
+    // memories it is about to get instead of inferring it from an empty list.
+    expect(await res.json()).toEqual({ ok: true, owner: SENTINEL_OWNER });
   });
 
   it("import notify confines paths to the Claude Code sessions directory", async () => {
@@ -1258,8 +1261,19 @@ describe("server", () => {
     await memloom.init();
     const server = createServer(memloom);
 
-    // Resolving a conflict that doesn't exist throws inside the engine.
-    const res = await server.request(
+    // Editing a memory that doesn't exist throws inside the engine, and this route has no
+    // catch of its own, so it is the generic onError path that has to answer.
+    const res = await server.request("/memory/00000000-0000-0000-0000-000000000001/update", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ content: "edited" }),
+    });
+    expect(res.status).toBe(500);
+    expect(typeof ((await res.json()) as { error: string }).error).toBe("string");
+
+    // A conflict id that is not this owner's, or not anybody's, is a different thing: the
+    // resolve route owns that answer and gives 404 rather than letting it read as a fault.
+    const missing = await server.request(
       "/memory/conflicts/00000000-0000-0000-0000-000000000001/resolve",
       {
         method: "POST",
@@ -1267,8 +1281,8 @@ describe("server", () => {
         body: JSON.stringify({ action: "keep_both" }),
       },
     );
-    expect(res.status).toBe(500);
-    expect(typeof ((await res.json()) as { error: string }).error).toBe("string");
+    expect(missing.status).toBe(404);
+    expect(typeof ((await missing.json()) as { error: string }).error).toBe("string");
   });
 
   it("serves the viewer bundle without shadowing the API", async () => {
@@ -1299,7 +1313,10 @@ describe("server", () => {
 
     // Unknown paths fall back to the SPA shell; the API still wins over static.
     expect(await (await server.request("/some/route")).text()).toContain("viewer");
-    expect(await (await server.request("/health")).json()).toEqual({ ok: true });
+    expect(await (await server.request("/health")).json()).toEqual({
+      ok: true,
+      owner: SENTINEL_OWNER,
+    });
 
     // Traversal never escapes the bundle dir.
     const evil = await server.request("/..%2f..%2fsecrets.txt");

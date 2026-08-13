@@ -595,7 +595,11 @@ export class Memloom implements MemoryEngine {
   readonly #autoIndexDelay: number;
   #autoIndexTimer: ReturnType<typeof setTimeout> | undefined;
   #autoIndexRunning = false;
-  #autoIndexAgain = false;
+  // Owners with writes still to index. A set, not one owner: the debounce timer is shared by
+  // the whole engine, so with more than one tenant writing, the newer write used to cancel
+  // the older owner's run and nothing rescheduled it. That owner's memories stayed unindexed
+  // for as long as anyone else kept saving — no error, no log, just a quietly worse recall.
+  readonly #autoIndexPending = new Set<string>();
 
   constructor(config: MemloomConfig) {
     this.#storage = config.storage;
@@ -656,7 +660,12 @@ export class Memloom implements MemoryEngine {
       [enabled ? "on" : "off"],
     );
     this.#autoIndex = enabled;
-    if (!enabled) clearTimeout(this.#autoIndexTimer);
+    if (!enabled) {
+      clearTimeout(this.#autoIndexTimer);
+      // Drop what was queued too. Re-enabling later should not replay writes from before
+      // the host turned indexing off.
+      this.#autoIndexPending.clear();
+    }
   }
 
   /**
@@ -668,30 +677,43 @@ export class Memloom implements MemoryEngine {
    */
   #scheduleAutoIndex(owner: string): void {
     if (!this.#autoIndex) return;
+    this.#autoIndexPending.add(owner);
+    this.#armAutoIndex();
+  }
+
+  #armAutoIndex(): void {
     clearTimeout(this.#autoIndexTimer);
-    this.#autoIndexTimer = setTimeout(() => void this.#runAutoIndex(owner), this.#autoIndexDelay);
+    this.#autoIndexTimer = setTimeout(() => void this.#runAutoIndex(), this.#autoIndexDelay);
     // Never hold the process open for a pending background run.
     this.#autoIndexTimer.unref?.();
   }
 
-  async #runAutoIndex(owner: string): Promise<void> {
-    if (this.#autoIndexRunning) {
-      this.#autoIndexAgain = true;
-      return;
-    }
+  async #runAutoIndex(): Promise<void> {
+    // Whoever is already running drains the set, so a second entry has nothing to do.
+    if (this.#autoIndexRunning) return;
     this.#autoIndexRunning = true;
     try {
-      await this.index(owner);
-    } catch (err) {
-      console.error(
-        `memloom: auto-index failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      // Drain, don't snapshot: a write that lands mid-run adds its owner to the set and is
+      // picked up by the next turn rather than waiting for another debounce window.
+      while (this.#autoIndexPending.size > 0) {
+        const owners = [...this.#autoIndexPending];
+        this.#autoIndexPending.clear();
+        for (const owner of owners) {
+          try {
+            await this.index(owner);
+          } catch (err) {
+            // One owner's failure must not strand the others still in the set.
+            console.error(
+              `memloom: auto-index failed for ${owner}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+      }
     } finally {
       this.#autoIndexRunning = false;
-      if (this.#autoIndexAgain) {
-        this.#autoIndexAgain = false;
-        this.#scheduleAutoIndex(owner);
-      }
+      // A write can land between the last size check and here. Its own timer already fired
+      // and returned early because a run was in progress, so re-arm on its behalf.
+      if (this.#autoIndexPending.size > 0) this.#armAutoIndex();
     }
   }
 
@@ -2963,6 +2985,38 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
+   * Every owner that holds anything in this store, sentinel included when it holds something.
+   *
+   * The daemon's reason to exist: its background work (reconcile catch-up, the file watchers)
+   * runs on behalf of somebody, and on a store with more than one tenant "somebody" has more
+   * than one answer. A pass that only ever covers the sentinel leaves every other owner's
+   * memories saved but never maintained, which looks like nothing at all until their graph is
+   * months stale.
+   *
+   * Discovered from the catalog for the same reason deleteOwner is: a table added later is
+   * covered the day it exists, rather than the day someone remembers this list.
+   */
+  async owners(): Promise<string[]> {
+    const tables = await this.#storage.query<{ name: string }>(
+      `SELECT c.relname AS name
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = current_schema()
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'owner_id'
+                            AND NOT a.attisdropped
+        WHERE c.relkind = 'r'
+        ORDER BY c.relname`,
+    );
+    const seen = new Set<string>();
+    for (const { name } of tables) {
+      const rows = await this.#storage.query<{ owner_id: string }>(
+        `SELECT DISTINCT owner_id FROM "${name}"`,
+      );
+      for (const row of rows) seen.add(row.owner_id);
+    }
+    return [...seen].sort();
+  }
+
+  /**
    * Erase one owner completely: every row this owner has in every table, in one transaction.
    * The account-deletion primitive a multi-tenant host needs — where deleteMemory() removes
    * one belief, this removes the tenant. Irreversible, and deliberately so: "delete my data"
@@ -2986,7 +3040,7 @@ export class Memloom implements MemoryEngine {
     if (!isOwnerId(ownerId)) {
       throw new Error(`memloom: deleteOwner needs a uuid owner id, got ${JSON.stringify(ownerId)}`);
     }
-    return this.#storage.tx(async (tx) => {
+    const result = await this.#storage.tx(async (tx) => {
       const owned = await tx.query<{ name: string }>(
         `SELECT c.relname AS name
            FROM pg_class c
@@ -3011,6 +3065,10 @@ export class Memloom implements MemoryEngine {
       }
       return { rows, tables };
     });
+    // A queued auto-index for an owner who no longer exists would write them a fresh
+    // memory_index_runs row: the tenant reappearing seconds after asking to be gone.
+    this.#autoIndexPending.delete(ownerId);
+    return result;
   }
 
   /**

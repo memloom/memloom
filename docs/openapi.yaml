@@ -4,11 +4,30 @@ info:
   version: 0.1.0
   description: |
     The HTTP API served by the `memloom serve` daemon on your machine. The CLI, the MCP server,
-    and the viewer all route through this API. The daemon is the single owner of the store, so
-    every client shares one consistent view of your memories.
+    and the viewer all route through this API, so every client shares one consistent view of
+    your memories.
+
+    ## Owners
+
+    One daemon can serve more than one owner. Every owner-scoped endpoint, reads as well as
+    writes, acts for the owner named by the `X-Memloom-Owner` request header: a uuid, sent on
+    every request by a client bound to that owner. A request without the header gets the
+    daemon's own default owner (`MEMLOOM_OWNER_ID` in its environment, or the sentinel owner
+    when that is unset), which is what a single-owner install has always used and what the
+    browser-based Console gets. `GET /health` reports that default.
+
+    A malformed header is refused with 400 rather than coerced. The three endpoints that also
+    accept an `ownerId` in their body (`/memory/save`, `/context/add`, `/context/url`) refuse a
+    body value that disagrees with the header, rather than silently preferring one.
+
+    Store-wide endpoints carry no owner: the speech-model catalog, reconcile settings, the
+    connector scopes, the ingest queue, and `/health`.
 
     No authentication: the daemon binds to `127.0.0.1` only and is reachable solely from your
-    own machine. Browser clients on other localhost ports are allowed via CORS.
+    own machine. Browser clients on other localhost ports are allowed via CORS. The owner header
+    is therefore a separation mechanism, not an authentication one: any process on your machine
+    can name any owner. It keeps two agents or two people out of each other's memories; it is
+    not a boundary between untrusted users.
 servers:
   - url: http://127.0.0.1:4319
     description: Local memloom daemon
@@ -29,6 +48,12 @@ paths:
                   ok:
                     type: boolean
                     example: true
+                  owner:
+                    type: string
+                    format: uuid
+                    description: |
+                      The owner a request that sends no `X-Memloom-Owner` header acts for.
+                    example: 00000000-0000-0000-0000-000000000000
   /memory/save:
     post:
       summary: Save a memory
@@ -1376,6 +1401,8 @@ paths:
       responses:
         "400":
           $ref: "#/components/responses/ValidationError"
+        "404":
+          $ref: "#/components/responses/NoSuchConflict"
         "200":
           description: Resolution applied.
           content:
@@ -1398,6 +1425,8 @@ paths:
           schema:
             type: string
       responses:
+        "404":
+          $ref: "#/components/responses/NoSuchConflict"
         "200":
           description: Resolution reverted.
           content:
@@ -2609,7 +2638,34 @@ paths:
                     type: boolean
                     example: true
 components:
+  parameters:
+    OwnerHeader:
+      name: X-Memloom-Owner
+      in: header
+      required: false
+      description: |
+        The owner this request acts for. Applies to every owner-scoped endpoint, reads as well
+        as writes. Omit it and the daemon's own default owner answers (see `GET /health`), which
+        is what a single-owner install has always used. A value that is not a uuid is refused
+        with 400 rather than coerced.
+      schema:
+        type: string
+        format: uuid
+      example: 11111111-1111-4111-8111-111111111111
   responses:
+    NoSuchConflict:
+      description: |
+        No conflict with that id belongs to this owner. Deliberately the same answer whether the
+        conflict is another owner's or does not exist at all: which of the two it is, is itself
+        another owner's business.
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error:
+                type: string
+                example: "memloom: no conflict 8b1f0c0e-4f2a-4f1b-9a6e-2f0a1c7d3b55"
     StoreLocked:
       description: |
         The store is held by a connected Postgres wire client (Drizzle Studio, psql). PGLite is

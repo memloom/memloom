@@ -1,0 +1,244 @@
+---
+title: "Memory per person"
+description: "One store, many owners: binding an owner id so a chatbot remembers each user separately"
+icon: "users"
+---
+
+## Two shapes of store
+
+memloom's default shape is one human and one store. Every engine method takes an optional
+`ownerId` and falls back to a fixed sentinel, so nothing has to be passed and nothing can be
+mismatched.
+
+A host app that serves many people is the other shape. A chatbot, a team server, anything where
+"whose memory is this" has more than one answer. Same store, same schema, an owner id per user.
+
+| Shape | Who calls | Owner |
+| --- | --- | --- |
+| **Single owner** (default) | CLI, daemon, your own scripts | Sentinel, implicit |
+| **Many owners** | Your app, keyed by its auth user id | One uuid per user, bound |
+
+***
+
+## Bind the owner, do not pass it
+
+Because `ownerId` defaults, a forgotten argument in a multi-tenant host is not a type error and
+not a runtime error. It reads and writes the shared sentinel account, so one user's memories
+surface in another user's session, silently. Every call still compiles. Every test still passes.
+
+So a host does not call the engine directly. It calls `forOwner()` once per request and works
+through the handle, where the owner is already bound and there is no argument left to forget.
+
+```ts
+import { Memloom } from "@memloom/core";
+
+const memloom = new Memloom({ storage, embedding, llm });
+await memloom.init();
+
+// Once per request, from your own session or JWT.
+const mem = memloom.forOwner(session.userId);
+
+await mem.save({ content: "prefers short answers" });
+const hits = await mem.recall("how do they like their answers?");
+```
+
+`forOwner()` requires a uuid, and rejects the sentinel owner specifically. In a host the sentinel
+is never a real tenant. It is what an unset user id looks like, arriving as everyone's shared
+account, so it fails loudly instead:
+
+```ts
+memloom.forOwner(undefined);       // throws: needs a uuid owner id
+memloom.forOwner("user_42");       // throws: needs a uuid owner id
+memloom.forOwner(SENTINEL_OWNER);  // throws: that is what a missing user id looks like
+```
+
+If your auth system issues something other than uuids, map it once at the edge (a v5 uuid derived
+from your user id works well) and keep the mapping. Do not reach past the handle.
+
+***
+
+## What the handle covers
+
+A deliberate subset of the engine: the per-user operations a host app runs on behalf of one
+person.
+
+| Area | Methods |
+| --- | --- |
+| Memories | `save`, `recall`, `memories`, `update`, `history`, `passage`, `deleteMemory` |
+| Conflicts | `conflicts`, `entityConflicts`, `resolveConflict` |
+| Entities | `graph`, `listEntities`, `relatedEntities` |
+| Context | `contextAdd`, `contextList`, `contextRemove` |
+| Indexing | `index` |
+| Account | `erase` |
+
+Store-wide machinery stays on the engine: migrations, reconcile settings, embedding
+fingerprints, and the import and sync connectors. Those belong to whoever operates the store,
+not to any one tenant.
+
+`resolveConflict()` is the one place the handle does real work rather than forwarding. The engine
+method reads the owner off the conflict row and acts on whoever that turns out to be, which is
+correct for a single-owner store and a cross-tenant write for anybody else. The handle checks
+ownership first, and answers an id belonging to someone else exactly as it answers an id that
+does not exist. Which of the two it is, is itself another tenant's business.
+
+***
+
+## Deleting an account
+
+`erase()` removes one tenant completely: every row that owner has in every table, in one
+transaction. Where `deleteMemory()` removes one belief, this removes the person.
+
+```ts
+const { rows, tables } = await memloom.forOwner(userId).erase();
+// { rows: 412, tables: { context_chunks: 380, memory_objects: 31, ... } }
+```
+
+The table list is discovered from the catalog rather than written down, so a table added later is
+covered the day it exists. Per-table counts are diagnostics, not a contract: cascades mean a child
+row can already be gone by the time its own table's delete runs.
+
+<Warning>
+  `erase()` covers Postgres rows only. Uploads, recordings, and transcripts that the daemon wrote
+  to disk are the host's to remove, because core does not know where they live. If your app
+  accepts file uploads, delete them in the same request.
+</Warning>
+
+***
+
+## Sizing the connection pool
+
+`PgAdapter.connect()` defaults to a pool of 10, which suits a daemon that owns its database. A
+serverless host is the opposite shape: every warm container holds its own pool against one shared
+connection limit, so a handful of containers at 10 each exhausts it.
+
+```ts
+// One or two per container, and let the platform's pooler multiplex.
+const storage = await PgAdapter.connect(process.env.DATABASE_URL, { max: 2 });
+```
+
+Point it at your platform's transaction pooler rather than the direct database port.
+
+***
+
+## The daemon, MCP and the CLI
+
+The daemon carries an owner too, so an agent and a person on one machine need not share
+memories. One client is bound to one owner, sent as the `X-Memloom-Owner` header on every
+request, and every owner-scoped route reads it. Reads as well as writes: writing per user and
+reading shared is worse than not separating at all, because it looks separated.
+
+Surfaces take the owner from their environment, never from a flag or a tool argument. Which
+person a surface acts for is a property of how it was launched, not of what it was asked to do,
+and a model calling a tool must never be the thing that chooses whose memories to read.
+
+```bash
+export MEMLOOM_OWNER_ID=11111111-1111-4111-8111-111111111111
+memloom recall "how do they like their answers?"
+```
+
+For MCP, put it in the registration block your client already has:
+
+```json
+{
+  "command": "node",
+  "args": ["<path>/dist/bin.js"],
+  "env": {
+    "OPENROUTER_API_KEY": "sk-or-...",
+    "MEMLOOM_OWNER_ID": "11111111-1111-4111-8111-111111111111"
+  }
+}
+```
+
+Leave it unset and everything shares the daemon's default owner, exactly as it always has. A
+malformed value is refused rather than ignored, at both ends: falling back to the shared owner
+because of a typo is how one person's memories reach everybody's session.
+
+`MEMLOOM_OWNER_ID` is deliberately not a `config.env` setting. That file configures the daemon,
+which serves every owner; this names which owner one client process is, so it belongs to that
+process's environment.
+
+### The Console follows the daemon
+
+The Console is a browser page served by the daemon, so it cannot send a header of its own. It
+gets the daemon's default owner, which the daemon reads from `MEMLOOM_OWNER_ID` in its own
+environment: the shell that ran `memloom serve`, or the CLI or MCP process that auto-started it.
+Export the variable in your shell profile and everything agrees.
+
+That default is fixed when the daemon starts. If you set or change `MEMLOOM_OWNER_ID` while a
+daemon is already running, restart it:
+
+```bash
+memloom stop   # the next command starts it again with the new environment
+```
+
+`GET /health` reports the default owner, so "which memories is the Console showing" is a
+question with an answer rather than a guess from an empty list.
+
+<Warning>
+  The daemon is a separation mechanism, not an authentication one. It binds loopback and asks
+  for no credentials, so any local process can name any owner in that header. It keeps two
+  agents or two people on one machine out of each other's memories. It is not a boundary
+  between untrusted users: that tier embeds `@memloom/core` and calls `forOwner()` in its own
+  process, where the owner comes from your session and never from the caller.
+</Warning>
+
+Background work follows the owner too. The reconcile scheduler runs its passes for every owner
+in the store rather than only the default one, and the file watcher runs one instance per owner,
+against that owner's linked folders. A store whose memories are saved per person but maintained
+for only one of them looks fine for weeks and then does not.
+
+***
+
+## Isolation, and what is actually guaranteed
+
+Owner scoping is enforced in SQL, on every read and every write, not in a wrapper you can step
+around. What that buys, stated plainly:
+
+- Recall, listing, and the graph never cross owners. The sentinel owner is a third tenant, not a
+  superuser view.
+- Byte-identical content saved by two owners produces two memories. The content-hash
+  short-circuit and the dedup candidate query are both owner-scoped, so one user's belief is
+  never merged into another's.
+- Reading, versioning, or deleting a memory through the wrong owner fails with the same error the
+  id would raise if it did not exist. There is no existence leak.
+- Resolving a conflict names the owner, so an id belonging to someone else is refused instead of
+  acted on. Without that argument the engine reads the owner off the conflict row and acts on
+  whoever that turns out to be, which is right for one person and a cross-tenant write for
+  anybody else.
+
+These are covered by `owner-isolation.test.ts`, which runs against both PGLite and real Postgres,
+and by `owner-http.test.ts`, which runs the same questions through the daemon.
+
+What it does not buy: memloom has no notion of who your users are. Authentication, authorization,
+and deciding which uuid belongs to the request in front of you are yours.
+
+***
+
+## The rule behind all of it: the two mistakes cost differently
+
+Deciding which owner a request belongs to means you can be wrong two ways, and they are not
+symmetric.
+
+**Failing to unify** is the loud, cheap one. A returning person is treated as new, so they restate
+what they already told you and conclude the memory feature does not work. Annoying, recoverable,
+and visible immediately.
+
+**Wrongly merging** is the expensive one. Two people collapse onto one owner and one person's
+private context surfaces inside another person's session. Preferences are the harmless end of
+that. The other end is a health detail, a salary, or a relationship the graph inferred from one
+person's memories and then served to someone else. That is not a papercut, it is a leak.
+
+So the bar for treating two things as the same owner is high, and ambiguity holds rather than
+merges. This is the reason behind decisions that otherwise look unhelpful:
+
+- A conflict belonging to another owner answers exactly as one that does not exist. Telling the
+  caller which of the two it is would confirm the existence of somebody else's data.
+- A malformed owner id is refused rather than coerced to the default, at both the client and the
+  daemon. Falling back to a shared owner because of a typo is a merge nobody chose.
+- `forOwner()` rejects the sentinel. In a host it is never a real person; it is what an unset user
+  id looks like, and accepting it merges every caller who forgot one.
+
+If you build identity resolution above memloom, keep this asymmetry. Let deterministic signals (a
+verified email, an authenticated SSO subject) link on their own, make weak ones (a shared device,
+a name) accumulate toward a threshold, and hold whatever lands in between for review rather than
+merging it. An eager resolver optimises the cheap failure and walks into the expensive one.

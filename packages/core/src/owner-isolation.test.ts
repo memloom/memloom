@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   HashingEmbeddingProvider,
   NullLLMProvider,
@@ -307,6 +307,55 @@ for (const factory of factories) {
               expect(String(err)).not.toMatch(/no conflict/);
             },
           );
+      });
+    });
+
+    // Auto-index is debounced on one engine-wide timer. With a single owner that is just a
+    // burst collapsing into one run; with two, the newer write cancelled the older owner's
+    // run and nothing rescheduled it, so that owner's memories were never indexed at all —
+    // no entities, no graph, weaker recall, and nothing anywhere saying so.
+    describe("auto-index across owners", () => {
+      it("indexes every owner that wrote, not just the last one", async () => {
+        await truncateAll(storage);
+        const m = new Memloom({
+          storage,
+          embedding: new HashingEmbeddingProvider(1024),
+          llm: new ScriptedLLMProvider(() => JSON.stringify([])),
+          autoIndex: true,
+          autoIndexDelayMs: 20,
+        });
+        await m.init();
+
+        await m.save({ content: "Anna reads tarot on Sunday evenings", ownerId: OWNER_A });
+        await m.save({ content: "Boris asks about his career", ownerId: OWNER_B });
+
+        await vi.waitFor(
+          async () => {
+            expect((await m.listIndexRuns(OWNER_A)).length).toBeGreaterThan(0);
+            expect((await m.listIndexRuns(OWNER_B)).length).toBeGreaterThan(0);
+          },
+          { timeout: 10_000, interval: 50 },
+        );
+      });
+
+      it("drops a queued run for an owner that was erased", async () => {
+        await truncateAll(storage);
+        const m = new Memloom({
+          storage,
+          embedding: new HashingEmbeddingProvider(1024),
+          llm: new ScriptedLLMProvider(() => JSON.stringify([])),
+          // Long enough that the queued run is still waiting when the erase lands.
+          autoIndexDelayMs: 10_000,
+          autoIndex: true,
+        });
+        await m.init();
+
+        await m.save({ content: "Anna reads tarot on Sunday evenings", ownerId: OWNER_A });
+        await m.deleteOwner(OWNER_A);
+
+        // Nothing queued brings the tenant back after they asked to be gone.
+        expect(await m.listIndexRuns(OWNER_A)).toEqual([]);
+        expect(await m.memories(OWNER_A)).toEqual([]);
       });
     });
   });
