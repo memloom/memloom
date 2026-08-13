@@ -70,6 +70,8 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/SaveInput"
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The save decision.
@@ -105,6 +107,8 @@ paths:
                   type: integer
                   description: Maximum results (default 10).
                   example: 5
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "400":
           $ref: "#/components/responses/ValidationError"
@@ -128,6 +132,8 @@ paths:
         Every active memory, newest first. Use this to browse the store; use /memory/query
         for relevance-ranked recall. Stale (superseded) memories are excluded.
       operationId: listMemories
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The active memories.
@@ -149,6 +155,7 @@ paths:
         active belief; the edited version goes stale and stays visible in `history`.
       operationId: updateMemory
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -197,6 +204,7 @@ paths:
         in the chain works as `id`.
       operationId: getMemoryHistory
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -222,6 +230,7 @@ paths:
         it. Unlike a resolution's `stale`, this is permanent; there is no revert.
       operationId: deleteMemory
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -251,6 +260,7 @@ paths:
         assistant's citation links call to fetch the rest.
       operationId: getPassage
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -283,6 +293,8 @@ paths:
           application/json:
             schema:
               type: object
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: How many memories and context chunks were indexed in this run.
@@ -314,6 +326,8 @@ paths:
           application/json:
             schema:
               type: object
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: NDJSON progress stream ending with a done (or error) event.
@@ -339,6 +353,8 @@ paths:
           application/json:
             schema:
               type: object
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: How many memories and context chunks were re-indexed.
@@ -364,6 +380,8 @@ paths:
           application/json:
             schema:
               type: object
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: NDJSON progress stream ending with a done (or error) event.
@@ -380,6 +398,8 @@ paths:
         failures, and entity/relation totals. Newest first. The viewer's Console polls this
         while a run is live; history survives restarts and includes CLI runs.
       operationId: listIndexRuns
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: Runs, newest first.
@@ -409,6 +429,8 @@ paths:
     delete:
       summary: Clear the whole indexing history
       operationId: clearIndexRuns
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: All runs and their events deleted.
@@ -417,6 +439,7 @@ paths:
       summary: The per-item log lines of one run
       operationId: getIndexRunEvents
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -447,6 +470,7 @@ paths:
       summary: Delete one run session (its events cascade)
       operationId: deleteIndexRun
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -495,6 +519,8 @@ paths:
                 force:
                   type: boolean
                   description: Ignore the ledger and reprocess every discovered session from the start.
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "400":
           $ref: "#/components/responses/ValidationError"
@@ -526,6 +552,8 @@ paths:
         Whether a token is configured, the current selection, the last sync time and error,
         whether a sync is running, and how many notion:// documents exist.
       operationId: notionStatus
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The connector status.
@@ -578,6 +606,8 @@ paths:
                 wait:
                   type: boolean
                   description: If a sync is already running, queue behind it instead of failing.
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "400":
           $ref: "#/components/responses/ValidationError"
@@ -616,6 +646,8 @@ paths:
                 force:
                   type: boolean
                   description: Re-import everything, ignoring the content-hash ledger.
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "400":
           $ref: "#/components/responses/ValidationError"
@@ -673,6 +705,8 @@ paths:
         distillation spend against the daily cap, and ledger totals across every import so
         far (sessions and memories, regardless of trigger).
       operationId: importClaudeCodeStatus
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: Capture status.
@@ -734,6 +768,8 @@ paths:
         relations from the engine, and the LLM proposal review queue (names the extractor
         wanted, with occurrence counts).
       operationId: getSchema
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: Entity types, relations, predicates with counts, and pending proposals.
@@ -803,6 +839,8 @@ paths:
                 description:
                   type: string
                   example: a named drug or supplement
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The created (or re-activated) entry.
@@ -821,6 +859,7 @@ paths:
         approve/dismiss lifecycle).
       operationId: setSchemaStatus
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -858,6 +897,7 @@ paths:
         stay in the graph.
       operationId: deleteSchemaEntry
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -882,6 +922,7 @@ paths:
       description: Promote a proposed name to the user tier and link its saved occurrences into the graph immediately (no re-index needed). The extractor also starts using the name on the next index run.
       operationId: approveProposal
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -902,6 +943,7 @@ paths:
       description: Reject a proposed name. The prompt blocklists it, so the extractor never proposes it again.
       operationId: dismissProposal
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -971,6 +1013,8 @@ paths:
         distinct documents that mention it. Most-mentioned first. Use this list to manage
         entities; /memory/graph shows the same data as a graph.
       operationId: listEntities
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The entities.
@@ -996,6 +1040,7 @@ paths:
         same sources, which is weaker and never outranks a stated link.
       operationId: relatedEntities
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: q
           in: query
           required: true
@@ -1047,6 +1092,8 @@ paths:
                   type: boolean
                   default: false
                   description: Report the plan without changing anything.
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: What the pass did.
@@ -1066,6 +1113,8 @@ paths:
         These never appear in GET /memory/conflicts, which is scoped to memory
         contradictions.
       operationId: listEntityConflicts
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The pending folds.
@@ -1085,6 +1134,8 @@ paths:
         Pairs a human or a model decided are not the same thing. Recorded so the resolver never
         raises them again. Reverting one puts the question back in the queue.
       operationId: listSettledEntityPairs
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The settled pairs.
@@ -1108,6 +1159,8 @@ paths:
         This is the same work the `llm_entities` reconcile pass does. Refused with 403 when
         `RECONCILE_ENABLED=0`, because it spends money.
       operationId: autoResolveEntities
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: What the model settled.
@@ -1146,6 +1199,8 @@ paths:
         `{"type":"done"}` carrying the totals. A mid-stream failure arrives as
         `{"type":"error"}`, since the response has already started.
       operationId: autoResolveEntitiesStream
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: NDJSON, one JSON object per line.
@@ -1171,6 +1226,8 @@ paths:
         says what applied it: `auto` for a deterministic spelling match, `human` for a fold
         you applied, `llm` for a future arbitration tier.
       operationId: listEntityMerges
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The folds.
@@ -1193,6 +1250,7 @@ paths:
         still point at it.
       operationId: revertEntityMerge
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -1221,6 +1279,7 @@ paths:
         A retype must name an active vocabulary type.
       operationId: updateEntity
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -1266,6 +1325,7 @@ paths:
         Revert the fold first.
       operationId: deleteEntity
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -1295,6 +1355,7 @@ paths:
         like a nickname and a full name.
       operationId: mergeEntity
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -1334,6 +1395,8 @@ paths:
         the edges between them. Chunk-level mention edges are rolled up to one weighted
         document -> entity edge, so documents stay single nodes.
       operationId: getGraph
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The graph.
@@ -1346,6 +1409,8 @@ paths:
       summary: List pending conflicts
       description: Contradictions the belief pipeline flagged that you have not resolved yet. Both sides stay active until you decide.
       operationId: listConflicts
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: Pending conflicts.
@@ -1365,6 +1430,8 @@ paths:
         The revertable history behind the pending queue, newest resolution first. Each entry
         carries the action that resolved it and can be undone via the revert endpoint.
       operationId: listResolvedConflicts
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: Resolved conflicts.
@@ -1386,6 +1453,7 @@ paths:
         in the store.
       operationId: resolveConflict
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -1419,6 +1487,7 @@ paths:
       description: Undo a previous resolution. Staled memories come back to active and the conflict returns to the pending list.
       operationId: revertConflict
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -1454,6 +1523,8 @@ paths:
           application/json:
             schema:
               type: object
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: NDJSON progress stream ending with a done (or error) event.
@@ -1487,6 +1558,8 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ReconcileInput"
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "400":
           $ref: "#/components/responses/ValidationError"
@@ -1536,6 +1609,8 @@ paths:
           application/json:
             schema:
               $ref: "#/components/schemas/ReconcileInput"
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "400":
           $ref: "#/components/responses/ValidationError"
@@ -1568,6 +1643,7 @@ paths:
         counters move.
       operationId: listReconcileRuns
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: limit
           in: query
           required: false
@@ -1595,6 +1671,7 @@ paths:
         ledger.
       operationId: listReconcileActions
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -1662,6 +1739,7 @@ paths:
         is a no-op.
       operationId: revertReconcile
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -1719,6 +1797,7 @@ paths:
         nothing beyond the calls already paid for.
       operationId: stopReconcile
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -1746,6 +1825,8 @@ paths:
         row was written, so it can be judged without opening either memory. A finding whose
         two memories are no longer both active drops out of this list.
       operationId: listPossibleContradictions
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: Unconfirmed contradictions.
@@ -1767,6 +1848,7 @@ paths:
         raised again.
       operationId: answerPossibleContradiction
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -1834,6 +1916,8 @@ paths:
                   type: string
                   description: Absolute path to a .md, .txt, or .pdf file on this machine.
                   example: C:\Users\me\notes\setup.md
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "400":
           $ref: "#/components/responses/ValidationError"
@@ -1943,6 +2027,8 @@ paths:
     get:
       summary: List context documents
       operationId: listContextDocuments
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: Ingested documents, most recently updated first.
@@ -1995,6 +2081,7 @@ paths:
         is the drill-down the viewer fetches when a document node is expanded.
       operationId: getDocumentChunks
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -2051,6 +2138,7 @@ paths:
         path to open.
       operationId: openContextDocument
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -2098,6 +2186,8 @@ paths:
                 contentBase64:
                   type: string
                   description: The file bytes, base64-encoded.
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The ingest outcome (same shape as /context/add for one file).
@@ -2120,6 +2210,7 @@ paths:
       description: Deletes the document and all of its chunks (cascade). The source file on disk is untouched.
       operationId: removeContextDocument
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -2148,6 +2239,7 @@ paths:
         attachments and web pages have no path to watch.
       operationId: watchContextDocument
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -2201,6 +2293,8 @@ paths:
                 path:
                   type: string
                   description: Absolute path of a folder on the machine running memloom.
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: On the watch list.
@@ -2228,6 +2322,8 @@ paths:
         "Nothing is watched" and "watching is off" are different answers, and a client that
         cannot tell them apart will report the wrong one.
       operationId: listContextRoots
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: Linked folders, newest first.
@@ -2283,6 +2379,7 @@ paths:
         the folder on the next pass, so anything that changed while it was off is picked up.
       operationId: watchContextRoot
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -2318,6 +2415,7 @@ paths:
         DELETE /context/documents/{id}, one at a time and deliberately.
       operationId: removeContextRoot
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -2368,6 +2466,8 @@ paths:
                   type: string
                   description: Per-turn OpenRouter model override (see /assistant/models).
                   example: anthropic/claude-sonnet-5
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The SSE event stream for this turn.
@@ -2419,6 +2519,8 @@ paths:
       summary: List chat sessions
       description: Starred first, then most recently active.
       operationId: assistantSessions
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The sessions.
@@ -2435,6 +2537,8 @@ paths:
       summary: Delete all chat sessions
       description: Removes every session, its messages, and its attachments.
       operationId: clearAssistantSessions
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: Cleared.
@@ -2452,6 +2556,7 @@ paths:
         over message content. Each hit carries the best-matching snippet.
       operationId: searchAssistantSessions
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: q
           in: query
           required: true
@@ -2478,6 +2583,7 @@ paths:
       summary: Rename or star a session
       operationId: patchAssistantSession
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -2506,6 +2612,7 @@ paths:
       description: Removes the session, its messages, and its attached files.
       operationId: deleteAssistantSession
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -2526,6 +2633,7 @@ paths:
       description: Oldest first. Assistant messages carry the sources their answer cited.
       operationId: assistantMessages
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -2548,6 +2656,7 @@ paths:
       summary: A session's attached files
       operationId: sessionAttachments
       parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
         - name: id
           in: path
           required: true
@@ -2597,6 +2706,8 @@ paths:
                   type: string
                   format: uuid
                   description: The chat to attach to; omit to create one.
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
       responses:
         "200":
           description: The ingest outcome plus the session it landed in.
