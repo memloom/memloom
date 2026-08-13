@@ -33,9 +33,16 @@ OPENROUTER_API_KEY=sk-or-...        # the one switch: with it, cloud mode. Witho
 | `RECONCILE_ENABLED` | unset | Set to `0` to keep the reports and refuse the repairs |
 | `MEMLOOM_SYNC` | `on` | Set to `off` to stop [watching linked files](/guides/file-sync) |
 | `MEMLOOM_PG_URL` | unset | Run on a real Postgres instead of the embedded store |
+| `MEMLOOM_OWNER_ID` | unset | Which person a process acts for. Environment only, not this file |
 
 The full annotated list, including transcription and diarization, lives in
 `config.env.example` in the repo and in the file `memloom init` writes.
+
+`MEMLOOM_OWNER_ID` is the one exception to everything above: it is read from a process's own
+environment and never from `config.env`. That file configures the daemon, which serves every
+owner, while this names which owner one client process is, so it belongs to the shell profile or
+MCP registration that launched it. Unset means the daemon's default owner, which is what a
+single-owner install has always used. See [memory per person](/guides/memory-per-person).
 
 <Accordion title="Notes on three of them" icon="circle-info">
   **`MEMLOOM_AUTO_INDEX`** covers the indexing that runs a few seconds after a save or ingest, one
