@@ -127,9 +127,16 @@ async function postJson(url: string, apiKey: string, body: unknown, what: string
   }
 }
 
-/** Upstream capacity language, as opposed to "your prompt was rejected". */
+/**
+ * Upstream capacity language, as opposed to "your prompt was rejected". Capacity words only:
+ * a bare "try again" or "retry" also appears in refusals that will never succeed ("try again
+ * with a different prompt"), and matching those buys four attempts and several seconds of
+ * backoff on a request whose answer is already final.
+ */
 function isTransient(message: string | undefined): boolean {
-  return /rate.?limit|temporarily|overloaded|try again|retry/i.test(message ?? "");
+  return /rate.?limit|temporarily|overloaded|capacity|too many requests|try again (in|later|shortly)/i.test(
+    message ?? "",
+  );
 }
 
 /**
@@ -143,7 +150,7 @@ function malformed(what: string, model: string, json: unknown): Error {
   const upstream = (json as { error?: { message?: string } } | null)?.error?.message;
   return new Error(
     `OpenRouter ${what} returned no result for "${model}"` +
-      (upstream ? `: ${upstream}` : ` (body: ${JSON.stringify(json).slice(0, 200)})`)
+      (upstream ? `: ${upstream}` : ` (body: ${JSON.stringify(json).slice(0, 200)})`),
   );
 }
 

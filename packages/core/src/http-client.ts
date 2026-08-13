@@ -65,19 +65,57 @@ export type FetchLike = (
   init?: { method?: string; headers?: Record<string, string>; body?: string },
 ) => Promise<HttpResponse>;
 
-// A MemoryEngine backed by a running `memloom serve` over HTTP. Same shape as the local engine,
-// so surfaces route through the single owner instead of opening the store themselves.
+/** The header that carries the owner from a client to the daemon. */
+export const OWNER_HEADER = "x-memloom-owner";
+
+// A MemoryEngine backed by a running `memloom serve` over HTTP. Same shape as the local engine.
+//
+// One client is bound to one owner, set once at construction and sent as a header on every
+// request. Not per call: the engine contract lets an ownerId be passed to almost every method,
+// and threading that across a wire meant either 100 body fields or 100 chances to forget one.
+// A surface (the CLI, the MCP server) is one person for its whole life anyway.
+//
+// Omit the owner and the daemon falls back to the sentinel, which is what every single-owner
+// install has always been. Nothing about an existing store changes.
 export class HttpMemloomClient implements MemoryEngine {
   readonly #baseUrl: string;
   readonly #fetch: FetchLike;
+  /** The owner every request from this client carries, or undefined for the daemon default. */
+  readonly ownerId: string | undefined;
 
-  constructor(baseUrl: string, fetchImpl?: FetchLike) {
+  constructor(baseUrl: string, fetchImpl?: FetchLike, ownerId?: string) {
     this.#baseUrl = baseUrl.replace(/\/+$/, "");
     this.#fetch = fetchImpl ?? (globalThis as unknown as { fetch: FetchLike }).fetch;
+    this.ownerId = ownerId;
+  }
+
+  /**
+   * The single fetch choke point, so the owner header cannot be forgotten at one call site.
+   * Every request in this class goes through here.
+   */
+  #req(path: string, init?: Parameters<FetchLike>[1]): Promise<HttpResponse> {
+    const headers = { ...init?.headers };
+    if (this.ownerId !== undefined) headers[OWNER_HEADER] = this.ownerId;
+    return this.#fetch(`${this.#baseUrl}${path}`, { ...init, headers });
+  }
+
+  /**
+   * Guard the per-call ownerId the engine contract carries. This client is already bound, so a
+   * caller naming a DIFFERENT owner is asking for something the connection cannot do. Silently
+   * serving them the bound owner's memories instead is the exact failure this design exists to
+   * remove, so it fails loudly. Undefined means "whoever this client is", which is the norm.
+   */
+  #owned(ownerId: string | undefined): void {
+    if (ownerId !== undefined && ownerId !== this.ownerId) {
+      throw new Error(
+        `memloom: this connection is bound to owner ${this.ownerId ?? "(daemon default)"}, ` +
+          `so it cannot act for ${ownerId}. Open a client for that owner instead.`,
+      );
+    }
   }
 
   async #json<T>(path: string, init?: Parameters<FetchLike>[1]): Promise<T> {
-    const res = await this.#fetch(`${this.#baseUrl}${path}`, init);
+    const res = await this.#req(path, init);
     if (!res.ok) throw new Error(`memloom server ${res.status}: ${await res.text()}`);
     return (await res.json()) as T;
   }
@@ -91,15 +129,21 @@ export class HttpMemloomClient implements MemoryEngine {
   }
 
   save(input: SaveInput): Promise<SaveResult> {
-    return this.#post<SaveResult>("/memory/save", input);
+    this.#owned(input.ownerId);
+    // The owner rides the header, not the body. Sending both would let a stale body field
+    // disagree with the connection, and the daemon rejects that rather than guess.
+    const { ownerId: _owner, ...body } = input;
+    return this.#post<SaveResult>("/memory/save", body);
   }
 
-  async memories(): Promise<Memory[]> {
+  async memories(ownerId?: string): Promise<Memory[]> {
+    this.#owned(ownerId);
     const { memories } = await this.#json<{ memories: Memory[] }>("/memory/list");
     return memories;
   }
 
   async recall(query: string, opts?: RecallOptions): Promise<Memory[]> {
+    this.#owned(opts?.ownerId);
     const { memories } = await this.#post<{ memories: Memory[] }>("/memory/query", {
       query,
       limit: opts?.limit,
@@ -114,17 +158,20 @@ export class HttpMemloomClient implements MemoryEngine {
     });
   }
 
-  async history(memoryId: string): Promise<Memory[]> {
+  async history(memoryId: string, ownerId?: string): Promise<Memory[]> {
+    this.#owned(ownerId);
     const { versions } = await this.#json<{ versions: Memory[] }>(`/memory/${memoryId}/history`);
     return versions;
   }
 
-  async deleteMemory(memoryId: string): Promise<void> {
+  async deleteMemory(memoryId: string, ownerId?: string): Promise<void> {
+    this.#owned(ownerId);
     await this.#json(`/memory/${memoryId}`, { method: "DELETE" });
   }
 
-  async passage(id: string): Promise<string | null> {
-    const res = await this.#fetch(`${this.#baseUrl}/memory/passage/${id}`);
+  async passage(id: string, ownerId?: string): Promise<string | null> {
+    this.#owned(ownerId);
+    const res = await this.#req(`/memory/passage/${id}`);
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`memloom server ${res.status}: ${await res.text()}`);
     const { content } = (await res.json()) as { content: string };
@@ -133,12 +180,13 @@ export class HttpMemloomClient implements MemoryEngine {
 
   async relatedEntities(
     target: string,
-    opts: { entityType?: string; limit?: number } = {},
+    opts: { ownerId?: string; entityType?: string; limit?: number } = {},
   ): Promise<RelatedEntities | null> {
+    this.#owned(opts.ownerId);
     const params = new URLSearchParams({ q: target });
     if (opts.entityType) params.set("type", opts.entityType);
     if (opts.limit != null) params.set("limit", String(opts.limit));
-    const res = await this.#fetch(`${this.#baseUrl}/memory/entities/related?${params}`);
+    const res = await this.#req(`/memory/entities/related?${params}`);
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`memloom server ${res.status}: ${await res.text()}`);
     return (await res.json()) as RelatedEntities;
@@ -221,7 +269,8 @@ export class HttpMemloomClient implements MemoryEngine {
     return this.#json<NotionStatus>("/notion/status");
   }
 
-  index(_ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult> {
+  index(ownerId?: string, onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult> {
+    this.#owned(ownerId);
     if (!onProgress) return this.#post<IndexResult>("/memory/index", {});
     return this.#streamNdjson<IndexProgressEvent, IndexResult>(
       "/memory/index/stream",
@@ -231,9 +280,10 @@ export class HttpMemloomClient implements MemoryEngine {
   }
 
   reindex(
-    _ownerId?: string,
+    ownerId?: string,
     onProgress?: (event: IndexProgressEvent) => void,
   ): Promise<IndexResult> {
+    this.#owned(ownerId);
     if (!onProgress) return this.#post<IndexResult>("/memory/reindex", {});
     return this.#streamNdjson<IndexProgressEvent, IndexResult>(
       "/memory/reindex/stream",
@@ -249,7 +299,7 @@ export class HttpMemloomClient implements MemoryEngine {
     body: unknown,
     onItem?: (event: TItem) => void,
   ): Promise<TDone> {
-    const res = await this.#fetch(`${this.#baseUrl}${path}`, {
+    const res = await this.#req(path, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body ?? {}),
@@ -316,16 +366,19 @@ export class HttpMemloomClient implements MemoryEngine {
     return result;
   }
 
-  graph(): Promise<Graph> {
+  graph(ownerId?: string): Promise<Graph> {
+    this.#owned(ownerId);
     return this.#json<Graph>("/memory/graph");
   }
 
-  async conflicts(): Promise<Conflict[]> {
+  async conflicts(ownerId?: string): Promise<Conflict[]> {
+    this.#owned(ownerId);
     const { conflicts } = await this.#json<{ conflicts: Conflict[] }>("/memory/conflicts");
     return conflicts;
   }
 
-  async resolvedConflicts(): Promise<ResolvedConflict[]> {
+  async resolvedConflicts(ownerId?: string): Promise<ResolvedConflict[]> {
+    this.#owned(ownerId);
     const { conflicts } = await this.#json<{ conflicts: ResolvedConflict[] }>(
       "/memory/conflicts/resolved",
     );
@@ -337,9 +390,10 @@ export class HttpMemloomClient implements MemoryEngine {
   }
 
   autoResolveConflicts(
-    _ownerId?: string,
+    ownerId?: string,
     onProgress?: (event: ConflictAutoEvent) => void,
   ): Promise<ConflictAutoResult> {
+    this.#owned(ownerId);
     return this.#streamNdjson<ConflictAutoEvent, ConflictAutoResult>(
       "/memory/conflicts/resolve-auto/stream",
       {},
@@ -362,11 +416,13 @@ export class HttpMemloomClient implements MemoryEngine {
     });
   }
 
-  revertReconcile(runId: string): Promise<ReconcileRevertResult> {
+  revertReconcile(runId: string, ownerId?: string): Promise<ReconcileRevertResult> {
+    this.#owned(ownerId);
     return this.#post<ReconcileRevertResult>(`/memory/reconcile/${runId}/revert`, {});
   }
 
-  stopReconcile(runId: string): Promise<{ stopped: boolean }> {
+  stopReconcile(runId: string, ownerId?: string): Promise<{ stopped: boolean }> {
+    this.#owned(ownerId);
     return this.#post<{ stopped: boolean }>(`/memory/reconcile/${runId}/stop`, {});
   }
 
@@ -378,13 +434,15 @@ export class HttpMemloomClient implements MemoryEngine {
     return this.#post<ReconcileSettings>("/memory/reconcile/settings", patch);
   }
 
-  async reconcileRuns(_ownerId?: string, limit?: number): Promise<ReconcileRun[]> {
+  async reconcileRuns(ownerId?: string, limit?: number): Promise<ReconcileRun[]> {
+    this.#owned(ownerId);
     const query = limit ? `?limit=${limit}` : "";
     const { runs } = await this.#json<{ runs: ReconcileRun[] }>(`/memory/reconcile/runs${query}`);
     return runs;
   }
 
-  async reconcileActions(runId: string): Promise<ReconcileAction[]> {
+  async reconcileActions(runId: string, ownerId?: string): Promise<ReconcileAction[]> {
+    this.#owned(ownerId);
     const { actions } = await this.#json<{ actions: ReconcileAction[] }>(
       `/memory/reconcile/runs/${runId}/actions`,
     );
@@ -394,9 +452,10 @@ export class HttpMemloomClient implements MemoryEngine {
   // The route serves the daemon's own page size, so a limit here would only describe a cap the
   // wire does not carry.
   async possibleContradictions(
-    _ownerId?: string,
+    ownerId?: string,
     _limit?: number,
   ): Promise<PossibleContradiction[]> {
+    this.#owned(ownerId);
     const { possible } = await this.#json<{ possible: PossibleContradiction[] }>(
       "/memory/reconcile/possible",
     );
@@ -406,7 +465,9 @@ export class HttpMemloomClient implements MemoryEngine {
   answerPossible(
     actionId: string,
     decision: Extract<ReconcileDecision, "approved" | "rejected">,
+    ownerId?: string,
   ): Promise<PossibleAnswer> {
+    this.#owned(ownerId);
     return this.#post<PossibleAnswer>(`/memory/reconcile/possible/${actionId}/answer`, {
       decision,
     });
@@ -417,49 +478,60 @@ export class HttpMemloomClient implements MemoryEngine {
     onProgress?: (event: ContextProgressEvent) => void,
     _signal?: AbortSignal,
   ): Promise<ContextAddResult> {
+    this.#owned(input.ownerId);
+    const { ownerId: _owner, ...body } = input;
     // Without a callback this stays a plain request, so every non-media format keeps the
     // simpler path and the response shape it already had.
-    if (!onProgress) return this.#post<ContextAddResult>("/context/add", input);
+    if (!onProgress) return this.#post<ContextAddResult>("/context/add", body);
     return this.#streamNdjson<ContextProgressEvent, ContextAddResult>(
       "/context/add/stream",
-      input,
+      body,
       onProgress,
     );
   }
 
   contextAddUrl(input: ContextAddUrlInput): Promise<ContextAddResult> {
-    return this.#post<ContextAddResult>("/context/url", input);
+    this.#owned(input.ownerId);
+    const { ownerId: _owner, ...body } = input;
+    return this.#post<ContextAddResult>("/context/url", body);
   }
 
-  async contextList(): Promise<ContextDocument[]> {
+  async contextList(ownerId?: string): Promise<ContextDocument[]> {
+    this.#owned(ownerId);
     const { documents } = await this.#json<{ documents: ContextDocument[] }>("/context/documents");
     return documents;
   }
 
-  contextChunks(documentId: string): Promise<DocumentChunks> {
+  contextChunks(documentId: string, ownerId?: string): Promise<DocumentChunks> {
+    this.#owned(ownerId);
     return this.#json<DocumentChunks>(`/context/documents/${documentId}/chunks`);
   }
 
-  async contextRemove(documentId: string): Promise<void> {
+  async contextRemove(documentId: string, ownerId?: string): Promise<void> {
+    this.#owned(ownerId);
     await this.#json(`/context/documents/${documentId}`, { method: "DELETE" });
   }
 
-  contextRootAdd(path: string): Promise<ContextRoot> {
+  contextRootAdd(path: string, ownerId?: string): Promise<ContextRoot> {
+    this.#owned(ownerId);
     return this.#post<ContextRoot>("/context/roots", { path });
   }
 
-  async contextRoots(): Promise<ContextRoot[]> {
+  async contextRoots(ownerId?: string): Promise<ContextRoot[]> {
+    this.#owned(ownerId);
     const { roots } = await this.#json<{ roots: ContextRoot[] }>("/context/roots");
     return roots;
   }
 
   // The routes answer 404 when the id is not there and #json throws on that, so "did anything
   // change" comes back as a boolean here, matching what the engine returns in process.
-  async contextRootWatch(rootId: string, watching: boolean): Promise<boolean> {
+  async contextRootWatch(rootId: string, watching: boolean, ownerId?: string): Promise<boolean> {
+    this.#owned(ownerId);
     return await this.#ok(`/context/roots/${rootId}/watch`, { watching });
   }
 
-  async contextRootRemove(rootId: string): Promise<boolean> {
+  async contextRootRemove(rootId: string, ownerId?: string): Promise<boolean> {
+    this.#owned(ownerId);
     try {
       await this.#json(`/context/roots/${rootId}`, { method: "DELETE" });
       return true;
@@ -468,7 +540,8 @@ export class HttpMemloomClient implements MemoryEngine {
     }
   }
 
-  async contextWatch(documentId: string, watching: boolean): Promise<boolean> {
+  async contextWatch(documentId: string, watching: boolean, ownerId?: string): Promise<boolean> {
+    this.#owned(ownerId);
     return await this.#ok(`/context/documents/${documentId}/watch`, { watching });
   }
 
@@ -481,11 +554,17 @@ export class HttpMemloomClient implements MemoryEngine {
     }
   }
 
-  describeSchema(): Promise<SchemaInfo> {
+  describeSchema(ownerId?: string): Promise<SchemaInfo> {
+    this.#owned(ownerId);
     return this.#json<SchemaInfo>("/memory/schema");
   }
 
-  async setSchemaStatus(id: string, status: "active" | "disabled"): Promise<void> {
+  async setSchemaStatus(
+    id: string,
+    status: "active" | "disabled",
+    ownerId?: string,
+  ): Promise<void> {
+    this.#owned(ownerId);
     await this.#json(`/memory/schema/${id}`, {
       method: "PATCH",
       headers: { "content-type": "application/json" },
@@ -493,7 +572,8 @@ export class HttpMemloomClient implements MemoryEngine {
     });
   }
 
-  async deleteSchemaEntry(id: string): Promise<void> {
+  async deleteSchemaEntry(id: string, ownerId?: string): Promise<void> {
+    this.#owned(ownerId);
     await this.#json(`/memory/schema/${id}`, { method: "DELETE" });
   }
 

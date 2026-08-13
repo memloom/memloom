@@ -175,7 +175,7 @@ export {
   ScriptedLLMProvider,
 } from "./hashing-provider.js";
 export type { FetchLike, HttpResponse } from "./http-client.js";
-export { HttpMemloomClient } from "./http-client.js";
+export { HttpMemloomClient, OWNER_HEADER } from "./http-client.js";
 // Web link ingestion (fetch + defuddle on linkedom, all in-process)
 export type { ExtractedLink, ExtractedPage, ExtractUrlOptions, FetchedPage } from "./link.js";
 export {
@@ -193,6 +193,7 @@ export type { InitOptions, MemloomConfig } from "./memloom.js";
 export {
   DEFAULT_RECONCILE_SETTINGS,
   EmbeddingFingerprintError,
+  isOwnerId,
   Memloom,
   SENTINEL_OWNER,
 } from "./memloom.js";

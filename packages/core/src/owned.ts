@@ -6,6 +6,7 @@ import type {
   ContextDocument,
   ContextProgressEvent,
   DeleteOwnerResult,
+  EntityConflict,
   EntityDetail,
   Graph,
   IndexProgressEvent,
@@ -60,6 +61,12 @@ export interface OwnedMemloom {
   index(onProgress?: (event: IndexProgressEvent) => void): Promise<IndexResult>;
 
   conflicts(): Promise<Conflict[]>;
+  /**
+   * Pending entity folds: two names the indexer thinks are one person or place. A separate
+   * queue from conflicts(), but resolveConflict() takes ids from either, so listing both is
+   * what makes the ids reachable without going around the handle.
+   */
+  entityConflicts(): Promise<EntityConflict[]>;
   /** Rejects a conflict id belonging to another owner rather than resolving it. */
   resolveConflict(
     conflictId: string,
@@ -132,16 +139,19 @@ class BoundMemloom implements OwnedMemloom {
     return this.#engine.conflicts(this.ownerId);
   }
 
-  // resolveConflict() takes no ownerId on the engine: it reads the owner off the conflict row
-  // and acts on whoever that is. Correct for a single-owner store, a cross-tenant write here.
-  // The check belongs on this side of the seam, where an owner is actually in hand.
-  async resolveConflict(
+  entityConflicts(): Promise<EntityConflict[]> {
+    return this.#engine.entityConflicts(this.ownerId);
+  }
+
+  // The engine's ownerId argument is what makes this safe: without it resolveConflict() reads
+  // the owner off the conflict row and acts on whoever that turns out to be, which is right for
+  // a single-owner store and a cross-tenant write here.
+  resolveConflict(
     conflictId: string,
     decision: ResolveDecision,
     provenance: ResolutionProvenance = {},
   ): Promise<void> {
-    await this.#assertOwns(conflictId);
-    return this.#engine.resolveConflict(conflictId, decision, provenance);
+    return this.#engine.resolveConflict(conflictId, decision, provenance, this.ownerId);
   }
 
   graph(): Promise<Graph> {
@@ -173,24 +183,6 @@ class BoundMemloom implements OwnedMemloom {
 
   contextRemove(documentId: string): Promise<void> {
     return this.#engine.contextRemove(documentId, this.ownerId);
-  }
-
-  // Both queues, because resolveConflict() serves both: an id it does not find in
-  // memory_dedup_decisions it re-dispatches to the entity fold path. Checking only the memory
-  // queue would refuse an owner their own entity conflicts — a guard that reads as ownership
-  // enforcement while actually removing a feature.
-  //
-  // Same message whether the conflict belongs to someone else or does not exist: which of the
-  // two it is, is itself another tenant's business.
-  async #assertOwns(conflictId: string): Promise<void> {
-    const [memory, entity] = await Promise.all([
-      this.#engine.conflicts(this.ownerId),
-      this.#engine.entityConflicts(this.ownerId),
-    ]);
-    const mine = memory.some((c) => c.id === conflictId) || entity.some((c) => c.id === conflictId);
-    if (!mine) {
-      throw new Error(`memloom: no conflict ${conflictId}`);
-    }
   }
 }
 

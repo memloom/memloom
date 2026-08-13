@@ -312,8 +312,12 @@ describe("a 200 that is really a rate limit", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const pending = new OpenRouterLLM({ apiKey: "k" }).complete("hi");
+    // Attach the rejection handler before draining timers. The other way round, the promise
+    // rejects while nothing is listening and vitest reports an unhandled rejection, which
+    // exits non-zero even though every assertion passed.
+    const rejects = expect(pending).rejects.toThrow(/prompt rejected/);
     await vi.runAllTimersAsync();
-    await expect(pending).rejects.toThrow(/prompt rejected/);
+    await rejects;
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -219,6 +219,12 @@ for (const factory of factories) {
         expect(() => m.forOwner(SENTINEL_OWNER)).toThrow(/sentinel owner/);
         expect(() => m.forOwner("")).toThrow(/uuid owner id/);
         expect(() => m.forOwner("user_42")).toThrow(/uuid owner id/);
+        // The literal missing user id, from a host without types. It has to reach the same
+        // message, not a TypeError about toLowerCase from inside the guard meant to catch it.
+        expect(() => m.forOwner(undefined as unknown as string)).toThrow(/uuid owner id/);
+        await expect(m.deleteOwner(undefined as unknown as string)).rejects.toThrow(
+          /uuid owner id/,
+        );
       });
 
       // resolveConflict is the one engine method that takes no ownerId — it reads the owner
@@ -277,6 +283,12 @@ for (const factory of factories) {
         );
         const foldId = row?.id;
         if (!foldId) throw new Error("could not stage an entity decision");
+
+        // Anna can find the fold through the handle, before anything resolves it. The guard
+        // accepts entity ids, so without a listing the only way to be holding one is to have
+        // gone around the handle in the first place.
+        expect((await m.forOwner(OWNER_A).entityConflicts()).map((c) => c.id)).toContain(foldId);
+        expect(await m.forOwner(OWNER_B).entityConflicts()).toEqual([]);
 
         // Anna's, so Boris is refused.
         await expect(

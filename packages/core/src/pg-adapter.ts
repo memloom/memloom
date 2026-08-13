@@ -53,10 +53,7 @@ export class PgAdapter implements StorageAdapter {
    * connection limit, so a handful of containers at 10 each exhausts it. Those callers pass
    * 1 or 2 and let the platform's own pooler do the multiplexing.
    */
-  static async connect(
-    connectionString: string,
-    opts: { max?: number } = {},
-  ): Promise<PgAdapter> {
+  static async connect(connectionString: string, opts: { max?: number } = {}): Promise<PgAdapter> {
     let pg: typeof Pg;
     try {
       pg = (await import("pg")).default as unknown as typeof Pg;

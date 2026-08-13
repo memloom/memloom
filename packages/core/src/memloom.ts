@@ -291,6 +291,15 @@ const ENTITY_MERGE_ACTION = "entity_merge";
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
+ * Is this a usable owner id? Exported so the daemon validates the owner header by the same rule
+ * forOwner() applies in process. Two implementations of "looks like an owner" would eventually
+ * disagree, and the request that fell in the gap would be served someone else's memories.
+ */
+export function isOwnerId(value: unknown): value is string {
+  return typeof value === "string" && UUID_PATTERN.test(value);
+}
+
+/**
  * How many uncertain folds one pass may add to the conflicts queue. The 1793-entity store
  * this was built against produces 241 review pairs; queueing all of them at once buries the
  * memory conflicts the surface exists for. Later passes drain the rest.
@@ -769,7 +778,9 @@ export class Memloom implements MemoryEngine {
    * (the CLI, the daemon, your own store) use the engine directly, where it is the default.
    */
   forOwner(ownerId: string): OwnedMemloom {
-    if (!UUID_PATTERN.test(ownerId.toLowerCase())) {
+    // isOwnerId checks typeof too: an undefined user id is the exact mistake this guard exists
+    // to name, and a host without types reaches it.
+    if (!isOwnerId(ownerId)) {
       throw new Error(`memloom: forOwner needs a uuid owner id, got ${JSON.stringify(ownerId)}`);
     }
     if (ownerId === SENTINEL_OWNER) {
@@ -2972,7 +2983,7 @@ export class Memloom implements MemoryEngine {
    * left", not "nothing existed".
    */
   async deleteOwner(ownerId: string): Promise<DeleteOwnerResult> {
-    if (!UUID_PATTERN.test(ownerId.toLowerCase())) {
+    if (!isOwnerId(ownerId)) {
       throw new Error(`memloom: deleteOwner needs a uuid owner id, got ${JSON.stringify(ownerId)}`);
     }
     return this.#storage.tx(async (tx) => {
@@ -4237,7 +4248,12 @@ export class Memloom implements MemoryEngine {
     // Who decided. Defaults to the human clicking in the viewer; the auto-resolvers name
     // themselves so a resolution can be read back as theirs months later.
     provenance: ResolutionProvenance = {},
+    // Whose call this is. Optional because a single-owner store has nobody to confuse; pass it
+    // from any caller serving more than one person and a conflict belonging to someone else is
+    // refused rather than resolved. Without it this method acts on whoever owns the row.
+    ownerId?: string,
   ): Promise<void> {
+    if (ownerId !== undefined) await this.#assertConflictOwner(conflictId, ownerId);
     // Entity folds share this table, this method and this revert story, but none of the
     // memory semantics below (nothing goes stale, no lineage moves). Dispatch first.
     if (await this.#isEntityDecision(conflictId)) {
@@ -4331,7 +4347,8 @@ export class Memloom implements MemoryEngine {
   }
 
   /** Undo a resolution: restore staled memories, deactivate the edges it created, re-queue it. */
-  async revertConflict(conflictId: string): Promise<void> {
+  async revertConflict(conflictId: string, ownerId?: string): Promise<void> {
+    if (ownerId !== undefined) await this.#assertConflictOwner(conflictId, ownerId);
     if (await this.#isEntityDecision(conflictId)) {
       await this.#revertEntityConflict(conflictId);
       return;
@@ -7058,6 +7075,26 @@ export class Memloom implements MemoryEngine {
       current = alias.canonical_id;
     }
     return null;
+  }
+
+  /**
+   * Refuse a conflict id that belongs to somebody else. One row read, and it covers both
+   * queues at once: memory contradictions and entity folds share memory_dedup_decisions, so a
+   * guard written against the table cannot miss one the way a guard written against a listing
+   * method can.
+   *
+   * The same error whether the conflict is another owner's or does not exist at all. Which of
+   * the two it is, is itself another tenant's business.
+   */
+  async #assertConflictOwner(conflictId: string, ownerId: string): Promise<void> {
+    const missing = new Error(`memloom: no conflict ${conflictId}`);
+    // The column is a uuid, so a malformed id would fail the query rather than miss the row.
+    if (!isOwnerId(conflictId)) throw missing;
+    const [row] = await this.#storage.query<{ owner_id: string }>(
+      "SELECT owner_id FROM memory_dedup_decisions WHERE id = $1",
+      [conflictId],
+    );
+    if (!row || row.owner_id !== ownerId) throw missing;
   }
 
   /** Is this decision row an entity fold rather than a memory contradiction? */
