@@ -96,6 +96,14 @@ export interface UpdateResult {
   version: number;
 }
 
+/** What deleteOwner() erased. Counts are a report, not a contract: see deleteOwner(). */
+export interface DeleteOwnerResult {
+  /** Total rows deleted across every table. Zero means the owner held nothing. */
+  rows: number;
+  /** Rows per table, tables that held nothing omitted. Ordering is alphabetical. */
+  tables: Record<string, number>;
+}
+
 export interface RecallOptions {
   limit?: number;
   ownerId?: string;

@@ -55,6 +55,7 @@
               "guides/extractors",
               "guides/recordings",
               "guides/file-sync",
+              "guides/memory-per-person",
               "guides/configuration",
               "guides/self-hosting"
             ]

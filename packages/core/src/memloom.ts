@@ -38,6 +38,7 @@ import type { NotionBlockNode } from "./notion.js";
 import { dataSourceTitle, expandsInline, NotionClient, pageTitle } from "./notion.js";
 import { blocksToMarkdown, rowsToMarkdown } from "./notion-markdown.js";
 import { LlmSpendError } from "./openrouter-provider.js";
+import { bindOwner, type OwnedMemloom } from "./owned.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
 import { uploadStoreDir } from "./queue.js";
 import {
@@ -112,6 +113,7 @@ import type {
   ContextDocument,
   ContextProgressEvent,
   ContextRoot,
+  DeleteOwnerResult,
   DocumentChunks,
   Entity,
   EntityAutoEvent,
@@ -287,6 +289,15 @@ const ENTITY_MERGE_ACTION = "entity_merge";
 // user could in principle name something after a uuid, but they have not, and the cost of
 // guessing wrong is one extra lookup that returns nothing.
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Is this a usable owner id? Exported so the daemon validates the owner header by the same rule
+ * forOwner() applies in process. Two implementations of "looks like an owner" would eventually
+ * disagree, and the request that fell in the gap would be served someone else's memories.
+ */
+export function isOwnerId(value: unknown): value is string {
+  return typeof value === "string" && UUID_PATTERN.test(value);
+}
 
 /**
  * How many uncertain folds one pass may add to the conflicts queue. The 1793-entity store
@@ -584,7 +595,11 @@ export class Memloom implements MemoryEngine {
   readonly #autoIndexDelay: number;
   #autoIndexTimer: ReturnType<typeof setTimeout> | undefined;
   #autoIndexRunning = false;
-  #autoIndexAgain = false;
+  // Owners with writes still to index. A set, not one owner: the debounce timer is shared by
+  // the whole engine, so with more than one tenant writing, the newer write used to cancel
+  // the older owner's run and nothing rescheduled it. That owner's memories stayed unindexed
+  // for as long as anyone else kept saving — no error, no log, just a quietly worse recall.
+  readonly #autoIndexPending = new Set<string>();
 
   constructor(config: MemloomConfig) {
     this.#storage = config.storage;
@@ -645,7 +660,12 @@ export class Memloom implements MemoryEngine {
       [enabled ? "on" : "off"],
     );
     this.#autoIndex = enabled;
-    if (!enabled) clearTimeout(this.#autoIndexTimer);
+    if (!enabled) {
+      clearTimeout(this.#autoIndexTimer);
+      // Drop what was queued too. Re-enabling later should not replay writes from before
+      // the host turned indexing off.
+      this.#autoIndexPending.clear();
+    }
   }
 
   /**
@@ -657,30 +677,43 @@ export class Memloom implements MemoryEngine {
    */
   #scheduleAutoIndex(owner: string): void {
     if (!this.#autoIndex) return;
+    this.#autoIndexPending.add(owner);
+    this.#armAutoIndex();
+  }
+
+  #armAutoIndex(): void {
     clearTimeout(this.#autoIndexTimer);
-    this.#autoIndexTimer = setTimeout(() => void this.#runAutoIndex(owner), this.#autoIndexDelay);
+    this.#autoIndexTimer = setTimeout(() => void this.#runAutoIndex(), this.#autoIndexDelay);
     // Never hold the process open for a pending background run.
     this.#autoIndexTimer.unref?.();
   }
 
-  async #runAutoIndex(owner: string): Promise<void> {
-    if (this.#autoIndexRunning) {
-      this.#autoIndexAgain = true;
-      return;
-    }
+  async #runAutoIndex(): Promise<void> {
+    // Whoever is already running drains the set, so a second entry has nothing to do.
+    if (this.#autoIndexRunning) return;
     this.#autoIndexRunning = true;
     try {
-      await this.index(owner);
-    } catch (err) {
-      console.error(
-        `memloom: auto-index failed: ${err instanceof Error ? err.message : String(err)}`,
-      );
+      // Drain, don't snapshot: a write that lands mid-run adds its owner to the set and is
+      // picked up by the next turn rather than waiting for another debounce window.
+      while (this.#autoIndexPending.size > 0) {
+        const owners = [...this.#autoIndexPending];
+        this.#autoIndexPending.clear();
+        for (const owner of owners) {
+          try {
+            await this.index(owner);
+          } catch (err) {
+            // One owner's failure must not strand the others still in the set.
+            console.error(
+              `memloom: auto-index failed for ${owner}: ${err instanceof Error ? err.message : String(err)}`,
+            );
+          }
+        }
+      }
     } finally {
       this.#autoIndexRunning = false;
-      if (this.#autoIndexAgain) {
-        this.#autoIndexAgain = false;
-        this.#scheduleAutoIndex(owner);
-      }
+      // A write can land between the last size check and here. Its own timer already fired
+      // and returned early because a run was in progress, so re-arm on its behalf.
+      if (this.#autoIndexPending.size > 0) this.#armAutoIndex();
     }
   }
 
@@ -747,6 +780,39 @@ export class Memloom implements MemoryEngine {
           "directory.",
       );
     }
+  }
+
+  /**
+   * A handle scoped to one owner, for hosts that serve many people from one store: a chatbot
+   * keyed by its auth user id, a team server, anything where "whose memory is this" has more
+   * than one answer.
+   *
+   * Every method on the engine defaults ownerId to SENTINEL_OWNER, so a forgotten argument in
+   * a multi-tenant host silently reads and writes a shared owner instead of erroring. Bind
+   * the owner once, per request, and that class of mistake stops being expressible:
+   *
+   *   const mem = memloom.forOwner(session.userId)
+   *   await mem.save({ content: "prefers short answers" })
+   *   const hits = await mem.recall("how do they like their answers?")
+   *
+   * The sentinel is rejected here on purpose. In a host it is never a real tenant; it is what
+   * an unset user id looks like, arriving as everyone's shared account. Single-owner callers
+   * (the CLI, the daemon, your own store) use the engine directly, where it is the default.
+   */
+  forOwner(ownerId: string): OwnedMemloom {
+    // isOwnerId checks typeof too: an undefined user id is the exact mistake this guard exists
+    // to name, and a host without types reaches it.
+    if (!isOwnerId(ownerId)) {
+      throw new Error(`memloom: forOwner needs a uuid owner id, got ${JSON.stringify(ownerId)}`);
+    }
+    if (ownerId === SENTINEL_OWNER) {
+      throw new Error(
+        "memloom: forOwner was given the sentinel owner, which in a multi-tenant host is what " +
+          "a missing user id looks like — every caller would share one account. Pass a real " +
+          "per-user id, or call the engine directly for the single-owner tier.",
+      );
+    }
+    return bindOwner(this, ownerId);
   }
 
   /**
@@ -2919,6 +2985,93 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
+   * Every owner that holds anything in this store, sentinel included when it holds something.
+   *
+   * The daemon's reason to exist: its background work (reconcile catch-up, the file watchers)
+   * runs on behalf of somebody, and on a store with more than one tenant "somebody" has more
+   * than one answer. A pass that only ever covers the sentinel leaves every other owner's
+   * memories saved but never maintained, which looks like nothing at all until their graph is
+   * months stale.
+   *
+   * Discovered from the catalog for the same reason deleteOwner is: a table added later is
+   * covered the day it exists, rather than the day someone remembers this list.
+   */
+  async owners(): Promise<string[]> {
+    const tables = await this.#storage.query<{ name: string }>(
+      `SELECT c.relname AS name
+         FROM pg_class c
+         JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = current_schema()
+         JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'owner_id'
+                            AND NOT a.attisdropped
+        WHERE c.relkind = 'r'
+        ORDER BY c.relname`,
+    );
+    const seen = new Set<string>();
+    for (const { name } of tables) {
+      const rows = await this.#storage.query<{ owner_id: string }>(
+        `SELECT DISTINCT owner_id FROM "${name}"`,
+      );
+      for (const row of rows) seen.add(row.owner_id);
+    }
+    return [...seen].sort();
+  }
+
+  /**
+   * Erase one owner completely: every row this owner has in every table, in one transaction.
+   * The account-deletion primitive a multi-tenant host needs — where deleteMemory() removes
+   * one belief, this removes the tenant. Irreversible, and deliberately so: "delete my data"
+   * has to mean it.
+   *
+   * The table list is discovered from the catalog (every table in the current schema with an
+   * owner_id column) rather than written down. A hard-coded list stops covering a table the
+   * moment someone adds one, and that failure mode is a tenant's data surviving their own
+   * deletion request — the exact bug this exists to prevent.
+   *
+   * Untouched: tables with no owner_id (the migration ledger, the embedding fingerprint, and
+   * the other store-wide settings), because they belong to the store, not to any tenant. Also
+   * untouched: files outside Postgres. Uploads and transcripts the daemon wrote to disk are
+   * the daemon's to remove; core does not know where they live.
+   *
+   * Per-table counts are diagnostics, not a contract. Cascades mean a child row can already
+   * be gone by the time its own table's delete runs, so a count of zero there means "nothing
+   * left", not "nothing existed".
+   */
+  async deleteOwner(ownerId: string): Promise<DeleteOwnerResult> {
+    if (!isOwnerId(ownerId)) {
+      throw new Error(`memloom: deleteOwner needs a uuid owner id, got ${JSON.stringify(ownerId)}`);
+    }
+    const result = await this.#storage.tx(async (tx) => {
+      const owned = await tx.query<{ name: string }>(
+        `SELECT c.relname AS name
+           FROM pg_class c
+           JOIN pg_namespace n ON n.oid = c.relnamespace AND n.nspname = current_schema()
+           JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'owner_id'
+                              AND NOT a.attisdropped
+          WHERE c.relkind = 'r'
+          ORDER BY c.relname`,
+      );
+      const tables: Record<string, number> = {};
+      let rows = 0;
+      for (const { name } of owned) {
+        // RETURNING because StorageAdapter.query yields rows, not a row count. Owner-sized
+        // deletes are small enough that materializing one marker per row is free.
+        const deleted = await tx.query(`DELETE FROM "${name}" WHERE owner_id = $1 RETURNING 1`, [
+          ownerId,
+        ]);
+        if (deleted.length > 0) {
+          tables[name] = deleted.length;
+          rows += deleted.length;
+        }
+      }
+      return { rows, tables };
+    });
+    // A queued auto-index for an owner who no longer exists would write them a fresh
+    // memory_index_runs row: the tenant reappearing seconds after asking to be gone.
+    this.#autoIndexPending.delete(ownerId);
+    return result;
+  }
+
+  /**
    * Recall active memories, ranked by hybrid retrieval: vector (meaning) and keyword (exact)
    * arms fused with reciprocal-rank fusion. `similarity` is the cosine signal alone;
    * `rrfScore` is the fused rank a result should be ordered by. Results arrive fused-order.
@@ -4153,7 +4306,12 @@ export class Memloom implements MemoryEngine {
     // Who decided. Defaults to the human clicking in the viewer; the auto-resolvers name
     // themselves so a resolution can be read back as theirs months later.
     provenance: ResolutionProvenance = {},
+    // Whose call this is. Optional because a single-owner store has nobody to confuse; pass it
+    // from any caller serving more than one person and a conflict belonging to someone else is
+    // refused rather than resolved. Without it this method acts on whoever owns the row.
+    ownerId?: string,
   ): Promise<void> {
+    if (ownerId !== undefined) await this.#assertConflictOwner(conflictId, ownerId);
     // Entity folds share this table, this method and this revert story, but none of the
     // memory semantics below (nothing goes stale, no lineage moves). Dispatch first.
     if (await this.#isEntityDecision(conflictId)) {
@@ -4247,7 +4405,8 @@ export class Memloom implements MemoryEngine {
   }
 
   /** Undo a resolution: restore staled memories, deactivate the edges it created, re-queue it. */
-  async revertConflict(conflictId: string): Promise<void> {
+  async revertConflict(conflictId: string, ownerId?: string): Promise<void> {
+    if (ownerId !== undefined) await this.#assertConflictOwner(conflictId, ownerId);
     if (await this.#isEntityDecision(conflictId)) {
       await this.#revertEntityConflict(conflictId);
       return;
@@ -6974,6 +7133,26 @@ export class Memloom implements MemoryEngine {
       current = alias.canonical_id;
     }
     return null;
+  }
+
+  /**
+   * Refuse a conflict id that belongs to somebody else. One row read, and it covers both
+   * queues at once: memory contradictions and entity folds share memory_dedup_decisions, so a
+   * guard written against the table cannot miss one the way a guard written against a listing
+   * method can.
+   *
+   * The same error whether the conflict is another owner's or does not exist at all. Which of
+   * the two it is, is itself another tenant's business.
+   */
+  async #assertConflictOwner(conflictId: string, ownerId: string): Promise<void> {
+    const missing = new Error(`memloom: no conflict ${conflictId}`);
+    // The column is a uuid, so a malformed id would fail the query rather than miss the row.
+    if (!isOwnerId(conflictId)) throw missing;
+    const [row] = await this.#storage.query<{ owner_id: string }>(
+      "SELECT owner_id FROM memory_dedup_decisions WHERE id = $1",
+      [conflictId],
+    );
+    if (!row || row.owner_id !== ownerId) throw missing;
   }
 
   /** Is this decision row an entity fold rather than a memory contradiction? */

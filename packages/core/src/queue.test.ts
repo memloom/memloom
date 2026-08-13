@@ -120,6 +120,65 @@ describe("IngestQueue stability", () => {
   }, 20_000);
 });
 
+// One daemon queue, more than one owner. A job carries whose it is, so the document lands on
+// the person who asked for it even when the ingest outlives a restart.
+describe("IngestQueue owners", () => {
+  const OWNER_A = "11111111-1111-4111-8111-111111111111";
+  const OWNER_B = "22222222-2222-4222-8222-222222222222";
+
+  it("hands the owner to the runner", async () => {
+    const path = join(dir, "owned.md");
+    await writeFile(path, "# owned");
+    const seen: (string | undefined)[] = [];
+    const queue = new IngestQueue({
+      async ingest(_path, ownerId) {
+        seen.push(ownerId);
+        return { outcome: "added", chunks: 1 };
+      },
+    });
+    const done = settled(queue);
+    await queue.add([path], { ownerId: OWNER_A });
+    await done;
+    expect(seen).toEqual([OWNER_A]);
+  }, 20_000);
+
+  it("two owners linking the same file are two jobs, not one", async () => {
+    const path = join(dir, "shared.md");
+    await writeFile(path, "# shared");
+    const owners: (string | undefined)[] = [];
+    const queue = new IngestQueue({
+      async ingest(_path, ownerId) {
+        owners.push(ownerId);
+        return { outcome: "added", chunks: 1 };
+      },
+    });
+    const done = settled(queue);
+    // Deduping on path alone would drop the second one, and that owner would sit waiting for
+    // a document the queue had already decided somebody else was getting.
+    await queue.add([path], { ownerId: OWNER_A });
+    await queue.add([path], { ownerId: OWNER_B });
+    await done;
+    expect(owners.sort()).toEqual([OWNER_A, OWNER_B]);
+  }, 20_000);
+
+  it("still dedupes the same owner asking twice", async () => {
+    const path = join(dir, "twice.md");
+    await writeFile(path, "# twice");
+    let calls = 0;
+    const queue = new IngestQueue({
+      async ingest() {
+        calls++;
+        return { outcome: "added", chunks: 1 };
+      },
+    });
+    const done = settled(queue);
+    await queue.add([path], { ownerId: OWNER_A });
+    await queue.add([path], { ownerId: OWNER_A });
+    await done;
+    expect(calls).toBe(1);
+  }, 20_000);
+});
+
 // The queue is the list of jobs a person started. The file watcher puts work on it too, and
 // that work must not read as theirs: saving one note three times would leave three finished
 // rows in a list nobody added to.

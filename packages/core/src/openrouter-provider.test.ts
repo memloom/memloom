@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { OpenRouterEmbeddings, OpenRouterLLM } from "./openrouter-provider.js";
 
 // Assert the exact request body we send OpenRouter: the dimensions param (Matryoshka
@@ -219,6 +219,105 @@ describe("postJson retry behavior", () => {
     await expect(new OpenRouterLLM({ apiKey: "k" }).complete("hi")).rejects.toThrow(
       /400 bad request/,
     );
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+// OpenRouter answers 200 with an error object and no choices/data often enough to matter: an
+// upstream hiccup, a moderation stop, a model that produced nothing. Reading straight through
+// that shape used to throw "Cannot read properties of undefined (reading '0')" from three
+// frames deep, naming neither the model nor the provider.
+describe("a 200 that carries no result", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function respond(json: unknown) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: { get: () => null },
+        text: async () => "",
+        json: async () => json,
+      }),
+    );
+  }
+
+  it("names the model when a completion comes back without choices", async () => {
+    respond({ error: { message: "upstream provider returned nothing" } });
+
+    await expect(
+      new OpenRouterLLM({ apiKey: "k", model: "some/model" }).complete("hi"),
+    ).rejects.toThrow(/no result for "some\/model": upstream provider returned nothing/);
+  });
+
+  it("quotes the body when there is no upstream message", async () => {
+    respond({ unexpected: true });
+
+    await expect(new OpenRouterLLM({ apiKey: "k" }).complete("hi")).rejects.toThrow(/unexpected/);
+  });
+
+  it("does the same for embeddings", async () => {
+    respond({ error: { message: "rate limited upstream" } });
+
+    await expect(new OpenRouterEmbeddings({ apiKey: "k" }).embed(["hi"])).rejects.toThrow(
+      /embeddings returned no result .*rate limited upstream/,
+    );
+  });
+
+  it("still tolerates a choice whose message is empty", async () => {
+    respond({ choices: [{ message: {} }] });
+
+    await expect(new OpenRouterLLM({ apiKey: "k" }).complete("hi")).resolves.toBe("");
+  });
+});
+
+// An upstream rate limit arrives as HTTP 200 with an error body, so the !res.ok
+// retry path never sees it. It is the same "come back shortly" a 429 means.
+describe("a 200 that is really a rate limit", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function reply(json: unknown) {
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => null },
+      text: async () => "",
+      json: async () => json,
+    };
+  }
+
+  it("backs off and retries, then returns the eventual result", async () => {
+    const limited = reply({
+      error: { message: "some/model is temporarily rate-limited upstream. Please retry shortly" },
+    });
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(limited)
+      .mockResolvedValue(reply({ choices: [{ message: { content: "ok" } }] }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = new OpenRouterLLM({ apiKey: "k" }).complete("hi");
+    await vi.runAllTimersAsync();
+    await expect(pending).resolves.toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a body that is not asking to be retried", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(reply({ error: { message: "prompt rejected" } }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const pending = new OpenRouterLLM({ apiKey: "k" }).complete("hi");
+    // Attach the rejection handler before draining timers. The other way round, the promise
+    // rejects while nothing is listening and vitest reports an unhandled rejection, which
+    // exits non-zero even though every assertion passed.
+    const rejects = expect(pending).rejects.toThrow(/prompt rejected/);
+    await vi.runAllTimersAsync();
+    await rejects;
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

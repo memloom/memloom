@@ -175,7 +175,7 @@ export {
   ScriptedLLMProvider,
 } from "./hashing-provider.js";
 export type { FetchLike, HttpResponse } from "./http-client.js";
-export { HttpMemloomClient } from "./http-client.js";
+export { HttpMemloomClient, OWNER_HEADER } from "./http-client.js";
 // Web link ingestion (fetch + defuddle on linkedom, all in-process)
 export type { ExtractedLink, ExtractedPage, ExtractUrlOptions, FetchedPage } from "./link.js";
 export {
@@ -193,6 +193,7 @@ export type { InitOptions, MemloomConfig } from "./memloom.js";
 export {
   DEFAULT_RECONCILE_SETTINGS,
   EmbeddingFingerprintError,
+  isOwnerId,
   Memloom,
   SENTINEL_OWNER,
 } from "./memloom.js";
@@ -220,6 +221,8 @@ export type {
   OpenRouterLLMOptions,
 } from "./openrouter-provider.js";
 export { OpenRouterEmbeddings, OpenRouterLLM } from "./openrouter-provider.js";
+// The multi-tenant surface: one owner-bound handle per user, from Memloom.forOwner()
+export type { OwnedMemloom } from "./owned.js";
 export type { PdfTextItem } from "./pdf-layout.js";
 export { assemblePageText } from "./pdf-layout.js";
 export { PgAdapter } from "./pg-adapter.js";
@@ -338,6 +341,7 @@ export type {
   ContextDocument,
   ContextProgressEvent,
   ContextRoot,
+  DeleteOwnerResult,
   DocumentChunks,
   DocumentSpeaker,
   Entity,

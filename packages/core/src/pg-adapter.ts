@@ -47,7 +47,13 @@ export class PgAdapter implements StorageAdapter {
     this.#pool = pool;
   }
 
-  static async connect(connectionString: string): Promise<PgAdapter> {
+  /**
+   * `max` caps the pool. The default (10) suits a daemon that owns its database; a serverless
+   * host is the opposite shape — every warm container holds its own pool against one shared
+   * connection limit, so a handful of containers at 10 each exhausts it. Those callers pass
+   * 1 or 2 and let the platform's own pooler do the multiplexing.
+   */
+  static async connect(connectionString: string, opts: { max?: number } = {}): Promise<PgAdapter> {
     let pg: typeof Pg;
     try {
       pg = (await import("pg")).default as unknown as typeof Pg;
@@ -60,7 +66,10 @@ export class PgAdapter implements StorageAdapter {
           `Underlying error: ${cause instanceof Error ? cause.message : String(cause)}`,
       );
     }
-    const pool = new pg.Pool({ connectionString });
+    const pool = new pg.Pool({
+      connectionString,
+      ...(opts.max === undefined ? {} : { max: opts.max }),
+    });
     // Fail fast on a bad URL or credentials instead of erroring on the first real query.
     const probe = await pool.connect();
     try {
