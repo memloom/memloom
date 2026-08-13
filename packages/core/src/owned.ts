@@ -175,11 +175,20 @@ class BoundMemloom implements OwnedMemloom {
     return this.#engine.contextRemove(documentId, this.ownerId);
   }
 
+  // Both queues, because resolveConflict() serves both: an id it does not find in
+  // memory_dedup_decisions it re-dispatches to the entity fold path. Checking only the memory
+  // queue would refuse an owner their own entity conflicts — a guard that reads as ownership
+  // enforcement while actually removing a feature.
+  //
   // Same message whether the conflict belongs to someone else or does not exist: which of the
   // two it is, is itself another tenant's business.
   async #assertOwns(conflictId: string): Promise<void> {
-    const mine = await this.#engine.conflicts(this.ownerId);
-    if (!mine.some((c) => c.id === conflictId)) {
+    const [memory, entity] = await Promise.all([
+      this.#engine.conflicts(this.ownerId),
+      this.#engine.entityConflicts(this.ownerId),
+    ]);
+    const mine = memory.some((c) => c.id === conflictId) || entity.some((c) => c.id === conflictId);
+    if (!mine) {
       throw new Error(`memloom: no conflict ${conflictId}`);
     }
   }

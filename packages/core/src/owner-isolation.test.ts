@@ -2,7 +2,11 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { HashingEmbeddingProvider, NullLLMProvider } from "./hashing-provider.js";
+import {
+  HashingEmbeddingProvider,
+  NullLLMProvider,
+  ScriptedLLMProvider,
+} from "./hashing-provider.js";
 import { Memloom, SENTINEL_OWNER } from "./memloom.js";
 import type { StorageAdapter } from "./storage.js";
 import { truncateAll } from "./test-store.js";
@@ -215,6 +219,82 @@ for (const factory of factories) {
         expect(() => m.forOwner(SENTINEL_OWNER)).toThrow(/sentinel owner/);
         expect(() => m.forOwner("")).toThrow(/uuid owner id/);
         expect(() => m.forOwner("user_42")).toThrow(/uuid owner id/);
+      });
+
+      // resolveConflict is the one engine method that takes no ownerId — it reads the owner
+      // off the conflict row and acts on whoever that turns out to be. Fine for one person
+      // and their own store; a cross-owner write for anybody else. The handle has to check.
+      it("one owner cannot resolve another's conflict, and can resolve their own", async () => {
+        await truncateAll(storage);
+        const m = new Memloom({
+          storage,
+          embedding: new HashingEmbeddingProvider(1024),
+          // Force the contradiction that a real classifier would find here.
+          llm: new ScriptedLLMProvider(() =>
+            JSON.stringify([{ candidate: 1, relation: "contradictory", reason: "same subject" }]),
+          ),
+        });
+        await m.init();
+
+        const anna = m.forOwner(OWNER_A);
+        const boris = m.forOwner(OWNER_B);
+
+        await anna.save({ content: "Anna is moving to Kraków in the autumn" });
+        const clash = await anna.save({ content: "Anna is moving to Gdańsk in the autumn" });
+
+        expect(clash.outcome).toBe("conflict");
+        const conflictId = clash.conflictId;
+        if (!conflictId) throw new Error("expected a pending conflict to resolve");
+
+        await expect(boris.resolveConflict(conflictId, { action: "keep_new" })).rejects.toThrow(
+          /no conflict/,
+        );
+        expect((await anna.conflicts()).length).toBe(1);
+
+        await anna.resolveConflict(conflictId, { action: "keep_new" });
+        expect(await anna.conflicts()).toEqual([]);
+      });
+
+      // resolveConflict() serves two queues: an id whose action is entity_merge is
+      // re-dispatched to the entity fold path. A guard that consults only the memory queue
+      // therefore refuses an owner their OWN entity conflicts — it reads as ownership
+      // enforcement while quietly removing a feature. The row is written directly because
+      // producing a real fold needs the indexer and an arbiter; what is under test is which
+      // queues the guard looks in, not how folds arise.
+      it("the ownership guard covers entity folds, not just memory conflicts", async () => {
+        await truncateAll(storage);
+        const m = new Memloom({
+          storage,
+          embedding: new HashingEmbeddingProvider(1024),
+          llm: new NullLLMProvider(),
+        });
+        await m.init();
+
+        const [row] = await storage.query<{ id: string }>(
+          `INSERT INTO memory_dedup_decisions (owner_id, action, incoming_content, candidates)
+           VALUES ($1, 'entity_merge', 'Kraków', '[]'::jsonb) RETURNING id`,
+          [OWNER_A],
+        );
+        const foldId = row?.id;
+        if (!foldId) throw new Error("could not stage an entity decision");
+
+        // Anna's, so Boris is refused.
+        await expect(
+          m.forOwner(OWNER_B).resolveConflict(foldId, { action: "keep_both" }),
+        ).rejects.toThrow(/no conflict/);
+
+        // Anna gets past the guard and into the entity path. It fails further in on a fold
+        // with no real entities behind it — any error EXCEPT "no conflict" proves the guard
+        // recognised the id, which is the thing this test is about.
+        await m
+          .forOwner(OWNER_A)
+          .resolveConflict(foldId, { action: "keep_both" })
+          .then(
+            () => undefined,
+            (err: unknown) => {
+              expect(String(err)).not.toMatch(/no conflict/);
+            },
+          );
       });
     });
   });
