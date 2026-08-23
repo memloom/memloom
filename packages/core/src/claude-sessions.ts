@@ -119,6 +119,8 @@ export interface SessionUnit {
 export interface ParsedSession {
   /** The session's own id from its lines; falls back to the filename UUID. */
   sessionId: string;
+  /** The working directory the session ran in, from the first line that carries one. */
+  cwd: string | null;
   units: SessionUnit[];
   /** Lines in the file, so the ledger watermark knows where "processed" ends. */
   lineCount: number;
@@ -136,6 +138,7 @@ interface RawContentBlock {
 interface RawLine {
   type?: string;
   sessionId?: string;
+  cwd?: string;
   isSidechain?: boolean;
   isMeta?: boolean;
   message?: {
@@ -167,6 +170,7 @@ export async function parseSession(path: string, fromLine = 0): Promise<ParsedSe
   const units: SessionUnit[] = [];
   const hash = createHash("sha256");
   let sessionId = "";
+  let cwd: string | null = null;
   let line = 0;
   let malformed = 0;
 
@@ -188,6 +192,7 @@ export async function parseSession(path: string, fromLine = 0): Promise<ParsedSe
       continue;
     }
     if (!sessionId && typeof parsed.sessionId === "string") sessionId = parsed.sessionId;
+    if (!cwd && typeof parsed.cwd === "string" && parsed.cwd.trim()) cwd = parsed.cwd;
     // Summaries duplicate content that also appears in full; sidechains are subagent turns
     // mirrored into the parent file; meta lines are harness bookkeeping.
     if (parsed.type !== "user" && parsed.type !== "assistant") continue;
@@ -203,11 +208,34 @@ export async function parseSession(path: string, fromLine = 0): Promise<ParsedSe
 
   return {
     sessionId: sessionId || basename(path, ".jsonl"),
+    cwd,
     units,
     lineCount: line,
     prefixHash: hash.digest("hex"),
     malformed,
   };
+}
+
+/**
+ * The human project name behind a captured session, for the mechanical projects/<name>
+ * scoping (PLAN-memory-scopes.md). The cwd the transcript lines record is exact: its last
+ * path segment IS the project directory. The encoded project dir name is the fallback for
+ * transcripts that never carried a cwd; its encoding flattens every separator to "-"
+ * ("D--Kostek-Projects-memloom"), so the last "-"-separated segment is a best effort that
+ * truncates dashed project names. Null when neither yields anything usable.
+ */
+export function projectNameOf(cwd: string | null, encodedDir: string): string | null {
+  if (cwd) {
+    const segments = cwd.split(/[\\/]+/).filter((s) => s.trim().length > 0);
+    const name = segments[segments.length - 1];
+    // A bare drive letter ("D:") means the session ran at a drive root, not in a project.
+    if (name && !/^[A-Za-z]:$/.test(name)) return name;
+  }
+  const tail = encodedDir
+    .split("-")
+    .filter((s) => s.trim().length > 0)
+    .pop();
+  return tail ?? null;
 }
 
 /** sha256 hex of the first `lines` lines: the ledger's rewrite check on a later run. */

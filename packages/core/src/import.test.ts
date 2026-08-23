@@ -54,7 +54,13 @@ function backdate(path: string, ageMs = 60 * 60 * 1000): void {
   utimesSync(path, when, when);
 }
 
-function writeSession(root: string, project: string, texts: string[], sessionId?: string): string {
+function writeSession(
+  root: string,
+  project: string,
+  texts: string[],
+  sessionId?: string,
+  cwd?: string,
+): string {
   const id = sessionId ?? randomUUID();
   const dir = join(root, project);
   mkdirSync(dir, { recursive: true });
@@ -63,6 +69,7 @@ function writeSession(root: string, project: string, texts: string[], sessionId?
     JSON.stringify({
       type: "user",
       sessionId: id,
+      ...(cwd ? { cwd } : {}),
       message: { role: "user", content: [{ type: "text", text }] },
     }),
   );
@@ -144,6 +151,43 @@ describe("importSessions", () => {
     expect(ledger).toHaveLength(1);
     expect(Number(ledger[0]?.line_offset)).toBe(3);
     expect(Number(ledger[0]?.memories_saved)).toBe(2);
+  });
+
+  it("scopes distilled memories into projects/<name> from the transcript cwd", async () => {
+    const { memloom } = await fresh();
+    const root = makeRoot();
+    writeSession(
+      root,
+      "D--Kostek-Projects-memloom",
+      ["remember: the scope comes from the cwd"],
+      undefined,
+      "D:\\Kostek\\Projects\\memloom",
+    );
+
+    const result = await memloom.importSessions({ root });
+    expect(result.saved).toBe(1);
+
+    const [imported] = await memloom.memories();
+    expect(imported?.scopePath).toBe("projects > memloom");
+
+    // Capture may create the folder (the user allowlisted it), and it is an ordinary
+    // user folder afterwards, movable and renamable like any other.
+    const flatten = (nodes: Awaited<ReturnType<typeof memloom.listScopes>>): typeof nodes =>
+      nodes.flatMap((n) => [n, ...flatten(n.children)]);
+    const folder = flatten(await memloom.listScopes()).find((s) => s.path === "projects/memloom");
+    expect(folder?.kind).toBe("user");
+  });
+
+  it("falls back to the encoded project dir name when no line carries a cwd", async () => {
+    const { memloom } = await fresh();
+    const root = makeRoot();
+    writeSession(root, "D--Kostek-Projects-widget", ["remember: scoped by dir name"]);
+
+    const result = await memloom.importSessions({ root });
+    expect(result.saved).toBe(1);
+
+    const [imported] = await memloom.memories();
+    expect(imported?.scopePath).toBe("projects > widget");
   });
 
   it("dry run makes zero LLM and embed calls and writes nothing", async () => {

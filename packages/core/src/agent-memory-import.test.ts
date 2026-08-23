@@ -125,6 +125,17 @@ describe("importAgentMemories", () => {
     const pref = memories.find((m) => m.content.includes("pnpm"));
     expect(pref?.memoryType).toBe("preference");
 
+    // Claude Code folders are per project, so their memories land in projects/<name>
+    // (best effort from the encoded dir name); Copilot's folder is global, so its
+    // memories stay in uncategorized for the classification pass.
+    expect(memories.find((m) => m.content.includes("Postgres 16"))?.scopePath).toBe(
+      "projects > proj",
+    );
+    expect(pref?.scopePath).toBe("projects > proj");
+    expect(memories.find((m) => m.content.includes("tagged from main"))?.scopePath).toBe(
+      "uncategorized",
+    );
+
     const ledger = await storage.query<{ source: string; memories_saved: number }>(
       "SELECT source, memories_saved FROM import_ledger",
     );
