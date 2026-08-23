@@ -14,6 +14,7 @@ import {
   discoverSessions,
   hashPrefix,
   parseSession,
+  projectNameOf,
   type SessionChunk,
   type SessionUnit,
 } from "./claude-sessions.js";
@@ -42,6 +43,14 @@ import { bindOwner, type OwnedMemloom } from "./owned.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
 import { uploadStoreDir } from "./queue.js";
 import {
+  buildScopeClassifyPrompt,
+  MIN_SCOPE_CONFIDENCE,
+  parseScopeClassification,
+  SCOPE_CLASSIFY_BATCH,
+  type ScopeClassifyItem,
+  type ScopeFolderOption,
+} from "./scope-classify.js";
+import {
   allScopes,
   buildScopeTree,
   ensureScopePath,
@@ -51,6 +60,7 @@ import {
   resolveScopePath,
   SCOPE_ALL,
   scopeDisplayPath,
+  scopeSlugPath,
   subtreeIds,
   wouldCycle,
 } from "./scopes.js";
@@ -2055,6 +2065,22 @@ export class Memloom implements MemoryEngine {
         continue;
       }
 
+      // Mechanical scoping (PLAN-memory-scopes.md): everything distilled from this session
+      // files under projects/<name>, no LLM involved. Capture is user-allowlisted, so
+      // creating the folder here is the user's standing instruction; agent saves still
+      // resolve strictly and cannot invent folders. A scoping failure must not cost the
+      // session: import unscoped and let the classification pass file it later.
+      let sessionScope: string | undefined;
+      const projectName = projectNameOf(parsed.cwd, session.project);
+      if (projectName && chunked.chunks.length > 0) {
+        try {
+          sessionScope = `projects/${projectName}`;
+          await ensureScopePath(this.#storage, owner, sessionScope);
+        } catch {
+          sessionScope = undefined;
+        }
+      }
+
       // Each chunk is processed end-to-end (distill, batch-embed its memories, save) and the
       // in-memory watermark advances only past chunks whose memories are fully saved. A
       // provider failure (out of credits, rate limit) then loses at most one chunk's calls:
@@ -2095,6 +2121,7 @@ export class Memloom implements MemoryEngine {
                 ...(memory.canonical ? { canonical: memory.canonical } : {}),
                 memoryType: memory.memoryType,
                 ownerId: owner,
+                ...(sessionScope ? { scope: sessionScope } : {}),
                 // The excerpt lets a flagged contradiction be judged right now, with the
                 // transcript as evidence, instead of waiting in the conflict queue.
                 context: { excerpt: excerptOf(memory, chunk) },
@@ -2274,6 +2301,24 @@ export class Memloom implements MemoryEngine {
       });
       result.redactions += event.redactions;
 
+      // Claude Code keeps one memory folder per project, so these notes know where they
+      // belong: projects/<name>, derived from the encoded project dir name (there is no
+      // transcript to read a cwd from). Copilot's folder is global, so its notes stay
+      // unscoped and the classification pass files them later. Same fallback posture as
+      // session import: a scoping failure imports unscoped rather than losing the folder.
+      let folderScope: string | undefined;
+      if (folder.agent === "claude-code") {
+        const projectName = projectNameOf(null, folder.label);
+        if (projectName) {
+          try {
+            folderScope = `projects/${projectName}`;
+            await ensureScopePath(this.#storage, owner, folderScope);
+          } catch {
+            folderScope = undefined;
+          }
+        }
+      }
+
       // One embed call per folder; each save and its ledger row land together, so a
       // provider failure mid-folder keeps everything already saved and a re-run only
       // reprocesses the remainder.
@@ -2288,6 +2333,7 @@ export class Memloom implements MemoryEngine {
               ...(unit.canonical ? { canonical: unit.canonical } : {}),
               memoryType: unit.memoryType,
               ownerId: owner,
+              ...(folderScope ? { scope: folderScope } : {}),
             },
             vectors[j],
           );
@@ -3526,9 +3572,17 @@ export class Memloom implements MemoryEngine {
        ORDER BY cc.created_at, cc.chunk_index`,
       [ownerId],
     );
+    // The scope classification queue rides along with the run: memories still sitting in
+    // 'uncategorized' that the pass has never looked at. Empty whenever the pass cannot
+    // run at all (no LLM, no user folders), so it never forces a run by itself in stores
+    // that have nothing to classify into.
+    const scopeWork = await this.#scopeClassifyWork(ownerId);
+
     // Nothing pending: no session row; an empty run every time someone clicks "index"
     // would drown the real history.
-    if (pending.length + pendingChunks.length === 0) return { indexed: 0, chunksIndexed: 0 };
+    if (pending.length + pendingChunks.length + scopeWork.memories.length === 0) {
+      return { indexed: 0, chunksIndexed: 0 };
+    }
 
     await this.#reconcileInterruptedRuns(ownerId);
     const [run] = await this.#storage.query<{ id: string }>(
@@ -3744,6 +3798,13 @@ export class Memloom implements MemoryEngine {
         });
       });
 
+      // The scope classification pass (PLAN-memory-scopes.md), after the extraction work:
+      // file what is still uncategorized into the owner's folders. Skipped when the breaker
+      // tripped, because the provider is unreachable and every batch would fail the same way.
+      if (!breakerTripped && scopeWork.memories.length > 0) {
+        await this.#classifyScopes(ownerId, scopeWork, logEvent);
+      }
+
       if (breakerTripped) {
         await logEvent(
           "error",
@@ -3778,6 +3839,112 @@ export class Memloom implements MemoryEngine {
     }
 
     return { indexed: totals.memories, chunksIndexed: totals.chunks };
+  }
+
+  /**
+   * What the scope classification pass would work on: the owner's user-tier folders as
+   * prompt options, and every active memory still unfiled (NULL or 'uncategorized' scope)
+   * that the pass has never stamped. Both lists come back empty when the pass cannot run:
+   * without an LLM there is nobody to ask, and without user folders the closed set offers
+   * the model nothing to choose, so asking would only spend calls.
+   */
+  async #scopeClassifyWork(
+    owner: string,
+  ): Promise<{ folders: ScopeFolderOption[]; memories: ScopeClassifyItem[] }> {
+    const none = { folders: [], memories: [] };
+    if (this.#llm instanceof NullLLMProvider) return none;
+    const { uncategorizedId } = await ensureSystemScopes(this.#storage, owner);
+    const scopes = await allScopes(this.#storage, owner);
+    const userFolders = scopes.filter((s) => s.kind === "user");
+    if (userFolders.length === 0) return none;
+    const memories = await this.#storage.query<{ id: string; content: string }>(
+      `SELECT id, content FROM memory_objects
+       WHERE owner_id = $1 AND status = 'active' AND scope_classified_at IS NULL
+         AND (scope_id IS NULL OR scope_id = $2)
+       ORDER BY created_at`,
+      [owner, uncategorizedId],
+    );
+    if (memories.length === 0) return none;
+    return {
+      folders: userFolders.map((s) => ({
+        path: scopeSlugPath(scopes, s.id),
+        description: s.description,
+      })),
+      memories,
+    };
+  }
+
+  /**
+   * The scope classification pass: one LLM call per batch, then strict validation. A
+   * verdict only lands when its path resolves to one of the owner's existing user folders
+   * and its confidence clears MIN_SCOPE_CONFIDENCE; anything else (an invented path, a
+   * system folder, a low-confidence guess) leaves the memory in 'uncategorized'. Folders
+   * are NEVER created here; that is the user's decision. An assignment moves the whole
+   * lineage (root_id), same as setMemoryScopes: the folder is an attribute of the belief.
+   * Every judged memory is stamped whatever the verdict, so the pass never re-reads it; a
+   * failed call stamps nothing, so the next run retries those memories.
+   */
+  async #classifyScopes(
+    owner: string,
+    work: { folders: ScopeFolderOption[]; memories: ScopeClassifyItem[] },
+    logEvent: (
+      level: "info" | "success" | "warning" | "error",
+      message: string,
+      itemId: string | null,
+      metadata: Record<string, unknown>,
+    ) => Promise<void>,
+  ): Promise<void> {
+    const scopes = await allScopes(this.#storage, owner);
+    const userIds = new Set(scopes.filter((s) => s.kind === "user").map((s) => s.id));
+    const batches: ScopeClassifyItem[][] = [];
+    for (let i = 0; i < work.memories.length; i += SCOPE_CLASSIFY_BATCH) {
+      batches.push(work.memories.slice(i, i + SCOPE_CLASSIFY_BATCH));
+    }
+    for (const [b, batch] of batches.entries()) {
+      const prefix = `scope pass [${b + 1}/${batches.length}]`;
+      let raw: string;
+      try {
+        this.#classifyCalls++;
+        raw = await this.#llm.complete(buildScopeClassifyPrompt(work.folders, batch));
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        await logEvent("warning", `${prefix} → failed: ${message}`, null, { error: message });
+        return;
+      }
+      let assigned = 0;
+      for (const verdict of parseScopeClassification(raw, batch.length)) {
+        if (verdict.confidence < MIN_SCOPE_CONFIDENCE) continue;
+        let scopeId: string | null = null;
+        try {
+          scopeId = resolveScopePath(scopes, verdict.path);
+        } catch {
+          // A malformed path (empty, over-deep) is model drift, same as an unknown one.
+          scopeId = null;
+        }
+        if (!scopeId || !userIds.has(scopeId)) continue;
+        const memory = batch[verdict.index - 1];
+        if (!memory) continue;
+        await this.#storage.query(
+          `UPDATE memory_objects SET scope_id = $3, updated_at = now()
+           WHERE owner_id = $1 AND root_id = (
+             SELECT root_id FROM memory_objects WHERE owner_id = $1 AND id = $2)`,
+          [owner, memory.id, scopeId],
+        );
+        assigned += 1;
+      }
+      await this.#storage.query(
+        `UPDATE memory_objects SET scope_classified_at = now()
+         WHERE owner_id = $1 AND id = ANY($2::uuid[])`,
+        [owner, batch.map((m) => m.id)],
+      );
+      const left = batch.length - assigned;
+      await logEvent(
+        assigned > 0 ? "success" : "info",
+        `${prefix} → filed ${assigned} of ${batch.length}, ${left} left uncategorized`,
+        null,
+        { batch: b + 1, batches: batches.length, assigned, left },
+      );
+    }
   }
 
   /** Index sessions, newest first: the Console's persistent log. Reconciles dead runs. */

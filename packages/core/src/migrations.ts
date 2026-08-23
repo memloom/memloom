@@ -1560,5 +1560,21 @@ export function buildMigrations(dims: number): Migration[] {
       $fn$;
     `,
     },
+    {
+      // The background classification pass files uncategorized memories into the owner's
+      // folders during index runs. The stamp records that a memory has been through the pass,
+      // whatever the verdict: a below-floor or invalid answer leaves the memory uncategorized,
+      // and without the stamp every later run would re-send it to the model. "Already looked
+      // at" cannot be inferred from scope_id alone, which is why this is its own column.
+      //
+      // The partial index is the pass's work queue: stamped rows leave it, so it stays small.
+      id: "0033_scope_classified",
+      sql: /* sql */ `
+      ALTER TABLE memory_objects ADD COLUMN IF NOT EXISTS scope_classified_at timestamptz;
+      CREATE INDEX IF NOT EXISTS memory_objects_scope_classify_due_idx
+        ON memory_objects (owner_id, created_at)
+        WHERE status = 'active' AND scope_classified_at IS NULL;
+    `,
+    },
   ];
 }
