@@ -46,6 +46,33 @@ memloom scopes set-doc projects/memloom <document-id>
 `set` moves whole version chains, so history never straddles two folders. `set-doc` moves a
 document and every chunk in one transaction.
 
+## scopes backfill
+
+```bash
+memloom scopes backfill --dry-run    # per-folder counts, nothing written
+memloom scopes backfill              # apply, then classify the rest with the LLM
+memloom scopes backfill --no-llm     # apply the mechanical pass only
+```
+
+Files every unfiled memory whose import provenance names a project into `projects/<name>`,
+deterministically and without a model call. It never overrides a filing you made by hand,
+re-running it is a no-op, and what it files the classifier skips forever. The remainder
+(saves with no provenance) goes through the same classification pass an index run uses;
+without `--no-llm` the command runs one for you.
+
+Run `--dry-run` first: it prints exactly what the real run would do.
+
+## scopes review
+
+```bash
+memloom scopes review                # what sits in uncategorized, ids included
+memloom scopes review personal-life
+```
+
+The correction loop after a backfill or a classification pass: list a folder, spot the
+misfiled, move them with `scopes set`. The viewer's folder sidebar is the same loop with
+multi-select.
+
 ## Filing and filtering elsewhere
 
 ```bash

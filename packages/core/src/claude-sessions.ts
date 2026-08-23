@@ -238,6 +238,23 @@ export function projectNameOf(cwd: string | null, encodedDir: string): string | 
   return tail ?? null;
 }
 
+/**
+ * The encoded project dir a provenance file path points into, or null. Both provenance
+ * sources put their files under `.claude/projects/<encoded>/...` (session transcripts and
+ * Claude Code memory folders alike), so the segment after that pair is the project, however
+ * deep the file sits below it. Copilot memory paths carry no project and answer null, which
+ * is the backfill's signal to leave the memory for the classifier.
+ */
+export function encodedProjectDirOf(filePath: string): string | null {
+  const segments = filePath.split(/[\\/]+/).filter((s) => s.trim().length > 0);
+  for (let i = 0; i + 2 < segments.length; i++) {
+    if (segments[i] === ".claude" && segments[i + 1] === "projects") {
+      return segments[i + 2] ?? null;
+    }
+  }
+  return null;
+}
+
 /** sha256 hex of the first `lines` lines: the ledger's rewrite check on a later run. */
 export async function hashPrefix(path: string, lines: number): Promise<string> {
   const hash = createHash("sha256");

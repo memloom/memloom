@@ -373,6 +373,10 @@ const documentScopeSchema = z.object({
   scope: z.string().min(1, "scope must be a non-empty string"),
 });
 
+const scopeBackfillSchema = z.object({
+  dryRun: z.boolean().optional(),
+});
+
 const updateSchema = z.object({
   content: z.string().min(1, "content must be a non-empty string"),
   canonical: z.string().optional(),
@@ -936,6 +940,15 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       const message = err instanceof Error ? err.message : String(err);
       return c.json({ error: message }, /no scope/.test(message) ? 404 : 400);
     }
+  });
+
+  // The mechanical backfill: provenance-bearing memories into their project folders.
+  // Deterministic and model-free, so it answers synchronously; the LLM remainder rides
+  // the index run instead (POST /memory/index).
+  app.post("/scopes/backfill", async (c) => {
+    const body = await parseBody(c, scopeBackfillSchema);
+    if (!body.ok) return body.res;
+    return c.json(await memloom.backfillScopes({ dryRun: body.data.dryRun, ownerId: ownerOf(c) }));
   });
 
   // Bulk move: whole lineages land in the target folder. The viewer multi-select.

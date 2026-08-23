@@ -14,6 +14,7 @@ import {
   discoverSessions,
   hashPrefix,
   parseSession,
+  encodedProjectDirOf,
   projectNameOf,
   type SessionChunk,
   type SessionUnit,
@@ -193,6 +194,7 @@ import type {
   SaveInput,
   SaveResult,
   Scope,
+  ScopeBackfillReport,
   ScopeNode,
   SettledEntityPair,
   SpeakerRoster,
@@ -3242,6 +3244,110 @@ export class Memloom implements MemoryEngine {
         [documentId, ownerId, scopeId],
       );
     });
+  }
+
+  /**
+   * The mechanical backfill (PLAN-memory-scopes.md child 4): every unfiled memory whose
+   * provenance names a project moves to `projects/<name>`, deterministically and for free.
+   * Import provenance survived every capture and import, so the exact memories polluting
+   * cross-scope recall are the ones this pass can file without a model.
+   *
+   * Three rules keep it safe to run any time:
+   * - It never overrides a filing. A lineage whose current version already sits in a real
+   *   folder is counted as alreadyFiled and left alone, so re-running after hand-moves
+   *   changes nothing (which also makes the pass idempotent).
+   * - A dry run writes nothing at all, not even the target folders.
+   * - What it files it also stamps (scope_classified_at), so the classification pass never
+   *   spends a model call second-guessing a mechanical fact.
+   */
+  async backfillScopes(
+    opts: { dryRun?: boolean; ownerId?: string } = {},
+  ): Promise<ScopeBackfillReport> {
+    const owner = opts.ownerId ?? SENTINEL_OWNER;
+    const dryRun = opts.dryRun ?? false;
+    const { uncategorizedId } = await ensureSystemScopes(this.#storage, owner);
+
+    // Provenance for every lineage still unfiled. The scope check looks at the lineage's
+    // ACTIVE version: that is where a user's hand-move lands, and stale versions always
+    // follow their root when a move happens.
+    const rows = await this.#storage.query<{ root_id: string; file_path: string }>(
+      `SELECT DISTINCT mo.root_id, ip.file_path
+       FROM import_provenance ip
+       JOIN memory_objects mo ON mo.id = ip.memory_id
+       JOIN memory_objects head
+         ON head.owner_id = mo.owner_id AND head.root_id = mo.root_id AND head.status = 'active'
+       WHERE ip.owner_id = $1
+         AND (head.scope_id IS NULL OR head.scope_id = $2)`,
+      [owner, uncategorizedId],
+    );
+
+    const perFolder = new Map<string, Set<string>>();
+    let unmappable = 0;
+    for (const row of rows) {
+      const encoded = encodedProjectDirOf(row.file_path);
+      const name = encoded ? projectNameOf(null, encoded) : null;
+      if (!name) {
+        unmappable++;
+        continue;
+      }
+      const path = `projects/${name.toLowerCase().replace(/\s+/g, "-")}`;
+      const lineages = perFolder.get(path) ?? new Set<string>();
+      lineages.add(row.root_id);
+      perFolder.set(path, lineages);
+    }
+
+    // How many provenance-bearing lineages were already filed by hand (or an earlier run):
+    // reported so "0 moved" on a re-run reads as done, not broken.
+    const [filed] = await this.#storage.query<{ n: number }>(
+      `SELECT count(DISTINCT mo.root_id)::int AS n
+       FROM import_provenance ip
+       JOIN memory_objects mo ON mo.id = ip.memory_id
+       JOIN memory_objects head
+         ON head.owner_id = mo.owner_id AND head.root_id = mo.root_id AND head.status = 'active'
+       WHERE ip.owner_id = $1
+         AND head.scope_id IS NOT NULL AND head.scope_id <> $2`,
+      [owner, uncategorizedId],
+    );
+
+    let rowsMoved = 0;
+    if (!dryRun) {
+      for (const [path, lineages] of perFolder) {
+        const scopeId = await ensureScopePath(this.#storage, owner, path);
+        const updated = await this.#storage.query<{ id: string }>(
+          `UPDATE memory_objects
+           SET scope_id = $3, scope_classified_at = now(), updated_at = now()
+           WHERE owner_id = $1 AND root_id = ANY($2::uuid[])
+           RETURNING id`,
+          [owner, [...lineages], scopeId],
+        );
+        rowsMoved += updated.length;
+      }
+    }
+
+    // The classifier's queue after this pass: unfiled, unstamped, and (on a dry run)
+    // not among the lineages the real run would file.
+    const wouldFile = dryRun ? [...perFolder.values()].flatMap((s) => [...s]) : [];
+    const [rest] = await this.#storage.query<{ n: number }>(
+      `SELECT count(*)::int AS n
+       FROM memory_objects
+       WHERE owner_id = $1 AND status = 'active' AND scope_classified_at IS NULL
+         AND (scope_id IS NULL OR scope_id = $2)
+         AND NOT (root_id = ANY($3::uuid[]))`,
+      [owner, uncategorizedId, wouldFile],
+    );
+
+    const moved = [...perFolder.values()].reduce((n, s) => n + s.size, 0);
+    return {
+      dryRun,
+      moved,
+      rows: rowsMoved,
+      perFolder: Object.fromEntries(
+        [...perFolder.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([p, s]) => [p, s.size]),
+      ),
+      alreadyFiled: Number(filed?.n ?? 0),
+      unmappable,
+      remaining: Number(rest?.n ?? 0),
+    };
   }
 
   /**

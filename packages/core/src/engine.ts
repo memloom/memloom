@@ -44,6 +44,7 @@ import type {
   SaveInput,
   SaveResult,
   Scope,
+  ScopeBackfillReport,
   ScopeNode,
   UpdateInput,
   UpdateResult,
@@ -79,6 +80,8 @@ export interface MemoryEngine {
   setMemoryScopes(memoryIds: string[], scope: string, ownerId?: string): Promise<number>;
   /** Move a document and its chunks into a folder, one transaction. */
   setDocumentScope(documentId: string, scope: string, ownerId?: string): Promise<void>;
+  /** Mechanical backfill: file provenance-bearing memories into projects/<name>. */
+  backfillScopes(opts?: { dryRun?: boolean; ownerId?: string }): Promise<ScopeBackfillReport>;
   /** Edit a belief: append a new current version and stale the prior one (explicit, no funnel). */
   update(input: UpdateInput): Promise<UpdateResult>;
   /** The full version chain of a belief, newest first: pass any version's id. */

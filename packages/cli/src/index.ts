@@ -320,6 +320,11 @@ Usage: memloom <command> [args]
                        move memories (whole version chains) into a folder
   scopes set-doc <path> <document-id>
                        move a context document and its chunks into a folder
+  scopes backfill      file provenance-bearing memories into projects/<name> mechanically,
+                       then classify the rest with the LLM (--dry-run first; --no-llm to
+                       skip the classification run)
+  scopes review [path] list what sits in a folder (default: uncategorized), ids included,
+                       so misfiled memories can be fixed with scopes set
   audio models         the speech models you can transcribe with, and their sizes
   audio setup [id]     download a speech model, once per machine (default: 465 MB)
   audio use <id>       transcribe with a different model from now on
@@ -929,8 +934,64 @@ export async function run(argv: readonly string[]): Promise<void> {
         return;
       }
 
+      if (sub === "backfill") {
+        const dryRun = args.includes("--dry-run");
+        const noLlm = args.includes("--no-llm");
+        const report = await engine.backfillScopes({ dryRun });
+        const verb = report.dryRun ? "would move" : "moved";
+        console.log(
+          `${verb} ${report.moved} ${report.moved === 1 ? "belief" : "beliefs"}` +
+            (report.dryRun ? "" : ` (${report.rows} rows)`),
+        );
+        for (const [path, n] of Object.entries(report.perFolder)) {
+          console.log(`  ${path.padEnd(38)}${n}`);
+        }
+        if (report.alreadyFiled > 0) {
+          console.log(`left alone (already filed by hand): ${report.alreadyFiled}`);
+        }
+        if (report.unmappable > 0) {
+          console.log(`no project in provenance (stays for the classifier): ${report.unmappable}`);
+        }
+        console.log(`unfiled with no provenance: ${report.remaining}`);
+        if (report.dryRun) {
+          console.log("dry run: nothing was written. Re-run without --dry-run to apply.");
+          return;
+        }
+        if (noLlm || report.remaining === 0) {
+          if (report.remaining > 0) {
+            console.log("skipping classification (--no-llm); memloom index runs it later.");
+          }
+          return;
+        }
+        // The LLM remainder rides the same classification pass every index run uses, so
+        // backfill finishes the job in one command instead of pointing at a second one.
+        console.log(`classifying the remaining ${report.remaining} with the LLM...`);
+        const indexed = await engine.index();
+        console.log(
+          `index run done (${indexed.indexed} memories, ${indexed.chunksIndexed} chunks indexed); ` +
+            "review the filing with: memloom scopes review",
+        );
+        return;
+      }
+
+      if (sub === "review") {
+        const ref = args[0] ?? "uncategorized";
+        const node = await findScope(ref);
+        const rows = await engine.memories(undefined, { scope: node.path });
+        if (rows.length === 0) {
+          console.log(`(nothing in ${node.path})`);
+          return;
+        }
+        console.log(`${rows.length} in ${node.path}; move any with: memloom scopes set <path> <id>`);
+        for (const m of rows) {
+          const text = m.content.length > 100 ? `${m.content.slice(0, 97)}...` : m.content;
+          console.log(`${m.id}  ${text.replace(/\s+/g, " ")}`);
+        }
+        return;
+      }
+
       throw new Error(
-        "usage: memloom scopes [list|add|rename|describe|move|rm|set|set-doc]",
+        "usage: memloom scopes [list|add|rename|describe|move|rm|set|set-doc|backfill|review]",
       );
     }
 

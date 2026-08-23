@@ -45,6 +45,7 @@ import type {
   SaveInput,
   SaveResult,
   Scope,
+  ScopeBackfillReport,
   ScopeNode,
   UpdateInput,
   UpdateResult,
@@ -204,6 +205,13 @@ export class HttpMemloomClient implements MemoryEngine {
   async setDocumentScope(documentId: string, scope: string, ownerId?: string): Promise<void> {
     this.#owned(ownerId);
     await this.#post(`/context/documents/${documentId}/scope`, { scope });
+  }
+
+  backfillScopes(
+    opts: { dryRun?: boolean; ownerId?: string } = {},
+  ): Promise<ScopeBackfillReport> {
+    this.#owned(opts.ownerId);
+    return this.#post<ScopeBackfillReport>("/scopes/backfill", { dryRun: opts.dryRun ?? false });
   }
 
   update(input: UpdateInput): Promise<UpdateResult> {

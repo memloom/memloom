@@ -58,6 +58,30 @@ export interface Scope {
   updatedAt: string;
 }
 
+/**
+ * What one backfill pass did (or would do, on a dry run): the mechanical filing of
+ * provenance-bearing memories into their project folders. The LLM remainder is not in
+ * here; it rides the index run's classification pass.
+ */
+export interface ScopeBackfillReport {
+  dryRun: boolean;
+  /** Lineages moved (rows can exceed this: every version of a belief moves with it). */
+  moved: number;
+  /** Rows updated across all moved lineages. Zero on a dry run. */
+  rows: number;
+  /** Lineage counts per target folder path, alphabetical. */
+  perFolder: Record<string, number>;
+  /**
+   * Provenance-bearing memories left alone because their belief already sits in a real
+   * folder: a filing the user (or an earlier pass) made, which mechanics never override.
+   */
+  alreadyFiled: number;
+  /** Provenance rows whose path names no project (Copilot's global folder). */
+  unmappable: number;
+  /** Unfiled memories with no provenance at all: the classifier's queue after this pass. */
+  remaining: number;
+}
+
 /** The scope tree with per-folder usage, what listScopes returns. */
 export interface ScopeNode extends Scope {
   /** Addressable slug path, e.g. "personal-life/people". */
