@@ -312,6 +312,29 @@ export {
   PREDICATES,
   PROPOSAL_MIN_OCCURRENCES,
 } from "./schema.js";
+// The scope registry: folder path parsing, tag normalization, subtree expansion. The pure
+// helpers; the engine methods (listScopes, createScope, ...) live on Memloom.
+export type { ScopeFilter } from "./scopes.js";
+export {
+  buildScopeTree,
+  ensureScopePath,
+  ensureSystemScopes,
+  expandScopeSelector,
+  GLOBAL_SCOPE,
+  MAX_SCOPE_DEPTH,
+  MAX_TAG_LENGTH,
+  MAX_TAGS,
+  normalizeTags,
+  parseScopePath,
+  resolveScopePath,
+  SCOPE_ALL,
+  scopeDisplayPath,
+  scopeSlug,
+  scopeSlugPath,
+  subtreeIds,
+  UNCATEGORIZED,
+  wouldCycle,
+} from "./scopes.js";
 export type { FileStability, StabilityOptions } from "./stability.js";
 export { waitUntilStable } from "./stability.js";
 export type { StorageAdapter } from "./storage.js";
@@ -406,6 +429,8 @@ export type {
   SaveInput,
   SaveOutcome,
   SaveResult,
+  Scope,
+  ScopeNode,
   SpeakerRoster,
   SyncTargets,
   UpdateInput,

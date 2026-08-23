@@ -1376,5 +1376,189 @@ export function buildMigrations(dims: number): Migration[] {
       ALTER TABLE context_documents ADD COLUMN IF NOT EXISTS missing_at timestamptz;
     `,
     },
+    {
+      // The scope dimension: hierarchical folders + free tags (PLAN-memory-scopes.md).
+      // Folders are rows in memory_scopes; memories and documents point at exactly one.
+      // scope_id stays nullable at the SQL level: the engine reads NULL as 'uncategorized'
+      // and never writes NULL going forward, so the migration needs no per-owner seeding
+      // (system folders are created lazily, the #ensureSchemaSeed pattern). Chunks
+      // denormalize their document's scope so memloom_fuse filters without joins.
+      id: "0032_memory_scopes",
+      sql: /* sql */ `
+      CREATE TABLE IF NOT EXISTS memory_scopes (
+        id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id    uuid NOT NULL,
+        parent_id   uuid REFERENCES memory_scopes (id),
+        name        text NOT NULL,
+        description text,
+        kind        text NOT NULL DEFAULT 'user' CHECK (kind IN ('user', 'system')),
+        created_at  timestamptz NOT NULL DEFAULT now(),
+        updated_at  timestamptz NOT NULL DEFAULT now()
+      );
+      -- Sibling names are unique per parent, case-insensitively. Expression index rather
+      -- than UNIQUE NULLS NOT DISTINCT so the same SQL runs on every supported Postgres.
+      CREATE UNIQUE INDEX IF NOT EXISTS memory_scopes_owner_parent_name_idx
+        ON memory_scopes (owner_id,
+                          coalesce(parent_id, '00000000-0000-0000-0000-000000000000'::uuid),
+                          lower(name));
+      CREATE INDEX IF NOT EXISTS memory_scopes_owner_idx ON memory_scopes (owner_id);
+
+      ALTER TABLE memory_objects    ADD COLUMN IF NOT EXISTS scope_id uuid REFERENCES memory_scopes (id);
+      ALTER TABLE memory_objects    ADD COLUMN IF NOT EXISTS tags text[] NOT NULL DEFAULT '{}';
+      ALTER TABLE context_documents ADD COLUMN IF NOT EXISTS scope_id uuid REFERENCES memory_scopes (id);
+      ALTER TABLE context_chunks    ADD COLUMN IF NOT EXISTS scope_id uuid REFERENCES memory_scopes (id);
+
+      CREATE INDEX IF NOT EXISTS memory_objects_owner_scope_idx
+        ON memory_objects (owner_id, scope_id);
+      CREATE INDEX IF NOT EXISTS memory_objects_tags_idx
+        ON memory_objects USING gin (tags);
+      CREATE INDEX IF NOT EXISTS context_chunks_owner_scope_idx
+        ON context_chunks (owner_id, scope_id);
+
+      DROP FUNCTION IF EXISTS memloom_fuse(
+        text, vector, uuid, int, int, int, int, boolean, boolean, boolean,
+        double precision, double precision, double precision, double precision, uuid
+      );
+
+      -- The 0021 fuse plus three params. p_scope_ids is the ALREADY-EXPANDED id set (the
+      -- engine expands subtree + uncategorized + global in TypeScript; SQL never walks the
+      -- tree). p_include_unscoped covers legacy NULL scope_id rows, true whenever the
+      -- uncategorized folder is in the requested set. p_tags is any-match (&&) and
+      -- memory-only: tags do not exist on chunks, so a tag-filtered recall excludes them
+      -- by construction rather than returning chunks that ignored the filter.
+      CREATE OR REPLACE FUNCTION memloom_fuse(
+        p_q                text,
+        p_emb              vector(${dims}),
+        p_owner            uuid,
+        p_limit            int     DEFAULT 10,
+        p_pool             int     DEFAULT 50,
+        p_anchor           int     DEFAULT 10,
+        p_k                int     DEFAULT 60,
+        p_use_vector       boolean DEFAULT true,
+        p_use_keyword      boolean DEFAULT true,
+        p_use_entity       boolean DEFAULT true,
+        p_anchor_sim       float   DEFAULT 0.60,
+        p_w_vector         float   DEFAULT 1.0,
+        p_w_keyword        float   DEFAULT 2.0,
+        p_w_entity         float   DEFAULT 0.5,
+        p_session          uuid    DEFAULT NULL,
+        p_scope_ids        uuid[]  DEFAULT NULL,
+        p_include_unscoped boolean DEFAULT false,
+        p_tags             text[]  DEFAULT NULL
+      )
+      RETURNS TABLE (id uuid, rrf_score double precision, src text)
+      LANGUAGE sql STABLE AS $fn$
+        WITH vec AS (
+          SELECT u.id, u.src, row_number() OVER (ORDER BY u.dist) AS rnk
+          FROM (
+            SELECT mo.id, 'memory'::text AS src, mo.embedding <=> p_emb AS dist
+            FROM memory_objects mo
+            WHERE mo.owner_id = p_owner AND mo.status = 'active' AND mo.embedding IS NOT NULL
+              AND (p_scope_ids IS NULL OR mo.scope_id = ANY(p_scope_ids)
+                   OR (mo.scope_id IS NULL AND p_include_unscoped))
+              AND (p_tags IS NULL OR mo.tags && p_tags)
+            UNION ALL
+            SELECT cc.id, 'chunk'::text, cc.embedding <=> p_emb
+            FROM context_chunks cc
+            WHERE cc.owner_id = p_owner AND cc.embedding IS NOT NULL
+              AND (cc.session_id IS NULL OR cc.session_id = p_session)
+              AND p_tags IS NULL
+              AND (p_scope_ids IS NULL OR cc.scope_id = ANY(p_scope_ids)
+                   OR (cc.scope_id IS NULL AND p_include_unscoped))
+          ) u
+          WHERE p_use_vector
+          ORDER BY u.dist
+          LIMIT p_pool
+        ),
+        kw AS (
+          SELECT u.id, u.src, row_number() OVER (ORDER BY u.rank DESC) AS rnk
+          FROM (
+            SELECT mo.id, 'memory'::text AS src,
+                   ts_rank(mo.search_tsv, websearch_to_tsquery('simple', p_q)) AS rank
+            FROM memory_objects mo
+            WHERE mo.owner_id = p_owner AND mo.status = 'active'
+              AND mo.search_tsv @@ websearch_to_tsquery('simple', p_q)
+              AND (p_scope_ids IS NULL OR mo.scope_id = ANY(p_scope_ids)
+                   OR (mo.scope_id IS NULL AND p_include_unscoped))
+              AND (p_tags IS NULL OR mo.tags && p_tags)
+            UNION ALL
+            SELECT cc.id, 'chunk'::text,
+                   ts_rank(cc.search_tsv, websearch_to_tsquery('simple', p_q))
+            FROM context_chunks cc
+            WHERE cc.owner_id = p_owner
+              AND cc.search_tsv @@ websearch_to_tsquery('simple', p_q)
+              AND (cc.session_id IS NULL OR cc.session_id = p_session)
+              AND p_tags IS NULL
+              AND (p_scope_ids IS NULL OR cc.scope_id = ANY(p_scope_ids)
+                   OR (cc.scope_id IS NULL AND p_include_unscoped))
+          ) u
+          WHERE p_use_keyword
+          ORDER BY u.rank DESC
+          LIMIT p_pool
+        ),
+        anchors AS (
+          SELECT g.eid
+          FROM (
+            SELECT u.eid, min(u.dist) AS dist
+            FROM (
+              SELECT me.id AS eid, me.embedding <=> p_emb AS dist
+              FROM memory_entities me
+              WHERE me.owner_id = p_owner AND me.embedding IS NOT NULL
+                AND (1 - (me.embedding <=> p_emb)) >= p_anchor_sim
+              UNION ALL
+              SELECT ea.canonical_id AS eid, ea.embedding <=> p_emb AS dist
+              FROM memory_entity_aliases ea
+              WHERE ea.owner_id = p_owner AND ea.embedding IS NOT NULL
+                AND (1 - (ea.embedding <=> p_emb)) >= p_anchor_sim
+            ) u
+            WHERE p_use_entity
+            GROUP BY u.eid
+          ) g
+          ORDER BY g.dist
+          LIMIT p_anchor
+        ),
+        -- Entities are global; their SOURCES are scoped. The filters live in the join
+        -- conditions so a mention from an out-of-scope memory or chunk cannot smuggle
+        -- its source into a scoped recall through the entity arm.
+        ent AS (
+          SELECT g.id, g.src, row_number() OVER (ORDER BY g.cnt DESC) AS rnk
+          FROM (
+            SELECT e.from_id AS id,
+                   CASE WHEN bool_or(mo.id IS NOT NULL) THEN 'memory'::text
+                        ELSE 'chunk'::text END AS src,
+                   count(DISTINCT e.to_id) AS cnt
+            FROM memory_edges e
+            JOIN anchors a ON a.eid = e.to_id
+            LEFT JOIN memory_objects mo ON mo.id = e.from_id AND mo.status = 'active'
+              AND (p_scope_ids IS NULL OR mo.scope_id = ANY(p_scope_ids)
+                   OR (mo.scope_id IS NULL AND p_include_unscoped))
+              AND (p_tags IS NULL OR mo.tags && p_tags)
+            LEFT JOIN context_chunks cc ON cc.id = e.from_id
+              AND p_tags IS NULL
+              AND (p_scope_ids IS NULL OR cc.scope_id = ANY(p_scope_ids)
+                   OR (cc.scope_id IS NULL AND p_include_unscoped))
+            WHERE e.owner_id = p_owner AND e.relation = 'mention' AND e.active
+            GROUP BY e.from_id
+            HAVING bool_or(mo.id IS NOT NULL) OR bool_or(cc.id IS NOT NULL)
+            ORDER BY count(DISTINCT e.to_id) DESC
+            LIMIT p_pool
+          ) g
+        ),
+        fused AS (
+          SELECT u.id AS fid, u.src AS fsrc, sum(u.w / (p_k + u.rnk)) AS score
+          FROM (
+            SELECT vec.id, vec.src, vec.rnk, p_w_vector  AS w FROM vec
+            UNION ALL SELECT kw.id,  kw.src,  kw.rnk,  p_w_keyword FROM kw
+            UNION ALL SELECT ent.id, ent.src, ent.rnk, p_w_entity FROM ent
+          ) u
+          GROUP BY u.id, u.src
+        )
+        SELECT fused.fid, fused.score, fused.fsrc
+        FROM fused
+        ORDER BY fused.score DESC
+        LIMIT p_limit
+      $fn$;
+    `,
+    },
   ];
 }

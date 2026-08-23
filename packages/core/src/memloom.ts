@@ -42,6 +42,19 @@ import { bindOwner, type OwnedMemloom } from "./owned.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
 import { uploadStoreDir } from "./queue.js";
 import {
+  allScopes,
+  buildScopeTree,
+  ensureScopePath,
+  ensureSystemScopes,
+  expandScopeSelector,
+  normalizeTags,
+  resolveScopePath,
+  SCOPE_ALL,
+  scopeDisplayPath,
+  subtreeIds,
+  wouldCycle,
+} from "./scopes.js";
+import {
   buildRecheckPrompt,
   countDueForRecheck,
   findRecheckSubjects,
@@ -169,6 +182,8 @@ import type {
   ResolvedConflict,
   SaveInput,
   SaveResult,
+  Scope,
+  ScopeNode,
   SettledEntityPair,
   SpeakerRoster,
   SyncTargets,
@@ -450,6 +465,8 @@ interface MemoryRow {
   version: number;
   asserted_at: string;
   created_at: string;
+  scope_id: string | null;
+  tags: string[] | null;
   similarity?: number;
   rrf_score?: number;
 }
@@ -471,6 +488,7 @@ interface RecallRow extends Partial<MemoryRow> {
   c_heading_path: string | null;
   c_page: number | null;
   c_created_at: string | null;
+  c_scope_id: string | null;
   d_id: string | null;
   d_title: string | null;
   d_path: string | null;
@@ -490,6 +508,9 @@ function mapRecallRow(row: RecallRow): Memory {
       version: 1,
       assertedAt: row.c_created_at ?? "",
       createdAt: row.c_created_at ?? "",
+      scopeId: row.c_scope_id ?? null,
+      scopePath: null, // filled in by the caller from the registry
+      tags: [],
       similarity: Number(row.similarity),
       rrfScore: Number(row.rrf_score),
       kind: "context",
@@ -518,6 +539,9 @@ function mapRow(row: MemoryRow): Memory {
     version: Number(row.version),
     assertedAt: row.asserted_at,
     createdAt: row.created_at,
+    scopeId: row.scope_id ?? null,
+    scopePath: null, // filled in by the caller from the registry
+    tags: row.tags ?? [],
     ...(row.similarity !== undefined ? { similarity: Number(row.similarity) } : {}),
     ...(row.rrf_score !== undefined ? { rrfScore: Number(row.rrf_score) } : {}),
   };
@@ -836,6 +860,9 @@ export class Memloom implements MemoryEngine {
     signal?: AbortSignal,
   ): Promise<ContextAddResult> {
     const owner = input.ownerId ?? SENTINEL_OWNER;
+    // Resolved before extraction: an unknown scope should fail in milliseconds, not after
+    // transcribing an hour of audio.
+    const scopeId = input.scope ? await this.#resolveScopeStrict(owner, input.scope) : null;
     const file = await extractFile(
       input.path,
       (bytes) => createHash("sha256").update(bytes).digest("hex"),
@@ -848,7 +875,7 @@ export class Memloom implements MemoryEngine {
         signal,
       },
     );
-    const result = await this.#ingestDocument(owner, input.path, file, null);
+    const result = await this.#ingestDocument(owner, input.path, file, null, scopeId);
     if (result.outcome !== "unchanged") this.#scheduleAutoIndex(owner);
     // The voice library pass: a fresh roster arrives with numbered speakers, and anyone
     // the store already knows by voice gets their name before the user ever sees
@@ -936,7 +963,8 @@ export class Memloom implements MemoryEngine {
       (bytes) => createHash("sha256").update(bytes).digest("hex"),
       input.html === undefined ? {} : { html: input.html },
     );
-    const result = await this.#ingestDocument(owner, link.url, link, null);
+    const scopeId = input.scope ? await this.#resolveScopeStrict(owner, input.scope) : null;
+    const result = await this.#ingestDocument(owner, link.url, link, null, scopeId);
     if (result.outcome !== "unchanged") this.#scheduleAutoIndex(owner);
     return result;
   }
@@ -976,11 +1004,20 @@ export class Memloom implements MemoryEngine {
    * already lives here creates nothing ("exists"). A link is the stronger identity: it can
    * refresh from disk; an upload is a one-time snapshot.
    */
+  /** Resolve a folder path strictly for an ingest surface; agents never create folders. */
+  async #resolveScopeStrict(owner: string, scope: string): Promise<string> {
+    const scopes = await allScopes(this.#storage, owner);
+    const id = resolveScopePath(scopes, scope);
+    if (!id) throw new Error(`memloom: unknown scope "${scope}"`);
+    return id;
+  }
+
   async #ingestDocument(
     owner: string,
     path: string,
     file: ExtractedFile,
     sessionId: string | null,
+    scopeId: string | null = null,
   ): Promise<ContextAddResult> {
     const isUpload = path.startsWith("upload://");
     // A document is a mirror of something that already existed, so when the extractor can
@@ -1000,11 +1037,21 @@ export class Memloom implements MemoryEngine {
       id: string;
       content_hash: string;
       chunk_count: number;
+      scope_id: string | null;
     }>(
-      "SELECT id, content_hash, chunk_count FROM context_documents WHERE owner_id = $1 AND path = $2",
+      "SELECT id, content_hash, chunk_count, scope_id FROM context_documents WHERE owner_id = $1 AND path = $2",
       [owner, path],
     );
     const prior = existing[0];
+
+    // The document's folder: an explicit scope wins (re-adding with --scope moves the
+    // document), a re-ingest keeps the folder it has, and a fresh document without either
+    // lands in 'uncategorized'. Resolved before the transaction so every chunk write below
+    // sees one settled value.
+    const docScope =
+      scopeId ??
+      prior?.scope_id ??
+      (await ensureSystemScopes(this.#storage, owner)).uncategorizedId;
 
     // The cross-namespace dedup (global docs only; chat attachments are session-scoped
     // copies on purpose).
@@ -1082,8 +1129,23 @@ export class Memloom implements MemoryEngine {
     };
 
     if (prior && prior.content_hash === file.contentHash) {
-      // Unchanged, but stray upload duplicates (from before this dedup existed) still get
-      // absorbed, so a plain re-link heals an already-duplicated store.
+      // Unchanged bytes, but an explicit scope still moves the document: "context add
+      // --scope X file" is a filing action, and the file not having changed since is no
+      // reason to ignore it.
+      if (scopeId !== null && prior.scope_id !== scopeId) {
+        await this.#storage.tx(async (tx) => {
+          await tx.query(
+            "UPDATE context_documents SET scope_id = $2, updated_at = now() WHERE id = $1",
+            [prior.id, scopeId],
+          );
+          await tx.query("UPDATE context_chunks SET scope_id = $2 WHERE document_id = $1", [
+            prior.id,
+            scopeId,
+          ]);
+        });
+      }
+      // Stray upload duplicates (from before this dedup existed) still get absorbed, so a
+      // plain re-link heals an already-duplicated store.
       const absorbed = absorbTargets.length > 0 ? await this.#storage.tx((tx) => absorb(tx)) : 0;
       return {
         documentId: prior.id,
@@ -1205,7 +1267,7 @@ export class Memloom implements MemoryEngine {
         await tx.query(
           `UPDATE context_documents
            SET path = $2, title = $3, kind = $4, content_hash = $5, chunk_count = $6, speakers = $7,
-               created_at = COALESCE($8::timestamptz, created_at), updated_at = now()
+               created_at = COALESCE($8::timestamptz, created_at), scope_id = $9, updated_at = now()
            WHERE id = $1`,
           [
             replaceId,
@@ -1216,13 +1278,14 @@ export class Memloom implements MemoryEngine {
             chunks.length,
             file.speakers ? JSON.stringify(file.speakers) : null,
             recordedAt,
+            docScope,
           ],
         );
         documentId = replaceId;
       } else {
         const inserted = await tx.query<{ id: string }>(
-          `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count, session_id, speakers, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, now())) RETURNING id`,
+          `INSERT INTO context_documents (owner_id, path, title, kind, content_hash, chunk_count, session_id, speakers, created_at, scope_id)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, COALESCE($9::timestamptz, now()), $10) RETURNING id`,
           [
             owner,
             path,
@@ -1233,6 +1296,7 @@ export class Memloom implements MemoryEngine {
             sessionId,
             file.speakers ? JSON.stringify(file.speakers) : null,
             recordedAt,
+            docScope,
           ],
         );
         const row = inserted[0];
@@ -1273,6 +1337,13 @@ export class Memloom implements MemoryEngine {
           ],
         );
       }
+
+      // One statement normalizes every chunk (kept and fresh alike) to the document's
+      // folder, so a re-add that moved the document can never leave kept chunks behind.
+      await tx.query("UPDATE context_chunks SET scope_id = $2 WHERE document_id = $1", [
+        documentId,
+        docScope,
+      ]);
 
       const absorbed = await absorb(tx);
       return {
@@ -2782,16 +2853,21 @@ export class Memloom implements MemoryEngine {
   // is the identical pipeline; there is no bypass lane.
   async #save(input: SaveInput, precomputed?: number[]): Promise<SaveResult> {
     const owner = input.ownerId ?? SENTINEL_OWNER;
+    // Resolved before any embedding spend: an unknown scope path is a caller error and
+    // should fail fast, not after a provider round-trip.
+    const scoped = await this.#resolveWriteScope(owner, input.scope, input.tags);
     const embedding = precomputed ?? (await this.#embedding.embed([input.content]))[0];
     if (!embedding) throw new Error("memloom: embedding provider returned no vector");
     const hash = createHash("sha256").update(input.content).digest("hex");
 
     if (!this.#dedup) {
-      const id = await this.#insert(owner, input, embedding, hash);
+      const id = await this.#insert(owner, input, embedding, hash, undefined, scoped);
       return { id, outcome: "added" };
     }
 
-    // Exact duplicate: cheap short-circuit, no LLM needed.
+    // Exact duplicate: cheap short-circuit, no LLM needed. The merge keeps the existing
+    // memory's folder: a fact restated from another scope does not move (decision 5 in
+    // PLAN-memory-scopes.md).
     const exact = await this.#storage.query<{ id: string }>(
       "SELECT id FROM memory_objects WHERE owner_id = $1 AND status = 'active' AND content_hash = $2 LIMIT 1",
       [owner, hash],
@@ -2800,7 +2876,7 @@ export class Memloom implements MemoryEngine {
 
     const candidates = await this.#findCandidates(owner, embedding, hash);
     if (candidates.length === 0) {
-      const id = await this.#insert(owner, input, embedding, hash);
+      const id = await this.#insert(owner, input, embedding, hash, undefined, scoped);
       return { id, outcome: "added" };
     }
 
@@ -2817,12 +2893,12 @@ export class Memloom implements MemoryEngine {
     if (identical) {
       const parent = candidates.find((c) => c.id === identical.candidateId);
       if (parent) {
-        const childId = await this.#versionOf(owner, parent, input, embedding, hash);
+        const childId = await this.#versionOf(owner, parent, input, embedding, hash, scoped);
         return { id: childId, outcome: "versioned", version: parent.version + 1 };
       }
     }
 
-    const id = await this.#insert(owner, input, embedding, hash);
+    const id = await this.#insert(owner, input, embedding, hash, undefined, scoped);
 
     const contradictions = classifications.filter((c) => c.relation === "contradictory");
     if (contradictions.length > 0) {
@@ -2854,17 +2930,53 @@ export class Memloom implements MemoryEngine {
     return { id, outcome: "added" };
   }
 
-  /** All active memories, newest first. The browsing counterpart to query-driven recall. */
-  async memories(ownerId: string = SENTINEL_OWNER): Promise<Memory[]> {
+  /**
+   * All active memories, newest first. The browsing counterpart to query-driven recall.
+   * `scope` narrows to one folder subtree (browsing semantics: JUST the subtree, none of
+   * recall's uncategorized/global widening; a folder listing shows that folder). `tags`
+   * is the same any-match filter recall uses.
+   */
+  async memories(
+    ownerId: string = SENTINEL_OWNER,
+    opts: { scope?: string; tags?: string[] } = {},
+  ): Promise<Memory[]> {
+    let scopeSql = "";
+    const params: unknown[] = [ownerId];
+    if (opts.scope !== undefined && opts.scope !== SCOPE_ALL) {
+      const scopes = await allScopes(this.#storage, ownerId);
+      const rootId = resolveScopePath(scopes, opts.scope);
+      if (!rootId) throw new Error(`memloom: unknown scope "${opts.scope}"`);
+      const ids = subtreeIds(scopes, rootId);
+      const { uncategorizedId } = await ensureSystemScopes(this.#storage, ownerId);
+      const includeUnscoped = ids.includes(uncategorizedId);
+      params.push(ids);
+      scopeSql = ` AND (scope_id = ANY($${params.length}::uuid[])${
+        includeUnscoped ? " OR scope_id IS NULL" : ""
+      })`;
+    }
+    let tagsSql = "";
+    if (opts.tags && opts.tags.length > 0) {
+      params.push(normalizeTags(opts.tags));
+      tagsSql = ` AND tags && $${params.length}::text[]`;
+    }
     const rows = await this.#storage.query<MemoryRow>(
       `SELECT id, owner_id, status, memory_type, canonical, content, summary,
-              root_id, version, asserted_at, created_at
+              root_id, version, asserted_at, created_at, scope_id, tags
        FROM memory_objects
-       WHERE owner_id = $1 AND status = 'active'
+       WHERE owner_id = $1 AND status = 'active'${scopeSql}${tagsSql}
        ORDER BY created_at DESC`,
-      [ownerId],
+      params,
     );
-    return rows.map(mapRow);
+    return this.#withScopePaths(ownerId, rows.map(mapRow));
+  }
+
+  /** Fill scopePath from the registry, one query for the whole batch; no-op when unscoped. */
+  async #withScopePaths(owner: string, memories: Memory[]): Promise<Memory[]> {
+    if (!memories.some((m) => m.scopeId !== null)) return memories;
+    const scopes = await allScopes(this.#storage, owner);
+    return memories.map((m) =>
+      m.scopeId === null ? m : { ...m, scopePath: scopeDisplayPath(scopes, m.scopeId) },
+    );
   }
 
   /**
@@ -2879,13 +2991,201 @@ export class Memloom implements MemoryEngine {
     if (!row) throw new Error(`memloom: no memory ${memoryId}`);
     const rows = await this.#storage.query<MemoryRow>(
       `SELECT id, owner_id, status, memory_type, canonical, content, summary,
-              root_id, version, asserted_at, created_at
+              root_id, version, asserted_at, created_at, scope_id, tags
        FROM memory_objects
        WHERE owner_id = $1 AND root_id = $2
        ORDER BY version DESC`,
       [ownerId, row.root_id],
     );
-    return rows.map(mapRow);
+    return this.#withScopePaths(ownerId, rows.map(mapRow));
+  }
+
+  // --- the scope registry (PLAN-memory-scopes.md) ---
+
+  /** The folder tree with per-folder counts. Legacy NULL-scope rows count as uncategorized. */
+  async listScopes(ownerId: string = SENTINEL_OWNER): Promise<ScopeNode[]> {
+    const { uncategorizedId } = await ensureSystemScopes(this.#storage, ownerId);
+    const scopes = await allScopes(this.#storage, ownerId);
+    const counts = new Map<string, { memories: number; documents: number }>();
+    const memoryCounts = await this.#storage.query<{ sid: string; n: number }>(
+      `SELECT coalesce(scope_id, $2::uuid) AS sid, count(*)::int AS n
+       FROM memory_objects WHERE owner_id = $1 AND status = 'active' GROUP BY 1`,
+      [ownerId, uncategorizedId],
+    );
+    for (const row of memoryCounts) counts.set(row.sid, { memories: Number(row.n), documents: 0 });
+    const documentCounts = await this.#storage.query<{ sid: string; n: number }>(
+      `SELECT coalesce(scope_id, $2::uuid) AS sid, count(*)::int AS n
+       FROM context_documents WHERE owner_id = $1 GROUP BY 1`,
+      [ownerId, uncategorizedId],
+    );
+    for (const row of documentCounts) {
+      const entry = counts.get(row.sid) ?? { memories: 0, documents: 0 };
+      entry.documents = Number(row.n);
+      counts.set(row.sid, entry);
+    }
+    return buildScopeTree(scopes, counts);
+  }
+
+  /**
+   * Create a folder by path, creating missing parents ("projects/memloom" makes both).
+   * The USER's surface (CLI, viewer, capture mapping); agent-facing saves resolve strictly
+   * and never land here. Idempotent: an existing path returns the existing folder.
+   */
+  async createScope(
+    path: string,
+    opts: { ownerId?: string; description?: string } = {},
+  ): Promise<Scope> {
+    const owner = opts.ownerId ?? SENTINEL_OWNER;
+    await ensureSystemScopes(this.#storage, owner);
+    const id = await ensureScopePath(this.#storage, owner, path);
+    if (opts.description !== undefined) {
+      await this.#storage.query(
+        "UPDATE memory_scopes SET description = $3, updated_at = now() WHERE id = $1 AND owner_id = $2",
+        [id, owner, opts.description],
+      );
+    }
+    const scopes = await allScopes(this.#storage, owner);
+    const created = scopes.find((s) => s.id === id);
+    if (!created) throw new Error("memloom: scope creation returned no row");
+    return created;
+  }
+
+  /** Rename a folder or edit its description. System folders keep their names. */
+  async updateScope(
+    scopeId: string,
+    changes: { name?: string; description?: string | null },
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<Scope> {
+    const scopes = await allScopes(this.#storage, ownerId);
+    const scope = scopes.find((s) => s.id === scopeId);
+    if (!scope) throw new Error(`memloom: no scope ${scopeId}`);
+    if (changes.name !== undefined && scope.kind === "system") {
+      throw new Error(`memloom: "${scope.name}" is a system folder and keeps its name`);
+    }
+    if (changes.name !== undefined && changes.name.trim().length === 0) {
+      throw new Error("memloom: a folder name cannot be empty");
+    }
+    await this.#storage.query(
+      `UPDATE memory_scopes
+       SET name = coalesce($3, name),
+           description = CASE WHEN $4 THEN $5 ELSE description END,
+           updated_at = now()
+       WHERE id = $1 AND owner_id = $2`,
+      [
+        scopeId,
+        ownerId,
+        changes.name?.trim() ?? null,
+        changes.description !== undefined,
+        changes.description ?? null,
+      ],
+    );
+    const after = await allScopes(this.#storage, ownerId);
+    const updated = after.find((s) => s.id === scopeId);
+    if (!updated) throw new Error(`memloom: no scope ${scopeId}`);
+    return updated;
+  }
+
+  /** Move a folder under a new parent (null = top level). Refuses cycles and system folders. */
+  async moveScope(
+    scopeId: string,
+    newParentId: string | null,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<void> {
+    const scopes = await allScopes(this.#storage, ownerId);
+    const scope = scopes.find((s) => s.id === scopeId);
+    if (!scope) throw new Error(`memloom: no scope ${scopeId}`);
+    if (scope.kind === "system") {
+      throw new Error(`memloom: "${scope.name}" is a system folder and stays at the top level`);
+    }
+    if (newParentId !== null && !scopes.some((s) => s.id === newParentId)) {
+      throw new Error(`memloom: no scope ${newParentId} to move under`);
+    }
+    if (wouldCycle(scopes, scopeId, newParentId)) {
+      throw new Error("memloom: cannot move a folder under its own descendant");
+    }
+    await this.#storage.query(
+      "UPDATE memory_scopes SET parent_id = $3, updated_at = now() WHERE id = $1 AND owner_id = $2",
+      [scopeId, ownerId, newParentId],
+    );
+  }
+
+  /**
+   * Delete an EMPTY folder: no children, nothing pointing at it (any status; stale rows
+   * still reference their folder). Emptying a folder first is setMemoryScopes' job, so a
+   * delete can never silently strand or move rows.
+   */
+  async deleteScope(scopeId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    const scopes = await allScopes(this.#storage, ownerId);
+    const scope = scopes.find((s) => s.id === scopeId);
+    if (!scope) throw new Error(`memloom: no scope ${scopeId}`);
+    if (scope.kind === "system") {
+      throw new Error(`memloom: "${scope.name}" is a system folder and cannot be deleted`);
+    }
+    if (scopes.some((s) => s.parentId === scopeId)) {
+      throw new Error(`memloom: "${scope.name}" has subfolders; delete or move them first`);
+    }
+    const [usage] = await this.#storage.query<{ memories: number; documents: number }>(
+      `SELECT (SELECT count(*) FROM memory_objects WHERE owner_id = $1 AND scope_id = $2)::int AS memories,
+              (SELECT count(*) FROM context_documents WHERE owner_id = $1 AND scope_id = $2)::int AS documents`,
+      [ownerId, scopeId],
+    );
+    if (usage && (usage.memories > 0 || usage.documents > 0)) {
+      throw new Error(
+        `memloom: "${scope.name}" holds ${usage.memories} memories and ` +
+          `${usage.documents} documents; move them first (memloom scopes move)`,
+      );
+    }
+    await this.#storage.query("DELETE FROM memory_scopes WHERE id = $1 AND owner_id = $2", [
+      scopeId,
+      ownerId,
+    ]);
+  }
+
+  /**
+   * Move memories into a folder, WHOLE LINEAGES: the folder is an attribute of the belief,
+   * so every version moves with it and history never straddles two folders. Returns how
+   * many rows moved. The bulk operation behind the viewer's multi-select move.
+   */
+  async setMemoryScopes(
+    memoryIds: string[],
+    scope: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<number> {
+    if (memoryIds.length === 0) return 0;
+    const scopes = await allScopes(this.#storage, ownerId);
+    const scopeId = resolveScopePath(scopes, scope);
+    if (!scopeId) throw new Error(`memloom: unknown scope "${scope}"`);
+    const rows = await this.#storage.query<{ id: string }>(
+      `UPDATE memory_objects SET scope_id = $3, updated_at = now()
+       WHERE owner_id = $1 AND root_id IN (
+         SELECT DISTINCT root_id FROM memory_objects
+         WHERE owner_id = $1 AND id = ANY($2::uuid[]))
+       RETURNING id`,
+      [ownerId, memoryIds, scopeId],
+    );
+    return rows.length;
+  }
+
+  /** Move a document and its chunks into a folder, one transaction. */
+  async setDocumentScope(
+    documentId: string,
+    scope: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<void> {
+    const scopes = await allScopes(this.#storage, ownerId);
+    const scopeId = resolveScopePath(scopes, scope);
+    if (!scopeId) throw new Error(`memloom: unknown scope "${scope}"`);
+    await this.#storage.tx(async (tx) => {
+      const rows = await tx.query<{ id: string }>(
+        "UPDATE context_documents SET scope_id = $3, updated_at = now() WHERE id = $1 AND owner_id = $2 RETURNING id",
+        [documentId, ownerId, scopeId],
+      );
+      if (rows.length === 0) throw new Error(`memloom: no document ${documentId}`);
+      await tx.query(
+        "UPDATE context_chunks SET scope_id = $3 WHERE document_id = $1 AND owner_id = $2",
+        [documentId, ownerId, scopeId],
+      );
+    });
   }
 
   /**
@@ -3079,6 +3379,11 @@ export class Memloom implements MemoryEngine {
   async recall(query: string, opts: RecallOptions = {}): Promise<Memory[]> {
     const owner = opts.ownerId ?? SENTINEL_OWNER;
     const limit = opts.limit ?? 10;
+    // Expanded once here, shared by both branches: subtree + uncategorized + global for a
+    // path, null (no filter) for "*" or omitted. Unknown paths throw before any embedding
+    // spend. See PLAN-memory-scopes.md for why scoped recall widens to those two folders.
+    const scopeFilter = await expandScopeSelector(this.#storage, owner, opts.scope);
+    const tagFilter = opts.tags && opts.tags.length > 0 ? normalizeTags(opts.tags) : null;
     const [embedding] = await this.#embedding.embed([query]);
     if (!embedding) throw new Error("memloom: embedding provider returned no vector");
     const qvec = toVectorLiteral(embedding);
@@ -3097,15 +3402,30 @@ export class Memloom implements MemoryEngine {
       // timezone is the user's day; convert before taking the date.
       const rows = await this.#storage.query<MemoryRow>(
         `SELECT id, owner_id, status, memory_type, canonical, content, summary, root_id,
-                version, asserted_at, created_at,
+                version, asserted_at, created_at, scope_id, tags,
                 1 - (embedding <=> $1::vector) AS similarity
          FROM memory_objects
          WHERE owner_id = $2 AND status = 'active'
            AND (asserted_at AT TIME ZONE $3)::date = $4::date
+           AND ($6::uuid[] IS NULL OR scope_id = ANY($6::uuid[])
+                OR (scope_id IS NULL AND $7))
+           AND ($8::text[] IS NULL OR tags && $8::text[])
          ORDER BY similarity DESC LIMIT $5`,
-        [qvec, owner, hostTimeZone(), opts.assertedOn, limit],
+        [
+          qvec,
+          owner,
+          hostTimeZone(),
+          opts.assertedOn,
+          limit,
+          scopeFilter?.ids ?? null,
+          scopeFilter?.includeUnscoped ?? false,
+          tagFilter,
+        ],
       );
-      return rows.map((row) => ({ ...mapRow(row), kind: "memory" as const }));
+      return this.#withScopePaths(
+        owner,
+        rows.map((row) => ({ ...mapRow(row), kind: "memory" as const })),
+      );
     }
 
     // The fuse ranks memories and context chunks together; join whichever table each id
@@ -3115,18 +3435,29 @@ export class Memloom implements MemoryEngine {
               1 - (COALESCE(mo.embedding, cc.embedding) <=> $1::vector) AS similarity,
               mo.owner_id, mo.status, mo.memory_type, mo.canonical, mo.content,
               mo.summary, mo.root_id, mo.version, mo.asserted_at, mo.created_at,
+              mo.scope_id, mo.tags,
               cc.owner_id AS c_owner_id, cc.content AS c_content,
               cc.heading_path AS c_heading_path, cc.page AS c_page,
-              cc.created_at AS c_created_at,
+              cc.created_at AS c_created_at, cc.scope_id AS c_scope_id,
               cd.id AS d_id, cd.title AS d_title, cd.path AS d_path
-       FROM memloom_fuse($2, $1::vector, $3, $4, p_session => $5) f
+       FROM memloom_fuse($2, $1::vector, $3, $4, p_session => $5,
+                         p_scope_ids => $6, p_include_unscoped => $7, p_tags => $8) f
        LEFT JOIN memory_objects mo ON f.src = 'memory' AND mo.id = f.id
        LEFT JOIN context_chunks cc ON f.src = 'chunk' AND cc.id = f.id
        LEFT JOIN context_documents cd ON cd.id = cc.document_id
        ORDER BY f.rrf_score DESC`,
-      [qvec, query, owner, limit, opts.sessionId ?? null],
+      [
+        qvec,
+        query,
+        owner,
+        limit,
+        opts.sessionId ?? null,
+        scopeFilter?.ids ?? null,
+        scopeFilter?.includeUnscoped ?? false,
+        tagFilter,
+      ],
     );
-    return rows.map(mapRecallRow);
+    return this.#withScopePaths(owner, rows.map(mapRecallRow));
   }
 
   /**
@@ -4374,6 +4705,16 @@ export class Memloom implements MemoryEngine {
         const [embedding] = await this.#embedding.embed([decision.content]);
         if (!embedding) throw new Error("memloom: embedding provider returned no vector");
         const hash = createHash("sha256").update(decision.content).digest("hex");
+        // The merged belief continues the primary existing fact's lineage, so it also
+        // stays in that fact's folder and keeps its tags.
+        const mergePrimary = candidateIds[0] ?? incoming;
+        const [primaryScope] = await this.#storage.query<{
+          scope_id: string | null;
+          tags: string[];
+        }>("SELECT scope_id, tags FROM memory_objects WHERE id = $1 AND owner_id = $2", [
+          mergePrimary,
+          owner,
+        ]);
         const winner = await this.#insert(
           owner,
           {
@@ -4382,9 +4723,9 @@ export class Memloom implements MemoryEngine {
           },
           embedding,
           hash,
+          undefined,
+          { scopeId: primaryScope?.scope_id ?? null, tags: primaryScope?.tags ?? [] },
         );
-        // The merged belief continues the primary existing fact's lineage.
-        const mergePrimary = candidateIds[0] ?? incoming;
         const mergeLin = await this.#lineageOf(mergePrimary);
         // Same head rule as keep_new. The winner is a fresh insert, so there is no prior
         // lineage to remember: revert stales it rather than moving it back.
@@ -5735,21 +6076,25 @@ export class Memloom implements MemoryEngine {
 
   // Insert a memory. Without `lineage` it starts a new belief (root_id = its own id, version 1);
   // with `lineage` it's the next version of an existing belief. The id is generated app-side so
-  // a new root can set root_id = id atomically.
+  // a new root can set root_id = id atomically. `scoped` carries the resolved folder + tags;
+  // absent means NULL scope_id, which reads as 'uncategorized' (internal callers that inherit
+  // from another row pass what they read).
   async #insert(
     owner: string,
     input: { content: string; canonical?: string; memoryType?: MemoryType },
     embedding: number[],
     hash: string,
     lineage?: { rootId: string; version: number },
+    scoped?: { scopeId: string | null; tags: string[] },
   ): Promise<string> {
     const id = randomUUID();
     const rootId = lineage?.rootId ?? id;
     const version = lineage?.version ?? 1;
     const rows = await this.#storage.query<{ id: string }>(
       `INSERT INTO memory_objects
-         (id, owner_id, root_id, version, memory_type, canonical, content, content_hash, embedding)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector)
+         (id, owner_id, root_id, version, memory_type, canonical, content, content_hash,
+          embedding, scope_id, tags)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::vector, $10, $11::text[])
        RETURNING id`,
       [
         id,
@@ -5761,6 +6106,8 @@ export class Memloom implements MemoryEngine {
         input.content,
         hash,
         toVectorLiteral(embedding),
+        scoped?.scopeId ?? null,
+        scoped?.tags ?? [],
       ],
     );
     const rid = rows[0]?.id;
@@ -5768,20 +6115,61 @@ export class Memloom implements MemoryEngine {
     return rid;
   }
 
+  /**
+   * Resolve a save's scope + tags. An explicit path resolves STRICTLY (unknown throws:
+   * agents must not invent folders); omitted lands in 'uncategorized', where the
+   * classification pass picks it up later.
+   */
+  async #resolveWriteScope(
+    owner: string,
+    scope: string | undefined,
+    tags: string[] | undefined,
+  ): Promise<{ scopeId: string; tags: string[] }> {
+    const normalized = normalizeTags(tags);
+    if (scope !== undefined && scope !== SCOPE_ALL) {
+      const scopes = await allScopes(this.#storage, owner);
+      const id = resolveScopePath(scopes, scope);
+      if (!id) {
+        throw new Error(
+          `memloom: unknown scope "${scope}". Folders are created by the user ` +
+            "(memloom scopes add), never by a save.",
+        );
+      }
+      return { scopeId: id, tags: normalized };
+    }
+    const { uncategorizedId } = await ensureSystemScopes(this.#storage, owner);
+    return { scopeId: uncategorizedId, tags: normalized };
+  }
+
   // Append a new version to a belief: stale the parent, insert the child sharing the parent's
   // root with version + 1, and link them child -> parent with a 'replaces' edge. Returns the
-  // new current version's id.
+  // new current version's id. The child stays in the PARENT's folder (a restatement never
+  // moves a belief; moving is an explicit setMemoryScopes) and unions the parent's tags with
+  // any the restatement brought.
   async #versionOf(
     owner: string,
     parent: { id: string; rootId: string; version: number },
     input: { content: string; canonical?: string; memoryType?: MemoryType },
     embedding: number[],
     hash: string,
+    scoped?: { scopeId: string | null; tags: string[] },
   ): Promise<string> {
-    const childId = await this.#insert(owner, input, embedding, hash, {
-      rootId: parent.rootId,
-      version: parent.version + 1,
-    });
+    const [parentRow] = await this.#storage.query<{ scope_id: string | null; tags: string[] }>(
+      "SELECT scope_id, tags FROM memory_objects WHERE id = $1 AND owner_id = $2",
+      [parent.id, owner],
+    );
+    const inherited = {
+      scopeId: parentRow?.scope_id ?? scoped?.scopeId ?? null,
+      tags: [...new Set([...(parentRow?.tags ?? []), ...(scoped?.tags ?? [])])],
+    };
+    const childId = await this.#insert(
+      owner,
+      input,
+      embedding,
+      hash,
+      { rootId: parent.rootId, version: parent.version + 1 },
+      inherited,
+    );
     await markStale(this.#storage, [parent.id]);
     await addEdge(this.#storage, owner, childId, parent.id, "replaces");
     return childId;
