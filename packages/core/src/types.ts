@@ -343,6 +343,8 @@ export interface GraphMemory {
   canonical: string | null;
   content: string;
   memoryType: MemoryType;
+  /** The folder this memory lives in; null reads as 'uncategorized'. The viewer's folder filter. */
+  scopeId: string | null;
 }
 
 // A context document as a graph node. Documents, not chunks, are the display granularity:
@@ -351,6 +353,8 @@ export interface GraphDocument {
   id: string;
   title: string;
   path: string;
+  /** The folder this document lives in; null reads as 'uncategorized'. Chunks share it. */
+  scopeId: string | null;
 }
 
 export interface GraphEdge {
@@ -616,6 +620,10 @@ export interface ContextDocument {
   kind: string;
   chunkCount: number;
   updatedAt: string;
+  /** The folder this document lives in. Null reads as 'uncategorized' (legacy rows). */
+  scopeId: string | null;
+  /** Display path of the folder ("Projects > memloom"); null when scopeId is null. */
+  scopePath: string | null;
   /** Present on diarized recordings; absent on text documents and pre-diarization ingests. */
   speakers?: SpeakerRoster | null;
   /**

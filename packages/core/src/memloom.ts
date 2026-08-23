@@ -986,6 +986,7 @@ export class Memloom implements MemoryEngine {
        FROM context_documents WHERE owner_id = $1 AND session_id = $2 ORDER BY updated_at DESC`,
       [ownerId, sessionId],
     );
+    // Attachments are chat-private and never browsed by folder, so the scope stays unset.
     return rows.map((r) => ({
       id: r.id,
       path: r.path,
@@ -993,6 +994,8 @@ export class Memloom implements MemoryEngine {
       kind: r.kind,
       chunkCount: Number(r.chunk_count),
       updatedAt: r.updated_at,
+      scopeId: null,
+      scopePath: null,
     }));
   }
 
@@ -1372,12 +1375,17 @@ export class Memloom implements MemoryEngine {
       speakers: unknown;
       watching: boolean;
       missing_at: string | null;
+      scope_id: string | null;
     }>(
-      `SELECT id, path, title, kind, chunk_count, updated_at, speakers, watching, missing_at
+      `SELECT id, path, title, kind, chunk_count, updated_at, speakers, watching, missing_at, scope_id
        FROM context_documents WHERE owner_id = $1 AND session_id IS NULL
        ORDER BY updated_at DESC`,
       [ownerId],
     );
+    // Same one-batch registry read as #withScopePaths: only when something is scoped.
+    const scopes = rows.some((r) => r.scope_id !== null)
+      ? await allScopes(this.#storage, ownerId)
+      : [];
     return rows.map((r) => ({
       id: r.id,
       path: r.path,
@@ -1389,6 +1397,8 @@ export class Memloom implements MemoryEngine {
       watching: r.watching,
       watchable: hasDiskPath(r.path),
       missingAt: r.missing_at,
+      scopeId: r.scope_id,
+      scopePath: r.scope_id === null ? null : scopeDisplayPath(scopes, r.scope_id),
     }));
   }
 
@@ -4407,8 +4417,9 @@ export class Memloom implements MemoryEngine {
       canonical: string | null;
       content: string;
       memory_type: GraphMemory["memoryType"];
+      scope_id: string | null;
     }>(
-      `SELECT id, canonical, content, memory_type FROM memory_objects
+      `SELECT id, canonical, content, memory_type, scope_id FROM memory_objects
        WHERE owner_id = $1 AND status = 'active'`,
       [ownerId],
     );
@@ -4416,8 +4427,14 @@ export class Memloom implements MemoryEngine {
       "SELECT id, name, entity_type FROM memory_entities WHERE owner_id = $1",
       [ownerId],
     );
-    const documents = await this.#storage.query<GraphDocument>(
-      "SELECT id, title, path FROM context_documents WHERE owner_id = $1 AND session_id IS NULL",
+    const documentRows = await this.#storage.query<{
+      id: string;
+      title: string;
+      path: string;
+      scope_id: string | null;
+    }>(
+      `SELECT id, title, path, scope_id FROM context_documents
+       WHERE owner_id = $1 AND session_id IS NULL`,
       [ownerId],
     );
     // Memory-anchored edges only: chunk edges are represented by the rollup below.
@@ -4462,6 +4479,13 @@ export class Memloom implements MemoryEngine {
       canonical: m.canonical,
       content: m.content,
       memoryType: m.memory_type,
+      scopeId: m.scope_id,
+    }));
+    const documents: GraphDocument[] = documentRows.map((d) => ({
+      id: d.id,
+      title: d.title,
+      path: d.path,
+      scopeId: d.scope_id,
     }));
     const entities: Entity[] = entityRows.map((e) => ({
       id: e.id,

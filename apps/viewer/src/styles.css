@@ -3116,3 +3116,213 @@ textarea {
   background: var(--danger);
   color: var(--bg);
 }
+
+/* ---------- folder sidebar (scope tree) ---------- */
+
+.scopeLayout {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  min-height: 0;
+}
+
+.scopeSidebar {
+  width: 240px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px;
+  border-right: 1px solid var(--border);
+  background: var(--bg-raised);
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.scopeSidebarTitle {
+  font-family: var(--mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+
+.scopeRow {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+
+.scopeChevron {
+  background: none;
+  border: none;
+  padding: 0;
+  width: 15px;
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-faint);
+}
+
+.scopeName {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 3px 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scopeName:hover {
+  color: var(--text);
+}
+
+.scopeRowActive .scopeName {
+  color: var(--brand);
+}
+
+/* System folders (uncategorized, global) read as fixtures, not as folders someone made. */
+.scopeRowSystem .scopeName {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-style: italic;
+}
+
+.scopeCount {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  flex: none;
+  padding-right: 4px;
+}
+
+.scopeKids {
+  margin-left: 13px;
+  border-left: 1px solid var(--border);
+  padding-left: 3px;
+}
+
+.scopeTools {
+  margin: 0 0 4px 17px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 0;
+}
+
+.scopeTools .metaAction {
+  margin-left: 0;
+  margin-right: 10px;
+}
+
+.scopeDesc {
+  margin: 0 0 2px 17px;
+  font-size: 12px;
+  color: var(--text-faint);
+  line-height: 1.35;
+}
+
+.scopeEditRow {
+  display: flex;
+  gap: 6px;
+  margin: 2px 0 6px 17px;
+  align-items: center;
+}
+
+.scopeInput {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 13px;
+  padding: 2px 6px;
+}
+
+.scopeNewTop {
+  margin: 6px 0 0;
+  text-align: left;
+}
+
+.scopeSelect {
+  border: 1px solid var(--border-strong);
+  background: var(--bg-inset);
+  color: var(--text);
+  font-size: 12px;
+  padding: 4px 6px;
+  max-width: 220px;
+}
+
+/* Inside the graph controls panel the tree is a section body, not a sidebar. */
+.graphControlSection .scopeSidebar {
+  width: auto;
+  border-right: none;
+  background: none;
+  padding: 0;
+  max-height: 220px;
+}
+
+/* Long enough panels (the folder section adds one) scroll instead of running off screen. */
+.graphControlsPanel {
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+}
+
+/* ---------- folder + tag chips on cards, bulk move bar ---------- */
+
+.chipLine {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.scopeTag {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  background: var(--bg-inset);
+  padding: 1px 6px;
+}
+
+.tagChip {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  background: none;
+  padding: 1px 6px;
+}
+
+.tagChip:hover {
+  color: var(--brand);
+  border-color: var(--brand);
+}
+
+.cardCheck {
+  accent-color: var(--brand);
+  margin-right: 6px;
+  vertical-align: middle;
+}
+
+.bulkBar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-raised);
+}
+
+.bulkCount {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--text-muted);
+}
