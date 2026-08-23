@@ -9,6 +9,7 @@ import {
   listConflicts,
   listDocuments,
   listPossibleContradictions,
+  listScopes,
   MAX_INLINE_MEDIA_SECONDS,
   memoryHistory,
   readPassage,
@@ -29,13 +30,20 @@ export function buildServer(memloom: MemoryEngine): McpServer {
     "save_memory",
     "Save a durable memory the user owns. Set `type` to classify it: fact (a stable truth), " +
       "preference (how the user likes things), episode (a time-bound event or decision), or " +
-      "procedure (reusable how-to steps); defaults to fact. memloom dedupes automatically and " +
-      "flags contradictions instead of overwriting, so save what is worth remembering; the " +
-      "response says if it created a conflict to resolve.",
+      "procedure (reusable how-to steps); defaults to fact. ALWAYS pass `scope`: the folder " +
+      "this belongs to, from the current context (a coding session in project X saves to " +
+      "projects/<x>; personal facts go under the user's life folders). Folders come from " +
+      "list_scopes and only the user creates them; an unknown path is refused. Omit scope " +
+      "only when genuinely unsure: the memory lands in 'uncategorized' and a background " +
+      "pass files it later. `tags` are free-form labels (lowercased). memloom dedupes " +
+      "automatically and flags contradictions instead of overwriting; the response says if " +
+      "it created a conflict to resolve.",
     {
       content: z.string(),
       canonical: z.string().optional(),
       type: z.enum(MEMORY_TYPES).optional(),
+      scope: z.string().optional(),
+      tags: z.array(z.string()).optional(),
     },
     async (args) => ({ content: [{ type: "text", text: await saveMemory(memloom, args) }] }),
   );
@@ -43,12 +51,31 @@ export function buildServer(memloom: MemoryEngine): McpServer {
   server.tool(
     "recall_memory",
     "Recall the user's memories AND ingested context documents by meaning, ranked by hybrid " +
-      "retrieval (semantic + exact keyword + entity). Exact identifiers like file paths, " +
+      "retrieval (semantic + exact keyword + entity). ALWAYS pass `scope`, the folder for " +
+      "the current context (list_scopes shows the tree): a scoped recall searches that " +
+      "subtree plus 'uncategorized' and 'global', so cross-cutting preferences still " +
+      "surface while unrelated scopes stay out. Pass \"*\" for a deliberate " +
+      "everything-search (cross-scope questions). Exact identifiers like file paths, " +
       "config keys, or error codes make excellent queries. Document results say which file " +
-      "and section they came from. Only active (non-superseded) memories are returned. Very " +
-      "long results are truncated with a marker; read_passage fetches the full text by id.",
-    { query: z.string(), limit: z.number().optional() },
+      "and section they came from; every hit shows its scope. `tags` filters to memories " +
+      "carrying any of the given tags. Very long results are truncated with a marker; " +
+      "read_passage fetches the full text by id.",
+    {
+      query: z.string(),
+      limit: z.number().optional(),
+      scope: z.string().optional(),
+      tags: z.array(z.string()).optional(),
+    },
     async (args) => ({ content: [{ type: "text", text: await recallMemory(memloom, args) }] }),
+  );
+
+  server.tool(
+    "list_scopes",
+    "The user's folder tree (scopes) with per-folder counts. Call it to pick a valid " +
+      "`scope` for save_memory or recall_memory when unsure what exists. Folders are " +
+      "created by the user, never by agents.",
+    {},
+    async () => ({ content: [{ type: "text", text: await listScopes(memloom) }] }),
   );
 
   server.tool(
@@ -71,7 +98,7 @@ export function buildServer(memloom: MemoryEngine): McpServer {
       "costs nothing and creates no duplicate, so calling this again is always safe. A page " +
       "that renders in the browser or sits behind a login answers with the reason instead of " +
       "a document; relay it rather than retrying.",
-    { url: z.string() },
+    { url: z.string(), scope: z.string().optional() },
     async (args) => ({ content: [{ type: "text", text: await addLink(memloom, args) }] }),
   );
 
@@ -86,7 +113,7 @@ export function buildServer(memloom: MemoryEngine): McpServer {
       `${MAX_INLINE_MEDIA_SECONDS / 60} minutes are REFUSED with an instruction to relay, ` +
       "because transcribing an hour of audio takes 8 to 11 minutes and no tool call should " +
       "block that long. Whole folders are a CLI job (memloom context add <folder>).",
-    { path: z.string() },
+    { path: z.string(), scope: z.string().optional() },
     async (args) => ({ content: [{ type: "text", text: await addFile(memloom, args) }] }),
   );
 
