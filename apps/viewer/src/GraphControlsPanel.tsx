@@ -1,6 +1,7 @@
 import { ChevronDown, ChevronRight, X } from "lucide-react";
 import { useState } from "react";
 import type { EdgeLabelMode, ViewerGraphConfig } from "./graphConfig";
+import { type ScopeSelection, ScopeTree } from "./ScopeTree";
 
 // The graph controls panel, rebuilt on native range inputs (no antd here) and the
 // viewer's sharp-corner design language. Sliders edit the scalar fields live; the
@@ -45,15 +46,21 @@ function ControlRow({
 
 export function GraphControlsPanel({
   graphConfig,
+  scopeSelected,
+  onScopeSelect,
   onChange,
   onReset,
   onClose,
 }: {
   graphConfig: ViewerGraphConfig;
+  /** The folder filter, owned by GraphView so it survives this panel closing. */
+  scopeSelected: ScopeSelection | null;
+  onScopeSelect: (sel: ScopeSelection | null) => void;
   onChange: (next: ViewerGraphConfig) => void;
   onReset: () => void;
   onClose: () => void;
 }) {
+  const [isFolderOpen, setIsFolderOpen] = useState(true);
   const [isDisplayOpen, setIsDisplayOpen] = useState(true);
   const [isForcesOpen, setIsForcesOpen] = useState(true);
 
@@ -88,6 +95,31 @@ export function GraphControlsPanel({
           </button>
         </div>
       </div>
+
+      <section className="graphControlSection">
+        <button
+          type="button"
+          className="graphControlSectionButton"
+          onClick={() => setIsFolderOpen((v) => !v)}
+        >
+          {isFolderOpen ? (
+            <ChevronDown size={13} strokeWidth={1.75} />
+          ) : (
+            <ChevronRight size={13} strokeWidth={1.75} />
+          )}
+          folder
+        </button>
+        {/* The shared folder tree, filter-only: management lives in the Memories and
+            Documents sidebars, and this panel is too narrow to host it comfortably. */}
+        {isFolderOpen && (
+          <ScopeTree
+            selected={scopeSelected}
+            onSelect={onScopeSelect}
+            count="memories"
+            manage={false}
+          />
+        )}
+      </section>
 
       <section className="graphControlSection">
         <button

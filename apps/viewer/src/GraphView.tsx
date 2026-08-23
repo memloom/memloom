@@ -34,6 +34,7 @@ import {
   stable01,
   type ViewRect,
 } from "./graphRender";
+import type { ScopeSelection } from "./ScopeTree";
 import { TraverseView } from "./TraverseView";
 import { useTheme } from "./useTheme";
 
@@ -205,12 +206,43 @@ function buildGraphData(
   /** Entities a traverse answer names. Revealed even with "show entities" off, or the
       dimming would darken the canvas and leave nothing lit to look at. */
   traverseIds: Set<string> | null,
+  /** The folder filter from the controls panel; null shows everything. */
+  scopeFilter: ScopeSelection | null,
 ) {
   const sizeMul = config.display.nodeSizeMultiplier;
   const spread = getCenterLayoutSpreadMultiplier(config.forces.centerForce);
-  const docIds = new Set(graph.documents.map((d) => d.id));
+  // The folder filter, applied to the payload before anything is built. Null (or absent)
+  // scope ids read as 'uncategorized', matching the engine's read side.
+  const scopeIds = scopeFilter ? new Set(scopeFilter.ids) : null;
+  const inScope = (scopeId: string | null | undefined) =>
+    scopeIds === null
+      ? true
+      : scopeId == null
+        ? (scopeFilter?.includeUnscoped ?? false)
+        : scopeIds.has(scopeId);
+  const memories = graph.memories.filter((m) => inScope(m.scopeId));
+  const documents = graph.documents.filter((d) => inScope(d.scopeId));
+  const docIds = new Set(documents.map((d) => d.id));
   const openDocs = [...expanded].filter(([id]) => docIds.has(id));
   const openIds = new Set(openDocs.map(([id]) => id));
+
+  // Entities stay global, so the folder filter keeps only those with at least one visible
+  // mention source; an entity whose every source is filtered out would float context-free.
+  let scopedEntities: Set<string> | null = null;
+  if (scopeIds !== null) {
+    scopedEntities = new Set();
+    const visibleSources = new Set<string>([
+      ...memories.map((m) => m.id),
+      ...documents.map((d) => d.id),
+    ]);
+    for (const [, dc] of openDocs) for (const c of dc.chunks) visibleSources.add(c.id);
+    const mark = (from: string, to: string) => {
+      if (visibleSources.has(from)) scopedEntities?.add(to);
+      if (visibleSources.has(to)) scopedEntities?.add(from);
+    };
+    for (const e of graph.edges) mark(e.from, e.to);
+    for (const [, dc] of openDocs) for (const e of dc.edges) mark(e.from, e.to);
+  }
 
   // With "show entities" off, only entities touching the active (selected) node exist.
   // Their edges vanish with them. The link builders below skip absent endpoints.
@@ -252,7 +284,7 @@ function buildGraphData(
     return { homeX: Math.cos(angle) * radial, homeY: Math.sin(angle) * radial };
   };
 
-  for (const m of graph.memories) {
+  for (const m of memories) {
     const home = scatterHome(m.id);
     addNode({
       id: m.id,
@@ -267,6 +299,7 @@ function buildGraphData(
   }
   for (const e of graph.entities) {
     if (revealedEntities && !revealedEntities.has(e.id)) continue;
+    if (scopedEntities && !scopedEntities.has(e.id)) continue;
     const home = scatterHome(e.id);
     addNode({
       id: e.id,
@@ -279,7 +312,7 @@ function buildGraphData(
       y: home.homeY,
     });
   }
-  for (const d of graph.documents) {
+  for (const d of documents) {
     const home = scatterHome(d.id);
     addNode({
       id: d.id,
@@ -469,6 +502,9 @@ export function GraphView({
   const [config, setConfig] = useState<ViewerGraphConfig>(() =>
     cloneGraphConfig(DEFAULT_GRAPH_CONFIG),
   );
+  // The folder filter from the controls panel. Held here, not in the panel, so closing
+  // the panel does not silently unfilter the canvas.
+  const [scopeSel, setScopeSel] = useState<ScopeSelection | null>(null);
   const [showControls, setShowControls] = useState(false);
   const [remountKey, setRemountKey] = useState(0);
   const previousNodeCountRef = useRef(0);
@@ -506,8 +542,8 @@ export function GraphView({
   // entities are revealed. Selecting/deselecting rebuilds; positions survive via the cache.
   const selectedId = selected?.id ?? null;
   const { graphData, nodeMap, neighborMap, chunkParent } = useMemo(
-    () => buildGraphData(graph, expanded, config, selectedId, traverseFocus),
-    [graph, expanded, config, selectedId, traverseFocus],
+    () => buildGraphData(graph, expanded, config, selectedId, traverseFocus, scopeSel),
+    [graph, expanded, config, selectedId, traverseFocus, scopeSel],
   );
 
   const nodeMapRef = useRef(nodeMap);
@@ -1113,6 +1149,8 @@ export function GraphView({
         {showControls && (
           <GraphControlsPanel
             graphConfig={config}
+            scopeSelected={scopeSel}
+            onScopeSelect={setScopeSel}
             onChange={setConfig}
             onReset={() => setConfig(cloneGraphConfig(DEFAULT_GRAPH_CONFIG))}
             onClose={() => setShowControls(false)}

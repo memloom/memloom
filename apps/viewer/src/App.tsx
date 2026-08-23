@@ -30,10 +30,15 @@ type Tab =
 // "loading". Keys must match what the views prefetch on mount, or the two would race as
 // separate requests instead of sharing one.
 const TAB_PREFETCH: Partial<Record<Tab, () => void>> = {
-  memories: () => void prefetch("memories", api.memories).catch(() => {}),
+  // Both tabs open with the folder sidebar, so the tree is warmed alongside the list.
+  memories: () => {
+    void prefetch("memories", api.memories).catch(() => {});
+    void prefetch("scopes", api.scopes).catch(() => {});
+  },
   documents: () => {
     void prefetch("documents", api.documents).catch(() => {});
     void prefetch("queue", api.queue).catch(() => {});
+    void prefetch("scopes", api.scopes).catch(() => {});
   },
   schema: () => {
     void prefetch("schema", api.schema).catch(() => {});
