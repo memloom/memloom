@@ -8,10 +8,17 @@ icon: "file-lines"
 
 ```bash
 memloom context add <path...>
+memloom context add --scope projects/memloom ./docs
 ```
 
 Ingest files or folders, which recurse. Chunks embed into the same recall as memories and each
 carries its breadcrumb, so results always say where they came from.
+
+`--scope` files the documents (and every chunk) into a folder; scoped recall then keeps them
+out of unrelated scopes. Re-adding an unchanged file with a different `--scope` still moves it,
+because filing is the intent of the command even when the bytes did not change. Without the
+flag a new document lands in `uncategorized` and a re-ingested one keeps its folder. See
+[Scopes](/concepts/scopes).
 
 | Kind | Extensions |
 | --- | --- |

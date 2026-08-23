@@ -9,6 +9,7 @@ icon: "brain"
 ```bash
 memloom save "the staging database runs on Postgres"
 memloom save --type procedure "to release: bump VERSION, tag, push"
+memloom save --scope personal-life --tags family "my sister lives in Krakow"
 ```
 
 With a key configured the belief pipeline runs: a duplicate merges, a rewording versions, and a
@@ -23,6 +24,10 @@ contradiction keeps both memories active and reports a conflict id.
 
 Outcomes are `added`, `merged`, `versioned` or `conflict`.
 
+`--scope` files the memory into a folder (created beforehand with
+[`memloom scopes add`](/cli/scopes)); without it the save lands in `uncategorized` and the
+classifier files it later. `--tags a,b` attaches free labels, lowercased.
+
 <Note>
   A conflict is not an error. Both memories stay active until you settle it. See
   [Conflicts](/cli/conflicts).
@@ -34,12 +39,19 @@ Outcomes are `added`, `merged`, `versioned` or `conflict`.
 
 ```bash
 memloom recall "staging database"
-memloom recall "ECONNREFUSED 54329"     # exact identifiers work well
+memloom recall "ECONNREFUSED 54329"          # exact identifiers work well
+memloom recall --scope personal-life "plans with my sister"
+memloom recall --scope "*" "everything"      # deliberate cross-scope search
 ```
 
 Searches memories and ingested files together, by meaning, exact words and entities, fused into
-one ranking. Results from files carry their source. Only active memories come back; superseded
-versions live in history. See [Retrieval](/concepts/retrieval).
+one ranking. Results from files carry their source; every hit prints its folder and tags. Only
+active memories come back; superseded versions live in history. See
+[Retrieval](/concepts/retrieval).
+
+`--scope <path>` searches that folder subtree plus `uncategorized` and `global`, and nothing
+else; `--tags a,b` keeps only memories carrying one of those tags. See
+[Scopes](/concepts/scopes).
 
 ***
 

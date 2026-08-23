@@ -1,0 +1,59 @@
+---
+title: "Scopes"
+description: "The folder tree from the terminal: create, file, move, and clean up"
+icon: "folder-tree"
+---
+
+## scopes
+
+```bash
+memloom scopes                # the folder tree with per-folder counts
+```
+
+System folders (`uncategorized`, `global`) are marked; descriptions print next to their
+folder. See [Scopes](/concepts/scopes) for what a folder means to recall.
+
+## scopes add
+
+```bash
+memloom scopes add personal-life/people
+memloom scopes add projects/memloom --description "the memory engine"
+```
+
+Missing parents are created. The description is not decoration: the classifier reads it when
+filing unscoped saves, so a described folder collects better.
+
+## scopes rename, describe, move, rm
+
+```bash
+memloom scopes rename personal-life "Personal Life"
+memloom scopes describe streaming "Twitch clips and stream moments"
+memloom scopes move streaming personal-life    # re-parent
+memloom scopes move streaming /                # back to the top level
+memloom scopes rm old-folder                   # only when empty
+```
+
+Folders address by path or id. `rm` refuses a folder that still has subfolders, memories, or
+documents; empty it first with `scopes set`. System folders refuse rename, move, and delete.
+
+## scopes set, set-doc
+
+```bash
+memloom scopes set personal-life <memory-id> [<memory-id>...]
+memloom scopes set-doc projects/memloom <document-id>
+```
+
+`set` moves whole version chains, so history never straddles two folders. `set-doc` moves a
+document and every chunk in one transaction.
+
+## Filing and filtering elsewhere
+
+```bash
+memloom save --scope personal-life/people --tags family "my sister lives in Krakow"
+memloom recall --scope personal-life "plans with my sister"
+memloom recall --scope "*" "everything about Krakow"
+memloom context add --scope projects/memloom ./docs
+```
+
+A scoped recall searches the subtree plus `uncategorized` and `global`; browsing and `set`
+touch just the folder you name.

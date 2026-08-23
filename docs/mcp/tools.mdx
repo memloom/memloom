@@ -1,17 +1,17 @@
 ---
 title: "Tools"
-description: "The fourteen tools memloom exposes to MCP clients, and how they chain"
+description: "The fifteen tools memloom exposes to MCP clients, and how they chain"
 icon: "screwdriver-wrench"
 ---
 
 ## Overview
 
-Fourteen tools in four groups. The descriptions the agent sees are written so it knows when to
+Fifteen tools in four groups. The descriptions the agent sees are written so it knows when to
 reach for each; this page is the human version, with the flows spelled out.
 
 <CardGroup cols={2}>
   <Card title="Memories" icon="brain">
-    `save_memory`, `recall_memory`, `read_passage`, `memory_history`
+    `save_memory`, `recall_memory`, `read_passage`, `memory_history`, `list_scopes`
   </Card>
   <Card title="Source material" icon="file-lines">
     `add_link`, `add_file`, `list_documents`
@@ -36,9 +36,16 @@ reach for each; this page is the human version, with the flows spelled out.
 | `content` | string | required |
 | `canonical` | string | Short title, becomes the recall heading |
 | `type` | enum | `fact` (default), `preference`, `episode`, `procedure` |
+| `scope` | string | Folder path from the current context ("projects/memloom") |
+| `tags` | string[] | Free labels, lowercased on save |
 
 Dedupes automatically and flags contradictions instead of overwriting. The response says which
 happened: saved, merged, or saved with a conflict id.
+
+The description tells the agent to always pass `scope` from context. Folders come from
+`list_scopes` and only the user creates them: an unknown path answers with the fix (pick an
+existing folder or omit) rather than saving; an omitted scope lands in `uncategorized` for the
+classifier. See [Scopes](/concepts/scopes).
 
 ### recall_memory
 
@@ -46,8 +53,12 @@ happened: saved, merged, or saved with a conflict id.
 | --- | --- | --- |
 | `query` | string | required |
 | `limit` | number | default 10 |
+| `scope` | string | Folder subtree to search; `"*"` searches everything |
+| `tags` | string[] | Any-match filter; memories only |
 
-Searches memories and documents together by meaning, exact words and entities. Exact identifiers
+Searches memories and documents together by meaning, exact words and entities. A scoped call
+searches the named subtree plus `uncategorized` and `global`, so cross-cutting preferences
+still surface while other folders stay out; every hit prints its folder. Exact identifiers
 like file paths and error codes make excellent queries. Each result carries a title, the passage,
 a similarity, provenance for chunks, and an `id`. Only active memories come back.
 
@@ -67,6 +78,11 @@ always reachable.
 
 `memoryId` from a recall result. The full version chain, newest first.
 
+### list_scopes
+
+No parameters. The folder tree with per-folder counts, rendered so a valid `scope` string can
+be copied straight out of the answer. Folders are created by the user, never by agents.
+
 <Note>
   Read-only. Editing a memory is a human action in the viewer or CLI.
 </Note>
@@ -80,13 +96,14 @@ re-adding something unchanged is a cheap no-op rather than a duplicate.
 
 ### add_link
 
-`url`. Saves a web page permanently as a document, returned by recall with the URL and section it
+`url`, and optionally `scope` (a folder path). Saves a web page permanently as a document, returned by recall with the URL and section it
 came from. The daemon fetches and parses it, so nothing reaches a third party. A page that only
 renders in a browser, or sits behind a login, answers with the reason instead of a document.
 
 ### add_file
 
-`path`, absolute, on the machine running memloom. Markdown, text, PDF, audio and video. Recordings
+`path`, absolute, on the machine running memloom, and optionally `scope` (a folder path).
+Markdown, text, PDF, audio and video. Recordings
 are transcribed locally with timestamps, so a recalled line cites the moment it was said.
 
 A linked file is then [watched](/guides/file-sync): edit it on disk and recall follows, with no

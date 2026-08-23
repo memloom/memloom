@@ -38,6 +38,7 @@
             "pages": [
               "concepts/architecture",
               "concepts/memory-types",
+              "concepts/scopes",
               "concepts/conflicts",
               "concepts/distillation",
               "concepts/graph",
@@ -241,6 +242,7 @@
             "pages": [
               "cli/daemon",
               "cli/memories",
+              "cli/scopes",
               "cli/import",
               "cli/graph",
               "cli/context",

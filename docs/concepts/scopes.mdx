@@ -1,0 +1,64 @@
+---
+title: "Scopes"
+description: "Folders and tags: how memories and documents stay separated by area of life"
+icon: "folder-tree"
+---
+
+Everything you save lands in exactly one **folder**. Folders are hierarchical
+(`Personal life > People`), you create them, and every memory and every context document points
+at one. **Tags** are free-form labels on top (`ai`, `twitch`, `girlfriend-moments`): a memory
+has one folder and any number of tags.
+
+The point is recall quality. Without scopes, a year of captured coding sessions and your life
+memories compete in one ranking, and "plans with my sister" comes back with database trivia.
+With scopes, a recall names the folder it is asking in and other folders stay out entirely.
+
+## Two folders you never create
+
+| Folder | What lives there |
+| --- | --- |
+| `uncategorized` | Saves that named no folder. The classification pass files them later; until then they are still recallable. |
+| `global` | Cross-cutting preferences that should surface in every scope ("never use em dashes"). |
+
+Both are created lazily and cannot be renamed or deleted.
+
+## What a scoped recall searches
+
+A recall with `scope: "personal-life"` searches that folder **and its subfolders**, plus
+`uncategorized` (a memory awaiting filing must not vanish), plus `global`. It never searches
+other folders. `scope: "*"` searches everything, which is the right call for deliberately
+cross-scope questions. An unknown path is an error, not an empty result, so a typo cannot
+masquerade as "you have no memories about that".
+
+Browsing is stricter than recall: a folder listing (`memloom scopes`, the viewer sidebar,
+`/memory/list?scope=`) shows just the subtree, with no widening.
+
+## How things get their folder
+
+- **You say so**: `--scope` on `save`, `recall` and `context add`; the `scope` parameter on the
+  MCP tools; the viewer's move actions.
+- **Capture maps mechanically**: a distilled Claude Code session lands in
+  `projects/<name>`, derived from the session's working directory. No model involved.
+- **The classifier files the rest**: saves that named no folder are classified against your
+  folder tree (names and descriptions) during indexing. Below the confidence floor they stay in
+  `uncategorized`. The classifier never invents folders; only you create them.
+
+Folder descriptions matter: they are what the classifier reads. A folder described as
+"streaming clips and Twitch moments" collects the right saves; an undescribed folder is just a
+name.
+
+## What never changes with scopes
+
+- **A belief stays where it lives.** Restating a fact from another scope versions it in place;
+  an exact duplicate merges into the existing folder. Moving a memory is always an explicit act
+  (`memloom scopes set`, the viewer), and it moves the whole version chain.
+- **Dedup and conflicts are owner-wide.** A contradiction between two scopes is still a
+  contradiction.
+- **Entities are global.** There is one `memloom` entity whether it shows up in work or in
+  life; scope filters which *mentions* of it you see, never the entity itself.
+
+## Addressing
+
+Folders address by slug path: `Personal life > People` is `personal-life/people`, matched
+case-insensitively, so renames that only change casing or spacing never break saved paths.
+Renaming or moving a folder is a registry edit; nothing stored on memories rewrites.
