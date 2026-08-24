@@ -1,5 +1,6 @@
 import { forceCollide } from "d3-force-3d";
 import {
+  Box,
   FilePlus,
   Maximize,
   MessageSquare,
@@ -11,6 +12,8 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ForceGraph2D from "react-force-graph-2d";
+import ForceGraph3D from "react-force-graph-3d";
+import type * as THREE from "three";
 import { AssistantView } from "./AssistantView";
 import { api, type ContextChunk, type DocumentChunks, type Graph } from "./api";
 import { AddFileCard, AddLinkCard } from "./cards";
@@ -19,19 +22,37 @@ import {
   cloneGraphConfig,
   DEFAULT_GRAPH_CONFIG,
   type GraphNodeKind,
-  type GraphRelation,
   type ViewerGraphConfig,
 } from "./graphConfig";
 import {
+  flyToNode,
+  makeLinkSprite,
+  makeNodeObject,
+  type NodeObject3D,
+  nodeTooltipHtml,
+  styleNodeObjects,
+  zoomCamera,
+} from "./graph3d";
+import {
+  buildGraphData,
+  type CachedNodePosition,
+  getAnchorStrength,
+  type GraphRegistry,
+  isPredicateLink,
+  type Link,
+  type Node,
+  type Palette,
+  PALETTES,
+  relationColor,
+} from "./graphData";
+import {
   clamp01,
   getLinkEndpointId,
-  type LabelAnchor,
   mixColors,
   pickLabelAnchor,
   rectContainsPoint,
   scaleColorAlpha,
   segmentBBoxIntersectsRect,
-  stable01,
   type ViewRect,
 } from "./graphRender";
 import type { ScopeSelection } from "./ScopeTree";
@@ -43,63 +64,8 @@ import { useTheme } from "./useTheme";
 // nothing drifts), a full force stack (link/charge/collision + anchor) driven by a live
 // controls panel, animated hover focus, and neighbor-aware label placement. memloom's
 // pixel-motif stays: memories are squares, entities circles, documents diamonds; clicking
-// a document blooms its chunks around it.
-
-type Palette = Record<
-  | "memory"
-  | "entity"
-  | "document"
-  | "chunk"
-  | "linkBase"
-  | "mention"
-  | "replaces"
-  | "distinct"
-  | "chunkLink"
-  | "linkDim"
-  | "label"
-  | "selectedStroke",
-  string
->;
-
-const PALETTES: Record<"dark" | "light", Palette> = {
-  dark: {
-    memory: "#38bdf8",
-    entity: "#c084fc",
-    document: "#34d399",
-    chunk: "#6ee7b7",
-    linkBase: "rgba(148, 163, 184, 0.45)",
-    mention: "rgba(192, 132, 252, 0.5)",
-    // Version lineage is indigo. Amber is reserved for chrome/identity (DESIGN.md).
-    replaces: "rgba(93, 103, 245, 0.65)",
-    distinct: "rgba(45, 212, 191, 0.5)",
-    chunkLink: "rgba(52, 211, 153, 0.45)",
-    linkDim: "rgba(148, 163, 184, 0.08)",
-    label: "#e2e8f0",
-    selectedStroke: "rgba(255, 255, 255, 0.92)",
-  },
-  light: {
-    memory: "#0284c7",
-    entity: "#9333ea",
-    document: "#059669",
-    chunk: "#10b981",
-    linkBase: "rgba(120, 113, 108, 0.5)",
-    mention: "rgba(147, 51, 234, 0.45)",
-    replaces: "rgba(79, 70, 229, 0.7)",
-    distinct: "rgba(13, 148, 136, 0.55)",
-    chunkLink: "rgba(5, 150, 105, 0.4)",
-    linkDim: "rgba(120, 113, 108, 0.12)",
-    label: "#44403c",
-    selectedStroke: "rgba(28, 25, 23, 0.92)",
-  },
-};
-
-function relationColor(pal: Palette, relation: GraphRelation): string {
-  if (relation === "mention") return pal.mention;
-  if (relation === "replaces") return pal.replaces;
-  if (relation === "distinct") return pal.distinct;
-  if (relation === "chunk") return pal.chunkLink;
-  return pal.linkBase;
-}
+// a document blooms its chunks around it. The 3D toggle re-renders the same build as a
+// three.js scene (cubes, spheres, octahedra) with orbit-style inspection.
 
 const LABEL_BASE_THRESHOLD = 0.55;
 const MIN_ZOOM = 0.14;
@@ -107,72 +73,24 @@ const MAX_ZOOM = 8;
 const ZOOM_STEP = 1.4;
 const INITIAL_MAX_ZOOM = 1.35;
 const BASE_LINK_WIDTH = 1;
+// Above this the per-node SpriteText labels (one canvas texture each) cost more than
+// they say; the hover tooltip still names everything.
+const MAX_3D_LABELED_NODES = 1500;
 
-const NODE_BASE_SIZE: Record<GraphNodeKind, number> = {
-  memory: 6,
-  entity: 7,
-  document: 8,
-  chunk: 4.5,
-};
-
-interface Node {
-  id: string;
-  kind: GraphNodeKind;
-  label: string;
-  full: string;
-  size: number;
-  homeX?: number;
-  homeY?: number;
-  x?: number;
-  y?: number;
-  vx?: number;
-  vy?: number;
-  fx?: number;
-  fy?: number;
-  /** Cached label side; recomputed while the simulation moves nodes, frozen when settled. */
-  labelAnchor?: LabelAnchor;
-}
-
-interface Link {
-  source: string | Node;
-  target: string | Node;
-  relation: GraphRelation;
-  /** The raw relation string: typed predicates (works_on, uses, ...) keep their name here. */
-  label: string;
-  weight: number;
-}
-
-// Structural relations the engine writes itself; everything else is a typed predicate the
-// extractor stated (subject -> predicate -> object), which is what earns a label + arrow.
-const STRUCTURAL_RELATIONS = new Set(["mention", "mentions", "replaces", "distinct", "chunk"]);
-
-function isPredicateLink(link: Link): boolean {
-  return !STRUCTURAL_RELATIONS.has(link.label);
-}
+type GraphMode = "2d" | "3d";
 
 type Selected = { kind: GraphNodeKind; title: string; body: string; id: string } | null;
 
-type CachedNodePosition = Pick<Node, "x" | "y" | "vx" | "vy" | "homeX" | "homeY">;
 // Positions survive data rebuilds (expand/collapse, 15s refetch) so the layout never
-// re-randomizes under the user.
-const POSITION_CACHE = new Map<string, CachedNodePosition>();
+// re-randomizes under the user. One cache per renderer: the 2D layout is a plane, the
+// 3D one a cloud, and seeding either from the other would flatten or shear it.
+const POSITION_CACHE_2D = new Map<string, CachedNodePosition>();
+const POSITION_CACHE_3D = new Map<string, CachedNodePosition>();
 
-function toRelation(relation: string): GraphRelation {
-  if (relation === "mention" || relation === "mentions") return "mention";
-  if (relation === "replaces") return "replaces";
-  if (relation === "distinct") return "distinct";
-  if (relation === "chunk") return "chunk";
-  return "default";
-}
-
-function getCenterLayoutSpreadMultiplier(centerForce: number) {
-  return 1.85 - clamp01(centerForce) * 1.1;
-}
-
-function getAnchorStrength(centerForce: number) {
-  const compactness = clamp01(centerForce);
-  return 0.05 * (0.72 + compactness * 1.35);
-}
+// Instance reuse across rebuilds (see GraphRegistry): both renderers join data by object
+// identity, so same instances = incremental scene updates instead of full teardowns.
+const GRAPH_REGISTRY_2D: GraphRegistry = { nodes: new Map(), links: new Map() };
+const GRAPH_REGISTRY_3D: GraphRegistry = { nodes: new Map(), links: new Map() };
 
 // One path per node kind: square (memory, chunk: content is square), circle (entity),
 // diamond (document).
@@ -196,228 +114,6 @@ function traceNode(
   } else {
     ctx.rect(x - r, y - r, r * 2, r * 2);
   }
-}
-
-function buildGraphData(
-  graph: Graph,
-  expanded: Map<string, DocumentChunks>,
-  config: ViewerGraphConfig,
-  activeId: string | null,
-  /** Entities a traverse answer names. Revealed even with "show entities" off, or the
-      dimming would darken the canvas and leave nothing lit to look at. */
-  traverseIds: Set<string> | null,
-  /** The folder filter from the controls panel; null shows everything. */
-  scopeFilter: ScopeSelection | null,
-) {
-  const sizeMul = config.display.nodeSizeMultiplier;
-  const spread = getCenterLayoutSpreadMultiplier(config.forces.centerForce);
-  // The folder filter, applied to the payload before anything is built. Null (or absent)
-  // scope ids read as 'uncategorized', matching the engine's read side.
-  const scopeIds = scopeFilter ? new Set(scopeFilter.ids) : null;
-  const inScope = (scopeId: string | null | undefined) =>
-    scopeIds === null
-      ? true
-      : scopeId == null
-        ? (scopeFilter?.includeUnscoped ?? false)
-        : scopeIds.has(scopeId);
-  const memories = graph.memories.filter((m) => inScope(m.scopeId));
-  const documents = graph.documents.filter((d) => inScope(d.scopeId));
-  const docIds = new Set(documents.map((d) => d.id));
-  const openDocs = [...expanded].filter(([id]) => docIds.has(id));
-  const openIds = new Set(openDocs.map(([id]) => id));
-
-  // Entities stay global, so the folder filter keeps only those with at least one visible
-  // mention source; an entity whose every source is filtered out would float context-free.
-  let scopedEntities: Set<string> | null = null;
-  if (scopeIds !== null) {
-    scopedEntities = new Set();
-    const visibleSources = new Set<string>([
-      ...memories.map((m) => m.id),
-      ...documents.map((d) => d.id),
-    ]);
-    for (const [, dc] of openDocs) for (const c of dc.chunks) visibleSources.add(c.id);
-    const mark = (from: string, to: string) => {
-      if (visibleSources.has(from)) scopedEntities?.add(to);
-      if (visibleSources.has(to)) scopedEntities?.add(from);
-    };
-    for (const e of graph.edges) mark(e.from, e.to);
-    for (const [, dc] of openDocs) for (const e of dc.edges) mark(e.from, e.to);
-  }
-
-  // With "show entities" off, only entities touching the active (selected) node exist.
-  // Their edges vanish with them. The link builders below skip absent endpoints.
-  let revealedEntities: Set<string> | null = null;
-  if (!config.display.showEntities) {
-    revealedEntities = new Set();
-    if (traverseIds) for (const id of traverseIds) revealedEntities.add(id);
-    if (activeId) {
-      revealedEntities.add(activeId);
-      const reveal = (from: string, to: string) => {
-        if (from === activeId) revealedEntities?.add(to);
-        if (to === activeId) revealedEntities?.add(from);
-      };
-      for (const e of graph.edges) reveal(e.from, e.to);
-      for (const [, dc] of openDocs) for (const e of dc.edges) reveal(e.from, e.to);
-    }
-  }
-
-  const nodes: Node[] = [];
-  const nodeMap = new Map<string, Node>();
-
-  const addNode = (node: Node) => {
-    const previous = POSITION_CACHE.get(node.id);
-    if (previous) {
-      node.x = previous.x;
-      node.y = previous.y;
-      node.vx = previous.vx;
-      node.vy = previous.vy;
-      if (previous.homeX !== undefined) node.homeX = previous.homeX;
-      if (previous.homeY !== undefined) node.homeY = previous.homeY;
-    }
-    nodeMap.set(node.id, node);
-    nodes.push(node);
-  };
-
-  const scatterHome = (id: string) => {
-    const angle = stable01(id) * Math.PI * 2;
-    const radial = (150 + stable01(`${id}:r`) * 220) * spread;
-    return { homeX: Math.cos(angle) * radial, homeY: Math.sin(angle) * radial };
-  };
-
-  for (const m of memories) {
-    const home = scatterHome(m.id);
-    addNode({
-      id: m.id,
-      kind: "memory",
-      label: m.canonical ?? m.content,
-      full: m.content,
-      size: NODE_BASE_SIZE.memory * sizeMul,
-      ...home,
-      x: home.homeX,
-      y: home.homeY,
-    });
-  }
-  for (const e of graph.entities) {
-    if (revealedEntities && !revealedEntities.has(e.id)) continue;
-    if (scopedEntities && !scopedEntities.has(e.id)) continue;
-    const home = scatterHome(e.id);
-    addNode({
-      id: e.id,
-      kind: "entity",
-      label: e.name,
-      full: `${e.name} (${e.entityType})`,
-      size: NODE_BASE_SIZE.entity * sizeMul,
-      ...home,
-      x: home.homeX,
-      y: home.homeY,
-    });
-  }
-  for (const d of documents) {
-    const home = scatterHome(d.id);
-    addNode({
-      id: d.id,
-      kind: "document",
-      label: d.title,
-      full: d.path,
-      size: NODE_BASE_SIZE.document * sizeMul,
-      ...home,
-      x: home.homeX,
-      y: home.homeY,
-    });
-  }
-  // Chunks bloom around their parent document's LIVE position (phyllotaxis spiral), so an
-  // expansion appears where the document is, rather than somewhere random.
-  for (const [docId, dc] of openDocs) {
-    const parent = POSITION_CACHE.get(docId) ?? nodeMap.get(docId);
-    const px = parent?.x ?? 0;
-    const py = parent?.y ?? 0;
-    dc.chunks.forEach((c, i) => {
-      const r = (18 + 6 * Math.sqrt(i)) * Math.min(spread, 1.2);
-      const a = i * 2.399963;
-      const home = { homeX: px + r * Math.cos(a), homeY: py + r * Math.sin(a) };
-      addNode({
-        id: c.id,
-        kind: "chunk",
-        label: c.headingPath ?? `#${c.chunkIndex + 1}`,
-        full: c.content,
-        size: NODE_BASE_SIZE.chunk * sizeMul,
-        ...home,
-        x: home.homeX,
-        y: home.homeY,
-      });
-    });
-  }
-
-  const rawLinks: Link[] = [
-    // An expanded document swaps its rolled-up mention edges for the chunk-level truth.
-    ...graph.edges
-      .filter((e) => !(openIds.has(e.from) && e.relation === "mention"))
-      .filter((e) => nodeMap.has(e.from) && nodeMap.has(e.to))
-      .map((e) => ({
-        source: e.from,
-        target: e.to,
-        relation: toRelation(e.relation),
-        label: e.relation,
-        weight: e.weight ?? 1,
-      })),
-    ...openDocs.flatMap(([docId, dc]) => [
-      ...dc.chunks.map((c) => ({
-        source: docId,
-        target: c.id,
-        relation: "chunk" as const,
-        label: "chunk",
-        weight: 1,
-      })),
-      ...dc.edges
-        .filter((e) => nodeMap.has(e.from) && nodeMap.has(e.to))
-        .map((e) => ({
-          source: e.from,
-          target: e.to,
-          relation: toRelation(e.relation),
-          label: e.relation,
-          weight: 1,
-        })),
-    ]),
-  ];
-
-  // Parallel typed predicates between the same pair (Gniezno located_in AND part_of
-  // Poland) are legal in the store, but drawn separately they overprint: two identical
-  // lines, two stacked arrowheads, two labels smeared into garbage at the midpoint.
-  // Merge same-direction predicate links into one, with the names joined in the label.
-  const links: Link[] = [];
-  const predicateByPair = new Map<string, Link>();
-  for (const link of rawLinks) {
-    if (!isPredicateLink(link)) {
-      links.push(link);
-      continue;
-    }
-    const key = `${link.source}|${link.target}`;
-    const prior = predicateByPair.get(key);
-    if (prior) {
-      if (!prior.label.split(", ").includes(link.label)) {
-        prior.label = `${prior.label}, ${link.label}`;
-      }
-      prior.weight = Math.max(prior.weight, link.weight);
-    } else {
-      predicateByPair.set(key, link);
-      links.push(link);
-    }
-  }
-
-  const neighborMap = new Map<string, Set<string>>();
-  for (const node of nodes) neighborMap.set(node.id, new Set());
-  for (const link of links) {
-    const s = getLinkEndpointId(link.source);
-    const t = getLinkEndpointId(link.target);
-    neighborMap.get(s)?.add(t);
-    neighborMap.get(t)?.add(s);
-  }
-
-  // chunk id -> parent document id, for the side panel's breadcrumb.
-  const chunkParent = new Map<string, string>();
-  for (const [docId, dc] of openDocs) for (const c of dc.chunks) chunkParent.set(c.id, docId);
-
-  return { graphData: { nodes, links }, nodeMap, neighborMap, chunkParent };
 }
 
 type HoverState = {
@@ -506,6 +202,14 @@ export function GraphView({
   // the panel does not silently unfilter the canvas.
   const [scopeSel, setScopeSel] = useState<ScopeSelection | null>(null);
   const [showControls, setShowControls] = useState(false);
+  // 2D canvas or 3D scene. Both simulate with d3-force-3d, so the force stack and the
+  // controls panel drive either; only the renderer and its camera differ.
+  const [mode, setMode] = useState<GraphMode>("2d");
+  const is3D = mode === "3d";
+  const modeRef = useRef(mode);
+  useEffect(() => {
+    modeRef.current = mode;
+  });
   const [remountKey, setRemountKey] = useState(0);
   const previousNodeCountRef = useRef(0);
   const hasUserInteractedRef = useRef(false);
@@ -541,9 +245,29 @@ export function GraphView({
   // The selected node feeds the build: with "show entities" off it decides which
   // entities are revealed. Selecting/deselecting rebuilds; positions survive via the cache.
   const selectedId = selected?.id ?? null;
+  const selectedIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    selectedIdRef.current = selectedId;
+  });
+  // Selection and traverse only shape the build while entities are hidden (they gate the
+  // reveal set); with entities shown, feeding them in would rebuild the whole graph on
+  // every click for an identical result. Null them out so the memo holds.
+  const revealSelectedId = config.display.showEntities ? null : selectedId;
+  const revealTraverse = config.display.showEntities ? null : traverseFocus;
   const { graphData, nodeMap, neighborMap, chunkParent } = useMemo(
-    () => buildGraphData(graph, expanded, config, selectedId, traverseFocus, scopeSel),
-    [graph, expanded, config, selectedId, traverseFocus, scopeSel],
+    () =>
+      buildGraphData(
+        graph,
+        expanded,
+        config,
+        revealSelectedId,
+        revealTraverse,
+        scopeSel,
+        is3D ? POSITION_CACHE_3D : POSITION_CACHE_2D,
+        is3D ? GRAPH_REGISTRY_3D : GRAPH_REGISTRY_2D,
+        is3D,
+      ),
+    [graph, expanded, config, revealSelectedId, revealTraverse, scopeSel, is3D],
   );
 
   const nodeMapRef = useRef(nodeMap);
@@ -576,7 +300,10 @@ export function GraphView({
       window.setTimeout(() => {
         // Re-resolve: the reveal rebuild may have created the node after this ran.
         const target = nodeMapRef.current.get(id);
-        if (target?.x != null && target.y != null) {
+        if (target?.x == null || target.y == null) return;
+        if (modeRef.current === "3d") {
+          flyToNode(fgRef.current, target);
+        } else {
           fgRef.current?.centerAt?.(target.x, target.y, 600);
         }
       }, 320);
@@ -634,23 +361,31 @@ export function GraphView({
 
   // Persist positions so a rebuild (refetch, expand/collapse) never relayouts from scratch.
   useEffect(() => {
-    POSITION_CACHE.clear();
+    const cache = modeRef.current === "3d" ? POSITION_CACHE_3D : POSITION_CACHE_2D;
+    cache.clear();
     nodeMap.forEach((node, id) => {
-      POSITION_CACHE.set(id, {
+      cache.set(id, {
         x: node.x,
         y: node.y,
+        z: node.z,
         vx: node.vx,
         vy: node.vy,
+        vz: node.vz,
         homeX: node.homeX,
         homeY: node.homeY,
+        homeZ: node.homeZ,
       });
     });
   }, [nodeMap]);
 
-  // Remount when nodes are removed (collapse, doc deletion) so orphaned dots don't linger.
+  // Remount when nodes are removed (collapse, doc deletion) so orphaned dots don't
+  // linger. 2D only: the 3D data join removes and disposes stale objects itself, and a
+  // remount there throws away the whole WebGL scene.
   useEffect(() => {
     const count = graphData.nodes.length;
-    if (count < previousNodeCountRef.current) setRemountKey((k) => k + 1);
+    if (count < previousNodeCountRef.current && modeRef.current === "2d") {
+      setRemountKey((k) => k + 1);
+    }
     previousNodeCountRef.current = count;
   }, [graphData.nodes.length]);
 
@@ -670,6 +405,10 @@ export function GraphView({
     observer.observe(wrapRef.current);
     return () => observer.disconnect();
   }, []);
+
+  // True once the current renderer instance's force engine has ticked, meaning its layout
+  // exists and d3ReheatSimulation is safe to call. False again on every (re)mount.
+  const engineReadyRef = useRef(false);
 
   // The full force stack: per-relation link tuning, bounded charge, collision, and the
   // home-anchor force that replaces both pinning and d3's center force: every node is
@@ -705,13 +444,20 @@ export function GraphView({
         const s = node.kind === "chunk" ? strength * 0.5 : strength;
         node.vx = (node.vx ?? 0) + ((node.homeX ?? 0) - (node.x ?? 0)) * s * alpha;
         node.vy = (node.vy ?? 0) + ((node.homeY ?? 0) - (node.y ?? 0)) * s * alpha;
+        // Only the 3D build sets homeZ; in 2D the z fields stay untouched.
+        if (node.homeZ !== undefined) {
+          node.vz = (node.vz ?? 0) + (node.homeZ - (node.z ?? 0)) * s * alpha;
+        }
       });
     });
 
     fg.d3VelocityDecay?.(f.velocityDecay);
     fg.d3AlphaDecay?.(f.alphaDecay);
     fg.d3AlphaMin?.(f.alphaMin);
-    fg.d3ReheatSimulation?.();
+    // Reheating before the first tick crashes the 3D renderer: its tick loop assumes the
+    // layout the (async) data digest creates, and the digest starts the engine itself. On
+    // a fresh instance the force parameters above are all that is needed.
+    if (engineReadyRef.current) fg.d3ReheatSimulation?.();
   }, [config]);
 
   useEffect(() => {
@@ -721,18 +467,22 @@ export function GraphView({
   useEffect(() => {
     configureForces();
   }, [configureForces]);
-  // Re-apply after (re)mount: the graph instance is fresh and has default forces.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: remountKey IS the trigger
+  // Re-apply after (re)mount: the graph instance is fresh and has default forces. A mode
+  // switch is a remount too (the other renderer takes over the same ref).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: remountKey and mode ARE the trigger
   useEffect(() => {
+    engineReadyRef.current = false;
     const raf = requestAnimationFrame(() => configureForcesRef.current());
     return () => cancelAnimationFrame(raf);
-  }, [remountKey]);
+  }, [remountKey, mode]);
 
   // Initial framing: fit, then clamp the zoom so a tiny graph doesn't fill the screen.
+  // Re-runs on a mode switch, because the fresh renderer starts at its default camera.
   useEffect(() => {
     const fitId = window.setTimeout(() => fgRef.current?.zoomToFit?.(700, 110), 180);
     const clampId = window.setTimeout(() => {
-      if (hasUserInteractedRef.current) return;
+      // The 3D camera has no zoom scalar to clamp; zoomToFit already frames it sanely.
+      if (mode === "3d" || hasUserInteractedRef.current) return;
       const current = Number(fgRef.current?.zoom?.() ?? 1);
       if (current > INITIAL_MAX_ZOOM) fgRef.current?.zoom?.(INITIAL_MAX_ZOOM, 220);
     }, 980);
@@ -740,7 +490,7 @@ export function GraphView({
       window.clearTimeout(fitId);
       window.clearTimeout(clampId);
     };
-  }, []);
+  }, [mode]);
 
   // Hover focus fades in/out instead of snapping (a mix-fade animation).
   const ensureHoverAnimation = useCallback(() => {
@@ -785,7 +535,7 @@ export function GraphView({
 
   // Hidden tab: stop the render loop entirely (canvas, hover picking, tweens). Clearing
   // hover first lets the fade loop terminate so no stale highlight waits on return.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: remountKey is deliberate; a fresh inner instance auto-starts its loop and must be re-paused while hidden
+  // biome-ignore lint/correctness/useExhaustiveDependencies: remountKey and mode are deliberate; a fresh inner instance auto-starts its loop and must be re-paused while hidden
   useEffect(() => {
     const fg = fgRef.current;
     if (!fg) return;
@@ -795,7 +545,7 @@ export function GraphView({
       handleHover(null);
       fg.pauseAnimation?.();
     }
-  }, [active, remountKey, handleHover]);
+  }, [active, remountKey, mode, handleHover]);
 
   const handleClick = useCallback(
     (node: Node) => {
@@ -819,15 +569,20 @@ export function GraphView({
 
   // Dragging a node re-homes it: the anchor force now holds it where the user put it.
   const handleNodeDragEnd = useCallback((node: Node) => {
+    const is3DDrag = modeRef.current === "3d";
     node.homeX = node.x;
     node.homeY = node.y;
-    POSITION_CACHE.set(node.id, {
+    if (is3DDrag) node.homeZ = node.z;
+    (is3DDrag ? POSITION_CACHE_3D : POSITION_CACHE_2D).set(node.id, {
       x: node.x,
       y: node.y,
+      z: node.z,
       vx: node.vx,
       vy: node.vy,
+      vz: node.vz,
       homeX: node.homeX,
       homeY: node.homeY,
+      homeZ: node.homeZ,
     });
     fgRef.current?.d3ReheatSimulation?.();
   }, []);
@@ -842,7 +597,9 @@ export function GraphView({
         id: chunk.id,
       });
       const node = nodeMap.get(chunk.id);
-      if (node?.x != null && node.y != null) fgRef.current?.centerAt?.(node.x, node.y, 400);
+      if (node?.x == null || node.y == null) return;
+      if (modeRef.current === "3d") flyToNode(fgRef.current, node, 500);
+      else fgRef.current?.centerAt?.(node.x, node.y, 400);
     },
     [nodeMap],
   );
@@ -1043,9 +800,119 @@ export function GraphView({
 
   const applyZoom = useCallback((factor: number) => {
     hasUserInteractedRef.current = true;
+    if (modeRef.current === "3d") {
+      zoomCamera(fgRef.current, factor);
+      return;
+    }
     const current = Number(fgRef.current?.zoom?.() ?? 1);
     fgRef.current?.zoom?.(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, current * factor)), 220);
   }, []);
+
+  // 3D mode
+  // Every node's three.js object, registered as the accessor builds it. Hover, selection,
+  // and traverse styling mutate these materials in place: no React render, no scene
+  // rebuild. Rebuilds overwrite entries by id; the map is dropped with the 3D renderer.
+  const threeObjectsRef = useRef(new Map<string, NodeObject3D>());
+  useEffect(() => {
+    if (!is3D) threeObjectsRef.current.clear();
+  }, [is3D]);
+
+  const style3D = useCallback(() => {
+    styleNodeObjects(threeObjectsRef.current, {
+      hoverId: hoverRef.current.focusNode,
+      neighbors: hoverRef.current.neighborSet,
+      selectedId: selectedIdRef.current,
+      traverse: traverseRef.current,
+      brand: brandRef.current,
+    });
+  }, []);
+
+  // Selection, traverse, and data rebuilds change what the materials should show. The
+  // timeout lands after the renderer has digested the new data and built the objects.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: selectedId/traverseFocus/graphData are the triggers; style3D reads their live values through refs
+  useEffect(() => {
+    if (!is3D) return;
+    const t = window.setTimeout(() => {
+      // Drop registrations for nodes the data join removed (the lib disposed their
+      // materials); styling a dead entry would resurrect nothing but leak the reference.
+      const objects = threeObjectsRef.current;
+      for (const id of objects.keys()) {
+        if (!nodeMapRef.current.has(id)) objects.delete(id);
+      }
+      style3D();
+    }, 60);
+    return () => window.clearTimeout(t);
+  }, [is3D, selectedId, traverseFocus, graphData, style3D]);
+
+  const handleHover3D = useCallback(
+    (node: Node | null) => {
+      handleHover(node);
+      style3D();
+    },
+    [handleHover, style3D],
+  );
+
+  // Same select/expand semantics as 2D, plus the camera flight to the clicked node.
+  const handleClick3D = useCallback(
+    (node: Node) => {
+      handleClick(node);
+      flyToNode(fgRef.current, node);
+    },
+    [handleClick],
+  );
+
+  const labeled3D = graphData.nodes.length <= MAX_3D_LABELED_NODES;
+  const nodeThreeObject = useCallback(
+    (node: Node) => {
+      const obj = makeNodeObject(node, pal, labeled3D);
+      threeObjectsRef.current.set(node.id, obj);
+      return obj.group;
+    },
+    [pal, labeled3D],
+  );
+
+  // No hover mixing here (materials are mutated directly instead); the accessor is
+  // re-evaluated on refresh(), which the traverse effect triggers.
+  const linkColor3D = useCallback((link: Link) => {
+    const base = relationColor(palRef.current, link.relation);
+    const tf = traverseRef.current;
+    if (tf) {
+      const s = getLinkEndpointId(link.source);
+      const t = getLinkEndpointId(link.target);
+      if (!(tf.has(s) && tf.has(t))) return scaleColorAlpha(base, 0.06);
+    }
+    return base;
+  }, []);
+
+  const linkThreeObject3D = useCallback(
+    (link: Link) => {
+      if (edgeLabelMode === "off") return undefined;
+      if (edgeLabelMode === "predicates" && !isPredicateLink(link)) return undefined;
+      return makeLinkSprite(link.label, pal);
+    },
+    [edgeLabelMode, pal],
+  );
+
+  // Keeps each relation-name sprite at its link's midpoint as the simulation moves.
+  const linkSpritePosition = useCallback(
+    (
+      sprite: { position: { set: (x: number, y: number, z: number) => void } } | null,
+      coords: {
+        start: { x: number; y: number; z?: number };
+        end: { x: number; y: number; z?: number };
+      },
+    ) => {
+      if (!sprite) return false;
+      const { start, end } = coords;
+      sprite.position.set(
+        (start.x + end.x) / 2,
+        (start.y + end.y) / 2,
+        ((start.z ?? 0) + (end.z ?? 0)) / 2,
+      );
+      return true;
+    },
+    [],
+  );
 
   if (graphData.nodes.length === 0) {
     return (
@@ -1062,6 +929,41 @@ export function GraphView({
   return (
     <>
       <div ref={wrapRef} className="graphWrap">
+        {is3D ? (
+          <ForceGraph3D
+            key={remountKey}
+            ref={fgRef}
+            width={size.width}
+            height={size.height}
+            graphData={graphData}
+            backgroundColor="rgba(0,0,0,0)"
+            cooldownTicks={config.forces.cooldownTicks}
+            showNavInfo={false}
+            onEngineTick={() => {
+              engineReadyRef.current = true;
+            }}
+            nodeThreeObject={nodeThreeObject}
+            nodeLabel={nodeTooltipHtml}
+            linkColor={linkColor3D}
+            linkWidth={0}
+            linkOpacity={0.55}
+            linkThreeObjectExtend={true}
+            // The lib's type wants an Object3D for every link, but its runtime treats a
+            // falsy return as "no extra object", which is what unlabeled links need.
+            linkThreeObject={linkThreeObject3D as unknown as (link: Link) => THREE.Object3D}
+            linkPositionUpdate={linkSpritePosition}
+            // Predicates are directional facts; the particle drifts subject -> object.
+            linkDirectionalParticles={(l: Link) => (isPredicateLink(l) ? 1 : 0)}
+            linkDirectionalParticleWidth={1.8}
+            linkDirectionalArrowLength={(l: Link) => (isPredicateLink(l) ? 3.5 : 0)}
+            linkDirectionalArrowRelPos={0.85}
+            enableNodeDrag
+            onNodeHover={handleHover3D}
+            onNodeClick={handleClick3D}
+            onNodeDragEnd={handleNodeDragEnd}
+            onBackgroundClick={() => setSelected(null)}
+          />
+        ) : (
         <ForceGraph2D
           key={remountKey}
           ref={fgRef}
@@ -1075,6 +977,7 @@ export function GraphView({
           linkVisibility={linkVisibility}
           onEngineTick={() => {
             simActiveRef.current = true;
+            engineReadyRef.current = true;
           }}
           onEngineStop={() => {
             simActiveRef.current = false;
@@ -1109,6 +1012,7 @@ export function GraphView({
           // zero while hidden and viewport-proportional while visible.
           autoPauseRedraw={false}
         />
+        )}
         <div className="zoomRail">
           <button
             type="button"
@@ -1136,6 +1040,14 @@ export function GraphView({
             title="Fit view"
           >
             <Maximize size={14} strokeWidth={1.75} />
+          </button>
+          <button
+            type="button"
+            className={`zoomButton ${is3D ? "zoomButtonActive" : ""}`}
+            onClick={() => setMode((m) => (m === "2d" ? "3d" : "2d"))}
+            title={is3D ? "Back to the flat graph" : "Inspect in 3D"}
+          >
+            <Box size={14} strokeWidth={1.75} />
           </button>
           <button
             type="button"
@@ -1198,6 +1110,9 @@ export function GraphView({
               <span className="swatchSquare swatchSmall" style={{ background: pal.chunk }} />
               chunk
             </div>
+            {is3D && (
+              <div className="legendHint">drag rotates, scroll zooms, right-drag pans</div>
+            )}
           </div>
         </div>
       </div>

@@ -428,6 +428,37 @@ button {
   gap: 7px;
 }
 
+.legendHint {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--border);
+  font-size: 10px;
+  color: var(--text-faint);
+}
+
+/* The 3D hover tooltip (react-force-graph renders nodeLabel html into its own div). */
+.graph3dTooltip {
+  max-width: 340px;
+  padding: 6px 9px;
+  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-raised) 94%, transparent);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.graph3dTooltipKind {
+  display: block;
+  margin-bottom: 3px;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .swatchSquare,
 .swatchCircle,
 .swatchDiamond {
