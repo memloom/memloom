@@ -242,6 +242,7 @@ export type {
 export { isChatProvider } from "./providers.js";
 export type { QueueItem, QueueRunner, QueueSnapshot, QueueStatus } from "./queue.js";
 export { IngestQueue, uploadStoreDir } from "./queue.js";
+export { attachmentStoreDir, mediaTypeOf } from "./memory-attachments.js";
 // The contradiction re-check: the retrieval widening, the prompt, and the quote verification.
 // All pure except findRecheckSubjects, which is one indexed query per belief in the window.
 export type { RecheckFinding, RecheckPair, RecheckSubject, RecheckVerdict } from "./recheck.js";
@@ -406,6 +407,8 @@ export type {
   IndexRunStatus,
   IndexRunTrigger,
   Memory,
+  MemoryAttachInput,
+  MemoryAttachment,
   MemoryStatus,
   MemoryType,
   NotionItemRef,

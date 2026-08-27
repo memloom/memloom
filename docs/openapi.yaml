@@ -247,6 +247,115 @@ paths:
                     type: array
                     items:
                       $ref: "#/components/schemas/Memory"
+  /memory/{id}/attachments:
+    post:
+      summary: Attach a file to a memory
+      description: |
+        Hangs a photo, a video or any file off a belief, so a memory can carry what the thing
+        looks like and not only what was written about it.
+
+        Filed against the LINEAGE, so it survives every later edit: `/memory/{id}/update`
+        appends a new version, and an attachment keyed to a version id would disappear the
+        first time the wording was corrected. Any version's id works as `id`.
+
+        The bytes are copied into memloom's own attachment store (`MEMLOOM_ATTACHMENT_DIR`,
+        default `~/.memloom/attachments`), so the caller may delete its copy immediately. This
+        is deliberately unlike `/context/add`, which points at a file where it already lives:
+        a memory whose picture was in the OS temp directory is a memory that loses its picture.
+
+        NOT searchable. Nothing describes the image and nothing embeds it; recall finds the
+        memory by what was written and the file comes back attached to it. `/context/attach`
+        is the other kind of attachment: chunked, embedded, scoped to one chat, gone with it.
+      operationId: memoryAttach
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename, bytes]
+              properties:
+                filename:
+                  type: string
+                  description: Name with extension. Titles the attachment and picks the media type.
+                bytes:
+                  type: string
+                  description: The file, base64 encoded.
+                mediaType:
+                  type: string
+                  description: Overrides what the filename implies.
+      responses:
+        "400":
+          description: Bad body, or the attach failed for a reason other than "not found".
+        "404":
+          description: No memory with that id.
+        "200":
+          description: Attached.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryAttachment"
+    get:
+      summary: What is attached to a memory
+      description: |
+        Newest first. Any version's id works. Empty for almost every memory.
+      operationId: memoryAttachments
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: The attachments.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  attachments:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/MemoryAttachment"
+
+  /memory/attachments/{id}:
+    delete:
+      summary: Remove one attachment
+      description: |
+        Deletes the row and the file. The memory is untouched. Deleting the MEMORY removes its
+        attachments and their files too.
+      operationId: memoryDetach
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "400":
+          description: Removal failed for a reason other than "not found".
+        "404":
+          description: No attachment with that id.
+        "200":
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+
   /memory/{id}:
     delete:
       summary: Delete a memory's whole belief
@@ -3070,6 +3179,29 @@ components:
                       type: string
                       example: query must be a non-empty string
   schemas:
+    MemoryAttachment:
+      type: object
+      description: |
+        A file hanging off a belief. `path` is where memloom put it on the daemon's machine;
+        the bytes are never returned inline.
+      properties:
+        id:
+          type: string
+        ownerId:
+          type: string
+        rootId:
+          type: string
+          description: The lineage it belongs to, not the version it was attached through.
+        name:
+          type: string
+        mediaType:
+          type: string
+        bytes:
+          type: integer
+        path:
+          type: string
+        createdAt:
+          type: string
     Scope:
       type: object
       properties:

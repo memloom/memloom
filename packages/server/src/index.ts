@@ -1004,6 +1004,48 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     }
   });
 
+  // A photo, a video or a file hanging off one belief. Bytes as base64 in JSON, the same
+  // shape `/context/attach` uses: a body parser on an otherwise pure-JSON surface is not
+  // worth a third of the transfer on a localhost daemon taking phone photos.
+  app.post("/memory/:id/attachments", async (c) => {
+    const body = z
+      .object({
+        filename: z.string().min(1),
+        bytes: z.string().min(1),
+        mediaType: z.string().optional(),
+      })
+      .safeParse(await c.req.json().catch(() => null));
+    if (!body.success) return c.json({ error: body.error.message }, 400);
+    try {
+      return c.json(
+        await memloom.memoryAttach({
+          memoryId: c.req.param("id"),
+          filename: body.data.filename,
+          bytes: new Uint8Array(Buffer.from(body.data.bytes, "base64")),
+          mediaType: body.data.mediaType,
+          ownerId: ownerOf(c),
+        }),
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no memory/.test(message) ? 404 : 400);
+    }
+  });
+
+  app.get("/memory/:id/attachments", async (c) =>
+    c.json({ attachments: await memloom.memoryAttachments(c.req.param("id"), ownerOf(c)) }),
+  );
+
+  app.delete("/memory/attachments/:id", async (c) => {
+    try {
+      await memloom.memoryDetach(c.req.param("id"), ownerOf(c));
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no attachment/.test(message) ? 404 : 400);
+    }
+  });
+
   // The full text of one recall hit (memory or context chunk): the fetch-the-rest path
   // behind truncated recall passages (MCP read_passage, assistant read_source).
   app.get("/memory/passage/:id", async (c) => {

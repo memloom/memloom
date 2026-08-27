@@ -1576,5 +1576,38 @@ export function buildMigrations(dims: number): Migration[] {
         WHERE status = 'active' AND scope_classified_at IS NULL;
     `,
     },
+    {
+      // A photo, a video or a file hanging off a belief. "i wanna be able to attach a
+      // file/video/image for the memory, so i can save memory and i also take a picture for
+      // more context of what it looks like, not just text."
+      //
+      // KEYED ON root_id, NOT id, and that is the whole schema decision. update() appends a
+      // new current version and stales the prior row, so an attachment keyed to a version id
+      // would vanish the first time anybody edited the memory it belongs to. The picture is
+      // of the thing, not of a wording of it.
+      //
+      // No foreign key, because root_id is a lineage id rather than a primary key: every
+      // version of a belief shares one, so there is nothing unique to reference. deleteMemory
+      // clears these rows and their files explicitly.
+      //
+      // The bytes are NOT here. media_path points into the attachment store on disk, the same
+      // trade `uploadStoreDir` already makes for uploaded recordings: a 40 MB video inside
+      // PGLite is a 40 MB row that every backup, every dump and every vacuum carries around.
+      id: "0034_memory_attachments",
+      sql: /* sql */ `
+      CREATE TABLE IF NOT EXISTS memory_attachments (
+        id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        owner_id    uuid NOT NULL,
+        root_id     uuid NOT NULL,
+        media_path  text NOT NULL,
+        name        text NOT NULL,
+        media_type  text NOT NULL,
+        bytes       bigint NOT NULL,
+        created_at  timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS memory_attachments_root_idx
+        ON memory_attachments (owner_id, root_id);
+    `,
+    },
   ];
 }
