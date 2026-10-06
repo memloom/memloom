@@ -1,0 +1,1661 @@
+{
+  "label": "after-v2",
+  "ranAt": "2026-10-06T09:35:56.373Z",
+  "prompt": "current",
+  "distill": {
+    "provider": "openrouter:google/gemini-2.5-flash",
+    "calls": 30,
+    "usd": 0.0519589
+  },
+  "judge": {
+    "provider": "openrouter:openai/gpt-4.1-mini",
+    "calls": 90,
+    "usd": 0.029188800000000004
+  },
+  "elapsedS": 39.6118066,
+  "totals": {
+    "folder": "all",
+    "fixtures": 30,
+    "expected": 123,
+    "recalled": 114,
+    "extracted": 160,
+    "generic": 0,
+    "unsupported": 2,
+    "duplicates": 30,
+    "dropped": 7,
+    "errors": 0
+  },
+  "byKind": [
+    {
+      "folder": "coding",
+      "fixtures": 10,
+      "expected": 34,
+      "recalled": 34,
+      "extracted": 57,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 13,
+      "dropped": 4,
+      "errors": 0
+    },
+    {
+      "folder": "advice",
+      "fixtures": 10,
+      "expected": 50,
+      "recalled": 44,
+      "extracted": 58,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 14,
+      "dropped": 1,
+      "errors": 0
+    },
+    {
+      "folder": "voice",
+      "fixtures": 10,
+      "expected": 39,
+      "recalled": 36,
+      "extracted": 45,
+      "generic": 0,
+      "unsupported": 2,
+      "duplicates": 3,
+      "dropped": 2,
+      "errors": 0
+    }
+  ],
+  "results": [
+    {
+      "id": "coding-01",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        4,
+        7
+      ],
+      "extracted": 8,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 4,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The project's CI job for Node 18 is failing due to the use of `crypto.hash()`, which was added in Node 20.12 and 21.7 and is not available in Node 18.",
+          "type": "fact",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers not to use polyfills or fallback branches for compatibility shims, as they consider them to rot over time.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user decided to keep the Node engine floor at 20 for the project and to stop CI from pretending to support Node 18.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The project's CI test matrix in `.github/workflows/ci.yml` no longer includes Node 18, and now runs tests on Node 20 and 22.",
+          "type": "fact",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The project's `engines.node` is set to `>=20`.",
+          "type": "fact",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The project's `README` now states under Requirements that Node 20 or newer is needed because it uses `crypto.hash`, which was added in Node 20.12.",
+          "type": "fact",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user standardized on pnpm for the project in January 2026.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The project's `README` has been updated to use `pnpm install` in the install block and `pnpm test` and `pnpm build` in the scripts section.",
+          "type": "fact",
+          "source": "observed",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-02",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        5,
+        6,
+        2,
+        3
+      ],
+      "extracted": 7,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user's orders report is timing out.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user decided to add an index on `orders(customer_id, created_at)` to address the orders report timeout issue.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's migration naming convention is `<timestamp>_<snake_description>.ts` and migrations are located in `db/migrations`.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The `orders` table in production has approximately 40 million rows.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's project's migration runner (`db/run-migrations.ts`) wraps every migration in `BEGIN/COMMIT` by default. To run `CREATE INDEX CONCURRENTLY`, a migration module must export `disableTransaction = true` to execute with autocommit, as `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block.",
+          "type": "procedure",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user experienced a production issue in December due to a `CREATE INDEX` operation locking writes for several minutes on the `orders` table.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user decided to add a comment at the top of migrations that export `disableTransaction = true` to explain why it's there, specifically stating: \"CONCURRENTLY cannot run inside a transaction; the runner wraps migrations in one unless this flag is set.\"",
+          "type": "procedure",
+          "source": "adopted",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-03",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        3,
+        4,
+        3,
+        1
+      ],
+      "extracted": 4,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 1,
+      "dropped": 3,
+      "memories": [
+        {
+          "content": "The user is on the on-call rotation this week and wants to keep pull requests small.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The `TestAggregate` test in `internal/metrics` was failing intermittently on CI, about one in five runs, but passed locally.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user decided to fix the flaky `TestAggregate` test by ensuring the `Aggregate()` function produces a stable order, specifically by sorting by label name, because callers likely want a stable order.",
+          "type": "procedure",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user wants the race detector to be enabled on every CI run, even if it increases the job duration.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-04",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        3,
+        6
+      ],
+      "extracted": 7,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 4,
+      "dropped": 1,
+      "memories": [
+        {
+          "content": "The user's Vercel bill for their portfolio site was $41 last month (April 2026), primarily due to image optimization bandwidth.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is moving to Poznań in June 2026 and is reviewing recurring costs.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's portfolio site now uses `output: 'export'` and `images: { unoptimized: true }` in `next.config.ts`, causing `next/image` to emit plain `img` tags pointing to pre-sized files in `public/images`.",
+          "type": "fact",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's portfolio site now generates 1x and 2x image variants using `sharp` in a build step (`scripts/resize-images.ts`).",
+          "type": "fact",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's portfolio site is deployed to Cloudflare Pages from the main branch, named 'portfolio', and has a custom domain pointed to it.",
+          "type": "fact",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's old Vercel project for the portfolio site has been paused and will be deleted after one month, following the user's move.",
+          "type": "fact",
+          "source": "adopted",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The contact form on the user's portfolio site now posts to a Cloudflare Pages Function at `functions/api/contact.ts`, and a test submission successfully arrived in the user's inbox.",
+          "type": "fact",
+          "source": "observed",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-05",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        2,
+        3,
+        4
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user's weather ETL job, `etl/weather_daily.py`, was failing with a MemoryError when processing a 12 GB parquet dump.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user decided to rewrite the `etl/weather_daily.py` script using Polars to address the MemoryError, aiming to keep the output identical for downstream dashboards that read `daily_weather.parquet`.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When using Polars for ETL, the user learned that `collect(engine='streaming')` combined with `sink_parquet` is necessary to prevent the entire lazy frame from materializing in memory, as the streaming engine is opt-in per query in Polars 1.x. This reduced peak memory usage for a 12 GB input to 2.1 GB.",
+          "type": "procedure",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When migrating from pandas to Polars for the `etl/weather_daily.py` script, the user had to cast Polars' Date type to Datetime to match the original pandas `datetime64[ns]` output, ensuring compatibility with downstream readers.",
+          "type": "procedure",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user initiated the full weather ETL job and expected it to take approximately seven more minutes after two minutes of processing.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-06",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        2,
+        3,
+        4
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user's MusicPlayer project (Kotlin, media3) had playback stop when the screen locked on their Pixel 8 (Android 14), but worked fine on their old Samsung (Android 12).",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user fixed a `ForegroundServiceStartNotAllowedException` on their Pixel 8 by adding `android:foregroundServiceType=\"mediaPlayback\"` and the `FOREGROUND_SERVICE_MEDIA_PLAYBACK` permission to the `PlaybackService` entry in `app/src/main/AndroidManifest.xml`. This allowed playback to continue through screen lock.",
+          "type": "procedure",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers commit messages to be in the imperative mood, without emojis, and without a 'fix:' prefix, as they do not use conventional commits.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user decided to drop their Samsung device from their test devices because it runs Android 12, and they believe no one uses the app below Android 13.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user set `minSdk = 33` in `app/build.gradle.kts` and removed two `Build.VERSION.SDK_INT >= 31` guards that became redundant.",
+          "type": "procedure",
+          "source": "observed",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-07",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        1,
+        2,
+        3
+      ],
+      "extracted": 4,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 1,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user is starting a Rust rewrite of the token-saver CLI, with Windows as the primary target.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers to use `clap derive` for argument parsing in the token-saver CLI to get a typed struct, rather than saving a dependency.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Spawning `powershell -Command` on the user's machine takes about 1.9 seconds due to PowerShell loading the user profile. Using `powershell -NoProfile -NonInteractive -Command` reduces the spawn time to about 180 ms, which fixed a slowness issue in the proxy subcommand of the token-saver CLI.",
+          "type": "procedure",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user decided to keep the `-NoProfile` flag for PowerShell commands in the token-saver CLI and added a comment in the code to explain the reason.",
+          "type": "fact",
+          "source": "adopted",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-08",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        1,
+        4,
+        2
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 1,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "On 2026-04-02, a deploy of the shopfront application broke checkout for 25 minutes because Stripe webhooks all returned 400 errors.",
+          "type": "episode",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's Stripe webhook secret is stored in the 'shopfront-prod' 1Password vault under the Stripe item.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's project now includes a startup check in settings.py that fails fast if any required secrets are empty, preventing the container from starting if secrets are missing.",
+          "type": "procedure",
+          "source": "adopted",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's deploy checklist in docs/deploy.md now includes a step to run `python manage.py check --deploy` and `scripts/verify-env.sh`. The `verify-env.sh` script compares variable names in .env.example against the target host's environment and exits with an error if any are missing.",
+          "type": "procedure",
+          "source": "adopted",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user decided to write up the incident in docs/incidents/2026-04-02-stripe-webhooks.md, including a timeline, the cause (renamed environment variable not present in production), and the two new guards, with a link to docs/deploy.md.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-09",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        2,
+        6,
+        3
+      ],
+      "extracted": 7,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user's monorepo linting process, using ESLint, Prettier, and the import plugin, takes 90 seconds.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user decided to switch from ESLint and Prettier to Biome for linting and formatting.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When using Biome, the user prefers 100-column lines and double quotes, consistent with their previous configuration.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user decided to run the Biome formatter once over the entire repository in a dedicated commit to maintain readable blame history.",
+          "type": "procedure",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user determined that they can live without the `no-cycle` rule from `eslint-plugin-import` because Madge catches those issues in CI.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Biome ignored files inside `dist/` and the viewer bundle only after setting `vcs.enabled: true` with `useIgnoreFile: true` in `biome.json`.",
+          "type": "procedure",
+          "source": "observed",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The `pnpm lint` command for the user's project is now `biome check .`.",
+          "type": "fact",
+          "source": "observed",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-10",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        1,
+        2,
+        5
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user's band rehearses on Thursdays and needs the setlist app to update live on everyone's phone during rehearsal, especially when songs are reordered mid-session.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers WebSockets for the setlist app's live updates because as a bass player, they need the phone to display the correct setlist instantly when they glance at it.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's setlist app uses WebSockets on a Hono server.",
+          "type": "fact",
+          "source": "adopted",
+          "grounding": "grounded"
+        },
+        {
+          "content": "On 2026-08-13, the user tested the setlist app on their iPhone at a rehearsal with the Ulica Cicha band, and their phone stopped receiving updates until reloaded.",
+          "type": "episode",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "To fix an issue where iOS Safari silently drops idle WebSockets, the setlist app's client now sends a ping every 20 seconds and reconnects with backoff if no pong is received within 5 seconds. It also re-subscribes to the setlist on reconnect to fetch any missed reorders.",
+          "type": "procedure",
+          "source": "observed",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-01",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        4,
+        7
+      ],
+      "extracted": 7,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 3,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user enjoys listening to audiobooks, especially during their daily commute.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is currently reading \"Gone Girl\" by Gillian Flynn on their Kindle.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user finds \"The Nightingale\" by Kristin Hannah interesting and wants to know more about it.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user uses the Audible app to listen to audiobooks and it allows them to bookmark and add notes.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's daily commute is 45 minutes each way.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user retains more information from audiobooks than e-books, possibly due to engagement or the ability to multitask.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user takes notes while listening to audiobooks, especially non-fiction books with valuable insights.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-02",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 5,
+      "recalled": 5,
+      "coverage": [
+        3,
+        4,
+        5,
+        6,
+        1
+      ],
+      "extracted": 8,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 1,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user recently tried a new Italian restaurant downtown and found it pretty good.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user has a friend named Emily who is an aspiring actress.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user recently attended a production of The Glass Menagerie at a local community theater.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to encourage their friend Emily to audition for a role in a play.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user recently had an audition for a role in \"The Crucible\" that did not go well.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is considering taking acting classes to improve their skills, specifically focusing on scene study and character development.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user struggles with getting into character and making performances feel authentic.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user wants to become more comfortable with analyzing scripts and developing a character's backstory.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-03",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 5,
+      "recalled": 2,
+      "coverage": [
+        2,
+        0,
+        0,
+        3,
+        0
+      ],
+      "extracted": 3,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user is trying to get back into playing the guitar.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user has a Spotify playlist called 'Summer Vibes' which contains chill tracks suitable for relaxing or working out.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user attended a music festival in April 2023 with friends and saw The Lumineers and The 1975 perform.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-04",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        4,
+        4,
+        2,
+        1
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 1,
+      "memories": [
+        {
+          "content": "The user is balancing assignments with a part-time job.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user uses Google Calendar to keep track of their classes and part-time job.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is planning a trip to the Great Ocean Road in Australia.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user previously visited the Great Ocean Road with friends during their study abroad program at the University of Melbourne.",
+          "type": "episode",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user recommends stopping by the Kennett River Koala Walk to spot koalas in their natural habitat when visiting the Great Ocean Road.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-05",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 6,
+      "recalled": 5,
+      "coverage": [
+        1,
+        2,
+        3,
+        4,
+        5,
+        0
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user bought a yellow dress and a pair of matching earrings for their sister's birthday.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user bought a pair of silver hoop earrings with a small pearl in the center for their mom.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user bought groceries and flowers for their neighbor, Mrs. Johnson, when she was recovering from surgery.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user bought snacks (granola bars, nuts) and energy drinks for a team-building event with their coworkers.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user contributed to a gift for Rachel's going-away party, which included a beautiful journal and a set of nice pens.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-06",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 5,
+      "recalled": 4,
+      "coverage": [
+        0,
+        5,
+        3,
+        2,
+        7
+      ],
+      "extracted": 7,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user has a dog named Max.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to check out online platforms for dog walkers.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Max needs flea and tick prevention medication applied every two weeks.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user wants an interactive dog toy for Max that can keep him engaged during the day while the user is away.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user decided to get Max a Kong Toy because Max loves peanut butter, and the user plans to stuff it with peanut butter as a special treat.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user wants a new collar with a nice name tag for Max.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user decided to get Max a nylon collar from Yellow Dog Design with an engraved name tag because it will be durable and easy to clean, suiting Max's active lifestyle.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-07",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 6,
+      "recalled": 6,
+      "coverage": [
+        3,
+        4,
+        5,
+        6,
+        2,
+        5
+      ],
+      "extracted": 6,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 4,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user wants to organize their jewelry collection using a spreadsheet to keep track of all the pieces.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user wants to include the story behind each jewelry piece in their spreadsheet, such as who gave it to them and when, to track sentimental value.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to start documenting their jewelry collection by adding sentimental pieces first, specifically a silver necklace their grandma gave them on their 18th birthday.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user lost a silver necklace, given to them by their grandma on their 18th birthday, about two months ago (around March 2023) at a friend's house during a sleepover. They plan to ask their friend if she has seen it.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to add pearl earrings, a gift from their parents upon high school graduation, to their jewelry spreadsheet. They associate these earrings with good luck and important milestones, having worn them on their stats final three weeks ago (around May 1, 2023).",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to add a gold chain with a tiny diamond cross pendant, borrowed from their mom, to their jewelry spreadsheet. They need to ask their mom if she has seen a small silver clasp the user used to fix the chain when it broke.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-08",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        2,
+        3,
+        5,
+        5
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user is in the process of buying a new home.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is buying a house for $325,000.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user was pre-approved for a $350,000 loan from Wells Fargo.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user has already agreed on a $2,000 credit towards closing costs with the seller.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to ask the seller to cover an additional 1% of the purchase price ($3,250) towards closing costs due to minor issues with the roof and plumbing found in the inspection report.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-09",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 6,
+      "recalled": 6,
+      "coverage": [
+        2,
+        2,
+        3,
+        5,
+        6,
+        1
+      ],
+      "extracted": 6,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user is planning a road trip to the mountains in June.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user had their bike in for a tune-up on April 20, 2023, because the gears were getting stuck. During this service, the mechanic replaced the chain for $25 and installed new bike lights for $40.",
+          "type": "episode",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user has clocked 347 miles on their bike since the start of 2023.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's goal is to reach 1000 miles on their bike by the end of summer.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's daily bike commute to work is about 10 miles round trip.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user purchased a Bell Zephyr helmet from a local bike shop downtown on April 10, 2023.",
+          "type": "episode",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-10",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 5,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        0,
+        5,
+        6
+      ],
+      "extracted": 6,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user is considering majoring in Economics.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user has positive memories from high school, including being part of the debate team and taking advanced placement courses in economics.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is surprised that they will become an Economics major soon.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's old high school friends plan to work after graduating from university.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user has taken online certification courses in Python programming and data visualization.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user has been reading books on machine learning and artificial intelligence.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-01",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        5,
+        2
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user's flights for a trip to Berlin are booked for Friday, February 21, 2026, returning Sunday night. The user will be staying at Ania's place in Neukölln.",
+          "type": "episode",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's passport expires in March 2026. The user needs to renew their passport before the Lisbon conference in April 2026, as the current passport will be valid for the Berlin trip but not for Lisbon.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to book an appointment at the office on Libelta to renew their passport, rather than relying on walk-ins.",
+          "type": "procedure",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers to travel light with one backpack, rather than a roller bag, to avoid waiting at baggage claim and losing items.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Ania, the user's friend, has been vegetarian since autumn 2025. The user plans to bring honey from the market in Poznań as a gift for Ania, as she liked it last time, and will not bring sausage.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-02",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user decided to name their side project \"Lantern\" because the domain \"nightjar.app\" was taken, and \"lantern.sh\" is available. They plan to acquire the domain tonight.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to price their side project, Lantern, at $5 per month or $40 per year, with a free tier that allows for 100 notes. This decision was influenced by Piotr, who advised against a $10 monthly price for a note tool.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's side project, Lantern, must have an offline-first architecture, using local SQLite with sync as an add-on.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Piotr offered to write the landing page copy for the user's side project, Lantern, and the user plans to accept his offer.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's target for their side project, Lantern, is to have the landing page up by the end of April and to have a beta version released to ten people in May.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-03",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 3,
+      "coverage": [
+        1,
+        0,
+        3,
+        4
+      ],
+      "extracted": 4,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 1,
+      "memories": [
+        {
+          "content": "The user ran 8 kilometers in 42 minutes and 5 seconds, achieving a personal record by about 1.5 minutes. This run caused a slight discomfort in their left knee, on the outside, similar to an issue experienced in March.",
+          "type": "episode",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's Nike running shoes have approximately 700 kilometers on them.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user has an appointment with Doctor Nowak at the clinic on Garbary for physiotherapy on Tuesday, May 19, 2026, at 10 AM. The user needs to bring their old X-ray from last year to the appointment.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user needs to log their run in Strava manually because their watch did not sync. In the future, the user will wait for GPS lock before starting their watch to ensure syncing.",
+          "type": "procedure",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-04",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        5,
+        4
+      ],
+      "extracted": 7,
+      "generic": 0,
+      "unsupported": 2,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "Marek approved a Q3 campaign budget of 30,000 złoty, with a promise to increase it if the first month's conversion rate exceeds two percent.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Ola is transferring to the Kraków office starting in September, leaving the Poznań team with the user, Bartek, and one open position.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user needs to post the job opening for Ola's replacement by July 15, 2026.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "unsupported"
+        },
+        {
+          "content": "The user needs to send Marek the revised budget sheet by Friday, June 26, 2026.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "unsupported"
+        },
+        {
+          "content": "The user decided to go with Studio Mosaic for the creative agency because their quote was 12,000, compared to another agency's quote of 28,000.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user needs to book the kickoff meeting for the first week of July 2026.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user believes meetings are more effective with a written agenda provided beforehand and plans to advocate for this practice.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-05",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        2,
+        3,
+        4
+      ],
+      "extracted": 4,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user's fridge is 14 years old and is dying, making noise and having a wet freezer drawer. The user plans to replace it rather than repair it.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers Bosch or Siemens fridges and has a budget of 3000 złoty for a new one.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to book Trattoria da Luigi on Wrocławska for March 1st for their mother's birthday, which is on March 3rd. The reservation will be for six people: the user, their mother, Kasia, Tomek, and the kids.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers Finish brand dishwasher tablets over Lidl brand ones because the Lidl ones leave a white film.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-06",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        2,
+        3,
+        4
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 1,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user finished reading 'The Remains of the Day' by Ishiguro on January 10, 2026, and considers it one of the best books they have read in years.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to read 'Klara and the Sun' by Ishiguro next, a book recommended by Marta.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers to read fiction on paper and listen to non-fiction as audiobooks, purchasing non-fiction on Audible and novels at Bookarest.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's book club meeting is on January 28, 2026, at Zosia's house, and the book to be discussed is 'Drive Your Plow Over the Bones of the Dead' by Tokarczuk.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to start reading 'Drive Your Plow Over the Bones of the Dead' during the week of January 11, 2026.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-07",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 5,
+      "recalled": 5,
+      "coverage": [
+        1,
+        1,
+        2,
+        3,
+        4
+      ],
+      "extracted": 4,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user's Yaris has 178,000 kilometers on it, and an oil change is due at 180,000 kilometers. They plan to have Pan Zbyszek at the garage on Głogowska perform the oil change, as he charges 350 for the service, compared to the dealer's quote of 600.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's car insurance renews on June 1st. Last year, it cost 1400 with Link4, and they plan to get a quote from PZU this year, based on Bartek's recommendation.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's right rear tire is slowly losing pressure (0.2 bar per week), likely due to a nail. They plan to ask Pan Zbyszek to inspect it when the car is in for its oil change.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's winter tires are stored in the basement, in the cage, because the garage flooded in 2025. They plan to swap them back onto the car in October.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-08",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        1,
+        4,
+        2,
+        3
+      ],
+      "extracted": 4,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "Tomek got engaged to Kasia and asked the user to be his best man. The wedding is planned for July next summer in Gdańsk.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user needs to organize Tomek's stag do. Tomek requested no strippers, no Kraków, and something outdoors, suggesting a weekend in the Tatras or a kayaking trip.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to call their mother to inform her about Tomek's engagement, as she has known Tomek since the user was six years old.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user wants to collect stories for Tomek's best man speech, specifically mentioning the kayak trip and the Erasmus trip with the lost passport.",
+          "type": "preference",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-09",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 2,
+      "coverage": [
+        2,
+        0,
+        0,
+        3
+      ],
+      "extracted": 3,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 1,
+      "memories": [
+        {
+          "content": "The user's sync job reports are off by an hour for one week every spring and autumn, specifically the week after the clock change, due to a Daylight Saving Time (DST) issue.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user determined that the DST bug is in their code, specifically with stored timestamps, because it occurs with both cron and manual triggers.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user will add a test that runs the sync job across a DST boundary using a fake clock to prevent future DST-related bugs.",
+          "type": "procedure",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-10",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "extracted": 4,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user's gym locker number is 214.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's dentist is Doctor Lewandowska at the practice on Półwiejska. Their next check-up is in March 2027, and their lower left molar with an old filling needs watching.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is allergic to penicillin and amoxicillin.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        },
+        {
+          "content": "At work, the company's parking spots are on level minus two, by the lift. Parking elsewhere results in a ticket, which the user learned the expensive way in August 2026, costing 150 złoty.",
+          "type": "fact",
+          "source": "user",
+          "grounding": "grounded"
+        }
+      ]
+    }
+  ]
+}

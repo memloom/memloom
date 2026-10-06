@@ -1,0 +1,18 @@
+{
+  "id": "voice-02",
+  "kind": "note",
+  "date": "2026-03-30",
+  "source": { "note": "hand-written; a product-idea voice note that changes its mind twice" },
+  "units": [
+    { "role": "user", "text": "So, the side project. I keep going back and forth on the name. Nightjar. No. Actually I did like Nightjar, but the domain is taken, nightjar dot app is some sleep thing. So, Lantern. Lantern it is, lantern dot sh is free, I'll grab it tonight." },
+    { "role": "user", "text": "Pricing, I think, I was going to do ten a month, but talking to Piotr yesterday he said nobody pays ten for a note tool, and he's right, so five dollars a month, or forty a year, and a free tier with, let's say, a hundred notes." },
+    { "role": "user", "text": "The thing I keep coming back to is that it has to work offline first. Not, like, as a feature, as the architecture. Local SQLite, sync is an add-on. If I can't get that right there's no point." },
+    { "role": "user", "text": "Hmm, what else. Piotr offered to do the landing page copy, he's good at that, so take him up on it. Target, um, target is to have the landing page up by end of April and the beta to ten people in May. Ten people. Not a hundred. I always overreach." }
+  ],
+  "expected": [
+    { "type": "fact", "content": "The user's side project is named Lantern (Nightjar was rejected because nightjar.app is taken); the user plans to register lantern.sh.", "keywords": ["lantern"] },
+    { "type": "fact", "content": "Lantern pricing: $5 a month or $40 a year, with a free tier of about 100 notes; the user dropped the $10 price after Piotr said nobody pays $10 for a note tool.", "keywords": [["$5", "five dollars", "5 dollars"]] },
+    { "type": "fact", "content": "Lantern is offline-first by architecture: local SQLite with sync as an add-on.", "keywords": [["offline", "sqlite"]] },
+    { "type": "fact", "content": "Piotr will write Lantern's landing page copy; the user aims for the landing page by end of April 2026 and a beta with ten people in May 2026.", "keywords": [["landing", "beta"]] }
+  ]
+}

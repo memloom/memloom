@@ -1,0 +1,19 @@
+{
+  "id": "voice-08",
+  "kind": "note",
+  "date": "2026-07-05",
+  "source": { "note": "hand-written; news about friends, a role, and a repeated point" },
+  "units": [
+    { "role": "user", "text": "Big news, Tomek got engaged to Kasia. Finally. He asked me to be best man, which, yes, obviously. Wedding is next summer, he said July, in Gdańsk, because her family's all there." },
+    { "role": "user", "text": "So I need to think about a speech at some point, not now, but, I should start collecting stories. The one about the kayak trip, definitely the kayak trip. And the Erasmus thing with the lost passport, if Kasia's parents can handle it." },
+    { "role": "user", "text": "Also the stag do is mine to organise apparently. He said no strippers, no Kraków, something outdoors, so, like, a weekend in the Tatras, or kayaking again, which, that would be thematically nice actually." },
+    { "role": "user", "text": "Best man. Wild. I have to be best man. Okay. Also call mum, she'll want to know, she's known Tomek since we were six."
+    }
+  ],
+  "expected": [
+    { "type": "fact", "content": "The user's friend Tomek is engaged to Kasia; the wedding is planned for July 2027 in Gdańsk, where Kasia's family lives.", "keywords": [["gdańsk", "gdansk"]] },
+    { "type": "fact", "content": "The user will be Tomek's best man and plans a speech built around the kayak trip story and possibly the Erasmus lost-passport story.", "keywords": ["best man"] },
+    { "type": "fact", "content": "The user is organising Tomek's stag do: no strippers, not Kraków, something outdoors such as a Tatras weekend or kayaking.", "keywords": [["stag", "bachelor"]] },
+    { "type": "fact", "content": "The user and Tomek have been friends since they were six; the user's mum knows Tomek well.", "keywords": ["six"] }
+  ]
+}

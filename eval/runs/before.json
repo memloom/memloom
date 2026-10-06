@@ -1,0 +1,1721 @@
+{
+  "label": "before",
+  "ranAt": "2026-10-06T09:32:56.315Z",
+  "prompt": "baseline",
+  "distill": {
+    "provider": "openrouter:google/gemini-2.5-flash",
+    "calls": 30,
+    "usd": 0.05204140000000001
+  },
+  "judge": {
+    "provider": "openrouter:openai/gpt-4.1-mini",
+    "calls": 90,
+    "usd": 0.031833200000000006
+  },
+  "elapsedS": 50.8873254,
+  "totals": {
+    "folder": "all",
+    "fixtures": 30,
+    "expected": 123,
+    "recalled": 103,
+    "extracted": 204,
+    "generic": 43,
+    "unsupported": 0,
+    "duplicates": 45,
+    "dropped": 3,
+    "errors": 0
+  },
+  "byKind": [
+    {
+      "folder": "coding",
+      "fixtures": 10,
+      "expected": 34,
+      "recalled": 30,
+      "extracted": 68,
+      "generic": 9,
+      "unsupported": 0,
+      "duplicates": 24,
+      "dropped": 1,
+      "errors": 0
+    },
+    {
+      "folder": "advice",
+      "fixtures": 10,
+      "expected": 50,
+      "recalled": 38,
+      "extracted": 80,
+      "generic": 34,
+      "unsupported": 0,
+      "duplicates": 10,
+      "dropped": 0,
+      "errors": 0
+    },
+    {
+      "folder": "voice",
+      "fixtures": 10,
+      "expected": 39,
+      "recalled": 35,
+      "extracted": 56,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 11,
+      "dropped": 2,
+      "errors": 0
+    }
+  ],
+  "results": [
+    {
+      "id": "coding-01",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 3,
+      "coverage": [
+        2,
+        0,
+        3,
+        4
+      ],
+      "extracted": 5,
+      "generic": 1,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 1,
+      "memories": [
+        {
+          "content": "The `engines` field in `package.json` is advisory for npm (prints a warning) and yarn (ignored unless `engine-strict` is set), but pnpm refuses installation by default if the Node.js version is outside the specified range. Semver ranges apply, e.g., `>=18` means 18 and newer, while `^18` means 18.x only.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "The project uses `crypto.hash()`, which was introduced in Node.js 20.12 and 21.7. This API is not available in Node.js 18.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The CI test matrix was updated to remove Node.js 18, now running tests on Node.js 20 and 22. The `engines.node` field in `package.json` was set to `>=20`. The README was updated to reflect the Node.js 20 or newer requirement, specifically mentioning the use of `crypto.hash`.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers `pnpm` for package management. The README's install section and script references (test, build) were updated to use `pnpm` commands.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The `npm-based` one-liner in the Quick Start section of the README was retained because it uses `npx` to run the published CLI, which is independent of the repository's package manager.",
+          "type": "fact",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-02",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        8,
+        7,
+        4,
+        5
+      ],
+      "extracted": 9,
+      "generic": 1,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The `orders` table in production has approximately 40 million rows.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The project's migration runner (db/run-migrations.ts) wraps every migration in a `BEGIN`/`COMMIT` transaction block by default.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The migration runner supports an escape hatch: exporting `disableTransaction = true` from a migration module causes the runner to execute that migration with autocommit, outside of a transaction.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "A new index `orders(customer_id, created_at)` was added to improve the performance of the orders report. The index was created concurrently.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Migration files should follow the naming convention `<timestamp>_<snake_description>.ts` and be located in `db/migrations`.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When `disableTransaction = true` is used in a migration, a comment should be added at the top of the migration explaining its purpose.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "In December, a `CREATE INDEX` operation on the `orders` table locked writes for several minutes in production due to the table's size.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When creating an index concurrently in a migration, if the migration runner wraps migrations in transactions, export `disableTransaction = true` from the migration module. This is because `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block in Postgres.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When designing a B-tree index for queries with equality filters and range/ORDER BY clauses, place equality columns first, then the range column. This allows Postgres to use the index for both types of conditions and also for queries on the leading column alone.",
+          "type": "procedure",
+          "grounding": "generic"
+        }
+      ]
+    },
+    {
+      "id": "coding-03",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 3,
+      "coverage": [
+        6,
+        5,
+        4,
+        0
+      ],
+      "extracted": 7,
+      "generic": 1,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "Go's map iteration order is deliberately randomized by the runtime since Go 1.0. This is to prevent code from relying on an unspecified order and is a common cause of flaky tests without concurrency.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "The `TestAggregate` test in `internal/metrics` was flaky because the `Aggregate()` function iterated over a map (`byLabel`) and appended to a result slice, leading to an unstable order. The test then compared this against a fixed-order slice.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The `Aggregate()` function in `aggregate.go` was modified to ensure a stable output order. It now collects map keys, sorts them using `slices.Sort`, and then builds the result slice based on this sorted order.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers that functions produce stable output orders, rather than fixing order issues only in tests.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user wants the Go race detector (`-race`) to be enabled for every CI run, even if it increases job duration.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "A flaky test, `TestAggregate` in `internal/metrics`, was identified and fixed. The flakiness was due to non-deterministic map iteration order in the `Aggregate()` function. The fix involved sorting map keys before constructing the result, ensuring a stable output order. The change was small (9 lines) and did not modify the test itself.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The Go race detector (`-race`) was added to the `test` target in the Makefile for CI runs. This increased the CI test duration from 1 minute 10 seconds to 2 minutes 40 seconds, but no races were reported.",
+          "type": "episode",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-04",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 3,
+      "coverage": [
+        1,
+        0,
+        3,
+        8
+      ],
+      "extracted": 8,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 3,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user's portfolio site was incurring high Vercel bills due to image optimization bandwidth, prompting a move to a different hosting provider.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The portfolio site has been migrated from Vercel to Cloudflare Pages.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The `next.config.ts` file for the portfolio site now includes `output: 'export'` and `images: { unoptimized: true }` to enable static export and disable Next.js image optimization.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Image variants (1x and 2x) for the portfolio site are now pre-sized at build time using `sharp` in `scripts/resize-images.ts`.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The static build of the portfolio site is deployed to Cloudflare Pages from the main branch, with the project named 'portfolio' and a custom domain pointing to it.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The contact form on the portfolio site now posts to a Cloudflare Pages Function at `functions/api/contact.ts`.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers to use Cloudflare Pages for hosting their static Next.js portfolio site due to its free bandwidth and the ability to pre-size images at build time.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The Vercel project for the portfolio site has been paused and will remain so for a month before deletion, to allow for testing and confirmation that the Cloudflare Pages migration is stable.",
+          "type": "episode",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-05",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        5,
+        6,
+        9
+      ],
+      "extracted": 10,
+      "generic": 2,
+      "unsupported": 0,
+      "duplicates": 7,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "Pandas is an eager and single-threaded data processing library that materializes entire dataframes in memory. A 12 GB Parquet file can expand to 40 GB of Pandas objects due to string decoding and other overheads.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Polars is a lazy and multi-threaded data processing library. Its streaming engine processes queries in batches, maintaining roughly constant memory usage regardless of input size. Polars reads Parquet files natively.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "DuckDB is a data processing option with similar properties to Polars (lazy, efficient memory usage) and uses SQL as its interface. DuckDB reads Parquet files natively.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "The user prefers to rewrite data processing scripts using Polars when an opportunity arises, especially if it addresses performance or memory issues.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The `etl/weather_daily.py` script was rewritten from Pandas to Polars to address a MemoryError when processing a 12 GB Parquet dump.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When using Polars 1.x for lazy frame processing, to ensure streaming execution and avoid materializing the entire plan in memory, combine `collect(engine='streaming')` with `sink_parquet`. Without `engine='streaming'`, the lazy frame will still be materialized at the end, potentially causing memory issues.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The rewritten `etl/weather_daily.py` script using Polars with streaming enabled processes a 12 GB Parquet input with a peak memory usage of 2.1 GB.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The output `daily_weather.parquet` generated by the Polars version of `etl/weather_daily.py` has the same number of rows (3,652) and column set as the Pandas version. Data types were checked for equality.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Polars writes dates as `Date` type by default, while Pandas writes them as `datetime64[ns]`. To maintain compatibility with downstream readers expecting `datetime64[ns]`, dates in the Polars output were explicitly cast to `Datetime`.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The `etl/weather_daily.py` job, after being rewritten in Polars, was started and estimated to complete in approximately 9 minutes (2 minutes for 30% completion).",
+          "type": "episode",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-06",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 2,
+      "coverage": [
+        3,
+        4,
+        0
+      ],
+      "extracted": 5,
+      "generic": 1,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "Android 14 (API 34) requires foreground services to declare a `foregroundServiceType` in the manifest and request the corresponding permission. For media playback, the type is `mediaPlayback` with the `FOREGROUND_SERVICE_MEDIA_PLAYBACK` permission. Failure to do so results in the system killing the service, typically around 10 seconds after the screen locks.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "To ensure media playback continues when the screen locks on Android 14 and newer devices, add `android:foregroundServiceType=\"mediaPlayback\"` to the `PlaybackService` entry in `AndroidManifest.xml` and declare the `FOREGROUND_SERVICE_MEDIA_PLAYBACK` permission. This addresses `ForegroundServiceStartNotAllowedException`.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Resolved an issue where playback stopped when the screen locked on a Pixel 8 (Android 14) in the MusicPlayer app. The fix involved adding `android:foregroundServiceType=\"mediaPlayback\"` and the `FOREGROUND_SERVICE_MEDIA_PLAYBACK` permission to the `AndroidManifest.xml`, as required by Android 14. This was committed as \"Declare the mediaPlayback foreground service type for Android 14\".",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Commit messages should be in the imperative mood, without emojis, and without a 'fix:' prefix. Conventional commits are not used.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The MusicPlayer project's `minSdk` has been updated to 33, and the `targetSdk` is 34. This means the app supports Android 13 and newer.",
+          "type": "fact",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-07",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        1,
+        2,
+        4
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The token-saver CLI is being rewritten in Rust. The primary target platform is Windows, with Linux and macOS to follow.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "For argument parsing in the Rust CLI, the user prefers `clap`'s derive API over the builder API or hand-rolled parsing, due to the benefits of typed structs.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Spawning `powershell -Command` on the user's machine takes approximately 1.9 seconds due to user profile loading (including oh-my-posh and two modules). Using `powershell -NoProfile -NonInteractive -Command` reduces the spawn time to about 180 ms. `cmd /C` is faster at around 40 ms but has issues with quoting for strings containing spaces or Unicode.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "To improve the performance of the `proxy` subcommand when running commands via PowerShell on Windows, use `powershell -NoProfile -NonInteractive -Command` instead of just `powershell -Command`. This avoids the significant overhead of loading the user's PowerShell profile.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The `rtk proxy git status` command's end-to-end execution time was reduced from 2.1 seconds to 0.3 seconds by switching the proxy's PowerShell invocation to use `-NoProfile -NonInteractive -Command`.",
+          "type": "episode",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-08",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        1,
+        4,
+        3
+      ],
+      "extracted": 5,
+      "generic": 1,
+      "unsupported": 0,
+      "duplicates": 1,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "On 2026-04-02, a deploy of shopfront at 14:10 UTC broke checkout for 25 minutes. Stripe webhooks failed with HTTP 400 errors because the `STRIPE_WH_SECRET` environment variable was renamed to `STRIPE_WEBHOOK_SECRET` in the new release, but the production environment still used the old name. This caused `settings.STRIPE_WEBHOOK_SECRET` to resolve to an empty string, leading to signature verification failures. The issue was resolved at 14:35 UTC by manually setting the correct environment variable.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Stripe signs every webhook with a secret specific to the endpoint. The receiving code verifies the signature header against this secret. A missing or incorrect secret causes verification to fail, resulting in an HTTP 400 response, which Stripe retries with backoff for up to three days.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "The Stripe webhook secret for the shopfront production environment is stored in the 'shopfront-prod' 1Password vault under the Stripe item.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "To prevent issues with missing or incorrectly named environment variables during deployment: 1. Implement a startup check in `settings.py` that fails fast with a clear message if any required secret is empty. 2. Add `python manage.py check --deploy` and a `scripts/verify-env.sh` step to the deploy checklist (`docs/deploy.md`). The `verify-env.sh` script should diff variable names in `.env.example` against the target host's environment and exit non-zero if any names are missing.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "A post-mortem for the 2026-04-02 Stripe webhook incident has been documented in `docs/incidents/2026-04-02-stripe-webhooks.md`. It includes the timeline (14:10 deploy, 14:12 first 400, 14:35 fixed), the cause (renamed environment variable not present in prod), and the two implemented guards, with a link to `docs/deploy.md`.",
+          "type": "fact",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-09",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        3,
+        10,
+        7
+      ],
+      "extracted": 10,
+      "generic": 2,
+      "unsupported": 0,
+      "duplicates": 7,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "Biome combines linting and formatting into a single Rust binary, offering significant speed improvements over separate ESLint and Prettier setups. This speed comes from avoiding Node.js startup overhead per plugin and inter-tool AST transfers.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "Biome's rule set is internal and does not support ESLint plugins directly. Custom or type-aware ESLint rules, such as those from `eslint-plugin-import`, need to have a Biome equivalent or be dropped.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "Switching to Biome from ESLint and Prettier reduced linting time for the monorepo from 90 seconds to 1.4 seconds.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Biome's default rule set covers 208 out of 212 ESLint findings, with the 4 missing findings all related to `eslint-plugin-import`'s `no-cycle` rule.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The `no-cycle` rule from `eslint-plugin-import` is not critical as `madge` catches cyclic dependencies in CI.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Formatting differences between Biome and Prettier primarily involve trailing commas and line wrapping.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers 100-column line widths and double quotes for code formatting.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When making large-scale formatting changes, the user prefers to commit the formatting changes in a separate commit to maintain readable blame history.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The project successfully migrated from ESLint and Prettier to Biome. This involved creating a `biome.json` with `lineWidth: 100`, `quoteStyle: double`, `vcs.enabled: true`, `vcs.useIgnoreFile: true`, and enabling both formatter and linter. ESLint, Prettier, and their 11 plugin packages were removed. The migration was done in two commits: one for the tool replacement and one for the full repository reformat.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "To ensure Biome respects `.gitignore` files and avoids formatting ignored directories (like `dist/`), set `vcs.enabled: true` and `vcs.useIgnoreFile: true` in `biome.json`.",
+          "type": "procedure",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "coding-10",
+      "folder": "coding",
+      "kind": "agent-session",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        3,
+        2,
+        4
+      ],
+      "extracted": 4,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user prefers WebSockets for live updates in the setlist app to ensure instant reorders are reflected on band members' phones, especially for the bassist who needs to see the correct order immediately.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The Hono server for the setlist app uses WebSockets for live updates. It exposes a `/ws` endpoint, and clients subscribe to a setlist ID. Reordering songs broadcasts the new order to all subscribed clients in the 'room'.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "During a rehearsal with the Ulica Cicha band, the setlist app's WebSocket updates stopped working on the user's iPhone until a manual reload. This occurred when the phone was idle or in the background.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "To prevent iOS Safari from silently dropping idle WebSockets when the tab is in the background or the screen dims, implement a heartbeat mechanism. The client should send a ping every 20 seconds and attempt to reconnect with backoff if no pong is received within 5 seconds. Upon reconnection, the client must re-subscribe to the setlist to fetch any missed updates.",
+          "type": "procedure",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-01",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 2,
+      "coverage": [
+        2,
+        0,
+        0,
+        3
+      ],
+      "extracted": 6,
+      "generic": 2,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user enjoys listening to fiction audiobooks, especially during their daily commute.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's daily commute is 45 minutes each way, totaling 1.5 hours of listening time per day.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user finds audiobooks more engaging and memorable than e-books, leading to better information retention. This is potentially due to dual coding, emotional connection from narration, pacing/rhythm, and the ability to multitask.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user actively takes notes while listening to audiobooks, particularly for non-fiction, to reinforce learning and retention. This helps process information deeply, identify key takeaways, and facilitate review and reflection.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When taking notes for audiobooks, consider apps with features like: timestamps (to link notes to specific audio points), tagging/organization, robust search, cloud syncing across devices, and customization options. Some apps also offer export features for sharing notes/quotes.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "Recommended note-taking apps for audiobooks include Notion, Simplenote, Bear, Evernote, Otter, and Audiobooks.com's built-in notes. Some of these (Notion, Simplenote, Bear, Evernote, Otter) support exporting notes in various formats (CSV, JSON, Markdown, plain text, HTML, PDF) and some have direct social media sharing capabilities (Notion, Bear, Evernote, Otter).",
+          "type": "fact",
+          "grounding": "generic"
+        }
+      ]
+    },
+    {
+      "id": "advice-02",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 5,
+      "recalled": 1,
+      "coverage": [
+        0,
+        0,
+        0,
+        3,
+        0
+      ],
+      "extracted": 3,
+      "generic": 2,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "To find local Italian restaurants, check online review sites (Yelp, Google Reviews, TripAdvisor), ask friends/family/colleagues, follow local food bloggers on social media, consult local food guides, or reach out to Italian cultural organizations.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "To find local adult acting classes, search online (e.g., \"acting classes for adults near me\"), check community centers, inquire at local colleges/universities (drama departments often offer continuing education), look for local branches of acting unions (Actors' Equity Association, SAG-AFTRA), ask for word-of-mouth recommendations, or follow local acting studios/theaters on social media. Before committing, consider the instructor's experience/style, techniques taught, class size/format, cost/scheduling, and any prerequisites.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "The user is interested in improving acting skills, specifically focusing on scene study and character development, to make performances feel more authentic and to better analyze scripts and develop character backstories.",
+          "type": "fact",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-03",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 5,
+      "recalled": 5,
+      "coverage": [
+        3,
+        1,
+        2,
+        7,
+        4
+      ],
+      "extracted": 8,
+      "generic": 1,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user is interested in improving their guitar skills and is looking for online resources beyond Fender Play.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is interested in discovering new music and artists, particularly in the ambient and lo-fi genres.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user has a Spotify playlist called 'Summer Vibes' which contains chill tracks suitable for relaxing or working out.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is interested in podcasts, specifically those featuring inspiring entrepreneurial stories or business-related content.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is looking for YouTube channels to learn guitar.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is interested in finding information about upcoming music festivals or concerts in their area.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user attended a music festival last month with friends and saw The Lumineers and The 1975 perform live. They described it as an amazing experience.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "To find upcoming music festivals and concerts: Use platforms like Songkick or Bandsintown to track artists and receive notifications. Check Eventbrite for various events. Utilize Facebook Events by searching for events in your area. Look for local music blogs, websites, or newspapers. Visit the websites of local venues. Check specific music festival websites for details. Follow favorite artists, promoters, and venues on social media.",
+          "type": "procedure",
+          "grounding": "generic"
+        }
+      ]
+    },
+    {
+      "id": "advice-04",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 3,
+      "coverage": [
+        6,
+        6,
+        2,
+        0
+      ],
+      "extracted": 9,
+      "generic": 6,
+      "unsupported": 0,
+      "duplicates": 1,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "Google Calendar is excellent for scheduling events and appointments but is not the most suitable tool for task management.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "Todoist is a task management application designed for creating and managing to-do lists, setting priorities, and tracking progress. It features a simple interface, task hierarchies for breaking down large projects, and integrations with other apps like Google Calendar and Gmail.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "Trello is a visual project management tool that uses boards, lists, and cards to organize tasks and projects. It is ideal for Kanban-style workflow management and team collaboration, offering customization options and integrations.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "The user prefers a dedicated task management tool with a simple, intuitive interface for breaking down larger projects into smaller, manageable tasks.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans a trip to the Great Ocean Road in Australia.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user previously visited the Great Ocean Road during a study abroad program at the University of Melbourne, exploring the coast, hiking, and visiting the Kennett River Koala Walk.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When choosing a productivity app, consider the following factors: ease of use, features (task management, reminders, collaboration), syncing capabilities across devices, pricing (free or affordable, premium features), and integration with other tools like Google Calendar or Microsoft Outlook.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "To decide between Todoist and Trello, consider whether a traditional, list-based approach (Todoist) or a visual, board-based approach (Trello) is preferred. Also, determine if the primary need is task management (Todoist) or project management and collaboration (Trello), and if tasks are complex and hierarchical (Todoist) or smaller and more flexible (Trello).",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "When visiting the Great Ocean Road, take your time, book accommodations in advance, bring sunscreen, water, and snacks, and drive safely due to winding and narrow sections of the road.",
+          "type": "procedure",
+          "grounding": "generic"
+        }
+      ]
+    },
+    {
+      "id": "advice-05",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 6,
+      "recalled": 4,
+      "coverage": [
+        2,
+        0,
+        4,
+        5,
+        6,
+        0
+      ],
+      "extracted": 6,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user wants to track gifts given, including the occasion, the gift itself, and the recipient.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user bought a yellow dress and matching earrings for their sister's birthday.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user bought silver hoop earrings with a small pearl for their mom, with no specific occasion.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user bought groceries and flowers for Mrs. Johnson during her recovery from surgery.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user bought snacks (granola bars, nuts) and energy drinks for coworkers during a team-building event.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user contributed to a gift for Rachel's going-away party, which included a journal and a set of pens.",
+          "type": "fact",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-06",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 5,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        0,
+        4,
+        3
+      ],
+      "extracted": 7,
+      "generic": 4,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "Max is a Golden Retriever.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Max likes peanut butter.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers Yellow Dog Design nylon collars for Max due to their durability, ease of cleaning, and wide range of styles and colors, suitable for Max's active lifestyle. They also prefer engraved name tags.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When finding a reliable dog walker:\n1. Check reviews from multiple sources.\n2. Conduct an interview to discuss dog's needs, walker's experience, and approach.\n3. Verify liability insurance and relevant certifications (e.g., pet first aid).\n4. Arrange a meet-and-greet with the dog to ensure a good fit.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "When considering a dog walker for medication administration:\n1. Ask about their experience with administering medication.\n2. Inquire about pet first aid or CPR certifications.\n3. Assess their comfort level with the responsibility.\n4. Clarify liability in case of adverse reactions or incorrect administration.\nIf a walker agrees, provide clear, detailed instructions, a schedule, and monitor/follow up regularly.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "To maximize the use of a Kong Toy for a dog:\n1. Start with a small amount of treats/peanut butter and gradually increase.\n2. Vary the types of treats used for stuffing (peanut butter, cream cheese, canned dog food).\n3. Freeze the stuffed Kong for a longer-lasting and cooling treat.\n4. Add layers of different treats (e.g., kibble then peanut butter) for added challenge.\n5. Supervise the dog, especially when introducing the toy.\n6. Rotate the Kong with other interactive toys to prevent boredom.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "When choosing a collar and name tag for a dog:\n1. Prioritize comfort and ensure it's adjustable to fit the dog's neck size.\n2. Select durable materials that can withstand the dog's lifestyle.\n3. Choose a style that suits the dog's personality and the owner's preference.\n4. Consider safety features like breakaway or martingale collars if the dog is prone to rough play or slipping out.",
+          "type": "procedure",
+          "grounding": "generic"
+        }
+      ]
+    },
+    {
+      "id": "advice-07",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 6,
+      "recalled": 6,
+      "coverage": [
+        6,
+        6,
+        7,
+        8,
+        1,
+        7
+      ],
+      "extracted": 8,
+      "generic": 3,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user wants to include sentimental value and stories behind each jewelry piece in their inventory. This will be captured in a 'Provenance/Story' column.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When documenting a jewelry piece in the inventory spreadsheet, include a 'Provenance/Story' column. This column should contain a brief description of how the piece was acquired, who gave it, the occasion, special memories, and notable events where it was worn. For example: \"Gift from my grandmother on my 18th birthday. She wore it on her wedding day, and I wore it to my high school prom.\"",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "The user is creating a jewelry inventory using a spreadsheet. Key columns include: ID, Type, Description, Metal, Gemstones, Acquisition Date, Purchase Price, Current Value, Storage Location, and Image. Additional columns considered are Designer/Brand, Occasion, Style Era, Condition, and Maintenance.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "The user prefers to start documenting their jewelry collection with pieces that hold the most sentimental value.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When documenting a jewelry piece, if it has a history of being lost or repaired, this information can be included in the 'Provenance/Story' column or a dedicated 'History of Ownership' / 'Notable Events' column. This allows for tracking the piece's journey and associated emotions.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "The user is documenting a silver necklace, a gift from their grandmother on their 18th birthday. It was lost about two months ago at a friend's house during a sleepover. The user plans to ask the friend about it.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is documenting pearl earrings, a gift from their parents upon high school graduation. The user associates them with good luck and important milestones, having worn them for a stats final three weeks prior to the current session.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user plans to document a gold chain with a tiny diamond cross pendant borrowed from their mother. The user needs to ask their mother about a small silver clasp used to fix the chain when it broke.",
+          "type": "episode",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-08",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        5,
+        5,
+        11,
+        11
+      ],
+      "extracted": 18,
+      "generic": 9,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "Closing costs are fees associated with the home buying process, typically paid at the closing of the transaction. They vary based on location, property type, and loan type.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "Common closing costs include: Title Insurance and Escrow Fees (0.5%-1.0% of purchase price + $500-$2,000), Loan Origination Fees (0.5%-1.0% of loan amount + $300-$900 underwriting + $300-$1,000 appraisal), Credit Report Fee ($15-$30), Flood Determination Fee ($15-$50), optional Inspection Fees ($300-$1,000 home, $50-$150 pest, $100-$300 septic), optional Attorney Fees ($500-$2,000), Recording Fees ($50-$200), Transfer Taxes (0.1%-2.0% of purchase price), and Other Fees ($20-$100 courier, $20-$100 notary).",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "General estimates for total closing costs as a percentage of the purchase price are: 2%-5% for conventional loans, 2.5%-6% for FHA loans, 1.5%-3% for VA loans, and 1%-3% for USDA loans.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "For a $250,000 home, estimated closing costs are: $5,000-$12,500 (conventional), $6,250-$15,000 (FHA), $3,750-$7,500 (VA), and $2,500-$7,500 (USDA).",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "The user is buying a $325,000 house and has a $350,000 pre-approval from Wells Fargo.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Estimated closing costs for a $325,000 purchase with a conventional loan are $11,332 to $20,322, or roughly 3.5% to 6.2% of the purchase price.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "To negotiate closing costs with a seller based on an inspection report: 1. Highlight specific issues and estimated repair costs. 2. Provide evidence like quotes from contractors. 3. Be reasonable and prepared to compromise. 4. Ensure all agreements are in writing in the contract or an addendum. Consider requesting a credit at closing instead of repairs.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "The extent of closing cost negotiation with a seller depends on: inspection report findings (severity and cost of repairs), local market conditions (buyer's vs. seller's market), original offer and negotiations (if price was already negotiated down), and seller's motivation to sell quickly.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "Negotiation ranges for seller-covered closing costs based on inspection findings: Minor issues: 0.5%-1% of purchase price ($1,625-$3,250 for a $325,000 home). Moderate issues: 1%-2% of purchase price ($3,250-$6,500). Major issues: 2%-3% or more of purchase price ($6,500-$9,750).",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "The user has already secured a $2,000 credit towards closing costs from the seller.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Requesting an additional 1% of the purchase price ($3,250 for a $325,000 home) for closing costs is a reasonable ask, especially with minor roof and plumbing issues identified in the inspection report and a prior $2,000 credit.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When negotiating for additional closing cost credits: 1. Emphasize the cumulative effect of all requested credits. 2. Be flexible and open to alternative solutions (e.g., seller paying for specific repairs, home warranty). 3. Reiterate commitment to the purchase. An example script for requesting an additional 1% credit is provided.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "If the seller agrees to an additional $3,250 credit, bringing the total credit to $5,250, the user's out-of-pocket closing costs would be an estimated $6,082 to $15,072.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Other home-buying expenses to factor in besides closing costs include: down payment, prepaids (insurance, taxes, interest), appraisal fees (if not in closing costs), inspection fees (if not in closing costs), maintenance, repairs, and utilities.",
+          "type": "fact",
+          "grounding": "generic"
+        },
+        {
+          "content": "For a $300,000 loan (assuming $325,000 purchase price - $25,000 down payment) with a 4% interest rate on a 30-year fixed-rate mortgage, the estimated monthly mortgage payment is $1,432.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Estimated monthly property taxes for a $325,000 home at a 1.25% rate are $338.54 ($4,062.50 annually).",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Estimated monthly homeowners insurance for a $325,000 home at a 0.8% rate is $216.67 ($2,600 annually).",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The total estimated monthly payment for mortgage, property taxes, and insurance is approximately $1,987.21.",
+          "type": "fact",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "advice-09",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 6,
+      "recalled": 4,
+      "coverage": [
+        1,
+        1,
+        3,
+        0,
+        6,
+        0
+      ],
+      "extracted": 7,
+      "generic": 4,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "On April 20th, the user had a bike tune-up because the gears were getting stuck. The mechanic replaced the chain for $25 and installed new bike lights for $40.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "To maintain a bike, follow this schedule:\n- Monthly: Check tire pressure and tread, clean and lubricate chain, check brake pads and cables, secure quick-release bolts and screws.\n- Every 3-6 months: Inspect and clean derailleurs and chainrings, check and adjust gear shifting, inspect and clean brake calipers and pads, check bolt and screw tightness.\n- Every 6-12 months: Replace chain (if not recently done), inspect and replace brake cables and housing, inspect and clean wheels (hubs, rims, spokes), consider a professional inspection/tune-up.\n\nAdditional tips:\n- Keep a record of maintenance activities.\n- Refer to the bike's manual for specific recommendations.\n- Adjust schedule based on usage and riding conditions.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "The user has clocked 347 miles on their bike since the start of the year and aims to reach 1000 miles by the end of summer.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "To plan bike routes and track mileage:\n- Use apps like MapMyRide, Ride with GPS, and Strava for route creation, tracking, and discovering new routes.\n- Consult local bike shops for route recommendations.\n- Break mileage goals into smaller chunks (e.g., 200-250 miles/month).\n- Create a riding schedule.\n- Find a riding buddy for motivation.\n- Celebrate milestones.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "To find bike-friendly and safe routes:\n- Use online resources: Google Maps (bicycling mode), MapMyRide (search and filter routes), Bike Route Finder (OpenStreetMap data, filter by surface/traffic), local government bike maps.\n- Leverage local knowledge: Ask local bike shops, join cycling clubs, or consult online cycling forums/groups.\n- Prioritize safety: Avoid high-traffic roads, choose routes with bike infrastructure (lanes, paths, sharrows), be aware of road conditions, and trust your judgment.\n- Additional tips: Start with short routes, plan in advance, and ensure visibility (bright clothing, lights).",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "The user purchased a Bell Zephyr helmet from a local downtown bike shop on April 10th.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "To check if a bike chain needs lubrication:\n- Visually inspect for rust, corrosion, or dryness.\n- Manually feel for dirtiness or roughness.\n- General recommendation: Lubricate every 100-200 miles, depending on riding conditions and type.",
+          "type": "procedure",
+          "grounding": "generic"
+        }
+      ]
+    },
+    {
+      "id": "advice-10",
+      "folder": "advice",
+      "kind": "chat",
+      "chunks": 1,
+      "expected": 5,
+      "recalled": 5,
+      "coverage": [
+        1,
+        2,
+        3,
+        4,
+        7
+      ],
+      "extracted": 8,
+      "generic": 3,
+      "unsupported": 0,
+      "duplicates": 1,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user is considering majoring in Economics.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user has positive high school memories, including being part of the debate team and taking advanced placement courses in economics.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is weighing the pros and cons of pursuing a Master's degree in Data Science.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user has already taken online certification courses in Python programming and data visualization.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user has been reading books on machine learning and artificial intelligence.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "To assess readiness for a Data Science Master's program, review core math and statistics topics (linear algebra, calculus, probability, statistical inference), compare completed coursework with program prerequisites, take online assessments (e.g., Khan Academy, Coursera), check specific program requirements, seek feedback from current students or professionals, and consider bridge courses for knowledge gaps.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "To build skills in machine learning and deep learning, consider courses like Andrew Ng's Machine Learning Course and Deep Learning Specialization (Coursera), Machine Learning with Python and Deep Learning with Python (DataCamp), and Natural Language Processing with Deep Learning (Stanford/Coursera). Certifications include Certified Machine Learning Engineer (IAMAI), Certified Deep Learning Developer (deeplearning.ai), and Google Cloud Certified - Professional Machine Learning Engineer. Additionally, participate in Kaggle competitions, complete TensorFlow and PyTorch tutorials, and follow relevant blogs.",
+          "type": "procedure",
+          "grounding": "generic"
+        },
+        {
+          "content": "When learning machine learning and deep learning, it is important to practice with projects and competitions, focus on understanding the underlying mathematics (linear algebra, calculus, probability), and stay updated with the latest developments in the rapidly evolving fields.",
+          "type": "procedure",
+          "grounding": "generic"
+        }
+      ]
+    },
+    {
+      "id": "voice-01",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 2,
+      "coverage": [
+        0,
+        3,
+        6,
+        0
+      ],
+      "extracted": 6,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 3,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "User is planning a trip to Berlin from Friday, March 21st to Sunday night. They will be staying at Ania's place in Neukölln.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's passport expires in March. It is valid for the Berlin trip but will not be valid for a conference in Lisbon in April.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Renew passport: Book an appointment at the office on Libelta to renew the passport.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When traveling, the user prefers to travel light with one small backpack instead of a roller bag.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Ania, the user's host in Berlin, has been vegetarian since autumn.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When bringing a gift from Poznań for Ania, the user should bring honey from the market, as Ania liked it previously, and avoid bringing sausage due to Ania's vegetarianism.",
+          "type": "preference",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-02",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The project name is Lantern. The domain lantern.sh is available.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The pricing model for Lantern is $5/month or $40/year, with a free tier limited to 100 notes.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The core architecture of Lantern must be offline-first, using local SQLite with sync as an add-on feature.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Piotr will write the landing page copy for Lantern.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The target for Lantern is to have the landing page live by the end of April and a beta released to ten people in May.",
+          "type": "fact",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-03",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        3,
+        5
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 1,
+      "dropped": 1,
+      "memories": [
+        {
+          "content": "User achieved a personal record (PR) for an 8K run, completing it in 42:05, which is about a minute and a half faster than their previous best.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "User is experiencing left knee pain on the outside, similar to an issue in March. This is attributed to their Nike running shoes, which have accumulated approximately 700 kilometers.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "User has booked a physiotherapy appointment with Doctor Nowak at the clinic on Garbary for Tuesday at 10 AM.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When attending physiotherapy with Doctor Nowak, bring the old X-ray from last year, as she requested it previously.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Remember to log runs in Strava manually if the watch fails to sync. To prevent future sync issues, wait for GPS lock before starting a run on the watch.",
+          "type": "procedure",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-04",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        4,
+        5
+      ],
+      "extracted": 7,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "Marek approved a Q3 campaign budget of 30,000 PLN. He will top it up if the first month's conversion rate exceeds 2%.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Ola is transferring to the Kraków office starting in September. The Poznań team will consist of the user, Bartek, and a new hire to fill Ola's position.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user needs to post the job role for Ola's replacement by July 15th.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Studio Mosaic has been selected as the creative agency for the campaign due to their quote of 12,000 PLN, significantly lower than another agency's quote of 28,000 PLN.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user needs to send Marek the revised budget sheet by Friday.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user needs to book the campaign kickoff meeting for the first week of July.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Meetings are more effective with a written agenda provided beforehand. The user should consistently advocate for this practice.",
+          "type": "preference",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-05",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 3,
+      "coverage": [
+        1,
+        7,
+        8
+      ],
+      "extracted": 8,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user's fridge is 14 years old and is dying (making noise, freezer drawer was wet). It needs to be replaced, not repaired.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers Bosch or Siemens appliances for replacements, specifically for the fridge, due to a negative experience with a 'no-name' washing machine.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The budget for a new fridge is 3000 złoty.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Mum's birthday is on March 3rd.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Mum likes Trattoria da Luigi on Wrocławska.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Mum will be at a sanatorium the week after March 1st.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Book a table for six at Trattoria da Luigi on Wrocławska for Sunday, March 1st, for Mum's birthday celebration. The attendees will be the user, Mum, Kasia, Tomek, and the kids.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user prefers Finish brand dishwasher tablets over Lidl brand, as Lidl ones leave a white film.",
+          "type": "preference",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-06",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 3,
+      "recalled": 2,
+      "coverage": [
+        0,
+        1,
+        3
+      ],
+      "extracted": 3,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user prefers to read fiction on paper and non-fiction as audiobooks. They buy novels from Bookarest and audiobooks from Audible.",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user believes reading fiction helps build empathy by allowing insight into other minds.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user's book club meeting is on the twenty-eighth at Zosia's, and the book to be discussed is \"Drive Your Plow Over the Bones of the Dead\" by Olga Tokarczuk. The user needs to start reading it this week.",
+          "type": "episode",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-07",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 5,
+      "recalled": 5,
+      "coverage": [
+        1,
+        2,
+        3,
+        5,
+        7
+      ],
+      "extracted": 8,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "The user's Yaris is at 178,000 km. An oil change is due at 180,000 km.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "For car maintenance, the user prefers Pan Zbyszek's garage on Głogowska over the dealer due to significantly lower prices for the same service (e.g., 350 PLN vs. 600 PLN for an oil change).",
+          "type": "preference",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Car insurance renews on June 1st. Last year's premium was 1400 PLN with Link4.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When getting car insurance quotes, check PZU, as Bartek reportedly pays less for a similar car.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The right rear tire is slowly losing pressure (approx. 0.2 bar/week), likely due to a nail.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "When the car is taken to Pan Zbyszek for the oil change, ask him to inspect and fix the slow leak in the right rear tire to avoid a separate trip.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Winter tires are stored in the basement cage, not the garage, because the garage flooded last year.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Swap winter tires back onto the car in October.",
+          "type": "procedure",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-08",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 3,
+      "coverage": [
+        1,
+        2,
+        3,
+        0
+      ],
+      "extracted": 3,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 0,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "Tomek got engaged to Kasia. The wedding is planned for July next summer in Gdańsk. The user has been asked to be the best man.",
+          "type": "episode",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user needs to prepare a best man speech for Tomek and Kasia's wedding. Potential stories include a kayak trip and an Erasmus trip involving a lost passport.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The user is responsible for organizing Tomek's stag do. Tomek's preferences for the stag do are: no strippers, not in Kraków, and something outdoors (e.g., a weekend in the Tatras or another kayaking trip).",
+          "type": "fact",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-09",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        2,
+        5,
+        4,
+        6
+      ],
+      "extracted": 6,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 2,
+      "dropped": 1,
+      "memories": [
+        {
+          "content": "A bug exists where reports are off by one hour for one week every spring and autumn, specifically the week after a clock change. This is attributed to Daylight Saving Time (DST) handling.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The DST bug is present in both cron-scheduled and manually triggered jobs, indicating the issue is within the application's code, not the cron library.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The root cause of the DST bug is storing local time instead of UTC.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "The next clock change is on the twenty-ninth, which is nine days away, setting a deadline for fixing the DST bug.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Migrate existing local timestamps by reinterpreting them as 'Europe/Warsaw' time and then converting them to UTC.",
+          "type": "procedure",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Add a test that simulates a job running across a DST boundary using a fake clock to prevent future DST-related issues.",
+          "type": "procedure",
+          "grounding": "grounded"
+        }
+      ]
+    },
+    {
+      "id": "voice-10",
+      "folder": "voice",
+      "kind": "note",
+      "chunks": 1,
+      "expected": 4,
+      "recalled": 4,
+      "coverage": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "extracted": 5,
+      "generic": 0,
+      "unsupported": 0,
+      "duplicates": 1,
+      "dropped": 0,
+      "memories": [
+        {
+          "content": "Gym locker number is 214.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Dentist is Doctor Lewandowska, located on Półwiejska. The lower left molar with an old filling needs watching.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Allergic to penicillin and amoxicillin.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Company parking spots at work are on level minus two, by the lift. Parking elsewhere results in a ticket.",
+          "type": "fact",
+          "grounding": "grounded"
+        },
+        {
+          "content": "Received a 150 złoty parking ticket in August for parking in a non-company spot at work.",
+          "type": "episode",
+          "grounding": "grounded"
+        }
+      ]
+    }
+  ]
+}

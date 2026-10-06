@@ -1,0 +1,20 @@
+{
+  "id": "coding-04",
+  "kind": "agent-session",
+  "date": "2026-05-09",
+  "source": { "note": "hand-written; a Next.js portfolio site moving hosts, with a life aside" },
+  "units": [
+    { "role": "user", "text": "My Vercel bill for the portfolio site was $41 last month, almost all of it image optimization bandwidth. That's silly for a static site. I'm moving to Poznań next month and every recurring cost is getting a look. What are the options?" },
+    { "role": "assistant", "text": "For a static Next.js export the usual candidates are Cloudflare Pages, Netlify, GitHub Pages, and keeping Vercel on the free hobby tier. Cloudflare Pages has no bandwidth charge and generous build minutes; Netlify's free tier caps bandwidth at 100 GB a month; GitHub Pages is free but has no server-side features at all; Vercel's hobby tier is free but forbids commercial use. Image optimization is the specific cost here: Vercel charges per source image optimized and per GB served, while Cloudflare's image resizing is a separate paid product. For a portfolio of a few dozen fixed images, pre-sizing them at build time removes the need for any runtime optimizer." },
+    { "role": "user", "text": "Cloudflare Pages then. I don't need a runtime optimizer, the images don't change. Do the move." },
+    { "role": "assistant", "text": "Done. next.config.ts now has `output: 'export'` and `images: { unoptimized: true }`, so next/image emits plain img tags pointing at the pre-sized files in public/images. I generated 1x and 2x variants with sharp in a build step (scripts/resize-images.ts). The static build deploys to Cloudflare Pages from the main branch; the project is named portfolio and the custom domain is pointed at it. The old Vercel project is paused, not deleted." },
+    { "role": "user", "text": "Great. Leave Vercel paused for a month in case something is broken, I'll delete it after the move." },
+    { "role": "assistant", "text": "Noted. One thing I confirmed while testing: the contact form previously posted to a Vercel serverless function. It now posts to a Cloudflare Pages Function at functions/api/contact.ts, and I sent a test submission that arrived at your inbox." }
+  ],
+  "expected": [
+    { "type": "fact", "content": "The user's portfolio site moved from Vercel to Cloudflare Pages in May 2026 because Vercel's image optimization bandwidth cost about $41 a month.", "keywords": ["cloudflare"] },
+    { "type": "fact", "content": "The user is moving to Poznań in June 2026 and is reviewing recurring costs.", "keywords": [["poznań", "poznan"]] },
+    { "type": "fact", "content": "The portfolio site is a static Next.js export with images unoptimized; 1x and 2x variants are pre-sized at build time with sharp.", "keywords": [["unoptimized", "sharp", "static export"]] },
+    { "type": "fact", "content": "The old Vercel project is paused, to be deleted a month after the move; the contact form now posts to a Cloudflare Pages Function.", "keywords": [["paused", "contact"]] }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "voice-06",
+  "kind": "note",
+  "date": "2026-01-11",
+  "source": { "note": "hand-written; reading notes with opinions, a preference and a generic observation" },
+  "units": [
+    { "role": "user", "text": "Finished The Remains of the Day last night, Ishiguro. Loved it, genuinely one of the best things I've read in years, the restraint of it. Next I want Klara and the Sun, same author, Marta recommended it ages ago." },
+    { "role": "user", "text": "I notice I read fiction on paper and everything else as audio. Non-fiction I just can't sit with, but walking and listening, that works, so, keep doing that, buy the non-fiction on Audible and the novels at Bookarest." },
+    { "role": "user", "text": "There's that thing about fiction building empathy, reading about other minds, I think that's basically true, people who read novels are probably better at, you know, seeing other people. Anyway." },
+    { "role": "user", "text": "Book club is the twenty-eighth, at Zosia's this time, and the book is Drive Your Plow by Tokarczuk, which I have not started, so, start it this week."
+    }
+  ],
+  "expected": [
+    { "type": "episode", "content": "The user finished Kazuo Ishiguro's The Remains of the Day on January 10, 2026 and loved it; they plan to read Klara and the Sun next, which Marta recommended.", "keywords": ["remains of the day"] },
+    { "type": "preference", "content": "The user reads fiction on paper (bought at Bookarest) and non-fiction as audiobooks on Audible while walking.", "keywords": [["audible", "paper"]] },
+    { "type": "episode", "content": "The user's book club meets on January 28, 2026 at Zosia's; the book is Olga Tokarczuk's Drive Your Plow, which the user has not started yet.", "keywords": [["plow", "tokarczuk"]] }
+  ]
+}

@@ -1,0 +1,21 @@
+{
+  "id": "coding-02",
+  "kind": "agent-session",
+  "date": "2026-03-04",
+  "source": { "note": "hand-written; a migration gotcha in a TypeScript + Postgres project called ledgerly" },
+  "units": [
+    { "role": "user", "text": "The orders report is timing out. I think we need an index on orders(customer_id, created_at). Write the migration. Naming convention is <timestamp>_<snake_description>.ts like the others in db/migrations." },
+    { "role": "assistant", "text": "Some background on why this helps: a B-tree index on (customer_id, created_at) lets Postgres satisfy both the equality filter on customer_id and the range or ORDER BY on created_at from the index alone, instead of scanning the heap and sorting. Column order matters: equality columns first, then the range column. Postgres can also use the leading column alone, so this index serves customer_id-only queries too.\n\nI will write it as `CREATE INDEX CONCURRENTLY` since the table is live." },
+    { "role": "user", "text": "Yes, definitely concurrently. orders has about 40 million rows in production and a plain CREATE INDEX would lock writes for several minutes. We got burned by that in December." },
+    { "role": "assistant", "text": "Wrote db/migrations/20260304_add_orders_customer_created_idx.ts. Running it locally failed, though: `ERROR: CREATE INDEX CONCURRENTLY cannot run inside a transaction block`. The project's migration runner (db/run-migrations.ts) wraps every migration in BEGIN/COMMIT. Postgres forbids CONCURRENTLY inside a transaction because the build has to wait for other transactions in multiple phases." },
+    { "role": "assistant", "text": "Looked at the runner: it already supports an escape hatch. A migration module can export `disableTransaction = true` and the runner then executes it with autocommit. Added that export to the new migration, re-ran locally, and the index built. Also confirmed with EXPLAIN that the report query now does an Index Scan on the new index instead of a Seq Scan plus Sort." },
+    { "role": "user", "text": "Perfect. Put a comment at the top of the migration saying why disableTransaction is there, so nobody deletes it thinking it's a leftover." },
+    { "role": "assistant", "text": "Added the comment: \"CONCURRENTLY cannot run inside a transaction; the runner wraps migrations in one unless this flag is set.\" The migration file is complete and the local database has the index." }
+  ],
+  "expected": [
+    { "type": "procedure", "content": "In ledgerly, the migration runner wraps every migration in a transaction; a migration that uses CREATE INDEX CONCURRENTLY must export disableTransaction = true or it fails with 'cannot run inside a transaction block'.", "keywords": ["disabletransaction"] },
+    { "type": "fact", "content": "The orders table has about 40 million rows in production, so indexes must be built CONCURRENTLY; a plain CREATE INDEX locked writes for minutes in December 2025.", "keywords": [["40 million", "40m"]] },
+    { "type": "fact", "content": "An index on orders(customer_id, created_at) was added in March 2026 to fix the orders report timing out.", "keywords": ["customer_id"] },
+    { "type": "preference", "content": "Migration files are named <timestamp>_<snake_description>.ts under db/migrations.", "keywords": [["timestamp", "snake"]] }
+  ]
+}

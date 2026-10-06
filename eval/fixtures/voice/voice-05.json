@@ -1,0 +1,17 @@
+{
+  "id": "voice-05",
+  "kind": "note",
+  "date": "2026-02-20",
+  "source": { "note": "hand-written; a household voice note with a birthday, a purchase decision and a generic rant" },
+  "units": [
+    { "role": "user", "text": "Household stuff. The fridge is dying, it's making that noise again and the freezer drawer was wet this morning. Replace it, don't repair it, it's fourteen years old. Budget three thousand złoty, and it has to be a Bosch or a Siemens, I'm not doing the no-name thing again after the washing machine." },
+    { "role": "user", "text": "Mum's birthday is the third of March, so that's, what, eleven days. Book the Italian place she likes, Trattoria da Luigi on Wrocławska, for Sunday the first, because she's at the sanatorium the week after. Table for six: me, mum, Kasia and Tomek and the kids." },
+    { "role": "user", "text": "Honestly everything is designed to break now, nobody makes anything to last, it's all just consumption, consumption, it's exhausting. Okay. Rant over." },
+    { "role": "user", "text": "Oh and the dishwasher tablets, the Finish ones, not the Lidl ones, the Lidl ones leave the white film." }
+  ],
+  "expected": [
+    { "type": "fact", "content": "The user is replacing their 14-year-old fridge rather than repairing it; budget 3,000 PLN, and it must be Bosch or Siemens after a bad experience with a no-name washing machine.", "keywords": [["bosch", "siemens"]] },
+    { "type": "fact", "content": "The user's mum's birthday is March 3; the user is booking Trattoria da Luigi on Wrocławska for Sunday, March 1, 2026, table for six (the user, mum, Kasia, Tomek and the kids), because mum is at a sanatorium the following week.", "keywords": ["luigi"] },
+    { "type": "preference", "content": "The user buys Finish dishwasher tablets, not the Lidl ones, which leave a white film.", "keywords": ["finish"] }
+  ]
+}

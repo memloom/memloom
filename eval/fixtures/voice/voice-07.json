@@ -1,0 +1,20 @@
+{
+  "id": "voice-07",
+  "kind": "note",
+  "date": "2026-04-08",
+  "source": { "note": "hand-written; a car-maintenance voice note with numbers that must survive exactly" },
+  "units": [
+    { "role": "user", "text": "Car stuff. The Yaris is at a hundred and seventy-eight thousand kilometres, oil change is due at one eighty, so in about two thousand, call it a month the way I drive. Pan Zbyszek, the garage on Głogowska, not the dealer, the dealer wanted six hundred for the same oil change and Zbyszek does it for three fifty." },
+    { "role": "user", "text": "Insurance renews on the first of June. Last year it was fourteen hundred with Link4, get a quote from PZU this time, Bartek said he pays way less for a similar car." },
+    { "role": "user", "text": "The right rear tyre is slowly losing pressure, like, point two bar a week. Probably a nail. Ask Zbyszek to look at it when I bring it in for the oil, don't make a separate trip." },
+    { "role": "user", "text": "And the winter tyres are in the basement, in the cage, not in the garage, because the garage flooded last year. Swap them back in, uh, October."
+    }
+  ],
+  "expected": [
+    { "type": "fact", "content": "The user's Toyota Yaris is at about 178,000 km; the next oil change is due at 180,000 km, about a month away as of April 2026.", "keywords": [["178", "180"]] },
+    { "type": "fact", "content": "The user takes the Yaris to Pan Zbyszek's garage on Głogowska, not the dealer: the dealer quoted 600 PLN for an oil change that Zbyszek does for 350.", "keywords": ["zbyszek"] },
+    { "type": "fact", "content": "The car insurance renews on June 1; last year it cost 1,400 PLN with Link4, and the user plans to get a PZU quote because Bartek pays much less for a similar car.", "keywords": [["pzu", "link4"]] },
+    { "type": "fact", "content": "The Yaris's right rear tyre loses about 0.2 bar a week, probably a nail; the user will have Zbyszek check it at the oil change rather than make a separate trip.", "keywords": [["tyre", "tire"]] },
+    { "type": "fact", "content": "The user's winter tyres are stored in the basement cage, not the garage (which flooded in 2025); they go back on in October.", "keywords": ["basement"] }
+  ]
+}

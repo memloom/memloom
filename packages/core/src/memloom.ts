@@ -2010,7 +2010,12 @@ export class Memloom implements MemoryEngine {
           }
           result.calls.extraction++;
           if (opts.unattended) await this.#bumpUnattendedCalls();
-          const output = await distillChunk(this.#llm, chunk);
+          const output = await distillChunk(this.#llm, chunk, {
+            // A Claude Code transcript: project talk is memory, library lore is not. The
+            // first timestamp lets the model resolve "yesterday" to a date.
+            kind: "agent-session",
+            ...(parsed.startedAt ? { recordedAt: parsed.startedAt.slice(0, 10) } : {}),
+          });
           event.dropped += output.dropped;
           let vectors: number[][] = [];
           if (output.memories.length > 0) {

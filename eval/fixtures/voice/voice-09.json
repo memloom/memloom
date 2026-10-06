@@ -1,0 +1,19 @@
+{
+  "id": "voice-09",
+  "kind": "note",
+  "date": "2026-03-20",
+  "source": { "note": "hand-written; a developer thinking through a bug on a walk, with a decision at the end" },
+  "units": [
+    { "role": "user", "text": "Okay the sync job bug. Thinking out loud. Reports are off by an hour for exactly one week every spring and autumn, and it's always the week after the clock change, so it's DST, it has to be DST. The scheduler stores local time and the worker assumes UTC, or the other way round, one of them is lying." },
+    { "role": "user", "text": "Could also be the cron library, but no, we hit it on both the cron path and the manual trigger, so it's in our code. It's the stored timestamps. Storing local time was a mistake from the start, I knew it then." },
+    { "role": "user", "text": "Decision. Store UTC everywhere, convert at the edges only, in the UI and in the email renderer. Write a migration that reinterprets the existing local timestamps as Europe Warsaw and converts them. Do it before the twenty-ninth, that's the next clock change, so there's a deadline, nine days." },
+    { "role": "user", "text": "And add a test that runs the job across a DST boundary with a fake clock, because clearly nobody tested that, me included."
+    }
+  ],
+  "expected": [
+    { "type": "fact", "content": "The sync job's reports are off by one hour for the week after each DST change because stored timestamps are local time while the worker assumes UTC; the bug is in the project's own code, not the cron library.", "keywords": [["dst", "daylight"]] },
+    { "type": "fact", "content": "The user decided to store all timestamps as UTC and convert only at the edges (UI and email renderer), with a migration that reinterprets existing local timestamps as Europe/Warsaw.", "keywords": ["utc"] },
+    { "type": "episode", "content": "The UTC migration must land before March 29, 2026, the next clock change, nine days after the note.", "keywords": [["29", "twenty-ninth"]] },
+    { "type": "procedure", "content": "The user plans a test that runs the sync job across a DST boundary with a fake clock.", "keywords": [["fake clock", "test"]] }
+  ]
+}

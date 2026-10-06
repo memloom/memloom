@@ -1,0 +1,18 @@
+{
+  "id": "voice-01",
+  "kind": "note",
+  "date": "2026-02-09",
+  "source": { "note": "hand-written; a walk-and-talk voice note about a trip, with a self-correction and a generic musing" },
+  "units": [
+    { "role": "user", "text": "Okay, um, note to self while I've got it in my head. The Berlin trip. Flights are booked for Friday the fourteenth... no, hang on, that's the wrong week, it's the twenty-first, Friday the twenty-first, back Sunday night. I'm staying at Ania's place in Neukölln, she said the couch is fine, so no hotel." },
+    { "role": "user", "text": "Things to do before then. Passport, my passport expires in March, so I should start the renewal now, not after the trip, because the Berlin thing is fine on the old one but the Lisbon conference in April won't be. Book the appointment at the office on Libelta, I think they do walk-ins but let's not risk it." },
+    { "role": "user", "text": "Also, general thought, travelling light is just, it's always better, everyone should do it, one backpack, you never wait at the belt, you never lose anything. Anyway. Pack the small backpack, not the roller." },
+    { "role": "user", "text": "Oh and Ania is vegetarian now, since like autumn, so if I bring something from Poznań, no sausage, bring the... the honey from the market, she liked that last time." }
+  ],
+  "expected": [
+    { "type": "episode", "content": "The user is flying to Berlin on Friday, February 21, 2026 and returning Sunday night, February 23; they are staying on Ania's couch in Neukölln, no hotel.", "keywords": [["21", "twenty-first"]] },
+    { "type": "fact", "content": "The user's passport expires in March 2026; they plan to renew it before the Lisbon conference in April, booking an appointment at the office on Libelta.", "keywords": ["passport"] },
+    { "type": "fact", "content": "The user's friend Ania has been vegetarian since autumn 2025; the user plans to bring her honey from the Poznań market, which she liked before.", "keywords": ["vegetarian"] },
+    { "type": "fact", "content": "The user is attending a conference in Lisbon in April 2026.", "keywords": ["lisbon"] }
+  ]
+}

@@ -1,0 +1,18 @@
+{
+  "id": "voice-04",
+  "kind": "note",
+  "date": "2026-06-24",
+  "source": { "note": "hand-written; a meeting debrief dictated in the car" },
+  "units": [
+    { "role": "user", "text": "Debrief from the planning meeting, dictating in the car so excuse the noise. Marek approved the Q3 campaign budget, thirty thousand złoty, not the forty we asked for, but he said if the first month converts above two percent he'll top it up." },
+    { "role": "user", "text": "Ola is moving to the Kraków office from September, so the Poznań team is me, Bartek and whoever we hire for her seat. I need to post that role by, he said by the fifteenth of July." },
+    { "role": "user", "text": "Action items for me. One, send Marek the revised budget sheet by Friday. Two, the agency, we're going with Studio Mosaic for the creative, not the big agency, because Mosaic quoted twelve thousand and the other quote was twenty-eight. Three, book the kickoff for the first week of July." },
+    { "role": "user", "text": "And a general thing, meetings are so much better when there's a written agenda beforehand, I should push for that always, everyone should. Anyway, that's the debrief." }
+  ],
+  "expected": [
+    { "type": "fact", "content": "Marek approved a Q3 2026 campaign budget of 30,000 PLN (40,000 was requested) and will top it up if the first month converts above 2%.", "keywords": [["30,000", "30 000", "thirty thousand", "30000"]] },
+    { "type": "fact", "content": "Ola is moving to the Kraków office from September 2026; the Poznań team will be the user, Bartek, and a new hire for Ola's seat, whose role the user must post by July 15, 2026.", "keywords": [["kraków", "krakow"]] },
+    { "type": "fact", "content": "The campaign creative goes to Studio Mosaic (quoted 12,000 PLN) rather than the big agency (28,000 PLN).", "keywords": ["mosaic"] },
+    { "type": "fact", "content": "The user owes Marek the revised budget sheet by Friday, June 26, 2026 and plans to book the campaign kickoff for the first week of July.", "keywords": [["budget sheet", "kickoff"]] }
+  ]
+}

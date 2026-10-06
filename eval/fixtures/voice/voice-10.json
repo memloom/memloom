@@ -1,0 +1,19 @@
+{
+  "id": "voice-10",
+  "kind": "note",
+  "date": "2026-09-02",
+  "source": { "note": "hand-written; an explicit 'remember this' note, including a secret that must not be stored" },
+  "units": [
+    { "role": "user", "text": "Remember this. Gym locker is two fourteen, the combination is, no, actually don't store the combination, just the locker number, two fourteen." },
+    { "role": "user", "text": "Dentist is Doctor Lewandowska, the practice on Półwiejska, next check-up is in six months so, March. She said the lower left molar, the one with the old filling, needs watching." },
+    { "role": "user", "text": "I'm allergic to penicillin, I keep forgetting to tell new doctors, so, that, remember that. Amoxicillin too, same family." },
+    { "role": "user", "text": "Parking at work: level minus two, the spots by the lift are the company's, anything else gets a ticket, learned that the expensive way in August, a hundred and fifty złoty."
+    }
+  ],
+  "expected": [
+    { "type": "fact", "content": "The user's gym locker is number 214 (the combination is deliberately not recorded).", "keywords": ["214"] },
+    { "type": "fact", "content": "The user's dentist is Dr. Lewandowska at the practice on Półwiejska; the next check-up is in March 2027, and the lower left molar with an old filling needs watching.", "keywords": ["lewandowska"] },
+    { "type": "fact", "content": "The user is allergic to penicillin and amoxicillin.", "keywords": ["penicillin"] },
+    { "type": "procedure", "content": "At work the user must park on level -2 in the spots by the lift (the company's); parking elsewhere got a 150 PLN ticket in August 2026.", "keywords": [["-2", "minus two"]] }
+  ]
+}

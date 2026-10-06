@@ -126,8 +126,20 @@ export {
   relabelByAppearance,
   TURN_MERGE_GAP_SECONDS,
 } from "./diarize.js";
-export type { DistilledMemory, DistillOutput } from "./distill.js";
-export { buildDistillPrompt, distillChunk, parseDistillation } from "./distill.js";
+export type {
+  DistilledMemory,
+  DistillOutput,
+  DistillPromptOptions,
+  MemorySource,
+  TranscriptKind,
+} from "./distill.js";
+export {
+  buildDistillPrompt,
+  distillChunk,
+  inferTranscriptKind,
+  MEMORY_SOURCES,
+  parseDistillation,
+} from "./distill.js";
 export type { MemoryEngine } from "./engine.js";
 // Arbitrating an uncertain fold with a model: the prompt and the parser, both pure.
 export type {
@@ -169,6 +181,9 @@ export {
   supportedExtensions,
 } from "./extract.js";
 // Providers
+// Test and eval only: runs prompts through the Claude Code CLI on a subscription.
+export type { ClaudeCliOptions } from "./claude-cli-provider.js";
+export { ClaudeCliLLM } from "./claude-cli-provider.js";
 export {
   HashingEmbeddingProvider,
   NullLLMProvider,

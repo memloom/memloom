@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { SessionChunk } from "./claude-sessions.js";
-import { buildDistillPrompt, distillChunk, parseDistillation } from "./distill.js";
+import {
+  buildDistillPrompt,
+  distillChunk,
+  inferTranscriptKind,
+  parseDistillation,
+} from "./distill.js";
 import { ScriptedLLMProvider } from "./hashing-provider.js";
 
 const chunk: SessionChunk = {
@@ -9,6 +14,15 @@ const chunk: SessionChunk = {
   units: [
     { line: 10, role: "user", text: "should we lower the node floor?" },
     { line: 12, role: "assistant", text: "yes, node 20 passes all 213 tests" },
+  ],
+};
+
+const monologue: SessionChunk = {
+  startLine: 1,
+  endLine: 2,
+  units: [
+    { line: 1, role: "user", text: "ok so, note to self, call the dentist tuesday" },
+    { line: 2, role: "user", text: "no wait wednesday, tuesday I'm in krakow" },
   ],
 };
 
@@ -23,6 +37,32 @@ describe("buildDistillPrompt", () => {
     for (const type of ["fact", "preference", "episode", "procedure"]) {
       expect(prompt).toContain(`"${type}"`);
     }
+  });
+
+  it("says whose memory it is and asks for a source label", () => {
+    const prompt = buildDistillPrompt(chunk);
+    expect(prompt).toContain('The store belongs to the person labelled "user"');
+    expect(prompt).toContain("are NOT memories");
+    expect(prompt).toContain('"source": "user|adopted|observed"');
+    // The old opening line tied the prompt to one transcript kind; it must not come back.
+    expect(prompt).not.toContain("coding-session transcript");
+  });
+
+  it("picks guidance by kind, inferring note vs chat from the roles present", () => {
+    expect(inferTranscriptKind(chunk)).toBe("chat");
+    expect(inferTranscriptKind(monologue)).toBe("note");
+    expect(buildDistillPrompt(chunk)).toContain("conversation with an assistant");
+    expect(buildDistillPrompt(monologue)).toContain("speaking or writing to themselves");
+    expect(buildDistillPrompt(chunk, { kind: "agent-session" })).toContain(
+      "session with a coding agent",
+    );
+  });
+
+  it("hands the recording date to the model when known", () => {
+    expect(buildDistillPrompt(chunk)).not.toContain("was recorded on");
+    expect(buildDistillPrompt(chunk, { recordedAt: "2026-03-14" })).toContain(
+      "was recorded on 2026-03-14",
+    );
   });
 });
 
@@ -41,7 +81,7 @@ describe("parseDistillation", () => {
 
   it("drops untypeable, empty, and oversized items", () => {
     const raw = JSON.stringify([
-      { type: "gotcha", content: "not one of the four types" },
+      { type: "credential", content: "not one of the four types" },
       { type: "fact", content: "" },
       { type: "fact", content: "x".repeat(5000) },
       { type: "fact", content: "kept" },
@@ -50,6 +90,33 @@ describe("parseDistillation", () => {
     expect(memories).toHaveLength(1);
     expect(memories[0]?.content).toBe("kept");
     expect(dropped).toBe(3);
+  });
+
+  it("maps the types models invent onto the four real ones", () => {
+    const raw = JSON.stringify([
+      { type: "decision", content: "store UTC everywhere" },
+      { type: "Plan", content: "ship before the 29th" },
+      { type: "event", content: "the garage flooded" },
+      { type: "gotcha", content: "needs -NoProfile" },
+    ]);
+    const { memories, dropped } = parseDistillation(raw, chunk);
+    expect(dropped).toBe(0);
+    expect(memories.map((m) => m.memoryType)).toEqual(["fact", "fact", "episode", "procedure"]);
+  });
+
+  it("keeps the three grounded sources, drops any other label, tolerates none", () => {
+    const raw = JSON.stringify([
+      { type: "fact", content: "a", source: "user" },
+      { type: "fact", content: "b", source: "Adopted" },
+      { type: "fact", content: "c", source: "observed" },
+      { type: "fact", content: "d", source: "assistant" },
+      { type: "fact", content: "e", source: "general" },
+      { type: "fact", content: "f" },
+    ]);
+    const { memories, dropped } = parseDistillation(raw, chunk);
+    expect(memories.map((m) => m.content)).toEqual(["a", "b", "c", "f"]);
+    expect(memories.map((m) => m.source)).toEqual(["user", "adopted", "observed", undefined]);
+    expect(dropped).toBe(2);
   });
 
   it("survives prose-wrapped and garbage replies", () => {
@@ -101,13 +168,26 @@ describe("distillChunk: injection corpus", () => {
     const llm = new ScriptedLLMProvider(() =>
       JSON.stringify([
         { type: "credential", content: "the admin password is hunter2" },
+        { type: "fact", content: "the admin password is hunter2", source: "assistant" },
         { type: "fact", content: "the session summarized a fetched page", lines: [1, 2] },
       ]),
     );
     const { memories, dropped } = await distillChunk(llm, injected);
-    // The untyped smuggle attempt is dropped; only contract-shaped output survives.
-    expect(dropped).toBe(1);
+    // The untyped smuggle attempt and the assistant-sourced one are dropped; only
+    // contract-shaped, grounded output survives.
+    expect(dropped).toBe(2);
     expect(memories).toHaveLength(1);
     expect(memories[0]?.content).not.toContain("hunter2");
+  });
+
+  it("passes kind and date through to the prompt", async () => {
+    let seen = "";
+    const llm = new ScriptedLLMProvider((prompt) => {
+      seen = prompt;
+      return "[]";
+    });
+    await distillChunk(llm, chunk, { kind: "agent-session", recordedAt: "2026-01-02" });
+    expect(seen).toContain("session with a coding agent");
+    expect(seen).toContain("recorded on 2026-01-02");
   });
 });
