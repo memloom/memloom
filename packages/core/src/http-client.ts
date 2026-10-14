@@ -87,11 +87,14 @@ export class HttpMemloomClient implements MemoryEngine {
   readonly #fetch: FetchLike;
   /** The owner every request from this client carries, or undefined for the daemon default. */
   readonly ownerId: string | undefined;
+  /** Bearer token for a server that requires one (a hosted memloom); none for the local daemon. */
+  readonly #token: string | undefined;
 
-  constructor(baseUrl: string, fetchImpl?: FetchLike, ownerId?: string) {
+  constructor(baseUrl: string, fetchImpl?: FetchLike, ownerId?: string, token?: string) {
     this.#baseUrl = baseUrl.replace(/\/+$/, "");
     this.#fetch = fetchImpl ?? (globalThis as unknown as { fetch: FetchLike }).fetch;
     this.ownerId = ownerId;
+    this.#token = token;
   }
 
   /**
@@ -101,6 +104,7 @@ export class HttpMemloomClient implements MemoryEngine {
   #req(path: string, init?: Parameters<FetchLike>[1]): Promise<HttpResponse> {
     const headers = { ...init?.headers };
     if (this.ownerId !== undefined) headers[OWNER_HEADER] = this.ownerId;
+    if (this.#token !== undefined) headers.authorization = `Bearer ${this.#token}`;
     return this.#fetch(`${this.#baseUrl}${path}`, { ...init, headers });
   }
 

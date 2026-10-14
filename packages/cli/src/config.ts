@@ -142,13 +142,20 @@ export function ensureConfig(): string {
 }
 
 /**
- * Load ~/.memloom/config.env into process.env (dotenv-style KEY=VALUE lines; # comments).
- * Values already present in the real environment win, so a shell/MCP-provided key overrides
- * the file. Called by the daemon at startup, the one place config needs to exist.
+ * One setting, from the real environment first and ~/.memloom/config.env second, without
+ * loading the rest of the file. For clients that need a single value (where the server is) and
+ * have no business holding the daemon's provider keys.
  */
-export function loadConfigEnv(): void {
+export function configValue(key: string): string | undefined {
+  const fromEnv = process.env[key]?.trim();
+  if (fromEnv) return fromEnv;
+  return readConfigFile()[key];
+}
+
+function readConfigFile(): Record<string, string> {
   const path = configPath();
-  if (!existsSync(path)) return;
+  const values: Record<string, string> = {};
+  if (!existsSync(path)) return values;
   for (const rawLine of readFileSync(path, "utf8").split(/\r?\n/)) {
     const line = rawLine.trim();
     if (!line || line.startsWith("#")) continue;
@@ -162,6 +169,18 @@ export function loadConfigEnv(): void {
     ) {
       value = value.slice(1, -1);
     }
+    values[key] = value;
+  }
+  return values;
+}
+
+/**
+ * Load ~/.memloom/config.env into process.env (dotenv-style KEY=VALUE lines; # comments).
+ * Values already present in the real environment win, so a shell/MCP-provided key overrides
+ * the file. Called by the daemon at startup, the one place config needs to exist.
+ */
+export function loadConfigEnv(): void {
+  for (const [key, value] of Object.entries(readConfigFile())) {
     if (!(key in process.env)) process.env[key] = value;
   }
 }

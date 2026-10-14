@@ -46,8 +46,12 @@
   },
   "dependencies": {
     "@memloom/core": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.12.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "hono": "^4.6.0",
     "memloom": "workspace:*",
     "zod": "^3.24.0"
+  },
+  "devDependencies": {
+    "@memloom/server": "workspace:*"
   }
 }

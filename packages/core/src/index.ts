@@ -87,6 +87,8 @@ export {
   selectModel,
   setupModels,
 } from "./audio-models.js";
+export type { IssuedToken, OAuthClient, TokenKind, TokenRow } from "./auth-store.js";
+export { AuthStore, hashToken } from "./auth-store.js";
 export type { BenchCorpus, BenchDoc, BenchQuery } from "./benchmark.js";
 // Retrieval benchmark + metrics
 export { runBenchmark } from "./benchmark.js";

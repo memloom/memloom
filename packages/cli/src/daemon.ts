@@ -7,13 +7,16 @@ import { PGLiteSocketServer } from "@electric-sql/pglite-socket";
 import { serve as nodeServe } from "@hono/node-server";
 import type { StorageAdapter } from "@memloom/core";
 import {
+  AuthStore,
   acquireDataDirLock,
   EmbeddingFingerprintError,
+  isOwnerId,
   Memloom,
   PgAdapter,
   PgliteAdapter,
+  SENTINEL_OWNER,
 } from "@memloom/core";
-import { createServer } from "@memloom/server";
+import { type CloudAuthOptions, createServer, type ServerOptions } from "@memloom/server";
 import { configPath, dataDir, ensureConfig, loadConfigEnv } from "./config.js";
 import { buildEngineDeps } from "./engine-config.js";
 import { openWithFallback, scheduleSnapshots, snapshotsEnabled } from "./snapshots.js";
@@ -62,7 +65,63 @@ async function alreadyServing(httpPort: number): Promise<boolean> {
   });
 }
 
-export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promise<void> {
+export interface DaemonExtras {
+  /** Extra routes for the HTTP app; the MCP package mounts its hosted endpoint here. */
+  mount?: ServerOptions["mount"];
+}
+
+/**
+ * Hosted mode: on when MEMLOOM_PUBLIC_URL names the address clients reach this server at. The
+ * server then listens on every interface (PORT, else the usual port), requires a token on every
+ * request, serves the OAuth sign-in, and leaves out what only makes sense on someone's own
+ * machine: file watching, the Postgres wire socket and the viewer.
+ */
+export function hostedConfig():
+  | {
+      publicUrl: string;
+      ownerId: string;
+      loginPassword: string | undefined;
+      port: number | undefined;
+    }
+  | undefined {
+  const raw = process.env.MEMLOOM_PUBLIC_URL?.trim();
+  if (!raw) return undefined;
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error(`memloom: MEMLOOM_PUBLIC_URL is not a URL: ${JSON.stringify(raw)}`);
+  }
+  if (url.protocol !== "https:" && url.hostname !== "localhost" && url.hostname !== "127.0.0.1") {
+    throw new Error(
+      "memloom: MEMLOOM_PUBLIC_URL must be https, since tokens travel in every request.",
+    );
+  }
+  const owner = process.env.MEMLOOM_OWNER_ID?.trim().toLowerCase() || SENTINEL_OWNER;
+  if (!isOwnerId(owner)) throw new Error("memloom: MEMLOOM_OWNER_ID must be a uuid.");
+  const password = process.env.MEMLOOM_LOGIN_PASSWORD;
+  if (password !== undefined && password.length < 12) {
+    throw new Error("memloom: MEMLOOM_LOGIN_PASSWORD must be at least 12 characters.");
+  }
+  return {
+    publicUrl: url.origin,
+    ownerId: owner,
+    loginPassword: password || undefined,
+    port: Number(process.env.PORT) || undefined,
+  };
+}
+
+export async function startDaemon(
+  httpPort = HTTP_PORT,
+  pgPort?: number,
+  extras: DaemonExtras = {},
+): Promise<void> {
+  // Config first: hosted mode is decided by it, and so is the port a hosted server binds.
+  ensureConfig();
+  loadConfigEnv();
+  const hosted = hostedConfig();
+  if (hosted?.port) httpPort = hosted.port;
+
   // Fail fast and clearly if a daemon already owns the port, instead of a silent bind error.
   if (await alreadyServing(httpPort)) {
     console.log(`memloom is already serving on http://127.0.0.1:${httpPort}.`);
@@ -70,9 +129,8 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promis
   }
 
   // Config lives in ~/.memloom/config.env, the ONE place the key/models need to be set,
-  // regardless of which process spawned the daemon. Real env vars win over the file.
-  ensureConfig();
-  loadConfigEnv();
+  // regardless of which process spawned the daemon. Real env vars win over the file. (Loaded
+  // above, before the port check.)
 
   // Resolved after loadConfigEnv so MEMLOOM_PG_PORT works from ~/.memloom/config.env too,
   // not just a real env var. An explicit argument still wins.
@@ -173,25 +231,37 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promis
   const viewerDir = fileURLToPath(new URL("../viewer", import.meta.url));
   const staticDir = existsSync(viewerDir) ? viewerDir : undefined;
 
+  const cloudAuth: CloudAuthOptions | undefined = hosted
+    ? {
+        store: new AuthStore(storage),
+        publicUrl: hosted.publicUrl,
+        ownerId: hosted.ownerId,
+        ...(hosted.loginPassword ? { loginPassword: hosted.loginPassword } : {}),
+      }
+    : undefined;
+
   const httpServer = nodeServe({
     fetch: createServer(memloom, {
       log: true,
       onShutdown: shutdown,
       // The daemon is the one host that should hold OS file watchers: it is long-lived and it
-      // owns the store. MEMLOOM_SYNC=off in the config file still turns it off.
-      fileSync: true,
+      // owns the store. MEMLOOM_SYNC=off in the config file still turns it off. A hosted
+      // server has no folders of the user's to watch.
+      fileSync: !hosted,
+      ...(cloudAuth ? { cloudAuth } : {}),
+      ...(extras.mount ? { mount: extras.mount } : {}),
       ...(staticDir ? { staticDir } : {}),
       // Mirrors OpenRouterLLM's own chat-model fallback chain, for the picker's label.
       ...(apiKey ? { defaultChatModel: chatModel ?? llmModel ?? "google/gemini-2.5-flash" } : {}),
     }).fetch,
     port: httpPort,
-    hostname: "127.0.0.1",
+    hostname: hosted ? "0.0.0.0" : "127.0.0.1",
   });
   // The wire socket is a PGLite-only concern: it exists so DB tools can inspect the embedded
   // store. On an external Postgres, tools connect to the server directly.
   let pgServer: PGLiteSocketServer | undefined;
   let wireError: string | undefined;
-  if (db) {
+  if (db && !hosted) {
     pgServer = new PGLiteSocketServer({ db, port: wirePort, host: "127.0.0.1" });
     // PGLite is single-connection: while a wire client (Drizzle Studio, psql) is attached it holds
     // an exclusive lock, and every HTTP API call silently queues behind it. Warn loudly, because
@@ -220,14 +290,18 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promis
   }
 
   console.log("memloom serving:");
-  console.log(`  HTTP API   http://127.0.0.1:${httpPort}          (CLI + MCP route here)`);
-  if (staticDir) {
+  if (!hosted) {
+    console.log(`  HTTP API   http://127.0.0.1:${httpPort}          (CLI + MCP route here)`);
+  }
+  if (staticDir && !hosted) {
     console.log(`  Viewer     http://127.0.0.1:${httpPort}          (\`memloom ui\` opens it)`);
   }
   if (db && pgServer) {
     console.log(
       `  Postgres   postgresql://postgres@127.0.0.1:${wirePort}/postgres   (Drizzle Studio, psql)`,
     );
+    console.log(`  data       ${dir}`);
+  } else if (db && hosted) {
     console.log(`  data       ${dir}`);
   } else if (db) {
     console.log(`  Postgres   OFF, port ${wirePort} would not bind: ${wireError}`);
@@ -239,6 +313,16 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promis
     );
   }
   console.log(`  config     ${configPath()}`);
+  if (hosted) {
+    console.log(
+      `  hosted     ${hosted.publicUrl}   (listening on 0.0.0.0:${httpPort}, tokens required)`,
+    );
+    console.log(
+      hosted.loginPassword
+        ? "  sign-in    OAuth on (Claude.ai connectors)"
+        : "  sign-in    OAuth OFF: set MEMLOOM_LOGIN_PASSWORD to connect Claude.ai",
+    );
+  }
   if (apiKey) {
     console.log(
       `  mode       cloud (${embedModel ?? "qwen/qwen3-embedding-8b"} @ ${embedDims ?? 1024} dims${embedProvider ? ` via ${embedProvider}` : ""}, ${llmModel ?? "google/gemini-2.5-flash"}${llmProvider === "anthropic" ? " via Anthropic" : ""}, auto-index ${autoIndex ? "on" : "off"})`,

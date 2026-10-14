@@ -42,6 +42,7 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { stream, streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { authOwner, type CloudAuthOptions, installCloudAuth } from "./cloud-auth.js";
 
 // The local HTTP server: a thin wrapper around @memloom/core so the browser-based viewer (and
 // any HTTP client) can reach the engine. The CLI/MCP route through this when it holds the
@@ -49,6 +50,8 @@ import { z } from "zod";
 // as the hosted public API, so clients can point at local or cloud.
 
 /** When the daemon last served anything: the difference between quiet and asleep. */
+export type { CloudAuthOptions } from "./cloud-auth.js";
+
 export interface DaemonActivity {
   lastRequestAt: number;
 }
@@ -105,6 +108,13 @@ export interface ServerOptions {
    * Defaults to global fetch.
    */
   fetchModels?: typeof fetch;
+  /**
+   * Require a bearer token on every request and serve the OAuth endpoints, for a server on the
+   * internet rather than on loopback. Unset is the local daemon, which trusts its own machine.
+   */
+  cloudAuth?: CloudAuthOptions;
+  /** Extra routes (the hosted MCP endpoint), mounted after every built-in route and behind auth. */
+  mount?: (app: Hono) => void;
 }
 
 // Fire-and-forget OS opener. The daemon runs on the file owner's machine, so "open" means
@@ -466,6 +476,20 @@ const importNotifySchema = z.object({
   path: z.string().min(1, "path must be a non-empty string").max(4096),
 });
 
+// A session transcript sent by value, for a server that cannot read the client's disk (a hosted
+// memloom). Names are plain file names: the server places the file itself.
+const SAFE_NAME = /^[A-Za-z0-9._-]+$/;
+const importUploadSchema = z.object({
+  project: z.string().min(1).max(255).regex(SAFE_NAME, "project must be a plain directory name"),
+  name: z
+    .string()
+    .min(1)
+    .max(255)
+    .regex(SAFE_NAME, "name must be a plain file name")
+    .refine((n) => n.endsWith(".jsonl"), "name must be a .jsonl session transcript"),
+  content: z.string().max(50_000_000),
+});
+
 const importScopeSchema = z.object({
   scope: z.union([
     z.literal("all"),
@@ -599,7 +623,7 @@ async function parseBody<S extends z.ZodTypeAny>(
   // one is how a write lands on the wrong person, so it is a 400 rather than a precedence
   // rule nobody remembers.
   const bodyOwner = (parsed.data as { ownerId?: unknown } | null)?.ownerId;
-  const headerOwner = c.req.header(OWNER_HEADER);
+  const headerOwner = authOwner(c) ?? c.req.header(OWNER_HEADER);
   if (
     typeof bodyOwner === "string" &&
     headerOwner &&
@@ -704,7 +728,8 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
    *
    * Validated once in middleware, so this only reads.
    */
-  const ownerOf = (c: Context): string => c.req.header(OWNER_HEADER)?.toLowerCase() ?? defaultOwner;
+  const ownerOf = (c: Context): string =>
+    authOwner(c) ?? c.req.header(OWNER_HEADER)?.toLowerCase() ?? defaultOwner;
 
   // Browser clients (the viewer in dev, docs playground) run on another localhost port. Allow
   // only local origins; a permissive `*` would let any public web page drive the daemon.
@@ -737,17 +762,22 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   //  - Origin check: a genuine cross-site request carries a non-local Origin. Same-origin
   //    viewer requests and non-browser clients (CLI, MCP, curl) send no Origin (or a local
   //    one), so they pass untouched.
+  // A hosted server is reached by its public name, and its own sign-in page posts back to it, so
+  // that host and origin join the loopback ones. Tokens, not addresses, are its real gate.
+  const publicUrl = opts.cloudAuth ? new URL(opts.cloudAuth.publicUrl) : undefined;
   app.use("*", async (c, next) => {
     const host = c.req.header("host");
-    if (host && !isLoopbackHost(host)) {
+    if (host && !isLoopbackHost(host) && host !== publicUrl?.host) {
       return c.json({ error: "forbidden: requests must target the loopback interface" }, 403);
     }
     const origin = c.req.header("origin");
-    if (origin && !LOCAL_ORIGIN.test(origin)) {
+    if (origin && !LOCAL_ORIGIN.test(origin) && origin !== publicUrl?.origin) {
       return c.json({ error: "forbidden: cross-origin request rejected" }, 403);
     }
     await next();
   });
+
+  if (opts.cloudAuth) installCloudAuth(app, opts.cloudAuth);
 
   if (opts.log) {
     app.use("*", async (c, next) => {
@@ -1139,6 +1169,24 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     }
     // Fire and forget: the hook must never wait on distillation. handleSessionNotify records
     // every failure in status, so nothing here is silently lost.
+    void memloom.handleSessionNotify(target).catch(() => {});
+    return c.json({ accepted: true }, 202);
+  });
+
+  // The same as notify for a client on another machine: the transcript arrives as content and
+  // is written where notify would have found it, so the import ledger and scope rules apply
+  // unchanged.
+  app.post("/import/claude-code/upload", async (c) => {
+    const body = await parseBody(c, importUploadSchema);
+    if (!body.ok) return body.res;
+    const { project, name, content } = body.data;
+    if (project === "." || project === ".." || name.startsWith(".")) {
+      return c.json({ error: "project and name must be plain names" }, 400);
+    }
+    const dir = join(sessionsRoot, project);
+    await mkdir(dir, { recursive: true });
+    const target = join(dir, name);
+    await writeFile(target, content);
     void memloom.handleSessionNotify(target).catch(() => {});
     return c.json({ accepted: true }, 202);
   });
@@ -2442,9 +2490,12 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     });
   });
 
+  opts.mount?.(app);
+
   // The viewer bundle, mounted last so every API route wins first. Unknown paths fall back to
-  // index.html (the shell handles them). Standard single-page-app serving.
-  if (opts.staticDir) {
+  // index.html (the shell handles them). Standard single-page-app serving. Not on a hosted
+  // server: a browser cannot attach the bearer token every API call there needs.
+  if (opts.staticDir && !opts.cloudAuth) {
     const root = resolve(opts.staticDir);
     app.get("*", async (c) => {
       const reqPath = c.req.path === "/" ? "/index.html" : c.req.path;
