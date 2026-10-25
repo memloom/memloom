@@ -134,6 +134,17 @@ describe("what comes back with a memory", () => {
     expect(hit?.attachments?.map((a) => a.name)).toEqual(["pot.jpg"]);
   });
 
+  it("the memory list and a belief's history carry them too", async () => {
+    const m = await fresh();
+    const { id } = await m.save({ content: "the bike lock code is on the receipt" });
+    await m.memoryAttach({ memoryId: id, filename: "receipt.jpg", bytes: bytes("photo") });
+
+    const [listed] = await m.memories();
+    expect(listed?.attachments?.map((a) => a.name)).toEqual(["receipt.jpg"]);
+    const [head] = await m.history(id);
+    expect(head?.attachments?.map((a) => a.name)).toEqual(["receipt.jpg"]);
+  });
+
   it("leaves the field alone on a memory with none", async () => {
     // Empty for almost every memory, so it must be absent rather than `[]` everywhere:
     // `attachments` present and empty reads as "we looked and there are none", which is
@@ -165,6 +176,21 @@ describe("taking one off", () => {
     const a = await m.memoryAttach({ memoryId: id, filename: "meter.jpg", bytes: bytes("photo") });
 
     await m.deleteMemory(id);
+    await expect(stat(a.path)).rejects.toThrow();
+  });
+
+  it("deleting an owner takes their files with them", async () => {
+    const m = await fresh();
+    const owner = "66666666-6666-4666-8666-666666666666";
+    const { id } = await m.save({ content: "my passport photo page", ownerId: owner });
+    const a = await m.memoryAttach({
+      memoryId: id,
+      filename: "passport.jpg",
+      bytes: bytes("photo"),
+      ownerId: owner,
+    });
+
+    await m.deleteOwner(owner);
     await expect(stat(a.path)).rejects.toThrow();
   });
 

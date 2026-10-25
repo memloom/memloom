@@ -1518,6 +1518,28 @@ describe("server", () => {
     expect(badExt.status).toBe(400);
   });
 
+  it("memory attachments: plain base64 only, and a bad id is a 400, not a 500", async () => {
+    const server = await app();
+    const saved = (await (
+      await server.request("/memory/save", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ content: "the shed key hangs by the door" }),
+      })
+    ).json()) as { id: string };
+    const attach = (bytes: string) =>
+      server.request(`/memory/${saved.id}/attachments`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ filename: "key.jpg", bytes }),
+      });
+
+    expect((await attach("data:image/jpeg;base64,AAAA")).status).toBe(400);
+    expect((await attach("!!!")).status).toBe(400);
+    expect((await attach(Buffer.from("photo").toString("base64"))).status).toBe(200);
+    expect((await server.request("/memory/not-a-uuid/attachments")).status).toBe(400);
+  });
+
   it("attachments: upload creates a session-scoped doc, listed and removable", async () => {
     const server = await app();
     const contentBase64 = Buffer.from("# Brief\nthe kickoff is on tuesday").toString("base64");

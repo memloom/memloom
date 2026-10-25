@@ -3067,7 +3067,7 @@ export class Memloom implements MemoryEngine {
        ORDER BY created_at DESC`,
       params,
     );
-    return this.#withScopePaths(ownerId, rows.map(mapRow));
+    return this.#withAttachments(await this.#withScopePaths(ownerId, rows.map(mapRow)), ownerId);
   }
 
   /** Fill scopePath from the registry, one query for the whole batch; no-op when unscoped. */
@@ -3097,7 +3097,7 @@ export class Memloom implements MemoryEngine {
        ORDER BY version DESC`,
       [ownerId, row.root_id],
     );
-    return this.#withScopePaths(ownerId, rows.map(mapRow));
+    return this.#withAttachments(await this.#withScopePaths(ownerId, rows.map(mapRow)), ownerId);
   }
 
   // --- the scope registry (PLAN-memory-scopes.md) ---
@@ -3656,6 +3656,11 @@ export class Memloom implements MemoryEngine {
     if (!isOwnerId(ownerId)) {
       throw new Error(`memloom: deleteOwner needs a uuid owner id, got ${JSON.stringify(ownerId)}`);
     }
+    // Attachment bytes live on disk, outside the tables the sweep below empties.
+    const files = await this.#storage.query<{ media_path: string }>(
+      "SELECT media_path FROM memory_attachments WHERE owner_id = $1",
+      [ownerId],
+    );
     const result = await this.#storage.tx(async (tx) => {
       const owned = await tx.query<{ name: string }>(
         `SELECT c.relname AS name
@@ -3681,6 +3686,7 @@ export class Memloom implements MemoryEngine {
       }
       return { rows, tables };
     });
+    for (const f of files) await discardAttachment(f.media_path);
     // A queued auto-index for an owner who no longer exists would write them a fresh
     // memory_index_runs row: the tenant reappearing seconds after asking to be gone.
     this.#autoIndexPending.delete(ownerId);
