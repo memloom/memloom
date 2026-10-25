@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it } from "vitest";
 import { AnthropicLLM, anthropicCostUsd, toAnthropicMessages } from "./anthropic-provider.js";
 import { LlmSpendError } from "./openrouter-provider.js";
+import { estimateUsd } from "./reconcile.js";
 
 // A local stand-in for the Messages API, so the request body memloom sends and the way it reads
 // the answer are both pinned without a key or a network.
@@ -96,6 +97,20 @@ describe("AnthropicLLM.complete", () => {
       .catch((e: unknown) => e);
     expect((err2 as LlmSpendError).code).toBe("no_credit");
   });
+
+  it("throws on a refusal instead of returning an empty answer", async () => {
+    const api = await fakeApi(() => ({
+      status: 200,
+      json: {
+        ...message([]),
+        stop_reason: "refusal",
+        stop_details: { type: "refusal", category: "cyber", explanation: null },
+      },
+    }));
+    await expect(
+      new AnthropicLLM({ apiKey: "k", baseUrl: api.baseUrl }).complete("x"),
+    ).rejects.toThrow(/declined the completion \(cyber\)/);
+  });
 });
 
 describe("AnthropicLLM.chat", () => {
@@ -171,5 +186,9 @@ describe("anthropicCostUsd", () => {
       12,
     );
     expect(anthropicCostUsd("claude-something-new", 10, 10)).toBeNull();
+  });
+
+  it("prices a reconcile dry run on a Claude model", () => {
+    expect(estimateUsd("claude-haiku-5-5", 50_000, 10_000)).toBeCloseTo(0.01, 12);
   });
 });
