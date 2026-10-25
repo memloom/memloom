@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { uptime } from "node:os";
 import { join } from "node:path";
 import lockfile from "proper-lockfile";
@@ -71,13 +71,30 @@ export function lockHolderGone(dataDir: string): boolean {
   return !isAlive(owner.pid);
 }
 
+/**
+ * Clear a dead holder's lock. Two processes can both find the holder gone (two clients starting
+ * the daemon after a reboot), and the slower one must not delete the lock the faster one has
+ * just taken. Renaming the owner record is atomic, so only one of them wins the right to remove
+ * the lock; the other finds the record gone and waits on the lock like any second opener.
+ */
+function reclaim(dataDir: string): void {
+  const claim = `${ownerFile(dataDir)}.${process.pid}`;
+  try {
+    renameSync(ownerFile(dataDir), claim);
+  } catch {
+    return;
+  }
+  rmSync(lockDir(dataDir), { recursive: true, force: true });
+  rmSync(claim, { force: true });
+}
+
 export async function acquireDataDirLock(
   dataDir: string,
   opts: LockOptions = {},
 ): Promise<ReleaseLock> {
   mkdirSync(dataDir, { recursive: true });
   const waitMs = opts.waitMs ?? 0;
-  if (lockHolderGone(dataDir)) rmSync(lockDir(dataDir), { recursive: true, force: true });
+  if (lockHolderGone(dataDir)) reclaim(dataDir);
   let release: () => Promise<void>;
   try {
     release = await lockfile.lock(dataDir, {

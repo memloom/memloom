@@ -100,6 +100,17 @@ describe("data-dir lock", () => {
     await release();
   });
 
+  it("lets only one of two openers take over a dead holder's lock", async () => {
+    const dir = tempDir();
+    const gone = spawn(process.execPath, ["-e", ""]);
+    await new Promise((r) => gone.once("exit", r));
+    leftLock(dir, { pid: gone.pid as number, bootedAt: thisBoot() });
+    const results = await Promise.allSettled([acquireDataDirLock(dir), acquireDataDirLock(dir)]);
+    const won = results.filter((r) => r.status === "fulfilled");
+    expect(won).toHaveLength(1);
+    await (won[0] as PromiseFulfilledResult<() => Promise<void>>).value();
+  });
+
   it("takes over a lock left before a reboot, even if its pid is in use again", async () => {
     const dir = tempDir();
     const reused = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"]);
