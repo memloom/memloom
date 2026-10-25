@@ -38,8 +38,12 @@ const lockDir = (dataDir: string) => `${dataDir}.lock`;
 const bootedAt = () => Date.now() - uptime() * 1000;
 
 function readOwner(dataDir: string): LockOwner | undefined {
+  return readOwnerFile(ownerFile(dataDir));
+}
+
+function readOwnerFile(path: string): LockOwner | undefined {
   try {
-    const owner = JSON.parse(readFileSync(ownerFile(dataDir), "utf8")) as Partial<LockOwner>;
+    const owner = JSON.parse(readFileSync(path, "utf8")) as Partial<LockOwner>;
     return typeof owner.pid === "number" && typeof owner.bootedAt === "number"
       ? { pid: owner.pid, bootedAt: owner.bootedAt }
       : undefined;
@@ -66,7 +70,10 @@ function isAlive(pid: number): boolean {
 export function lockHolderGone(dataDir: string): boolean {
   if (!existsSync(lockDir(dataDir))) return false;
   const owner = readOwner(dataDir);
-  if (!owner) return false;
+  return owner ? holderGone(owner) : false;
+}
+
+function holderGone(owner: LockOwner): boolean {
   if (Math.abs(owner.bootedAt - bootedAt()) > SAME_BOOT_MS) return true;
   return !isAlive(owner.pid);
 }
@@ -77,11 +84,18 @@ export function lockHolderGone(dataDir: string): boolean {
  * just taken. Renaming the owner record is atomic, so only one of them wins the right to remove
  * the lock; the other finds the record gone and waits on the lock like any second opener.
  */
-function reclaim(dataDir: string): void {
+export function reclaim(dataDir: string): void {
   const claim = `${ownerFile(dataDir)}.${process.pid}`;
   try {
     renameSync(ownerFile(dataDir), claim);
   } catch {
+    return;
+  }
+  // Between finding the holder gone and the rename, another process may have taken the lock
+  // and written its own record, which is then the one just claimed. Hand a live one back.
+  const claimed = readOwnerFile(claim);
+  if (claimed && !holderGone(claimed)) {
+    renameSync(claim, ownerFile(dataDir));
     return;
   }
   rmSync(lockDir(dataDir), { recursive: true, force: true });
