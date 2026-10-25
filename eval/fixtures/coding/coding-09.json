@@ -1,0 +1,46 @@
+{
+  "id": "coding-09",
+  "kind": "agent-session",
+  "date": "2026-02-27",
+  "source": { "note": "hand-written; monorepo lint tooling decision" },
+  "units": [
+    {
+      "role": "user",
+      "text": "Lint on the monorepo takes 90 seconds. eslint + prettier + the import plugin. I keep hearing biome is fast. Worth switching?"
+    },
+    {
+      "role": "assistant",
+      "text": "What each does, briefly: a linter flags code patterns (unused variables, unsafe equality), a formatter rewrites whitespace and punctuation to a canonical style, and the two are separate jobs that ESLint and Prettier split between them. Biome does both in one Rust binary with one config file, which is where the speed comes from: no Node startup per plugin, no AST handed between tools. The trade-off is plugin coverage: Biome implements its own rule set and does not run ESLint plugins, so anything custom (your import-order plugin, type-aware rules) has to have a Biome equivalent or be dropped."
+    },
+    { "role": "user", "text": "Try it on a branch and tell me what we'd lose." },
+    {
+      "role": "assistant",
+      "text": "Done on branch chore/biome. `biome check .` over the whole repo takes 1.4 seconds. Of the 212 ESLint findings on main, Biome reports 208 with equivalent rules; the 4 missing are all from eslint-plugin-import's `no-cycle`, which Biome does not have. Formatting diff against Prettier output: 31 files, all trailing-comma and line-wrap differences. One gotcha I hit: Biome ignored nothing until I set `vcs.enabled: true` with `useIgnoreFile: true` in biome.json; without that it formatted files inside dist/ and the viewer bundle."
+    },
+    {
+      "role": "user",
+      "text": "We can live without no-cycle, madge catches those in CI anyway. Switch. Keep 100-column lines and double quotes, same as before, and run the formatter once over everything in its own commit so blame stays readable."
+    },
+    {
+      "role": "assistant",
+      "text": "Switched: biome.json with lineWidth 100, quoteStyle double, vcs ignore-file on, and formatter + linter enabled; removed eslint, prettier and their 11 plugin packages from the root. Two commits: \"Replace eslint and prettier with biome\" and \"Format the repo with biome\". `pnpm lint` is now `biome check .`."
+    }
+  ],
+  "expected": [
+    {
+      "type": "fact",
+      "content": "The monorepo switched from ESLint + Prettier to Biome in February 2026 because lint took 90 seconds and Biome does the same in about 1.4 seconds; the only lost rule was import/no-cycle, which madge covers in CI.",
+      "keywords": ["biome"]
+    },
+    {
+      "type": "procedure",
+      "content": "biome.json needs vcs.enabled: true and useIgnoreFile: true, otherwise Biome formats files in dist/ and the viewer bundle.",
+      "keywords": ["useignorefile"]
+    },
+    {
+      "type": "preference",
+      "content": "The user's formatting style is 100-column lines and double quotes; a repo-wide reformat goes in its own commit so git blame stays readable.",
+      "keywords": [["100", "double quotes"]]
+    }
+  ]
+}

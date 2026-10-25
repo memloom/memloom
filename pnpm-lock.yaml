@@ -16,13 +16,16 @@ importers:
         version: 22.20.0
       tsup:
         specifier: ^8.5.0
-        version: 8.5.1(postcss@8.5.16)(typescript@5.9.3)
+        version: 8.5.1(postcss@8.5.16)(tsx@4.23.15)(typescript@5.9.3)
+      tsx:
+        specifier: ^4.23.15
+        version: 4.23.15
       typescript:
         specifier: ^5.7.3
         version: 5.9.3
       vitest:
         specifier: ^3.0.0
-        version: 3.2.6(@types/debug@4.1.13)(@types/node@22.20.0)
+        version: 3.2.6(@types/debug@4.1.13)(@types/node@22.20.0)(tsx@4.23.15)
 
   apps/viewer:
     dependencies:
@@ -46,7 +49,7 @@ importers:
         version: 1.29.1(react@19.2.7)
       react-force-graph-3d:
         specifier: ^1.29.1
-        version: 1.29.1(react@19.2.7)
+        version: 1.29.2(react@19.2.7)
       react-hot-toast:
         specifier: ^2.6.0
         version: 2.6.0(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
@@ -74,10 +77,10 @@ importers:
         version: 0.185.4
       '@vitejs/plugin-react':
         specifier: ^5.0.0
-        version: 5.2.0(vite@7.3.6(@types/node@22.20.0))
+        version: 5.2.0(vite@7.3.6(@types/node@22.20.0)(tsx@4.23.15))
       vite:
         specifier: ^7.0.0
-        version: 7.3.6(@types/node@22.20.0)
+        version: 7.3.6(@types/node@22.20.0)(tsx@4.23.15)
 
   packages/cli:
     dependencies:
@@ -174,8 +177,8 @@ importers:
 
 packages:
 
-  3d-force-graph@1.80.0:
-    resolution: {integrity: sha512-tzI353gW1nXPpnC7VTa3JjMg+3cp77qOLUFO0vucPTfF+q5R6sQsNsIqVTbRIb7RSypn14nBa4yfkOe9ThxASw==}
+  3d-force-graph@1.80.1:
+    resolution: {integrity: sha512-8+JcH/K1MkVncxthCVg1vdNY49PSUY7gPMlFzBHJD91AmofqqxZNnVo5RfY61BShwZk6koqyYK7f5hp+NT6utQ==}
     engines: {node: '>=12'}
 
   '@babel/code-frame@7.29.7':
@@ -249,8 +252,8 @@ packages:
     peerDependencies:
       '@babel/core': ^7.0.0-0
 
-  '@babel/runtime@7.29.7':
-    resolution: {integrity: sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==}
+  '@babel/runtime@7.29.10':
+    resolution: {integrity: sha512-NpugTzbKgGrNe45Ui32cN8vCFFMxVtP/9rtfwv0nP5FRDAjvYBxJcLVpYA9mr1jxP6cnIT7x9LUzuDTbWYYNRA==}
     engines: {node: '>=6.9.0'}
 
   '@babel/template@7.29.7':
@@ -1964,8 +1967,8 @@ packages:
     peerDependencies:
       react: '*'
 
-  react-force-graph-3d@1.29.1:
-    resolution: {integrity: sha512-5Vp+PGpYnO+zLwgK2NvNqdXHvsWLrFzpDfJW1vUA1twjo9SPvXqfUYQrnRmAbD+K2tOxkZw1BkbH31l5b4TWHg==}
+  react-force-graph-3d@1.29.2:
+    resolution: {integrity: sha512-FcMoZ5Kjy/0/0988SyRL4zX56Lk3BO/2Jr1mvUsfLRNQRgn9OTIA3BnAripTtk7TmLJdFEDAwNUrjy6Gtnlg3g==}
     engines: {node: '>=12'}
     peerDependencies:
       react: '*'
@@ -2178,14 +2181,14 @@ packages:
   thenify@3.3.1:
     resolution: {integrity: sha512-RVZSIV5IG10Hk3enotrhvz0T9em6cyHBLkH/YAZuKqd8hRkKhSfCGIcP2KUY0EPxndzANBmNllzWPwak+bheSw==}
 
-  three-forcegraph@1.43.4:
-    resolution: {integrity: sha512-FtmiZP/T16ZQaHza3JDaDn0YTXFtg9e7pGnTeU8nzu0NNkx7MpWbF/GvmpbQsWHx3rukHtkRv1fTorLPB3FDEA==}
+  three-forcegraph@1.43.6:
+    resolution: {integrity: sha512-fayF9Cn6XfSUJOcKUcJ1tg8EQEHP9X3wELzNX/Ik3TxnbHTfYuEFspSld7GvK8RwEpsyoJaPbfEGgMTJoiywYg==}
     engines: {node: '>=12'}
     peerDependencies:
       three: '>=0.118.3'
 
-  three-render-objects@1.42.0:
-    resolution: {integrity: sha512-KYfkPrYGEbIK8ChFocWqOF1aAN80FBUBWVYB8mB2oBpVuVN+52FvvngVYB5ieFANQu7Rt21rPYZ/xKaAgVWWRQ==}
+  three-render-objects@1.43.0:
+    resolution: {integrity: sha512-CoGJ7dRJsbtGoR4YhxUQlgocZ4vnmVC0YEFsvTye0DKifHPogoa7zl9knea+3EG2+biDicTC1PW7O02TxlV2vQ==}
     engines: {node: '>=12'}
     peerDependencies:
       three: '>=0.179'
@@ -2259,6 +2262,11 @@ packages:
         optional: true
       typescript:
         optional: true
+
+  tsx@4.23.15:
+    resolution: {integrity: sha512-Yiex1Ovn8z2xPpOWckIiysV1SSyRMY9BkLF++q0yKiDxCqRhosKfMg3janKkiLBwZ5c/YryloKwGZcrEmtwxKw==}
+    engines: {node: '>=18.0.0'}
+    hasBin: true
 
   turndown@7.2.4:
     resolution: {integrity: sha512-I8yFsfRzmzK0WV1pNNOA4A7y4RDfFxPRxb3t+e3ui14qSGOxGtiSP6GjeX+Y6CHb7HYaFj7ECUD7VE5kQMZWGQ==}
@@ -2434,13 +2442,13 @@ packages:
 
 snapshots:
 
-  3d-force-graph@1.80.0:
+  3d-force-graph@1.80.1:
     dependencies:
       accessor-fn: 1.5.3
       kapsule: 1.16.3
       three: 0.185.1
-      three-forcegraph: 1.43.4(three@0.185.1)
-      three-render-objects: 1.42.0(three@0.185.1)
+      three-forcegraph: 1.43.6(three@0.185.1)
+      three-render-objects: 1.43.0(three@0.185.1)
 
   '@babel/code-frame@7.29.7':
     dependencies:
@@ -2531,7 +2539,7 @@ snapshots:
       '@babel/core': 7.29.7
       '@babel/helper-plugin-utils': 7.29.7
 
-  '@babel/runtime@7.29.7': {}
+  '@babel/runtime@7.29.10': {}
 
   '@babel/template@7.29.7':
     dependencies:
@@ -2978,7 +2986,7 @@ snapshots:
 
   '@ungap/structured-clone@1.3.3': {}
 
-  '@vitejs/plugin-react@5.2.0(vite@7.3.6(@types/node@22.20.0))':
+  '@vitejs/plugin-react@5.2.0(vite@7.3.6(@types/node@22.20.0)(tsx@4.23.15))':
     dependencies:
       '@babel/core': 7.29.7
       '@babel/plugin-transform-react-jsx-self': 7.29.7(@babel/core@7.29.7)
@@ -2986,7 +2994,7 @@ snapshots:
       '@rolldown/pluginutils': 1.0.0-rc.3
       '@types/babel__core': 7.20.5
       react-refresh: 0.18.0
-      vite: 7.3.6(@types/node@22.20.0)
+      vite: 7.3.6(@types/node@22.20.0)(tsx@4.23.15)
     transitivePeerDependencies:
       - supports-color
 
@@ -2998,13 +3006,13 @@ snapshots:
       chai: 5.3.3
       tinyrainbow: 2.0.0
 
-  '@vitest/mocker@3.2.6(vite@7.3.6(@types/node@22.20.0))':
+  '@vitest/mocker@3.2.6(vite@7.3.6(@types/node@22.20.0)(tsx@4.23.15))':
     dependencies:
       '@vitest/spy': 3.2.6
       estree-walker: 3.0.3
       magic-string: 0.30.21
     optionalDependencies:
-      vite: 7.3.6(@types/node@22.20.0)
+      vite: 7.3.6(@types/node@22.20.0)(tsx@4.23.15)
 
   '@vitest/pretty-format@3.2.6':
     dependencies:
@@ -4206,13 +4214,14 @@ snapshots:
 
   polished@4.3.1:
     dependencies:
-      '@babel/runtime': 7.29.7
+      '@babel/runtime': 7.29.10
 
-  postcss-load-config@6.0.1(postcss@8.5.16):
+  postcss-load-config@6.0.1(postcss@8.5.16)(tsx@4.23.15):
     dependencies:
       lilconfig: 3.1.3
     optionalDependencies:
       postcss: 8.5.16
+      tsx: 4.23.15
 
   postcss@8.5.16:
     dependencies:
@@ -4277,9 +4286,9 @@ snapshots:
       react: 19.2.7
       react-kapsule: 2.6.0(react@19.2.7)
 
-  react-force-graph-3d@1.29.1(react@19.2.7):
+  react-force-graph-3d@1.29.2(react@19.2.7):
     dependencies:
-      3d-force-graph: 1.80.0
+      3d-force-graph: 1.80.1
       prop-types: 15.8.1
       react: 19.2.7
       react-kapsule: 2.6.0(react@19.2.7)
@@ -4557,7 +4566,7 @@ snapshots:
     dependencies:
       any-promise: 1.3.0
 
-  three-forcegraph@1.43.4(three@0.185.1):
+  three-forcegraph@1.43.6(three@0.185.1):
     dependencies:
       accessor-fn: 1.5.3
       d3-array: 3.2.4
@@ -4571,7 +4580,7 @@ snapshots:
       three: 0.185.1
       tinycolor2: 1.6.0
 
-  three-render-objects@1.42.0(three@0.185.1):
+  three-render-objects@1.43.0(three@0.185.1):
     dependencies:
       '@tweenjs/tween.js': 25.0.0
       accessor-fn: 1.5.3
@@ -4613,7 +4622,7 @@ snapshots:
 
   ts-interface-checker@0.1.13: {}
 
-  tsup@8.5.1(postcss@8.5.16)(typescript@5.9.3):
+  tsup@8.5.1(postcss@8.5.16)(tsx@4.23.15)(typescript@5.9.3):
     dependencies:
       bundle-require: 5.1.0(esbuild@0.27.7)
       cac: 6.7.14
@@ -4624,7 +4633,7 @@ snapshots:
       fix-dts-default-cjs-exports: 1.0.1
       joycon: 3.1.1
       picocolors: 1.1.1
-      postcss-load-config: 6.0.1(postcss@8.5.16)
+      postcss-load-config: 6.0.1(postcss@8.5.16)(tsx@4.23.15)
       resolve-from: 5.0.0
       rollup: 4.62.2
       source-map: 0.7.6
@@ -4640,6 +4649,12 @@ snapshots:
       - supports-color
       - tsx
       - yaml
+
+  tsx@4.23.15:
+    dependencies:
+      esbuild: 0.28.1
+    optionalDependencies:
+      fsevents: 2.3.3
 
   turndown@7.2.4:
     dependencies:
@@ -4714,13 +4729,13 @@ snapshots:
       '@types/unist': 3.0.3
       vfile-message: 4.0.3
 
-  vite-node@3.2.4(@types/node@22.20.0):
+  vite-node@3.2.4(@types/node@22.20.0)(tsx@4.23.15):
     dependencies:
       cac: 6.7.14
       debug: 4.4.3
       es-module-lexer: 1.7.0
       pathe: 2.0.3
-      vite: 7.3.6(@types/node@22.20.0)
+      vite: 7.3.6(@types/node@22.20.0)(tsx@4.23.15)
     transitivePeerDependencies:
       - '@types/node'
       - jiti
@@ -4735,7 +4750,7 @@ snapshots:
       - tsx
       - yaml
 
-  vite@7.3.6(@types/node@22.20.0):
+  vite@7.3.6(@types/node@22.20.0)(tsx@4.23.15):
     dependencies:
       esbuild: 0.28.1
       fdir: 6.5.0(picomatch@4.0.5)
@@ -4746,12 +4761,13 @@ snapshots:
     optionalDependencies:
       '@types/node': 22.20.0
       fsevents: 2.3.3
+      tsx: 4.23.15
 
-  vitest@3.2.6(@types/debug@4.1.13)(@types/node@22.20.0):
+  vitest@3.2.6(@types/debug@4.1.13)(@types/node@22.20.0)(tsx@4.23.15):
     dependencies:
       '@types/chai': 5.2.3
       '@vitest/expect': 3.2.6
-      '@vitest/mocker': 3.2.6(vite@7.3.6(@types/node@22.20.0))
+      '@vitest/mocker': 3.2.6(vite@7.3.6(@types/node@22.20.0)(tsx@4.23.15))
       '@vitest/pretty-format': 3.2.6
       '@vitest/runner': 3.2.6
       '@vitest/snapshot': 3.2.6
@@ -4769,8 +4785,8 @@ snapshots:
       tinyglobby: 0.2.17
       tinypool: 1.1.1
       tinyrainbow: 2.0.0
-      vite: 7.3.6(@types/node@22.20.0)
-      vite-node: 3.2.4(@types/node@22.20.0)
+      vite: 7.3.6(@types/node@22.20.0)(tsx@4.23.15)
+      vite-node: 3.2.4(@types/node@22.20.0)(tsx@4.23.15)
       why-is-node-running: 2.3.0
     optionalDependencies:
       '@types/debug': 4.1.13

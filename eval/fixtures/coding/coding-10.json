@@ -1,0 +1,52 @@
+{
+  "id": "coding-10",
+  "kind": "agent-session",
+  "date": "2026-08-14",
+  "source": {
+    "note": "hand-written; a side project session where the owner also talks about their band"
+  },
+  "units": [
+    {
+      "role": "user",
+      "text": "For the setlist app: the band needs the setlist to update live on everyone's phone during rehearsal. We rehearse Thursdays and someone always reorders songs mid-session. Polling every few seconds or WebSockets?"
+    },
+    {
+      "role": "assistant",
+      "text": "The general comparison: polling is simple and works through any proxy, but each client makes a request every interval whether or not anything changed, so latency equals the interval and server load scales with clients times frequency. WebSockets keep one connection open and push changes the moment they happen, at the cost of connection management: reconnects, heartbeats, and proxies that close idle connections. Server-Sent Events sit between the two: one-directional push over plain HTTP. For a handful of phones in one room, any of them works; the question is how instant you want reorders to feel."
+    },
+    {
+      "role": "user",
+      "text": "WebSockets. I play bass, I have my hands full, if I glance at the phone it has to already be right. Go with ws on the Hono server."
+    },
+    {
+      "role": "assistant",
+      "text": "Implemented: the Hono server exposes /ws, each client subscribes to a setlist id, and a reorder broadcasts the new order to the room. Tested with three browser tabs: a drag in one shows in the others within about 50 ms on the local network."
+    },
+    {
+      "role": "user",
+      "text": "Tested on my iPhone at rehearsal yesterday with the Ulica Cicha guys. Worked for a bit, then my phone stopped getting updates until I reloaded."
+    },
+    {
+      "role": "assistant",
+      "text": "Reproduced on iOS Safari: it silently drops a WebSocket that has been idle for about 30 seconds when the tab is in the background or the screen dims, and the client gets no close event. The fix is a heartbeat: the client now sends a ping every 20 seconds and reconnects with backoff if no pong arrives within 5 seconds. Also re-subscribes to the setlist on reconnect so a missed reorder is fetched. Left the phone locked for 10 minutes and it was current on wake."
+    },
+    { "role": "user", "text": "Perfect. That's the one, ship it before Thursday." }
+  ],
+  "expected": [
+    {
+      "type": "fact",
+      "content": "The user plays bass in a band called Ulica Cicha, which rehearses on Thursdays.",
+      "keywords": ["ulica cicha"]
+    },
+    {
+      "type": "fact",
+      "content": "The setlist app syncs live reorders over WebSockets (a /ws endpoint on the Hono server) rather than polling; the user wants the phone to already be right when they glance at it.",
+      "keywords": ["websocket"]
+    },
+    {
+      "type": "procedure",
+      "content": "iOS Safari silently drops an idle WebSocket after about 30 seconds in the background with no close event; the setlist client pings every 20 seconds, reconnects with backoff after 5 seconds without a pong, and re-subscribes on reconnect.",
+      "keywords": [["20 seconds", "20s", "ping"]]
+    }
+  ]
+}
