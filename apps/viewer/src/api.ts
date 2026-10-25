@@ -25,6 +25,36 @@ export interface Memory {
     headingPath: string | null;
     page: number | null;
   };
+  /** The folder this memory lives in. Null reads as 'uncategorized' (legacy rows). */
+  scopeId?: string | null;
+  /** Display path of the folder ("Projects > memloom"); null when scopeId is null. */
+  scopePath?: string | null;
+  /** Free-form labels, normalized lowercase. */
+  tags?: string[];
+}
+
+/** One folder in the scope registry, as the management calls return it. */
+export interface Scope {
+  id: string;
+  parentId: string | null;
+  name: string;
+  /** Read by the classifier when assigning unscoped saves; shown in the sidebar. */
+  description: string | null;
+  /** 'system' folders (uncategorized, global) cannot be renamed, moved, or deleted. */
+  kind: "user" | "system";
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** The folder tree with per-folder usage, what GET /scopes returns. */
+export interface ScopeNode extends Scope {
+  /** Addressable slug path, e.g. "personal-life/people"; what the scope params take. */
+  path: string;
+  children: ScopeNode[];
+  /** Active memories directly in this folder (not descendants). */
+  memories: number;
+  /** Context documents directly in this folder. */
+  documents: number;
 }
 
 export interface GraphMemory {
@@ -32,6 +62,8 @@ export interface GraphMemory {
   canonical: string | null;
   content: string;
   memoryType: MemoryType;
+  /** The folder this memory lives in; null (or absent, older daemons) reads as 'uncategorized'. */
+  scopeId?: string | null;
 }
 
 export interface Entity {
@@ -259,6 +291,8 @@ export interface GraphDocument {
   id: string;
   title: string;
   path: string;
+  /** The folder this document lives in; null (or absent) reads as 'uncategorized'. */
+  scopeId?: string | null;
 }
 
 /** One diarized voice in a recording, mirrored from the core type. */
@@ -296,6 +330,10 @@ export interface ContextDocument {
   watchable?: boolean;
   /** When its file stopped being findable on disk. The chunks stay regardless. */
   missingAt?: string | null;
+  /** The folder this document lives in. Null reads as 'uncategorized' (legacy rows). */
+  scopeId?: string | null;
+  /** Display path of the folder; null when scopeId is null. */
+  scopePath?: string | null;
 }
 
 /** A linked folder. Files that appear inside it get ingested while it is watched. */
@@ -806,7 +844,28 @@ async function readNdjson<TItem, TDone>(
 
 export const api = {
   graph: () => json<Graph>("/memory/graph"),
-  memories: () => json<{ memories: Memory[] }>("/memory/list").then((r) => r.memories),
+  // `scope` narrows the listing to one folder subtree (browsing semantics: just the
+  // subtree, none of recall's uncategorized/global widening).
+  memories: (scope?: string) =>
+    json<{ memories: Memory[] }>(
+      `/memory/list${scope ? `?scope=${encodeURIComponent(scope)}` : ""}`,
+    ).then((r) => r.memories),
+  // The scope registry: the folder tree with per-folder counts, plus the management calls
+  // behind the sidebar. Folders are the user's to manage (PLAN-memory-scopes.md).
+  scopes: () => json<{ scopes: ScopeNode[] }>("/scopes").then((r) => r.scopes),
+  createScope: (path: string, description?: string) =>
+    post<Scope>("/scopes", { path, ...(description ? { description } : {}) }),
+  updateScope: (id: string, patch: { name?: string; description?: string | null }) =>
+    post<Scope>(`/scopes/${id}/update`, patch),
+  moveScope: (id: string, parentId: string | null) =>
+    post<{ ok: boolean }>(`/scopes/${id}/move`, { parentId }),
+  deleteScope: (id: string) => json<{ ok: boolean }>(`/scopes/${id}`, { method: "DELETE" }),
+  // Bulk move memories into a folder by path. Whole lineages move together, so the moved
+  // count can exceed the number of ids passed.
+  moveMemories: (ids: string[], scope: string) =>
+    post<{ moved: number }>("/memory/scope", { ids, scope }),
+  setDocumentScope: (id: string, scope: string) =>
+    post<{ ok: boolean }>(`/context/documents/${id}/scope`, { scope }),
   documents: () =>
     json<{ documents: ContextDocument[] }>("/context/documents").then((r) => r.documents),
   documentChunks: (id: string) => json<DocumentChunks>(`/context/documents/${id}/chunks`),

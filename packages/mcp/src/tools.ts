@@ -10,6 +10,7 @@ import {
   mediaDurationSeconds,
   PASSAGE_CHARS,
   type ResolveDecision,
+  type ScopeNode,
   supportedExtensions,
 } from "@memloom/core";
 
@@ -18,13 +19,25 @@ import {
 
 export async function saveMemory(
   memloom: MemoryEngine,
-  args: { content: string; canonical?: string; type?: MemoryType },
+  args: { content: string; canonical?: string; type?: MemoryType; scope?: string; tags?: string[] },
 ): Promise<string> {
-  const result = await memloom.save({
-    content: args.content,
-    ...(args.canonical ? { canonical: args.canonical } : {}),
-    ...(args.type ? { memoryType: args.type } : {}),
-  });
+  let result: Awaited<ReturnType<MemoryEngine["save"]>>;
+  try {
+    result = await memloom.save({
+      content: args.content,
+      ...(args.canonical ? { canonical: args.canonical } : {}),
+      ...(args.type ? { memoryType: args.type } : {}),
+      ...(args.scope ? { scope: args.scope } : {}),
+      ...(args.tags ? { tags: args.tags } : {}),
+    });
+  } catch (err) {
+    // An unknown folder is an answer, not a tool failure: the agent should pick an existing
+    // one (folders are created by the user, never by a save) or drop the scope.
+    if (/unknown scope/.test(err instanceof Error ? err.message : "")) {
+      return `${failureMessage(err)} Call list_scopes for the folder tree, pick an existing one, or omit scope to save into 'uncategorized'.`;
+    }
+    throw err;
+  }
   if (result.outcome === "conflict") {
     return `Saved (id ${result.id}), but it CONTRADICTS an existing memory. Both are kept; the user should resolve conflict ${result.conflictId} (keep new / keep existing / keep both / merge).`;
   }
@@ -36,10 +49,26 @@ export async function saveMemory(
 
 export async function recallMemory(
   memloom: MemoryEngine,
-  args: { query: string; limit?: number },
+  args: { query: string; limit?: number; scope?: string; tags?: string[] },
 ): Promise<string> {
-  const results = await memloom.recall(args.query, { limit: args.limit ?? 10 });
-  if (results.length === 0) return "No memories found.";
+  let results: Awaited<ReturnType<MemoryEngine["recall"]>>;
+  try {
+    results = await memloom.recall(args.query, {
+      limit: args.limit ?? 10,
+      ...(args.scope ? { scope: args.scope } : {}),
+      ...(args.tags ? { tags: args.tags } : {}),
+    });
+  } catch (err) {
+    if (/unknown scope/.test(err instanceof Error ? err.message : "")) {
+      return `${failureMessage(err)} Call list_scopes for the folder tree, or pass scope "*" to search everything.`;
+    }
+    throw err;
+  }
+  if (results.length === 0) {
+    return args.scope && args.scope !== "*"
+      ? `No memories found in scope "${args.scope}" (searched that folder plus 'uncategorized' and 'global'). Retry with scope "*" if the question may live elsewhere.`
+      : "No memories found.";
+  }
   return results
     .map((m) => {
       // Title: the canonical form when the memory has one, else the content's first words.
@@ -69,6 +98,9 @@ export async function recallMemory(
           .join(" ");
         lines.push(where);
       }
+      // Where the row is filed, so a cross-scope hit is visible as one.
+      if (m.scopePath) lines.push(`- scope ${m.scopePath}`);
+      if (m.tags?.length) lines.push(`- tags ${m.tags.join(", ")}`);
       // Every hit surfaces its id: memory_history looks up how a memory changed, and
       // read_passage fetches a truncated hit's full text (memories AND chunks).
       lines.push(`- id ${m.id}${!m.source && m.version > 1 ? ` (v${m.version})` : ""}`);
@@ -154,10 +186,19 @@ function describeIngest(result: ContextAddResult, source: string): string {
  * Save a web page as a context document. memloom fetches and parses it in the daemon, so
  * nothing about the page reaches a third party.
  */
-export async function addLink(memloom: MemoryEngine, args: { url: string }): Promise<string> {
+export async function addLink(
+  memloom: MemoryEngine,
+  args: { url: string; scope?: string },
+): Promise<string> {
   try {
-    return describeIngest(await memloom.contextAddUrl({ url: args.url }), args.url);
+    return describeIngest(
+      await memloom.contextAddUrl({ url: args.url, ...(args.scope ? { scope: args.scope } : {}) }),
+      args.url,
+    );
   } catch (err) {
+    if (/unknown scope/.test(err instanceof Error ? err.message : "")) {
+      return `${failureMessage(err)} Call list_scopes for the folder tree, or omit scope.`;
+    }
     // Extraction failures are the caller's to act on (the page renders in a browser, it is a
     // PDF, the site refused us), so they are answered rather than thrown: an agent should
     // relay the reason and move on instead of retrying the same URL. Extraction is the only
@@ -174,7 +215,7 @@ export async function addLink(memloom: MemoryEngine, args: { url: string }): Pro
  */
 export async function addFile(
   memloom: MemoryEngine,
-  args: { path: string },
+  args: { path: string; scope?: string },
   deps: AddFileDeps = {},
 ): Promise<string> {
   const path = resolve(args.path);
@@ -205,8 +246,14 @@ export async function addFile(
   }
 
   try {
-    return describeIngest(await memloom.contextAdd({ path }), path);
+    return describeIngest(
+      await memloom.contextAdd({ path, ...(args.scope ? { scope: args.scope } : {}) }),
+      path,
+    );
   } catch (err) {
+    if (/unknown scope/.test(err instanceof Error ? err.message : "")) {
+      return `${failureMessage(err)} Call list_scopes for the folder tree, or omit scope.`;
+    }
     // A missing speech model, a missing ffmpeg or a file ffmpeg cannot read all carry their
     // own fix in the message, so they are relayed rather than thrown as a tool failure.
     const code = failureCode(err);
@@ -442,4 +489,35 @@ export async function deleteSchemaEntry(
   }
   await memloom.deleteSchemaEntry(entry.id);
   return `Deleted ${args.kind} "${entry.name}" from the vocabulary. Entities already extracted under it stay in the graph.`;
+}
+
+/**
+ * The folder tree, rendered so an agent can copy a valid `scope` string straight out of
+ * the answer: every line leads with the slug path, which IS the addressable form.
+ */
+export async function listScopes(memloom: MemoryEngine): Promise<string> {
+  const tree = await memloom.listScopes();
+  if (tree.length === 0) return "No folders yet. The user creates them: memloom scopes add <path>.";
+  const lines: string[] = [];
+  const render = (nodes: ScopeNode[], depth: number): void => {
+    for (const node of nodes) {
+      const counts = [
+        node.memories > 0 ? `${node.memories} memories` : "",
+        node.documents > 0 ? `${node.documents} documents` : "",
+      ]
+        .filter(Boolean)
+        .join(", ");
+      lines.push(
+        `${"  ".repeat(depth)}${node.path}${node.kind === "system" ? " [system]" : ""}` +
+          `${counts ? ` (${counts})` : ""}${node.description ? ` - ${node.description}` : ""}`,
+      );
+      render(node.children, depth + 1);
+    }
+  };
+  render(tree, 0);
+  lines.push(
+    "",
+    "Pass one of these paths as `scope`. A scoped recall also searches 'uncategorized' and 'global'; \"*\" searches everything.",
+  );
+  return lines.join("\n");
 }

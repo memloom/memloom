@@ -44,6 +44,9 @@ import type {
   ResolvedConflict,
   SaveInput,
   SaveResult,
+  Scope,
+  ScopeBackfillReport,
+  ScopeNode,
   UpdateInput,
   UpdateResult,
 } from "./types.js";
@@ -136,9 +139,13 @@ export class HttpMemloomClient implements MemoryEngine {
     return this.#post<SaveResult>("/memory/save", body);
   }
 
-  async memories(ownerId?: string): Promise<Memory[]> {
+  async memories(ownerId?: string, opts?: { scope?: string; tags?: string[] }): Promise<Memory[]> {
     this.#owned(ownerId);
-    const { memories } = await this.#json<{ memories: Memory[] }>("/memory/list");
+    const params = new URLSearchParams();
+    if (opts?.scope) params.set("scope", opts.scope);
+    if (opts?.tags?.length) params.set("tags", opts.tags.join(","));
+    const qs = params.size > 0 ? `?${params}` : "";
+    const { memories } = await this.#json<{ memories: Memory[] }>(`/memory/list${qs}`);
     return memories;
   }
 
@@ -147,8 +154,59 @@ export class HttpMemloomClient implements MemoryEngine {
     const { memories } = await this.#post<{ memories: Memory[] }>("/memory/query", {
       query,
       limit: opts?.limit,
+      scope: opts?.scope,
+      tags: opts?.tags,
     });
     return memories;
+  }
+
+  async listScopes(ownerId?: string): Promise<ScopeNode[]> {
+    this.#owned(ownerId);
+    const { scopes } = await this.#json<{ scopes: ScopeNode[] }>("/scopes");
+    return scopes;
+  }
+
+  createScope(path: string, opts: { ownerId?: string; description?: string } = {}): Promise<Scope> {
+    this.#owned(opts.ownerId);
+    return this.#post<Scope>("/scopes", { path, description: opts.description });
+  }
+
+  updateScope(
+    scopeId: string,
+    changes: { name?: string; description?: string | null },
+    ownerId?: string,
+  ): Promise<Scope> {
+    this.#owned(ownerId);
+    return this.#post<Scope>(`/scopes/${scopeId}/update`, changes);
+  }
+
+  async moveScope(scopeId: string, newParentId: string | null, ownerId?: string): Promise<void> {
+    this.#owned(ownerId);
+    await this.#post(`/scopes/${scopeId}/move`, { parentId: newParentId });
+  }
+
+  async deleteScope(scopeId: string, ownerId?: string): Promise<void> {
+    this.#owned(ownerId);
+    await this.#json(`/scopes/${scopeId}`, { method: "DELETE" });
+  }
+
+  async setMemoryScopes(memoryIds: string[], scope: string, ownerId?: string): Promise<number> {
+    this.#owned(ownerId);
+    const { moved } = await this.#post<{ moved: number }>("/memory/scope", {
+      ids: memoryIds,
+      scope,
+    });
+    return moved;
+  }
+
+  async setDocumentScope(documentId: string, scope: string, ownerId?: string): Promise<void> {
+    this.#owned(ownerId);
+    await this.#post(`/context/documents/${documentId}/scope`, { scope });
+  }
+
+  backfillScopes(opts: { dryRun?: boolean; ownerId?: string } = {}): Promise<ScopeBackfillReport> {
+    this.#owned(opts.ownerId);
+    return this.#post<ScopeBackfillReport>("/scopes/backfill", { dryRun: opts.dryRun ?? false });
   }
 
   update(input: UpdateInput): Promise<UpdateResult> {

@@ -111,8 +111,10 @@ export {
   chunkUnits,
   claudeProjectsDir,
   discoverSessions,
+  encodedProjectDirOf,
   hashPrefix,
   parseSession,
+  projectNameOf,
   QUIET_MS,
 } from "./claude-sessions.js";
 // Speaker diarization (pyannote segmentation + WeSpeaker embeddings under sherpa-onnx, local)
@@ -327,6 +329,42 @@ export {
   PREDICATES,
   PROPOSAL_MIN_OCCURRENCES,
 } from "./schema.js";
+// The scope classification pass: prompt + parser, pure. The pass itself runs inside the
+// engine's index run.
+export type {
+  ScopeAssignment,
+  ScopeClassifyItem,
+  ScopeFolderOption,
+} from "./scope-classify.js";
+export {
+  buildScopeClassifyPrompt,
+  MIN_SCOPE_CONFIDENCE,
+  parseScopeClassification,
+  SCOPE_CLASSIFY_BATCH,
+} from "./scope-classify.js";
+// The scope registry: folder path parsing, tag normalization, subtree expansion. The pure
+// helpers; the engine methods (listScopes, createScope, ...) live on Memloom.
+export type { ScopeFilter } from "./scopes.js";
+export {
+  buildScopeTree,
+  ensureScopePath,
+  ensureSystemScopes,
+  expandScopeSelector,
+  GLOBAL_SCOPE,
+  MAX_SCOPE_DEPTH,
+  MAX_TAG_LENGTH,
+  MAX_TAGS,
+  normalizeTags,
+  parseScopePath,
+  resolveScopePath,
+  SCOPE_ALL,
+  scopeDisplayPath,
+  scopeSlug,
+  scopeSlugPath,
+  subtreeIds,
+  UNCATEGORIZED,
+  wouldCycle,
+} from "./scopes.js";
 export type { FileStability, StabilityOptions } from "./stability.js";
 export { waitUntilStable } from "./stability.js";
 export type { StorageAdapter } from "./storage.js";
@@ -421,6 +459,9 @@ export type {
   SaveInput,
   SaveOutcome,
   SaveResult,
+  Scope,
+  ScopeBackfillReport,
+  ScopeNode,
   SpeakerRoster,
   SyncTargets,
   UpdateInput,

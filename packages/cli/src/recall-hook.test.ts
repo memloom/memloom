@@ -6,6 +6,7 @@ import {
   formatRecallBlock,
   HIT_CHARS,
   parsePromptPayload,
+  projectScopeOf,
   promptRecall,
   RECALL_LIMIT,
   shouldSkipPrompt,
@@ -41,14 +42,42 @@ function okFetch(memories: Memory[]) {
 }
 
 describe("parsePromptPayload", () => {
-  it("extracts the prompt", () => {
-    expect(parsePromptPayload('{"prompt":"hello","cwd":"/x"}')).toBe("hello");
+  it("extracts the prompt and the working directory", () => {
+    expect(parsePromptPayload('{"prompt":"hello","cwd":"/x"}')).toEqual({
+      prompt: "hello",
+      cwd: "/x",
+    });
+  });
+
+  it("keeps the prompt when cwd is missing or unusable", () => {
+    expect(parsePromptPayload('{"prompt":"hello"}')).toEqual({ prompt: "hello", cwd: null });
+    expect(parsePromptPayload('{"prompt":"hello","cwd":42}')).toEqual({
+      prompt: "hello",
+      cwd: null,
+    });
+    expect(parsePromptPayload('{"prompt":"hello","cwd":"  "}')).toEqual({
+      prompt: "hello",
+      cwd: null,
+    });
   });
 
   it("returns null on invalid JSON or a missing prompt", () => {
     expect(parsePromptPayload("{ nope")).toBeNull();
     expect(parsePromptPayload('{"cwd":"/x"}')).toBeNull();
     expect(parsePromptPayload('{"prompt":42}')).toBeNull();
+  });
+});
+
+describe("projectScopeOf", () => {
+  it("derives projects/<basename> from either separator style", () => {
+    expect(projectScopeOf("D:\\Kostek\\Projects\\memloom")).toBe("projects/memloom");
+    expect(projectScopeOf("/home/k/projects/Widget Factory")).toBe("projects/widget-factory");
+  });
+
+  it("yields nothing for missing directories and drive roots", () => {
+    expect(projectScopeOf(null)).toBeUndefined();
+    expect(projectScopeOf("D:\\")).toBeUndefined();
+    expect(projectScopeOf("/")).toBeUndefined();
   });
 });
 
@@ -124,6 +153,56 @@ describe("fetchRecall", () => {
     expect(JSON.parse(init.body as string)).toEqual({ query: "staging db", limit: RECALL_LIMIT });
   });
 
+  it("passes the scope through in the body", async () => {
+    const fetchMock = okFetch([memory()]);
+    vi.stubGlobal("fetch", fetchMock);
+    await fetchRecall("staging db", undefined, "projects/memloom");
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string)).toEqual({
+      query: "staging db",
+      limit: RECALL_LIMIT,
+      scope: "projects/memloom",
+    });
+  });
+
+  it("retries a 400 once without the scope so an unknown folder never silences recall", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 400 })
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ memories: [memory()] }) });
+    vi.stubGlobal("fetch", fetchMock);
+    const result = await fetchRecall("staging db", undefined, "projects/brand-new");
+    expect(result).toHaveLength(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const second = fetchMock.mock.calls[1] as unknown as [string, RequestInit];
+    expect(JSON.parse(second[1].body as string)).toEqual({
+      query: "staging db",
+      limit: RECALL_LIMIT,
+    });
+  });
+
+  it("stays null when the unscoped retry fails too", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({ ok: false, status: 400 })
+      .mockResolvedValueOnce({ ok: false, status: 503 });
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await fetchRecall("q", undefined, "projects/x")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("never retries a non-400 failure or an unscoped 400", async () => {
+    const fetchMock = vi.fn(async () => ({ ok: false, status: 503 }));
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await fetchRecall("q", undefined, "projects/x")).toBeNull();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    const badRequest = vi.fn(async () => ({ ok: false, status: 400 }));
+    vi.stubGlobal("fetch", badRequest);
+    expect(await fetchRecall("q")).toBeNull();
+    expect(badRequest).toHaveBeenCalledTimes(1);
+  });
+
   it("returns null on a non-ok response (503 store lock) and on network failure", async () => {
     vi.stubGlobal(
       "fetch",
@@ -147,6 +226,17 @@ describe("promptRecall", () => {
     vi.stubGlobal("fetch", okFetch([memory()]));
     const out = await promptRecall(stdin('{"prompt":"what runs the staging db?"}'));
     expect(out).toContain("[fact] the staging database runs on Postgres");
+  });
+
+  it("scopes the query to the payload's project directory", async () => {
+    const fetchMock = okFetch([memory()]);
+    vi.stubGlobal("fetch", fetchMock);
+    const out = await promptRecall(
+      stdin('{"prompt":"what runs the staging db?","cwd":"D:\\\\Kostek\\\\Projects\\\\memloom"}'),
+    );
+    expect(out).toContain("[fact]");
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(init.body as string).scope).toBe("projects/memloom");
   });
 
   it("never queries for skipped prompts", async () => {

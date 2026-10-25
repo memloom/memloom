@@ -92,7 +92,7 @@ describe("cli router", () => {
 
   it("context subcommands missing their argument explain themselves and never run", async () => {
     await expect(run(["context", "add"])).rejects.toThrow(
-      /usage: memloom context add <path-or-url\.\.\.>/,
+      /usage: memloom context add \[--scope <path>\] <path-or-url\.\.\.>/,
     );
     await expect(run(["context", "remove"])).rejects.toThrow(
       /usage: memloom context remove <document-id>/,

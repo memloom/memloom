@@ -336,11 +336,45 @@ const saveSchema = z.object({
   canonical: z.string().optional(),
   memoryType: z.enum(MEMORY_TYPES).optional(),
   ownerId: z.string().uuid().optional(),
+  scope: z.string().min(1).optional(),
+  tags: z.array(z.string()).optional(),
 });
 
 const querySchema = z.object({
   query: z.string().min(1, "query must be a non-empty string"),
   limit: z.number().int().positive().optional(),
+  scope: z.string().min(1).optional(),
+  tags: z.array(z.string()).optional(),
+});
+
+// The scope registry (PLAN-memory-scopes.md): folders the user manages. Paths resolve
+// case-insensitively by slug; creation makes missing parents.
+const scopeCreateSchema = z.object({
+  path: z.string().min(1, "path must be a non-empty string"),
+  description: z.string().optional(),
+  ownerId: z.string().uuid().optional(),
+});
+
+const scopeUpdateSchema = z.object({
+  name: z.string().min(1).optional(),
+  description: z.string().nullable().optional(),
+});
+
+const scopeMoveSchema = z.object({
+  parentId: z.string().uuid().nullable(),
+});
+
+const memoryScopeSchema = z.object({
+  ids: z.array(z.string().uuid()).min(1, "ids must name at least one memory"),
+  scope: z.string().min(1, "scope must be a non-empty string"),
+});
+
+const documentScopeSchema = z.object({
+  scope: z.string().min(1, "scope must be a non-empty string"),
+});
+
+const scopeBackfillSchema = z.object({
+  dryRun: z.boolean().optional(),
 });
 
 const updateSchema = z.object({
@@ -351,6 +385,7 @@ const updateSchema = z.object({
 const contextAddSchema = z.object({
   path: z.string().min(1, "path must be a non-empty string"),
   ownerId: z.string().uuid().optional(),
+  scope: z.string().min(1).optional(),
 });
 
 // The html field is capped well under the page fetcher own 10 MB limit: a rendered DOM
@@ -359,6 +394,7 @@ const contextUrlSchema = z.object({
   url: z.string().refine(isHttpUrl, "url must start with http:// or https://"),
   html: z.string().max(10_000_000).optional(),
   ownerId: z.string().uuid().optional(),
+  scope: z.string().min(1).optional(),
 });
 
 const audioSelectSchema = z.object({
@@ -802,22 +838,142 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   app.post("/memory/save", async (c) => {
     const body = await parseBody(c, saveSchema);
     if (!body.ok) return body.res;
-    // parseBody has already refused a body owner that disagrees with the header, so either
-    // one is the answer when both are there.
-    return c.json(await memloom.save({ ...body.data, ownerId: body.data.ownerId ?? ownerOf(c) }));
+    try {
+      // parseBody has already refused a body owner that disagrees with the header, so either
+      // one is the answer when both are there.
+      return c.json(await memloom.save({ ...body.data, ownerId: body.data.ownerId ?? ownerOf(c) }));
+    } catch (err) {
+      // An unknown scope or an over-limit tag is the caller's mistake, not a server fault.
+      const message = err instanceof Error ? err.message : String(err);
+      if (/^memloom: (unknown scope|tag longer than|more than \d+ tags)/.test(message))
+        return c.json({ error: message }, 400);
+      throw err;
+    }
   });
 
-  // Browsing counterpart to /memory/query: all active memories, newest first.
-  app.get("/memory/list", async (c) => c.json({ memories: await memloom.memories(ownerOf(c)) }));
+  // Browsing counterpart to /memory/query: all active memories, newest first. `scope`
+  // narrows to one folder subtree (browsing semantics: just the subtree), `tags` any-match.
+  app.get("/memory/list", async (c) => {
+    const scope = c.req.query("scope");
+    const tagsRaw = c.req.query("tags");
+    const tags = tagsRaw ? tagsRaw.split(",").filter((t) => t.length > 0) : undefined;
+    try {
+      return c.json({
+        memories: await memloom.memories(ownerOf(c), {
+          ...(scope ? { scope } : {}),
+          ...(tags ? { tags } : {}),
+        }),
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/unknown scope/.test(message)) return c.json({ error: message }, 400);
+      throw err;
+    }
+  });
 
   app.post("/memory/query", async (c) => {
     const body = await parseBody(c, querySchema);
     if (!body.ok) return body.res;
-    const memories = await memloom.recall(body.data.query, {
-      limit: body.data.limit,
-      ownerId: ownerOf(c),
-    });
-    return c.json({ memories });
+    try {
+      const memories = await memloom.recall(body.data.query, {
+        limit: body.data.limit,
+        scope: body.data.scope,
+        tags: body.data.tags,
+        ownerId: ownerOf(c),
+      });
+      return c.json({ memories });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      if (/^memloom: (unknown scope|tag longer than|more than \d+ tags)/.test(message))
+        return c.json({ error: message }, 400);
+      throw err;
+    }
+  });
+
+  // The scope registry (PLAN-memory-scopes.md). Folders are the user's to manage: these
+  // routes are what the CLI and the viewer drive; agent surfaces only ever read.
+  app.get("/scopes", async (c) => c.json({ scopes: await memloom.listScopes(ownerOf(c)) }));
+
+  app.post("/scopes", async (c) => {
+    const body = await parseBody(c, scopeCreateSchema);
+    if (!body.ok) return body.res;
+    try {
+      return c.json(
+        await memloom.createScope(body.data.path, {
+          ownerId: body.data.ownerId ?? ownerOf(c),
+          ...(body.data.description !== undefined ? { description: body.data.description } : {}),
+        }),
+      );
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+    }
+  });
+
+  app.post("/scopes/:id/update", async (c) => {
+    const body = await parseBody(c, scopeUpdateSchema);
+    if (!body.ok) return body.res;
+    try {
+      return c.json(await memloom.updateScope(c.req.param("id"), body.data, ownerOf(c)));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no scope/.test(message) ? 404 : 400);
+    }
+  });
+
+  app.post("/scopes/:id/move", async (c) => {
+    const body = await parseBody(c, scopeMoveSchema);
+    if (!body.ok) return body.res;
+    try {
+      await memloom.moveScope(c.req.param("id"), body.data.parentId, ownerOf(c));
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no scope/.test(message) ? 404 : 400);
+    }
+  });
+
+  app.delete("/scopes/:id", async (c) => {
+    try {
+      await memloom.deleteScope(c.req.param("id"), ownerOf(c));
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no scope/.test(message) ? 404 : 400);
+    }
+  });
+
+  // The mechanical backfill: provenance-bearing memories into their project folders.
+  // Deterministic and model-free, so it answers synchronously; the LLM remainder rides
+  // the index run instead (POST /memory/index).
+  app.post("/scopes/backfill", async (c) => {
+    const body = await parseBody(c, scopeBackfillSchema);
+    if (!body.ok) return body.res;
+    return c.json(await memloom.backfillScopes({ dryRun: body.data.dryRun, ownerId: ownerOf(c) }));
+  });
+
+  // Bulk move: whole lineages land in the target folder. The viewer multi-select.
+  app.post("/memory/scope", async (c) => {
+    const body = await parseBody(c, memoryScopeSchema);
+    if (!body.ok) return body.res;
+    try {
+      return c.json({
+        moved: await memloom.setMemoryScopes(body.data.ids, body.data.scope, ownerOf(c)),
+      });
+    } catch (err) {
+      return c.json({ error: err instanceof Error ? err.message : String(err) }, 400);
+    }
+  });
+
+  app.post("/context/documents/:id/scope", async (c) => {
+    const body = await parseBody(c, documentScopeSchema);
+    if (!body.ok) return body.res;
+    try {
+      await memloom.setDocumentScope(c.req.param("id"), body.data.scope, ownerOf(c));
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no document/.test(message) ? 404 : 400);
+    }
   });
 
   app.post("/memory/:id/update", async (c) => {
@@ -1776,7 +1932,11 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     if (!info) return c.json({ error: `no such file or directory: ${target}` }, 400);
     if (!info.isDirectory()) {
       try {
-        const result = await memloom.contextAdd({ path: target, ownerId: owner });
+        const result = await memloom.contextAdd({
+          path: target,
+          ownerId: owner,
+          ...(body.data.scope ? { scope: body.data.scope } : {}),
+        });
         syncChanged(owner);
         return c.json(result);
       } catch (err) {
@@ -1812,7 +1972,11 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     const errors: string[] = [];
     for (const file of files) {
       try {
-        const r = await memloom.contextAdd({ path: file, ownerId: owner });
+        const r = await memloom.contextAdd({
+          path: file,
+          ownerId: owner,
+          ...(body.data.scope ? { scope: body.data.scope } : {}),
+        });
         chunks += r.chunks;
         absorbed += r.absorbed ?? 0;
         if (r.outcome === "unchanged") unchanged += 1;

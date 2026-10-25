@@ -36,6 +36,61 @@ export interface Memory {
   kind?: "memory" | "context";
   /** Where a context chunk came from; surfaces show this so provenance is always clear. */
   source?: RecallSource;
+  /** The folder this row lives in. Null reads as 'uncategorized' (legacy rows). */
+  scopeId: string | null;
+  /** Display path of the folder ("Personal life > People"); null when scopeId is null. */
+  scopePath: string | null;
+  /** Free-form labels, normalized lowercase. Chunks have none (always empty). */
+  tags: string[];
+}
+
+/** One folder in the scope registry. See PLAN-memory-scopes.md. */
+export interface Scope {
+  id: string;
+  ownerId: string;
+  parentId: string | null;
+  name: string;
+  /** Read by the classifier when assigning unscoped saves; shown in the viewer. */
+  description: string | null;
+  /** 'system' folders (uncategorized, global) cannot be renamed, moved, or deleted. */
+  kind: "user" | "system";
+  createdAt: string;
+  updatedAt: string;
+}
+
+/**
+ * What one backfill pass did (or would do, on a dry run): the mechanical filing of
+ * provenance-bearing memories into their project folders. The LLM remainder is not in
+ * here; it rides the index run's classification pass.
+ */
+export interface ScopeBackfillReport {
+  dryRun: boolean;
+  /** Lineages moved (rows can exceed this: every version of a belief moves with it). */
+  moved: number;
+  /** Rows updated across all moved lineages. Zero on a dry run. */
+  rows: number;
+  /** Lineage counts per target folder path, alphabetical. */
+  perFolder: Record<string, number>;
+  /**
+   * Provenance-bearing memories left alone because their belief already sits in a real
+   * folder: a filing the user (or an earlier pass) made, which mechanics never override.
+   */
+  alreadyFiled: number;
+  /** Provenance rows whose path names no project (Copilot's global folder). */
+  unmappable: number;
+  /** Unfiled memories with no provenance at all: the classifier's queue after this pass. */
+  remaining: number;
+}
+
+/** The scope tree with per-folder usage, what listScopes returns. */
+export interface ScopeNode extends Scope {
+  /** Addressable slug path, e.g. "personal-life/people". */
+  path: string;
+  children: ScopeNode[];
+  /** Active memories directly in this folder (not descendants). */
+  memories: number;
+  /** Context documents directly in this folder. */
+  documents: number;
 }
 
 export interface RecallSource {
@@ -54,6 +109,14 @@ export interface SaveInput {
   memoryType?: MemoryType;
   /** Defaults to the fixed sentinel owner in the embedded (single-user) tier. */
   ownerId?: string;
+  /**
+   * Folder path ("personal-life/people"). Resolved strictly: an unknown path throws, because
+   * agents must not invent folders. Omitted: the save lands in 'uncategorized' and the
+   * background classification pass assigns a folder later.
+   */
+  scope?: string;
+  /** Free-form labels; normalized (trimmed, lowercased, deduped) before storage. */
+  tags?: string[];
   /**
    * Transcript context, set by the session import: lets a flagged contradiction be judged
    * at save time with evidence the dedup classifier alone lacks. Absent on manual saves,
@@ -119,6 +182,14 @@ export interface RecallOptions {
    * searched; a chat's attachments are visible only to its own recalls.
    */
   sessionId?: string;
+  /**
+   * Folder selector. A path searches that subtree PLUS 'uncategorized' (rows awaiting
+   * classification must not vanish) PLUS 'global' (cross-cutting preferences fire
+   * everywhere). "*" or omitted searches everything. Unknown paths throw.
+   */
+  scope?: string;
+  /** Any-match tag filter. Memory-only: chunks carry no tags, so this excludes them. */
+  tags?: string[];
 }
 
 export interface ConflictCandidate {
@@ -296,6 +367,8 @@ export interface GraphMemory {
   canonical: string | null;
   content: string;
   memoryType: MemoryType;
+  /** The folder this memory lives in; null reads as 'uncategorized'. The viewer's folder filter. */
+  scopeId: string | null;
 }
 
 // A context document as a graph node. Documents, not chunks, are the display granularity:
@@ -304,6 +377,8 @@ export interface GraphDocument {
   id: string;
   title: string;
   path: string;
+  /** The folder this document lives in; null reads as 'uncategorized'. Chunks share it. */
+  scopeId: string | null;
 }
 
 export interface GraphEdge {
@@ -488,11 +563,18 @@ export interface ContextAddInput {
   /** Absolute path to a .md, .txt, or .pdf file on the daemon's machine. */
   path: string;
   ownerId?: string;
+  /**
+   * Folder path for the document and its chunks. Resolved strictly (unknown throws).
+   * Omitted: a new document lands in 'uncategorized'; a re-ingested one keeps its folder.
+   */
+  scope?: string;
 }
 
 export interface ContextAddUrlInput {
   /** http(s) URL. Stored normalized (tracking params and fragment stripped) as the path. */
   url: string;
+  /** Folder path, same semantics as ContextAddInput.scope. */
+  scope?: string;
   /**
    * Rendered HTML from a caller that already loaded the page, so the daemon skips the
    * fetch. This is how a browser extension saves a single-page app or a page behind a
@@ -562,6 +644,10 @@ export interface ContextDocument {
   kind: string;
   chunkCount: number;
   updatedAt: string;
+  /** The folder this document lives in. Null reads as 'uncategorized' (legacy rows). */
+  scopeId: string | null;
+  /** Display path of the folder ("Projects > memloom"); null when scopeId is null. */
+  scopePath: string | null;
   /** Present on diarized recordings; absent on text documents and pre-diarization ingests. */
   speakers?: SpeakerRoster | null;
   /**

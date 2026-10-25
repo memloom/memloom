@@ -25,6 +25,9 @@ function memory(id: string, content: string): Memory {
     version: 1,
     assertedAt: "",
     createdAt: "",
+    scopeId: null,
+    scopePath: null,
+    tags: [],
     kind: "memory",
   };
 }

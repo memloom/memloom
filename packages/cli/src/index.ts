@@ -10,7 +10,9 @@ import {
   type Memory,
   type MemoryType,
   type PossibleContradiction,
+  parseScopePath,
   type ReconcileReport,
+  type ScopeNode,
   supportedExtensions,
 } from "@memloom/core";
 import { runAgentMemoryImport } from "./agent-memory.js";
@@ -47,6 +49,31 @@ function formatClock(seconds: number): string {
   const s = total % 60;
   const mm = h > 0 ? String(m).padStart(2, "0") : String(m);
   return `${h > 0 ? `${h}:` : ""}${mm}:${String(s).padStart(2, "0")}`;
+}
+
+/**
+ * Pull one `--name value` / `--name=value` flag out of a word list, mutating it. Returns
+ * undefined when the flag is absent; throws when it is present without a value.
+ */
+function takeFlag(words: string[], name: string): string | undefined {
+  const at = words.findIndex((w) => w === `--${name}` || w.startsWith(`--${name}=`));
+  if (at === -1) return undefined;
+  const flag = words[at] ?? "";
+  const value = flag.includes("=") ? flag.slice(flag.indexOf("=") + 1) : words[at + 1];
+  words.splice(at, flag.includes("=") ? 1 : 2);
+  if (!value) throw new Error(`--${name} needs a value`);
+  return value;
+}
+
+/** "--tags a,b,c" to ["a", "b", "c"]; undefined stays undefined. */
+function takeTags(words: string[]): string[] | undefined {
+  const raw = takeFlag(words, "tags");
+  if (raw === undefined) return undefined;
+  const tags = raw
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+  return tags.length > 0 ? tags : undefined;
 }
 
 /** "from setup.md › Guide > Postgres (p. 3)" for context-chunk recall results. */
@@ -248,8 +275,10 @@ Usage: memloom <command> [args]
   stop                 stop the running daemon gracefully (releases the store cleanly)
   ui                   open the viewer (graph, conflicts, console) in your browser
   init                 ensure the daemon is running and the store is ready
-  save <text...>       save a memory (--type fact|preference|episode|procedure)
-  recall <text...>     recall memories AND context by meaning
+  save <text...>       save a memory (--type fact|preference|episode|procedure,
+                       --scope <folder-path>, --tags a,b)
+  recall <text...>     recall memories AND context by meaning (--scope <path>|"*"
+                       searches one folder subtree + uncategorized + global; --tags a,b)
   update <id> <text>   edit a memory into a new version (keeps the old one in history)
   history <id>         show a memory's full version chain (newest first)
   index [--rebuild]    extract entities from unindexed memories and context chunks;
@@ -281,6 +310,24 @@ Usage: memloom <command> [args]
   context watch <path> keep a linked folder or file in step with disk
   context unwatch <path>
                        stop syncing one (its chunks stay)
+  scopes               show the folder tree with per-folder counts
+  scopes add <path>    create a folder ("personal-life/people"); parents are created too
+                       (--description <text> is read by the classifier)
+  scopes rename <path|id> <new name>
+  scopes describe <path|id> <text>
+                       set the description the classifier files by
+  scopes move <path|id> <new-parent-path|/>
+                       re-parent a folder; / moves it to the top level
+  scopes rm <path|id>  delete an EMPTY folder
+  scopes set <path> <memory-id...>
+                       move memories (whole version chains) into a folder
+  scopes set-doc <path> <document-id>
+                       move a context document and its chunks into a folder
+  scopes backfill      file provenance-bearing memories into projects/<name> mechanically,
+                       then classify the rest with the LLM (--dry-run first; --no-llm to
+                       skip the classification run)
+  scopes review [path] list what sits in a folder (default: uncategorized), ids included,
+                       so misfiled memories can be fixed with scopes set
   audio models         the speech models you can transcribe with, and their sizes
   audio setup [id]     download a speech model, once per machine (default: 465 MB)
   audio use <id>       transcribe with a different model from now on
@@ -707,10 +754,19 @@ export async function run(argv: readonly string[]): Promise<void> {
         }
         memoryType = value as MemoryType;
       }
+      const scope = takeFlag(words, "scope");
+      const tags = takeTags(words);
       const content = words.join(" ").trim();
-      if (!content) throw new Error("usage: memloom save [--type <type>] <text>");
+      if (!content) {
+        throw new Error("usage: memloom save [--type <type>] [--scope <path>] [--tags a,b] <text>");
+      }
       const engine = await connect();
-      const result = await engine.save({ content, ...(memoryType ? { memoryType } : {}) });
+      const result = await engine.save({
+        content,
+        ...(memoryType ? { memoryType } : {}),
+        ...(scope ? { scope } : {}),
+        ...(tags ? { tags } : {}),
+      });
       const extra = result.version
         ? `  v${result.version}`
         : result.conflictId
@@ -721,15 +777,28 @@ export async function run(argv: readonly string[]): Promise<void> {
     }
 
     case "recall": {
-      const query = rest.join(" ").trim();
-      if (!query) throw new Error("usage: memloom recall <text>");
+      const words = [...rest];
+      const scope = takeFlag(words, "scope");
+      const tags = takeTags(words);
+      const query = words.join(" ").trim();
+      if (!query) throw new Error("usage: memloom recall [--scope <path>|*] [--tags a,b] <text>");
       const engine = await connect();
-      const results = await engine.recall(query);
+      const results = await engine.recall(query, {
+        ...(scope ? { scope } : {}),
+        ...(tags ? { tags } : {}),
+      });
       if (results.length === 0) console.log("(no memories)");
       for (const m of results) {
         console.log(`[sim ${(m.similarity ?? 0).toFixed(2)}]  ${m.content}`);
         const source = describeSource(m);
         if (source) console.log(`            ${source}`);
+        const filing = [
+          m.scopePath ? `in ${m.scopePath}` : "",
+          m.tags?.length ? `#${m.tags.join(" #")}` : "",
+        ]
+          .filter(Boolean)
+          .join("  ");
+        if (filing) console.log(`            ${filing}`);
       }
       return;
     }
@@ -757,6 +826,182 @@ export async function run(argv: readonly string[]): Promise<void> {
       return;
     }
 
+    case "scopes": {
+      const [sub, ...args] = rest;
+      const engine = await connect();
+
+      const flatten = (nodes: ScopeNode[]): ScopeNode[] =>
+        nodes.flatMap((n) => [n, ...flatten(n.children)]);
+
+      // A folder argument is a path ("personal-life/people", any casing) or a raw id.
+      const findScope = async (ref: string): Promise<ScopeNode> => {
+        const all = flatten(await engine.listScopes());
+        const byId = all.find((n) => n.id === ref);
+        if (byId) return byId;
+        const slug = parseScopePath(ref).join("/");
+        const byPath = all.find((n) => n.path === slug);
+        if (!byPath) {
+          throw new Error(`no folder "${ref}". Run: memloom scopes`);
+        }
+        return byPath;
+      };
+
+      if (sub === undefined || sub === "list") {
+        const tree = await engine.listScopes();
+        const render = (nodes: ScopeNode[], depth: number): void => {
+          for (const node of nodes) {
+            const counts = [
+              node.memories > 0 ? `${node.memories} memories` : "",
+              node.documents > 0 ? `${node.documents} documents` : "",
+            ]
+              .filter(Boolean)
+              .join(", ");
+            const label = `${"  ".repeat(depth)}${node.path}${node.kind === "system" ? " [system]" : ""}`;
+            console.log(
+              `${label.padEnd(40)}${counts}${node.description ? `  - ${node.description}` : ""}`,
+            );
+            render(node.children, depth + 1);
+          }
+        };
+        render(tree, 0);
+        return;
+      }
+
+      if (sub === "add") {
+        const words = [...args];
+        const description = takeFlag(words, "description");
+        const target = words.join(" ").trim();
+        if (!target) {
+          throw new Error("usage: memloom scopes add <path> [--description <text>]");
+        }
+        const scope = await engine.createScope(target, {
+          ...(description !== undefined ? { description } : {}),
+        });
+        console.log(`created  ${scope.name}  (${scope.id})`);
+        return;
+      }
+
+      if (sub === "rename" || sub === "describe") {
+        const [ref, ...text] = args;
+        const value = text.join(" ").trim();
+        if (!ref || !value) {
+          throw new Error(`usage: memloom scopes ${sub} <path|id> <text>`);
+        }
+        const node = await findScope(ref);
+        const changes = sub === "rename" ? { name: value } : { description: value };
+        const updated = await engine.updateScope(node.id, changes);
+        console.log(`${sub === "rename" ? "renamed" : "described"}  ${updated.name}`);
+        return;
+      }
+
+      if (sub === "move") {
+        const [ref, parentRef] = args;
+        if (!ref || !parentRef) {
+          throw new Error("usage: memloom scopes move <path|id> <new-parent-path|/>");
+        }
+        const node = await findScope(ref);
+        const parentId = parentRef === "/" ? null : (await findScope(parentRef)).id;
+        await engine.moveScope(node.id, parentId);
+        console.log(
+          `moved  ${node.name}  ${parentRef === "/" ? "to the top level" : `under ${parentRef}`}`,
+        );
+        return;
+      }
+
+      if (sub === "rm") {
+        const ref = args[0];
+        if (!ref) throw new Error("usage: memloom scopes rm <path|id>");
+        const node = await findScope(ref);
+        await engine.deleteScope(node.id);
+        console.log(`deleted  ${node.name}`);
+        return;
+      }
+
+      if (sub === "set") {
+        const [ref, ...ids] = args;
+        if (!ref || ids.length === 0) {
+          throw new Error("usage: memloom scopes set <path> <memory-id...>");
+        }
+        const node = await findScope(ref);
+        const moved = await engine.setMemoryScopes(ids, node.path);
+        console.log(`moved ${moved} ${moved === 1 ? "row" : "rows"} into ${node.path}`);
+        return;
+      }
+
+      if (sub === "set-doc") {
+        const [ref, documentId] = args;
+        if (!ref || !documentId) {
+          throw new Error("usage: memloom scopes set-doc <path> <document-id>");
+        }
+        const node = await findScope(ref);
+        await engine.setDocumentScope(documentId, node.path);
+        console.log(`moved document into ${node.path}`);
+        return;
+      }
+
+      if (sub === "backfill") {
+        const dryRun = args.includes("--dry-run");
+        const noLlm = args.includes("--no-llm");
+        const report = await engine.backfillScopes({ dryRun });
+        const verb = report.dryRun ? "would move" : "moved";
+        console.log(
+          `${verb} ${report.moved} ${report.moved === 1 ? "belief" : "beliefs"}` +
+            (report.dryRun ? "" : ` (${report.rows} rows)`),
+        );
+        for (const [path, n] of Object.entries(report.perFolder)) {
+          console.log(`  ${path.padEnd(38)}${n}`);
+        }
+        if (report.alreadyFiled > 0) {
+          console.log(`left alone (already filed by hand): ${report.alreadyFiled}`);
+        }
+        if (report.unmappable > 0) {
+          console.log(`no project in provenance (stays for the classifier): ${report.unmappable}`);
+        }
+        console.log(`unfiled with no provenance: ${report.remaining}`);
+        if (report.dryRun) {
+          console.log("dry run: nothing was written. Re-run without --dry-run to apply.");
+          return;
+        }
+        if (noLlm || report.remaining === 0) {
+          if (report.remaining > 0) {
+            console.log("skipping classification (--no-llm); memloom index runs it later.");
+          }
+          return;
+        }
+        // The LLM remainder rides the same classification pass every index run uses, so
+        // backfill finishes the job in one command instead of pointing at a second one.
+        console.log(`classifying the remaining ${report.remaining} with the LLM...`);
+        const indexed = await engine.index();
+        console.log(
+          `index run done (${indexed.indexed} memories, ${indexed.chunksIndexed} chunks indexed); ` +
+            "review the filing with: memloom scopes review",
+        );
+        return;
+      }
+
+      if (sub === "review") {
+        const ref = args[0] ?? "uncategorized";
+        const node = await findScope(ref);
+        const rows = await engine.memories(undefined, { scope: node.path });
+        if (rows.length === 0) {
+          console.log(`(nothing in ${node.path})`);
+          return;
+        }
+        console.log(
+          `${rows.length} in ${node.path}; move any with: memloom scopes set <path> <id>`,
+        );
+        for (const m of rows) {
+          const text = m.content.length > 100 ? `${m.content.slice(0, 97)}...` : m.content;
+          console.log(`${m.id}  ${text.replace(/\s+/g, " ")}`);
+        }
+        return;
+      }
+
+      throw new Error(
+        "usage: memloom scopes [list|add|rename|describe|move|rm|set|set-doc|backfill|review]",
+      );
+    }
+
     case "context": {
       const [sub, ...args] = rest;
 
@@ -768,7 +1013,7 @@ export async function run(argv: readonly string[]): Promise<void> {
         throw new Error(`usage: memloom context <${CONTEXT_SUBS.join("|")}>`);
       }
       if (sub === "add" && args.length === 0) {
-        throw new Error("usage: memloom context add <path-or-url...>");
+        throw new Error("usage: memloom context add [--scope <path>] <path-or-url...>");
       }
       if (sub === "remove" && !args[0]) {
         throw new Error("usage: memloom context remove <document-id>");
@@ -782,13 +1027,15 @@ export async function run(argv: readonly string[]): Promise<void> {
       const engine = await connect();
 
       if (sub === "add") {
+        const addArgs = [...args];
+        const scope = takeFlag(addArgs, "scope");
         // A URL is not a path: it never touches resolve() or the directory walk.
-        const urls = args.filter(isHttpUrl);
-        const targets = args.filter((a) => !isHttpUrl(a)).map((a) => resolve(a));
+        const urls = addArgs.filter(isHttpUrl);
+        const targets = addArgs.filter((a) => !isHttpUrl(a)).map((a) => resolve(a));
 
         for (const url of urls) {
           try {
-            const result = await engine.contextAddUrl({ url });
+            const result = await engine.contextAddUrl({ url, ...(scope ? { scope } : {}) });
             console.log(
               `${result.outcome.padEnd(9)}  ${result.title}  (${result.chunks} chunks)\n  ${url}`,
             );
@@ -878,7 +1125,10 @@ export async function run(argv: readonly string[]): Promise<void> {
             };
           }
 
-          const result = await engine.contextAdd({ path: file }, progress);
+          const result = await engine.contextAdd(
+            { path: file, ...(scope ? { scope } : {}) },
+            progress,
+          );
           // Clear the progress line so the result is not printed onto it.
           if (isMedia) process.stderr.write(`\r${" ".repeat(72)}\r`);
           const extras = [

@@ -119,6 +119,8 @@ export interface SessionUnit {
 export interface ParsedSession {
   /** The session's own id from its lines; falls back to the filename UUID. */
   sessionId: string;
+  /** The working directory the session ran in, from the first line that carries one. */
+  cwd: string | null;
   units: SessionUnit[];
   /** Lines in the file, so the ledger watermark knows where "processed" ends. */
   lineCount: number;
@@ -138,6 +140,7 @@ interface RawContentBlock {
 interface RawLine {
   type?: string;
   sessionId?: string;
+  cwd?: string;
   timestamp?: string;
   isSidechain?: boolean;
   isMeta?: boolean;
@@ -170,6 +173,7 @@ export async function parseSession(path: string, fromLine = 0): Promise<ParsedSe
   const units: SessionUnit[] = [];
   const hash = createHash("sha256");
   let sessionId = "";
+  let cwd: string | null = null;
   let startedAt: string | null = null;
   let line = 0;
   let malformed = 0;
@@ -192,6 +196,7 @@ export async function parseSession(path: string, fromLine = 0): Promise<ParsedSe
       continue;
     }
     if (!sessionId && typeof parsed.sessionId === "string") sessionId = parsed.sessionId;
+    if (!cwd && typeof parsed.cwd === "string" && parsed.cwd.trim()) cwd = parsed.cwd;
     // The date the prompt resolves "yesterday" against; the first stamped line is close
     // enough to the session's start for that.
     if (!startedAt && typeof parsed.timestamp === "string" && parsed.timestamp.trim()) {
@@ -212,12 +217,101 @@ export async function parseSession(path: string, fromLine = 0): Promise<ParsedSe
 
   return {
     sessionId: sessionId || basename(path, ".jsonl"),
+    cwd,
     units,
     lineCount: line,
     prefixHash: hash.digest("hex"),
     malformed,
     startedAt,
   };
+}
+
+/**
+ * The human project name behind a captured session, for the mechanical projects/<name>
+ * scoping (PLAN-memory-scopes.md). The cwd the transcript lines record is exact: its last
+ * path segment IS the project directory. The encoded project dir name is the fallback for
+ * transcripts that never carried a cwd; its encoding flattens every separator to "-"
+ * ("D--Kostek-Projects-memloom"), so the last "-"-separated segment is a best effort that
+ * truncates dashed project names. Null when neither yields anything usable.
+ */
+export function projectNameOf(cwd: string | null, encodedDir: string): string | null {
+  if (cwd) {
+    const segments = cwd.split(/[\\/]+/).filter((s) => s.trim().length > 0);
+    const name = segments[segments.length - 1];
+    // A bare drive letter ("D:") means the session ran at a drive root, not in a project.
+    if (name && !/^[A-Za-z]:$/.test(name)) return name;
+  }
+  const tail = encodedDir
+    .split("-")
+    .filter((s) => s.trim().length > 0)
+    .pop();
+  return tail ?? null;
+}
+
+/**
+ * The encoded project dir a provenance file path points into, or null. Both provenance
+ * sources put their files under `.claude/projects/<encoded>/...` (session transcripts and
+ * Claude Code memory folders alike), so the segment after that pair is the project, however
+ * deep the file sits below it. Copilot memory paths carry no project and answer null, which
+ * is the backfill's signal to leave the memory for the classifier.
+ */
+export function encodedProjectDirOf(filePath: string): string | null {
+  const segments = filePath.split(/[\\/]+/).filter((s) => s.trim().length > 0);
+  for (let i = 0; i + 2 < segments.length; i++) {
+    if (segments[i] === ".claude" && segments[i + 1] === "projects") {
+      return segments[i + 2] ?? null;
+    }
+  }
+  return null;
+}
+
+/**
+ * The Claude Code project dir a provenance file path points into (`.../.claude/projects/<encoded>`),
+ * or null. The companion of encodedProjectDirOf, for reading the transcripts that sit there.
+ */
+export function projectDirOf(filePath: string): string | null {
+  const encoded = encodedProjectDirOf(filePath);
+  if (!encoded) return null;
+  const at = filePath.replace(/\\/g, "/").lastIndexOf(`/.claude/projects/${encoded}`);
+  return at < 0 ? null : filePath.slice(0, at + `/.claude/projects/${encoded}`.length);
+}
+
+/**
+ * The working directory a project's session transcripts record, or null when none is left
+ * to read. Live capture names a project's folder from this cwd; the encoded dir name loses
+ * every "-" in the project name, so paths that start from provenance (the backfill, Claude
+ * Code memory folders) read it here to land in the same folder live capture uses.
+ */
+export async function recordedCwdOf(projectDir: string): Promise<string | null> {
+  let names: string[];
+  try {
+    names = (await readdir(projectDir)).filter((n) => n.endsWith(".jsonl")).slice(0, 5);
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    const rl = createInterface({
+      input: createReadStream(join(projectDir, name), { encoding: "utf8" }),
+      crlfDelay: Number.POSITIVE_INFINITY,
+    });
+    let line = 0;
+    try {
+      for await (const raw of rl) {
+        if (++line > 200) break;
+        try {
+          const parsed = JSON.parse(raw) as { cwd?: unknown };
+          if (typeof parsed.cwd === "string" && parsed.cwd.trim()) return parsed.cwd;
+        } catch {
+          // A malformed line says nothing about the cwd; keep reading.
+        }
+      }
+    } catch {
+      // Unreadable transcript: try the next one.
+    } finally {
+      rl.close();
+    }
+  }
+  return null;
 }
 
 /** sha256 hex of the first `lines` lines: the ledger's rewrite check on a later run. */

@@ -107,6 +107,18 @@ paths:
                   type: integer
                   description: Maximum results (default 10).
                   example: 5
+                scope:
+                  type: string
+                  description: >-
+                    Folder selector. A path searches that subtree plus `uncategorized` and
+                    `global`; `"*"` (or omission) searches everything; an unknown path
+                    answers 400.
+                  example: personal-life
+                tags:
+                  type: array
+                  items:
+                    type: string
+                  description: Any-match tag filter. Memories only; chunks carry no tags.
       parameters:
         - $ref: "#/components/parameters/OwnerHeader"
       responses:
@@ -134,6 +146,19 @@ paths:
       operationId: listMemories
       parameters:
         - $ref: "#/components/parameters/OwnerHeader"
+        - name: scope
+          in: query
+          required: false
+          schema:
+            type: string
+          description: >-
+            Folder path. Browsing semantics: just that subtree, none of recall's widening.
+        - name: tags
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Comma-separated tags; any-match.
       responses:
         "200":
           description: The active memories.
@@ -1894,6 +1919,239 @@ paths:
                     type: string
                     nullable: true
                     description: The conflict row it became. Null on a rejection.
+  /scopes:
+    get:
+      summary: The folder tree
+      description: |
+        Every folder with per-folder counts, as a tree. System folders (`uncategorized`,
+        `global`) are created lazily on first use and always present after it.
+      operationId: listScopes
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+      responses:
+        "200":
+          description: The folder tree.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scopes:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ScopeNode"
+    post:
+      summary: Create a folder
+      description: |
+        Create a folder by path, creating missing parents ("projects/memloom" makes both).
+        Idempotent: an existing path returns the existing folder. The description is read by
+        the classification pass when filing unscoped saves.
+      operationId: createScope
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [path]
+              properties:
+                path:
+                  type: string
+                  example: personal-life/people
+                description:
+                  type: string
+                ownerId:
+                  type: string
+      responses:
+        "200":
+          description: The created (or existing) folder.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scope"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+  /scopes/{id}/update:
+    post:
+      summary: Rename a folder or edit its description
+      description: System folders keep their names.
+      operationId: updateScope
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                description:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: The updated folder.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scope"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: No such folder.
+  /scopes/{id}/move:
+    post:
+      summary: Re-parent a folder
+      description: "Refuses cycles and system folders. A null parentId moves to the top level."
+      operationId: moveScope
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [parentId]
+              properties:
+                parentId:
+                  type: string
+                  nullable: true
+      responses:
+        "200":
+          description: Moved.
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: No such folder.
+  /scopes/{id}:
+    delete:
+      summary: Delete an empty folder
+      description: |
+        Refused while the folder has subfolders or anything pointing at it, and always for
+        system folders; the error says what is still inside.
+      operationId: deleteScope
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted.
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: No such folder.
+  /scopes/backfill:
+    post:
+      summary: Mechanically file provenance-bearing memories
+      description: |
+        Every unfiled memory whose import provenance names a project moves to
+        `projects/<name>`, deterministically and without a model call. Never overrides a
+        filing already made; idempotent; a dry run writes nothing. The provenance-less
+        remainder is the classification pass's queue (POST /memory/index).
+      operationId: backfillScopes
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                dryRun:
+                  type: boolean
+                  default: false
+      responses:
+        "200":
+          description: What the pass did (or would do).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ScopeBackfillReport"
+  /memory/scope:
+    post:
+      summary: Move memories into a folder
+      description: |
+        Bulk move by folder path. Whole lineages move (every version of each belief), so the
+        returned count can exceed the ids passed.
+      operationId: setMemoryScopes
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [ids, scope]
+              properties:
+                ids:
+                  type: array
+                  items:
+                    type: string
+                scope:
+                  type: string
+                  example: personal-life
+      responses:
+        "200":
+          description: How many rows moved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  moved:
+                    type: integer
+        "400":
+          $ref: "#/components/responses/ValidationError"
+  /context/documents/{id}/scope:
+    post:
+      summary: Move a document into a folder
+      description: The document and every chunk move in one transaction.
+      operationId: setDocumentScope
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope]
+              properties:
+                scope:
+                  type: string
+      responses:
+        "200":
+          description: Moved.
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "404":
+          description: No such document.
   /context/add:
     post:
       summary: Ingest a file as context
@@ -2812,6 +3070,71 @@ components:
                       type: string
                       example: query must be a non-empty string
   schemas:
+    Scope:
+      type: object
+      properties:
+        id:
+          type: string
+        ownerId:
+          type: string
+        parentId:
+          type: string
+          nullable: true
+        name:
+          type: string
+        description:
+          type: string
+          nullable: true
+          description: Read by the classification pass when filing unscoped saves.
+        kind:
+          type: string
+          enum: [user, system]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    ScopeNode:
+      allOf:
+        - $ref: "#/components/schemas/Scope"
+        - type: object
+          properties:
+            path:
+              type: string
+              description: Addressable slug path.
+              example: personal-life/people
+            children:
+              type: array
+              items:
+                $ref: "#/components/schemas/ScopeNode"
+            memories:
+              type: integer
+              description: Active memories directly in this folder (not descendants).
+            documents:
+              type: integer
+    ScopeBackfillReport:
+      type: object
+      properties:
+        dryRun:
+          type: boolean
+        moved:
+          type: integer
+          description: Lineages moved (rows can exceed this; every version moves).
+        rows:
+          type: integer
+          description: Rows updated across all moved lineages. Zero on a dry run.
+        perFolder:
+          type: object
+          additionalProperties:
+            type: integer
+        alreadyFiled:
+          type: integer
+        unmappable:
+          type: integer
+        remaining:
+          type: integer
+          description: Unfiled memories with no provenance, the classifier's queue.
     SaveInput:
       type: object
       required: [content]
@@ -2838,6 +3161,19 @@ components:
         ownerId:
           type: string
           description: Owner UUID. Defaults to the fixed single-user sentinel in the embedded tier.
+        scope:
+          type: string
+          description: >-
+            Folder path ("personal-life/people"). Resolved strictly: an unknown path answers
+            400, because folders are created by the user, never by a save. Omitted saves land
+            in `uncategorized` for the classification pass.
+          example: projects/memloom
+        tags:
+          type: array
+          items:
+            type: string
+          description: Free labels; trimmed, lowercased and deduped before storage.
+          example: [engine, retrieval]
     SaveResult:
       type: object
       required: [id, outcome]
@@ -2895,6 +3231,20 @@ components:
           type: number
           description: Fused reciprocal-rank-fusion score. Rank-based and small by design. Use it for ordering; it is not a percentage.
           example: 0.0328
+        scopeId:
+          type: string
+          nullable: true
+          description: The folder this row lives in. Null reads as `uncategorized` (legacy rows).
+        scopePath:
+          type: string
+          nullable: true
+          description: Display path of the folder ("Projects > memloom").
+          example: Projects > memloom
+        tags:
+          type: array
+          items:
+            type: string
+          description: Free labels, normalized lowercase. Chunks have none.
         kind:
           type: string
           enum: [memory, context]

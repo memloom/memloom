@@ -43,6 +43,9 @@ import type {
   ResolvedConflict,
   SaveInput,
   SaveResult,
+  Scope,
+  ScopeBackfillReport,
+  ScopeNode,
   UpdateInput,
   UpdateResult,
 } from "./types.js";
@@ -53,8 +56,32 @@ import type {
 export interface MemoryEngine {
   save(input: SaveInput): Promise<SaveResult>;
   recall(query: string, opts?: RecallOptions): Promise<Memory[]>;
-  /** All active memories, newest first: the browse path, where recall is the query path. */
-  memories(ownerId?: string): Promise<Memory[]>;
+  /**
+   * All active memories, newest first: the browse path, where recall is the query path.
+   * `scope` narrows to one folder subtree with browsing semantics (just the subtree, no
+   * recall widening); `tags` is the any-match filter.
+   */
+  memories(ownerId?: string, opts?: { scope?: string; tags?: string[] }): Promise<Memory[]>;
+  /** The folder tree with per-folder counts (PLAN-memory-scopes.md). */
+  listScopes(ownerId?: string): Promise<ScopeNode[]>;
+  /** Create a folder by path, creating missing parents. Idempotent. */
+  createScope(path: string, opts?: { ownerId?: string; description?: string }): Promise<Scope>;
+  /** Rename a folder or edit its description. System folders keep their names. */
+  updateScope(
+    scopeId: string,
+    changes: { name?: string; description?: string | null },
+    ownerId?: string,
+  ): Promise<Scope>;
+  /** Move a folder under a new parent (null = top level). Refuses cycles and system folders. */
+  moveScope(scopeId: string, newParentId: string | null, ownerId?: string): Promise<void>;
+  /** Delete an EMPTY folder (no children, no rows pointing at it). */
+  deleteScope(scopeId: string, ownerId?: string): Promise<void>;
+  /** Move memories into a folder, whole lineages. Returns how many rows moved. */
+  setMemoryScopes(memoryIds: string[], scope: string, ownerId?: string): Promise<number>;
+  /** Move a document and its chunks into a folder, one transaction. */
+  setDocumentScope(documentId: string, scope: string, ownerId?: string): Promise<void>;
+  /** Mechanical backfill: file provenance-bearing memories into projects/<name>. */
+  backfillScopes(opts?: { dryRun?: boolean; ownerId?: string }): Promise<ScopeBackfillReport>;
   /** Edit a belief: append a new current version and stale the prior one (explicit, no funnel). */
   update(input: UpdateInput): Promise<UpdateResult>;
   /** The full version chain of a belief, newest first: pass any version's id. */
