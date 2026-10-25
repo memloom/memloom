@@ -265,6 +265,55 @@ export function encodedProjectDirOf(filePath: string): string | null {
   return null;
 }
 
+/**
+ * The Claude Code project dir a provenance file path points into (`.../.claude/projects/<encoded>`),
+ * or null. The companion of encodedProjectDirOf, for reading the transcripts that sit there.
+ */
+export function projectDirOf(filePath: string): string | null {
+  const encoded = encodedProjectDirOf(filePath);
+  if (!encoded) return null;
+  const at = filePath.replace(/\\/g, "/").lastIndexOf(`/.claude/projects/${encoded}`);
+  return at < 0 ? null : filePath.slice(0, at + `/.claude/projects/${encoded}`.length);
+}
+
+/**
+ * The working directory a project's session transcripts record, or null when none is left
+ * to read. Live capture names a project's folder from this cwd; the encoded dir name loses
+ * every "-" in the project name, so paths that start from provenance (the backfill, Claude
+ * Code memory folders) read it here to land in the same folder live capture uses.
+ */
+export async function recordedCwdOf(projectDir: string): Promise<string | null> {
+  let names: string[];
+  try {
+    names = (await readdir(projectDir)).filter((n) => n.endsWith(".jsonl")).slice(0, 5);
+  } catch {
+    return null;
+  }
+  for (const name of names) {
+    const rl = createInterface({
+      input: createReadStream(join(projectDir, name), { encoding: "utf8" }),
+      crlfDelay: Number.POSITIVE_INFINITY,
+    });
+    let line = 0;
+    try {
+      for await (const raw of rl) {
+        if (++line > 200) break;
+        try {
+          const parsed = JSON.parse(raw) as { cwd?: unknown };
+          if (typeof parsed.cwd === "string" && parsed.cwd.trim()) return parsed.cwd;
+        } catch {
+          // A malformed line says nothing about the cwd; keep reading.
+        }
+      }
+    } catch {
+      // Unreadable transcript: try the next one.
+    } finally {
+      rl.close();
+    }
+  }
+  return null;
+}
+
 /** sha256 hex of the first `lines` lines: the ledger's rewrite check on a later run. */
 export async function hashPrefix(path: string, lines: number): Promise<string> {
   const hash = createHash("sha256");

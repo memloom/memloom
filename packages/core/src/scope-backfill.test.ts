@@ -1,5 +1,8 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { encodedProjectDirOf } from "./claude-sessions.js";
+import { encodedProjectDirOf, projectDirOf, recordedCwdOf } from "./claude-sessions.js";
 import { HashingEmbeddingProvider, NullLLMProvider } from "./hashing-provider.js";
 import { Memloom, SENTINEL_OWNER } from "./memloom.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
@@ -50,6 +53,25 @@ describe("encodedProjectDirOf", () => {
       "D--x-app",
     );
     expect(encodedProjectDirOf(COPILOT)).toBe(null);
+  });
+});
+
+describe("recordedCwdOf", () => {
+  it("reads the cwd a project's transcripts record, which keeps dashes the dir name loses", async () => {
+    const root = mkdtempSync(join(tmpdir(), "memloom-cwd-"));
+    try {
+      const dir = join(root, ".claude", "projects", "D--Kostek-Projects-memloom-viewer");
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(
+        join(dir, "s.jsonl"),
+        `not json\n${JSON.stringify({ type: "user", cwd: "D:\\Kostek\\Projects\\memloom-viewer" })}\n`,
+      );
+      expect(projectDirOf(join(dir, "s.jsonl"))).toBe(dir);
+      expect(await recordedCwdOf(dir)).toBe("D:\\Kostek\\Projects\\memloom-viewer");
+      expect(await recordedCwdOf(join(root, "missing"))).toBe(null);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
 
@@ -131,5 +153,30 @@ describe("backfillScopes", () => {
     expect(report.unmappable).toBe(1);
     const [row] = await m.memories();
     expect(row?.scopePath).toBe("uncategorized");
+  });
+});
+
+describe("backfillScopes with transcripts on disk", () => {
+  it("names the folder the way live capture does, from the transcript's cwd", async () => {
+    const root = mkdtempSync(join(tmpdir(), "memloom-backfill-"));
+    try {
+      const dir = join(root, ".claude", "projects", "D--Kostek-Projects-memloom-viewer");
+      mkdirSync(dir, { recursive: true });
+      const transcript = join(dir, "abc.jsonl");
+      writeFileSync(
+        transcript,
+        `${JSON.stringify({ cwd: "D:/Kostek/Projects/memloom-viewer" })}\n`,
+      );
+      const m = await make();
+      const a = await m.save({ content: "the viewer uses vite" });
+      await provenance(a.id, transcript);
+
+      await m.backfillScopes();
+
+      const [memory] = await m.memories();
+      expect(memory?.scopePath).toBe("projects > memloom-viewer");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });
