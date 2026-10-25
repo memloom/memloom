@@ -15,7 +15,9 @@ import {
   encodedProjectDirOf,
   hashPrefix,
   parseSession,
+  projectDirOf,
   projectNameOf,
+  recordedCwdOf,
   type SessionChunk,
   type SessionUnit,
 } from "./claude-sessions.js";
@@ -374,6 +376,8 @@ function hostTimeZone(): string {
 // nobody watching, so it runs against a per-day distillation call budget. Hitting the cap
 // pauses capture loudly in `memloom status`; attended `memloom import` runs are never capped.
 const UNATTENDED_DAILY_CALL_CAP = 200;
+// The scope pass classifies at most this many batches per index run.
+const SCOPE_CLASSIFY_BATCHES_PER_RUN = 10;
 
 // _memloom_meta keys for hook capture state. The scope is what `connect` configured
 // (project allowlist or "all"); the notify keys are what `memloom status` renders.
@@ -2358,7 +2362,7 @@ export class Memloom implements MemoryEngine {
       // session import: a scoping failure imports unscoped rather than losing the folder.
       let folderScope: string | undefined;
       if (folder.agent === "claude-code") {
-        const projectName = projectNameOf(null, folder.label);
+        const projectName = projectNameOf(await recordedCwdOf(dirname(folder.path)), folder.label);
         if (projectName) {
           try {
             folderScope = `projects/${projectName}`;
@@ -3321,9 +3325,13 @@ export class Memloom implements MemoryEngine {
 
     const perFolder = new Map<string, Set<string>>();
     let unmappable = 0;
+    // One transcript read per project dir, so names match what live capture uses.
+    const cwds = new Map<string, string | null>();
     for (const row of rows) {
       const encoded = encodedProjectDirOf(row.file_path);
-      const name = encoded ? projectNameOf(null, encoded) : null;
+      const dir = projectDirOf(row.file_path);
+      if (dir && !cwds.has(dir)) cwds.set(dir, await recordedCwdOf(dir));
+      const name = encoded ? projectNameOf(dir ? (cwds.get(dir) ?? null) : null, encoded) : null;
       if (!name) {
         unmappable++;
         continue;
@@ -4120,14 +4128,21 @@ export class Memloom implements MemoryEngine {
     if (this.#llm instanceof NullLLMProvider) return none;
     const { uncategorizedId } = await ensureSystemScopes(this.#storage, owner);
     const scopes = await allScopes(this.#storage, owner);
-    const userFolders = scopes.filter((s) => s.kind === "user");
+    // Leaf folders only: a parent such as `projects` holds folders, and a memory filed in it
+    // directly would fall outside every projects/<name> recall.
+    const userFolders = scopes.filter(
+      (s) => s.kind === "user" && !scopes.some((c) => c.parentId === s.id),
+    );
     if (userFolders.length === 0) return none;
+    // A bounded slice per run: a large backlog (a whole store after upgrading) drains over
+    // several runs and days, under the daily budget, instead of in one unattended burst.
     const memories = await this.#storage.query<{ id: string; content: string }>(
       `SELECT id, content FROM memory_objects
        WHERE owner_id = $1 AND status = 'active' AND scope_classified_at IS NULL
          AND (scope_id IS NULL OR scope_id = $2)
-       ORDER BY created_at`,
-      [owner, uncategorizedId],
+       ORDER BY created_at
+       LIMIT $3`,
+      [owner, uncategorizedId, SCOPE_CLASSIFY_BATCH * SCOPE_CLASSIFY_BATCHES_PER_RUN],
     );
     if (memories.length === 0) return none;
     return {
@@ -4160,16 +4175,29 @@ export class Memloom implements MemoryEngine {
     ) => Promise<void>,
   ): Promise<void> {
     const scopes = await allScopes(this.#storage, owner);
-    const userIds = new Set(scopes.filter((s) => s.kind === "user").map((s) => s.id));
+    const userIds = new Set(work.folders.map((f) => resolveScopePath(scopes, f.path)));
+    const { uncategorizedId } = await ensureSystemScopes(this.#storage, owner);
     const batches: ScopeClassifyItem[][] = [];
     for (let i = 0; i < work.memories.length; i += SCOPE_CLASSIFY_BATCH) {
       batches.push(work.memories.slice(i, i + SCOPE_CLASSIFY_BATCH));
     }
     for (const [b, batch] of batches.entries()) {
       const prefix = `scope pass [${b + 1}/${batches.length}]`;
+      // Nobody asked for this pass, so it spends from the same daily budget as unattended
+      // distillation and stops when that is gone. Stamping nothing leaves the rest for later.
+      if ((await this.#unattendedCallsToday()) >= UNATTENDED_DAILY_CALL_CAP) {
+        await logEvent(
+          "info",
+          `${prefix} → paused: the daily unattended budget (${UNATTENDED_DAILY_CALL_CAP} calls) is spent`,
+          null,
+          { batch: b + 1, batches: batches.length },
+        );
+        return;
+      }
       let raw: string;
       try {
         this.#classifyCalls++;
+        await this.#bumpUnattendedCalls();
         raw = await this.#llm.complete(buildScopeClassifyPrompt(work.folders, batch));
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -4189,13 +4217,16 @@ export class Memloom implements MemoryEngine {
         if (!scopeId || !userIds.has(scopeId)) continue;
         const memory = batch[verdict.index - 1];
         if (!memory) continue;
-        await this.#storage.query(
+        // Only while the memory is still unfiled: a move the user made during the run wins.
+        const moved = await this.#storage.query<{ id: string }>(
           `UPDATE memory_objects SET scope_id = $3, updated_at = now()
            WHERE owner_id = $1 AND root_id = (
-             SELECT root_id FROM memory_objects WHERE owner_id = $1 AND id = $2)`,
-          [owner, memory.id, scopeId],
+             SELECT root_id FROM memory_objects
+             WHERE owner_id = $1 AND id = $2 AND (scope_id IS NULL OR scope_id = $4))
+           RETURNING id`,
+          [owner, memory.id, scopeId, uncategorizedId],
         );
-        assigned += 1;
+        if (moved.length > 0) assigned += 1;
       }
       await this.#storage.query(
         `UPDATE memory_objects SET scope_classified_at = now()

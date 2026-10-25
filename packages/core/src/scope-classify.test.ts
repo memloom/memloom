@@ -189,6 +189,65 @@ describe("scope classification pass", () => {
     expect(rows.every((r) => r.stamped)).toBe(true);
   });
 
+  it("spends from the daily unattended budget and stops when it is gone", async () => {
+    const script: FilingScript = { replies: [[]], prompts: [] };
+    const m = await make(filingLLM(script), { dedup: false });
+    await m.createScope("projects/memloom");
+    await m.save({ content: "filed once the budget allows" });
+    const key = `import_unattended_calls_${new Date().toLocaleDateString("en-CA")}`;
+    await storage.query(
+      `INSERT INTO _memloom_meta (key, value) VALUES ($1, '200')
+       ON CONFLICT (key) DO UPDATE SET value = '200'`,
+      [key],
+    );
+
+    await m.index();
+
+    expect(script.prompts).toHaveLength(0);
+    const [row] = await scopeRows();
+    expect(row?.stamped).toBe(false);
+
+    await storage.query("UPDATE _memloom_meta SET value = '0' WHERE key = $1", [key]);
+    await m.index();
+    expect(script.prompts).toHaveLength(1);
+    const [meta] = await storage.query<{ value: string }>(
+      "SELECT value FROM _memloom_meta WHERE key = $1",
+      [key],
+    );
+    expect(meta?.value).toBe("1");
+  });
+
+  it("classifies a bounded slice of a large backlog per run", async () => {
+    const script: FilingScript = { replies: [], prompts: [] };
+    const m = await make(filingLLM(script), { dedup: false });
+    await m.createScope("projects/memloom");
+    const total = SCOPE_CLASSIFY_BATCH * 10 + 3;
+    for (let i = 0; i < total; i++) await m.save({ content: `backlog note ${i} on topic ${i}` });
+
+    await m.index();
+
+    expect(script.prompts).toHaveLength(10);
+    const rows = await scopeRows();
+    expect(rows.filter((r) => r.stamped)).toHaveLength(SCOPE_CLASSIFY_BATCH * 10);
+  });
+
+  it("offers leaf folders only, never a parent that holds folders", async () => {
+    const script: FilingScript = {
+      replies: [[{ index: 1, path: "projects", confidence: 0.95 }]],
+      prompts: [],
+    };
+    const m = await make(filingLLM(script), { dedup: false });
+    await m.createScope("projects/memloom");
+    await m.save({ content: "a note the model would like to dump in the parent" });
+
+    await m.index();
+
+    expect(script.prompts[0]).toContain("- projects/memloom");
+    expect(script.prompts[0]).not.toMatch(/^- projects$/m);
+    const [memory] = await m.memories();
+    expect(memory?.scopePath).not.toBe("projects");
+  });
+
   it("skips the pass when the owner has no user folders", async () => {
     const script: FilingScript = { replies: [[]], prompts: [] };
     const m = await make(filingLLM(script));

@@ -845,7 +845,8 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     } catch (err) {
       // An unknown scope or an over-limit tag is the caller's mistake, not a server fault.
       const message = err instanceof Error ? err.message : String(err);
-      if (/unknown scope|tag/i.test(message)) return c.json({ error: message }, 400);
+      if (/^memloom: (unknown scope|tag longer than|more than \d+ tags)/.test(message))
+        return c.json({ error: message }, 400);
       throw err;
     }
   });
@@ -883,7 +884,8 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       return c.json({ memories });
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (/unknown scope|tag/i.test(message)) return c.json({ error: message }, 400);
+      if (/^memloom: (unknown scope|tag longer than|more than \d+ tags)/.test(message))
+        return c.json({ error: message }, 400);
       throw err;
     }
   });
