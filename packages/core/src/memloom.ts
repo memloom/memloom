@@ -53,12 +53,19 @@ import { dataSourceTitle, expandsInline, NotionClient, pageTitle } from "./notio
 import { blocksToMarkdown, rowsToMarkdown } from "./notion-markdown.js";
 import { LlmSpendError } from "./openrouter-provider.js";
 import { bindOwner, type OwnedMemloom } from "./owned.js";
-import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
+import {
+  type EmbeddingProvider,
+  isChatProvider,
+  type LLMProvider,
+  type LlmUsage,
+} from "./providers.js";
 import { uploadStoreDir } from "./queue.js";
 import {
+  buildContradictionCheckPrompt,
   buildRecheckPrompt,
   countDueForRecheck,
   findRecheckSubjects,
+  parseContradictionCheck,
   parseRecheckVerdicts,
   type RecheckFinding,
   verifiedFindings,
@@ -226,6 +233,11 @@ export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
 
 /** The action class a contradiction re-check writes, so its findings are identifiable as its own. */
 const RECHECK_CLASS = "emergent_contradiction";
+// A finding the pair-by-pair second check stood behind, and one it threw out. Rows still under
+// RECHECK_CLASS were written before that check existed, or when it gave no usable answer, and
+// the next run checks them.
+const CONFIRMED_CLASS = "emergent_contradiction_confirmed";
+const DISMISSED_CLASS = "emergent_contradiction_dismissed";
 
 /**
  * Free passes on, paid passes off, catch-up on. A pass that cannot spend money needs no
@@ -265,6 +277,7 @@ interface ReconcileRecheckOutcome {
   window: number;
   calls: number;
   claimed: number;
+  dismissed: number;
   findings: RecheckFinding[];
   spent: { inputTokens: number; outputTokens: number; usd: number };
   remaining: number;
@@ -5673,6 +5686,7 @@ export class Memloom implements MemoryEngine {
                 calls: recheck.calls,
                 claimed: recheck.claimed,
                 verified: recheck.findings.length,
+                dismissed: recheck.dismissed,
                 remaining: recheck.remaining,
                 spentUsd: recheck.spent.usd,
                 spentInputTokens: recheck.spent.inputTokens,
@@ -5801,10 +5815,12 @@ export class Memloom implements MemoryEngine {
    * existed at that moment.
    *
    * One call per belief in the window, carrying up to 20 neighbours. Findings are written as
-   * 'possible' actions, never as conflicts: measured precision is about 40 percent, so a queue
-   * fed directly from here would be more noise than signal. A human promotes one with a click.
+   * 'possible' actions, never as conflicts. A wide call alone was right about 2 in 5 times, so
+   * each quoted finding gets a narrow second call on that one pair, and only the ones it stands
+   * behind reach the queue. A human still promotes one with a click.
    *
-   * Findings are written under RECHECK_CLASS, which is what moves the window's left edge.
+   * The class records what the second check said: CONFIRMED_CLASS, DISMISSED_CLASS, or
+   * RECHECK_CLASS when it gave no usable answer and the finding waits for the next run.
    */
   async #recheckContradictions(
     owner: string,
@@ -5818,6 +5834,7 @@ export class Memloom implements MemoryEngine {
       window: 0,
       calls: 0,
       claimed: 0,
+      dismissed: 0,
       findings: [],
       spent: { inputTokens: 0, outputTokens: 0, usd: 0 },
       remaining: 0,
@@ -5825,6 +5842,72 @@ export class Memloom implements MemoryEngine {
     };
     const due = await countDueForRecheck(this.#storage, owner);
     result.window = due.count;
+
+    // Several calls run at once. Abort and budget are checked before each call starts, so a run
+    // overshoots its budget by at most the calls already in flight.
+    const halt = () => {
+      // Nobody is listening any more, so stop spending.
+      if (signal?.aborted) result.stoppedBy ??= "aborted";
+      else if (budgetUsd != null && result.spent.usd >= budgetUsd) result.stoppedBy ??= "budget";
+      return result.stoppedBy !== null;
+    };
+    const track = (usage: LlmUsage) => {
+      result.spent.inputTokens += usage.inputTokens;
+      result.spent.outputTokens += usage.outputTokens;
+      // The provider's own billed figure when it gives one, the price table when it does not.
+      // Either is a real number; what must never happen is a budget silently measuring nothing.
+      result.spent.usd +=
+        usage.usd ?? estimateUsd(model, usage.inputTokens, usage.outputTokens) ?? 0;
+    };
+
+    // Findings left waiting without the second check, by earlier runs or by one that got no
+    // usable answer, get it first, so the queue only ever holds what that check stands behind.
+    const unchecked = await this.#storage.query<{
+      id: string;
+      new_content: string;
+      old_content: string;
+      new_quote: string | null;
+      old_quote: string | null;
+    }>(
+      `SELECT a.id, n.content AS new_content, o.content AS old_content, a.new_quote, a.old_quote
+         FROM memory_reconcile_actions a
+         JOIN memory_objects n ON n.id = a.memory_id
+         JOIN memory_objects o ON o.id = a.candidate_id
+        WHERE a.owner_id = $1 AND a.kind = 'possible' AND a.decision IS NULL AND a.class = $2`,
+      [owner, RECHECK_CLASS],
+    );
+    await runPool(
+      unchecked,
+      reconcileConcurrency(),
+      async (row) => {
+        const verdict = await this.#secondCheck(
+          {
+            newContent: row.new_content,
+            oldContent: row.old_content,
+            newQuote: row.new_quote ?? "",
+            oldQuote: row.old_quote ?? "",
+          },
+          track,
+        );
+        if (!verdict) return;
+        if (verdict.contradiction) {
+          await this.#storage.query(
+            "UPDATE memory_reconcile_actions SET class = $2 WHERE id = $1",
+            [row.id, CONFIRMED_CLASS],
+          );
+        } else {
+          await this.#storage.query(
+            `UPDATE memory_reconcile_actions
+                SET class = $2, decision = 'rejected', decided_at = now(),
+                    reason = reason || ' | second check: ' || $3
+              WHERE id = $1`,
+            [row.id, DISMISSED_CLASS, verdict.reason],
+          );
+          result.dismissed++;
+        }
+      },
+      halt,
+    );
 
     // Without a budget this sweeps one page and stops, which is the cost ceiling. With one, it
     // keeps paging until nothing is due or the money runs out, so a backlog can actually be
@@ -5851,27 +5934,11 @@ export class Memloom implements MemoryEngine {
       }
       const callsBeforePage = result.calls;
 
-      // Several calls run at once. Abort and budget are checked before each call starts, so a run
-      // overshoots its budget by at most the calls already in flight.
-      const halt = () => {
-        // Nobody is listening any more, so stop spending.
-        if (signal?.aborted) result.stoppedBy ??= "aborted";
-        else if (budgetUsd != null && result.spent.usd >= budgetUsd) result.stoppedBy ??= "budget";
-        return result.stoppedBy !== null;
-      };
       const judge = async (subject: (typeof subjects)[number]) => {
         let raw: string;
         try {
           raw = await this.#llm.complete(buildRecheckPrompt(subject, subject.candidates), {
-            onUsage: (usage) => {
-              result.spent.inputTokens += usage.inputTokens;
-              result.spent.outputTokens += usage.outputTokens;
-              // The provider's own billed figure when it gives one, the price table when it does
-              // not. Either is a real number; what must never happen is a budget silently
-              // measuring nothing.
-              result.spent.usd +=
-                usage.usd ?? estimateUsd(model, usage.inputTokens, usage.outputTokens) ?? 0;
-            },
+            onUsage: track,
           });
         } catch (err) {
           // Out of credit or a rejected key stops everything: no later call can succeed, and a
@@ -5887,24 +5954,42 @@ export class Memloom implements MemoryEngine {
         result.claimed += verdicts.filter((v) => v.contradictory).length;
         // Quotes are checked here rather than trusted. A verdict whose spans are not in the two
         // memories is dropped and not recorded, so it is asked about again on a later run.
+        // Each quoted finding then gets a second opinion on its own. A dismissed one is still
+        // recorded, so the pair is never raised again, but it is never shown.
         for (const finding of verifiedFindings(subject, subject.candidates, verdicts)) {
+          const verdict = await this.#secondCheck(
+            {
+              newContent: subject.content,
+              oldContent:
+                subject.candidates.find((c) => c.candidateId === finding.candidateId)?.content ??
+                "",
+              newQuote: finding.newQuote,
+              oldQuote: finding.oldQuote,
+            },
+            track,
+          );
+          const dismissed = verdict?.contradiction === false;
           await this.#storage.query(
             `INSERT INTO memory_reconcile_actions
                (owner_id, run_id, kind, class, memory_id, candidate_id, reason, new_quote, old_quote,
-                applied, surfaced)
-             VALUES ($1, $2, 'possible', $3, $4, $5, $6, $7, $8, false, true)`,
+                applied, surfaced, decision, decided_at)
+             VALUES ($1, $2, 'possible', $3, $4, $5, $6, $7, $8, false, $9, $10,
+                     CASE WHEN $10::text IS NULL THEN NULL ELSE now() END)`,
             [
               owner,
               runId,
-              RECHECK_CLASS,
+              verdict === null ? RECHECK_CLASS : dismissed ? DISMISSED_CLASS : CONFIRMED_CLASS,
               finding.memoryId,
               finding.candidateId,
-              finding.reason,
+              dismissed ? `${finding.reason} | second check: ${verdict?.reason}` : finding.reason,
               finding.newQuote,
               finding.oldQuote,
+              !dismissed,
+              dismissed ? "rejected" : null,
             ],
           );
-          result.findings.push(finding);
+          if (dismissed) result.dismissed++;
+          else result.findings.push(finding);
         }
         // Stamped only after a call that answered, so a belief is never recorded as checked on
         // the strength of a failure. The stamp is per belief so an interrupted run keeps the work
@@ -5960,6 +6045,25 @@ export class Memloom implements MemoryEngine {
     result.remaining = (await countDueForRecheck(this.#storage, owner)).count;
     if (!result.stoppedBy && result.remaining > 0) result.stoppedBy = "cap";
     return result;
+  }
+
+  /**
+   * The pair-by-pair second opinion on a finding. null means no usable answer, which leaves the
+   * finding waiting for the next run rather than guessing either way.
+   */
+  async #secondCheck(
+    finding: { newContent: string; oldContent: string; newQuote: string; oldQuote: string },
+    track: (usage: LlmUsage) => void,
+  ): Promise<{ contradiction: boolean; reason: string } | null> {
+    try {
+      const raw = await this.#llm.complete(buildContradictionCheckPrompt(finding), {
+        onUsage: track,
+      });
+      return parseContradictionCheck(raw);
+    } catch (err) {
+      if (err instanceof LlmSpendError) throw err;
+      return null;
+    }
   }
 
   /**
@@ -6047,8 +6151,8 @@ export class Memloom implements MemoryEngine {
    * report.
    *
    * A rejection is worth keeping: it is a labelled example of what this user does not consider a
-   * contradiction, and the only path off 40 percent precision that does not mean a more
-   * expensive model.
+   * contradiction, and the cheapest way to sharpen the second check without a more expensive
+   * model.
    */
   async answerPossible(
     actionId: string,

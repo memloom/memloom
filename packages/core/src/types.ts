@@ -1127,8 +1127,8 @@ export type ReconcileRunStatus = "running" | "success" | "error" | "aborted";
  * retire and fold change state; question and conflict ask the human.
  *
  * 'possible' is a contradiction the re-check found and nobody has confirmed. It is not a conflict
- * on purpose: the pass runs at roughly 40 percent precision, so these wait in the ledger where
- * dismissing one costs a click, and approving one is what writes the real conflict row.
+ * on purpose: even after the second check a model made the call, so these wait in the ledger
+ * where dismissing one costs a click, and approving one is what writes the real conflict row.
  */
 export type ReconcileActionKind = "retire" | "question" | "conflict" | "fold" | "possible";
 export type ReconcileDecision = "approved" | "rejected" | "snoozed";
@@ -1331,8 +1331,13 @@ export interface ReconcileRecheckResult {
   calls: number;
   /** Contradictions the model asserted. */
   claimed: number;
-  /** Of those, the ones whose quotes were found in both memories. Only these are recorded. */
+  /** Of those, the ones whose quotes were found in both memories and a second check confirmed. */
   verified: number;
+  /**
+   * Quoted findings, this run's or ones left waiting by earlier runs, that the second check
+   * judged not to be contradictions. Recorded as dismissed and never shown.
+   */
+  dismissed: number;
   /** Beliefs still due when the run stopped. */
   remaining: number;
   /** What the run actually cost, from the provider's own billed figures. */

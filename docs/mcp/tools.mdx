@@ -154,8 +154,8 @@ the reason, and the similarity.
 | `answer` | enum | `confirm` or `dismiss` |
 
 <Warning>
-  These are not conflicts. The pass runs at roughly 40 percent precision, so most of what it
-  returns is wrong. `confirm` creates a real conflict; `dismiss` is permanent with no undo. Ask
+  These are not conflicts. Each one passed a second check, but a model still made the call and
+  some are wrong. `confirm` creates a real conflict; `dismiss` is permanent with no undo. Ask
   the user rather than guessing: a wrong confirm makes noise they can clear, a wrong dismiss loses
   a real contradiction for good.
 </Warning>

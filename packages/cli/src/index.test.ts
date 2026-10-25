@@ -144,10 +144,9 @@ describe("cli router", () => {
     };
 
     const out = formatPossibleContradictions([finding]);
-    // Answering as if these were established findings is the failure mode, so the count and the
-    // precision come before anything a reader could act on.
+    // Answering as if these were established findings is the failure mode, so the count comes
+    // before anything a reader could act on.
     expect(out.split("\n")[0]).toContain("1 unconfirmed contradiction");
-    expect(out.split("\n")[0]).toContain("about 2 in 5 are real");
     expect(out).toContain("similarity 81%, judged by google/gemini-2.5-flash");
     expect(out).toContain("NEW:      we run on railway now");
     expect(out).toContain("EXISTING: the deploy target is fly.io");

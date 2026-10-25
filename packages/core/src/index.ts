@@ -264,10 +264,12 @@ export { IngestQueue, uploadStoreDir } from "./queue.js";
 // All pure except findRecheckSubjects, which is one indexed query per belief in the window.
 export type { RecheckFinding, RecheckPair, RecheckSubject, RecheckVerdict } from "./recheck.js";
 export {
+  buildContradictionCheckPrompt,
   buildRecheckPrompt,
   countDueForRecheck,
   findRecheckSubjects,
   MIN_QUOTE_CHARS,
+  parseContradictionCheck,
   parseRecheckVerdicts,
   quoteOccursIn,
   RECHECK_FLOOR,

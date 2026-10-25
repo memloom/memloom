@@ -60,7 +60,7 @@ The last line always names the run, so undoing one never means looking the id up
   dollar figure, rather than a confident wrong number.
 </Note>
 
-A run with the contradiction re-check on is minutes of sequential calls and the CLI waits for it.
+A run with the contradiction re-check on can take a while, and the CLI waits for it.
 Watch it live in the viewer's Settings tab if you want per-belief progress. Only one applying run
 at a time; a second is refused while the first is live.
 
@@ -73,7 +73,7 @@ memloom reconcile possible
 ```
 
 ```
-3 unconfirmed contradictions. about 2 in 5 are real, so read both quotes before answering.
+3 unconfirmed contradictions. a second check stood behind each one, but read both quotes before answering.
 
 similarity 71%, judged by google/gemini-2.5-flash
   NEW:      the release is scheduled for the 14th
@@ -84,6 +84,11 @@ similarity 71%, judged by google/gemini-2.5-flash
 
 Both quotes were verified against the two memories when the finding was written, so they are the
 whole question. Reading them beats opening two beliefs and comparing.
+
+Every finding also gets a second opinion: the model looks at that one pair on its own and decides
+whether the two can both be true. Only findings it stands behind are listed. The ones it rejects
+are recorded as dismissed, so that pair is never raised again. Findings from before this check
+existed get it on the next run with `llm_recheck` on.
 
 ## reconcile yes, reconcile no
 

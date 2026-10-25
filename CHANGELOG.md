@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- The contradiction re-check gives every finding a second, pair-by-pair check and lists only the
+  ones it stands behind. Rejected findings are recorded as dismissed and never shown, and findings
+  already waiting get the check on the next run. The sweep's prompt now asks for contradictions
+  only, so it writes a fraction of the output tokens it used to
 - Reconciliation runs its model calls in parallel: 16 at once by default,
   `MEMLOOM_RECONCILE_CONCURRENCY` to change it. The contradiction re-check on a 6,000-belief store
   drops from most of a day to under an hour. Entity folds and conflict resolutions are still

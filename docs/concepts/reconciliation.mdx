@@ -66,10 +66,12 @@ This pass goes back over old beliefs against their **20 nearest** neighbours.
 | Cost ceiling | 200 beliefs a run, about **$0.55** |
 | Progress | Per belief, oldest first, so a backlog drains across runs with nothing skipped |
 | Repeat | A belief comes back around after 30 days |
-| Precision | About **40 percent** |
+| Precision | About **40 percent** for the wide call alone; each finding then gets a second check |
 
-Because it is wrong more often than right, its findings are **possible contradictions**, not
-conflicts. They wait in the Conflicts tab. Confirming one creates the real conflict; dismissing one
+The wide call is wrong more often than right, so every finding it quotes gets a second call that
+looks at that one pair and is told to say no when in doubt. Only findings it confirms are shown;
+the rest are recorded as dismissed and never raised again. Even so, they are **possible
+contradictions**, not conflicts. They wait in the Conflicts tab. Confirming one creates the real conflict; dismissing one
 is permanent for that pair.
 
 <Note>

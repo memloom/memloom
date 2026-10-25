@@ -1520,8 +1520,8 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
 
   app.get("/memory/reconcile/settings", async (c) => c.json(await memloom.reconcileSettings()));
 
-  // The re-check's findings, and answering one. These are NOT conflicts: the pass runs at about
-  // 40 percent precision, so they wait here where dismissing costs a click. Approving is what
+  // The re-check's findings, and answering one. These are NOT conflicts: a model made the call,
+  // even after a second check, so they wait here where dismissing costs a click. Approving is what
   // writes the conflict row, which is why this route can return one.
   app.get("/memory/reconcile/possible", async (c) =>
     c.json({ possible: await memloom.possibleContradictions(ownerOf(c)) }),

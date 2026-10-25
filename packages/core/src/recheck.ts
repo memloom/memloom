@@ -250,15 +250,15 @@ export function buildRecheckPrompt(
     "you cannot find a single span on each side stating the opposing claims, the memories do not",
     'contradict each other: answer "complementary" instead.',
     "",
-    "Return ONLY a JSON array, one object per existing memory:",
-    '[{"candidate": <number>, "relation": "complementary|contradictory",',
-    '  "reason": "<at most 12 words>", "new_quote": "<verbatim>", "old_quote": "<verbatim>"}]',
+    "Return ONLY a JSON array with one object per CONTRADICTORY existing memory, and leave the",
+    "complementary ones out. Most of the time nothing contradicts; then return []:",
+    '[{"candidate": <number>, "reason": "<at most 12 words>", "new_quote": "<verbatim>",',
+    '  "old_quote": "<verbatim>"}]',
   ].join("\n");
 }
 
 /**
- * Read the model's array. Anything not recognisably a contradiction is complementary, so a
- * garbled answer goes quiet rather than inventing a finding. Same fail-open direction the save
+ * Read the model's array. A garbled answer yields nothing rather than inventing a finding. Same fail-open direction the save
  * path takes, for the same reason: a missed contradiction costs nothing today, a false one costs
  * a person's attention.
  */
@@ -280,9 +280,10 @@ export function parseRecheckVerdicts(raw: string, candidates: RecheckPair[]): Re
     if (!cand) continue;
     out.push({
       candidateId: cand.candidateId,
-      contradictory: String(rec.relation ?? "")
-        .toLowerCase()
-        .includes("contra"),
+      // The prompt lists only contradictions now, so an item without a relation is one. A
+      // relation that says otherwise still wins, for a model that answers in the old shape.
+      contradictory:
+        rec.relation === undefined || String(rec.relation).toLowerCase().includes("contra"),
       reason: String(rec.reason ?? ""),
       newQuote: rec.new_quote ? String(rec.new_quote) : "",
       oldQuote: rec.old_quote ? String(rec.old_quote) : "",
@@ -337,4 +338,53 @@ export function verifiedFindings(
     });
   }
   return out;
+}
+
+/**
+ * The second opinion on one finding, asked with nothing else in view. The sweep reads 20 loosely
+ * related neighbours at once and flags anything that sounds opposed; most of those flags are two
+ * true statements about different cases. Asked about a single pair, the same model separates
+ * them far better, and since only flagged pairs reach this, it costs a fraction of the sweep.
+ */
+export function buildContradictionCheckPrompt(finding: {
+  newContent: string;
+  oldContent: string;
+  newQuote: string;
+  oldQuote: string;
+}): string {
+  return [
+    "Two memories from one person's notes were flagged as contradicting each other. Decide whether",
+    "they really do.",
+    "",
+    `MEMORY A: ${finding.newContent}`,
+    "",
+    `MEMORY B: ${finding.oldContent}`,
+    "",
+    `Flagged clash: "${finding.newQuote}" versus "${finding.oldQuote}"`,
+    "",
+    "It is a real contradiction only when both are about the same subject, the same case and the",
+    "same time, and they cannot both be true, or when a decision, plan or fact in one was later",
+    "reversed or changed by the other. It is NOT one when they describe different cases, options,",
+    "components or periods that are each true on their own, when one is more detailed than the",
+    "other, or when they merely share words.",
+    "",
+    "When in doubt, it is not a contradiction.",
+    "",
+    'Return ONLY JSON: {"contradiction": true|false, "reason": "<at most 12 words>"}',
+  ].join("\n");
+}
+
+/** True only for an explicit yes, so a garbled answer dismisses nothing it did not judge. */
+export function parseContradictionCheck(
+  raw: string,
+): { contradiction: boolean; reason: string } | null {
+  const match = raw.match(/\{[\s\S]*\}/);
+  if (!match) return null;
+  try {
+    const rec = JSON.parse(match[0]) as Record<string, unknown>;
+    if (typeof rec.contradiction !== "boolean") return null;
+    return { contradiction: rec.contradiction, reason: String(rec.reason ?? "") };
+  } catch {
+    return null;
+  }
 }
