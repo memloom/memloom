@@ -57,11 +57,11 @@ function describeNetworkError(err: unknown): string {
  */
 export class LlmSpendError extends Error {
   readonly code: "no_credit" | "unauthorized";
-  constructor(code: "no_credit" | "unauthorized", detail: string) {
+  constructor(code: "no_credit" | "unauthorized", detail: string, provider = "OpenRouter") {
     super(
       code === "no_credit"
-        ? `OpenRouter is out of credit: ${detail}`
-        : `OpenRouter rejected the API key: ${detail}`,
+        ? `${provider} is out of credit: ${detail}`
+        : `${provider} rejected the API key: ${detail}`,
     );
     this.name = "LlmSpendError";
     this.code = code;

@@ -17,6 +17,8 @@ export {
   parseClaudeMemoryFolder,
   parseCopilotMemoryFolder,
 } from "./agent-memories.js";
+export type { AnthropicEffort, AnthropicLLMOptions } from "./anthropic-provider.js";
+export { AnthropicLLM, anthropicCostUsd } from "./anthropic-provider.js";
 export type { AssistantEvent } from "./assistant.js";
 export {
   buildAssistantSystemPrompt,

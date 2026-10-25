@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- The LLM can run on the Anthropic API instead of OpenRouter: set `MEMLOOM_LLM_PROVIDER=anthropic`
+  and `ANTHROPIC_API_KEY`. It defaults to Claude Haiku 5.5 at low effort, and each call is priced
+  from the model's published rates, so reconciliation budgets still hold. Embeddings stay on
+  OpenRouter, since Anthropic has no embeddings endpoint. The viewer's model picker lists
+  OpenRouter models, so its choice applies only when it names a Claude model
 - Memories and documents live in folders. Every one has exactly one folder and any number of
   tags. A recall can name a folder and then searches only that subtree, plus `uncategorized` and
   `global`. Captured Claude Code sessions file under `projects/<name>` from their working

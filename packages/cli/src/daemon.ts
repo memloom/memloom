@@ -79,8 +79,17 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promis
   const wirePort = pgPort ?? pgWirePort();
 
   const deps = buildEngineDeps();
-  const { apiKey, embedModel, embedDims, embedProvider, llmModel, chatModel, autoIndex, pgUrl } =
-    deps;
+  const {
+    apiKey,
+    embedModel,
+    embedDims,
+    embedProvider,
+    llmModel,
+    chatModel,
+    llmProvider,
+    autoIndex,
+    pgUrl,
+  } = deps;
 
   // Storage tier switch (MEMLOOM_PG_URL): an external Postgres gets the pooled adapter and
   // needs neither the data-dir lock nor the wire socket (inspect the server directly).
@@ -232,7 +241,7 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promis
   console.log(`  config     ${configPath()}`);
   if (apiKey) {
     console.log(
-      `  mode       cloud (${embedModel ?? "qwen/qwen3-embedding-8b"} @ ${embedDims ?? 1024} dims${embedProvider ? ` via ${embedProvider}` : ""}, ${llmModel ?? "google/gemini-2.5-flash"}, auto-index ${autoIndex ? "on" : "off"})`,
+      `  mode       cloud (${embedModel ?? "qwen/qwen3-embedding-8b"} @ ${embedDims ?? 1024} dims${embedProvider ? ` via ${embedProvider}` : ""}, ${llmModel ?? "google/gemini-2.5-flash"}${llmProvider === "anthropic" ? " via Anthropic" : ""}, auto-index ${autoIndex ? "on" : "off"})`,
     );
   } else {
     console.log(

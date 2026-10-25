@@ -31,6 +31,15 @@ const CONFIG_TEMPLATE = `# memloom configuration. The daemon (\`memloom serve\`)
 # Assistant chat model (defaults to OPENROUTER_LLM_MODEL; must support tool calling):
 # OPENROUTER_CHAT_MODEL=google/gemini-2.5-flash
 
+# Run the LLM (extraction, dedup, conflicts, reconciliation, the assistant) on the Anthropic API
+# instead of OpenRouter. Embeddings stay on OpenRouter: Anthropic has no embeddings endpoint.
+# MEMLOOM_LLM_PROVIDER=anthropic
+# ANTHROPIC_API_KEY=sk-ant-...
+# ANTHROPIC_LLM_MODEL=claude-haiku-5-5
+# ANTHROPIC_CHAT_MODEL=claude-haiku-5-5
+# Effort for the pipeline's calls (low, medium, high, xhigh, max). Thinking bills as output:
+# ANTHROPIC_EFFORT=low
+
 # Preferred OpenRouter host for embeddings (latency varies a lot between hosts of the same
 # model; nebius is the fast one for the default model and is used automatically):
 # OPENROUTER_EMBED_PROVIDER=nebius
