@@ -8,9 +8,9 @@ import {
 } from "../packages/core/src/distill.js";
 import {
   chunksOf,
+  FIXTURE_FOLDERS,
   type Fixture,
   type FixtureKind,
-  FIXTURE_FOLDERS,
   keywordsMatch,
   loadFixtures,
   transcriptText,

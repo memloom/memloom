@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { LlmUsage, LLMProvider } from "./providers.js";
+import type { LLMProvider, LlmUsage } from "./providers.js";
 
 // An LLMProvider that shells out to the Claude Code CLI (`claude -p`), so evals and local
 // experiments run on a Claude subscription instead of an API key. Test and eval use only: it

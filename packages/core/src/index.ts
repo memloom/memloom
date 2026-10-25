@@ -91,6 +91,10 @@ export { runBenchmark } from "./benchmark.js";
 // Context connector building blocks
 export type { Chunk, ChunkOptions } from "./chunker.js";
 export { chunkMarkdown, chunkOutline, chunkText } from "./chunker.js";
+// Providers
+// Test and eval only: runs prompts through the Claude Code CLI on a subscription.
+export type { ClaudeCliOptions } from "./claude-cli-provider.js";
+export { ClaudeCliLLM } from "./claude-cli-provider.js";
 // Claude Code session import building blocks
 export type {
   ChunkResult,
@@ -180,10 +184,6 @@ export {
   registerExtractor,
   supportedExtensions,
 } from "./extract.js";
-// Providers
-// Test and eval only: runs prompts through the Claude Code CLI on a subscription.
-export type { ClaudeCliOptions } from "./claude-cli-provider.js";
-export { ClaudeCliLLM } from "./claude-cli-provider.js";
 export {
   HashingEmbeddingProvider,
   NullLLMProvider,

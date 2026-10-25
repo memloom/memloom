@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { ClaudeCliLLM } from "../../packages/core/src/claude-cli-provider.js";
 import { ScriptedLLMProvider } from "../../packages/core/src/hashing-provider.js";
 import { OpenRouterLLM } from "../../packages/core/src/openrouter-provider.js";
-import type { LlmUsage, LLMProvider } from "../../packages/core/src/providers.js";
+import type { LLMProvider, LlmUsage } from "../../packages/core/src/providers.js";
 
 // Provider selection for the eval. "claude-cli" is the default: it runs on a Claude
 // subscription through `claude -p` and costs nothing per call. "openrouter" is the model

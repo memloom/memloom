@@ -1,9 +1,9 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import {
+  chunkUnits,
   type SessionChunk,
   type SessionUnit,
-  chunkUnits,
 } from "../../packages/core/src/claude-sessions.js";
 import type { TranscriptKind } from "../../packages/core/src/distill.js";
 
