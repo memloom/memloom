@@ -30,6 +30,17 @@
   Letta, cognee and graphiti do and what memloom took from each
 - `ClaudeCliLLM`, a test-and-eval-only provider that shells out to `claude -p`, so the eval runs on
   a Claude subscription instead of an API key. Not wired into the daemon
+- Fixed: a second daemon could open the store while the first was still running, and the two
+  together corrupted the WAL so that neither could open it again ("could not locate a valid
+  checkpoint record"). A PGLite query runs on the main thread, so a daemon busy with a long one
+  missed its health check and stopped refreshing its lock; a client then started another daemon,
+  which took the lock as abandoned after 15 seconds. Now a daemon that holds the port counts as
+  running however slowly it answers, and the lock records its holder's pid and boot time, so it
+  is taken over only once that process is gone or the machine has restarted
+- The daemon keeps snapshots of the embedded store in `~/.memloom/snapshots`, the newest two,
+  taken every six hours while the store changes. A store that will not open is renamed to
+  `data.broken-<time>` and the daemon starts from the newest snapshot. `MEMLOOM_SNAPSHOTS=off`
+  turns this off
 - Fixed: a store left with a blank `postmaster.pid` by a crash or power loss would not open again.
   Postgres reads the empty file as a lock it cannot parse and PGLite reports only "PGlite failed
   to initialize properly", so the daemon exited on every start and the MCP server with it. The

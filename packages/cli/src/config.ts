@@ -92,6 +92,12 @@ const CONFIG_TEMPLATE = `# memloom configuration. The daemon (\`memloom serve\`)
 # clears whenever it likes. Deleting a document deletes its bytes from here too:
 # MEMLOOM_UPLOAD_DIR=~/.memloom/uploads
 
+# The daemon keeps the two newest snapshots of the embedded store in ~/.memloom/snapshots,
+# taking one every six hours while the store changes. If the store will not open (after a
+# crash or power loss), it is moved aside unchanged and the newest snapshot is used instead.
+# Set to off to keep no snapshots:
+# MEMLOOM_SNAPSHOTS=off
+
 # Transcription runs in a worker thread so a long file cannot block the daemon. Set this to 1
 # to run it in the main process instead, which is only useful when debugging the worker:
 # MEMLOOM_ASR_INPROC=1

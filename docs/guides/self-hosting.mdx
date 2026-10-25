@@ -29,6 +29,13 @@ cp -r ~/.memloom/data ~/backups/memloom-2026-07-12
 Stop first so the directory is quiescent. Restoring is the reverse. `config.env` travels
 separately.
 
+The daemon also keeps its own copies. Every six hours while the store changes it writes a
+snapshot to `~/.memloom/snapshots` and keeps the newest two, about the store's compressed size
+each. PGLite cannot force its writes to disk, so a crash or power loss can leave the store unable
+to open. When that happens the daemon renames it to `data.broken-<time>`, untouched, starts from
+the newest snapshot, and says so in its output. Memories saved after that snapshot are still in
+the renamed folder and can be recovered by hand. `MEMLOOM_SNAPSHOTS=off` turns this off.
+
 ***
 
 ## Running on Docker Postgres

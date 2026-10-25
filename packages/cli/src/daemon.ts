@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { createConnection } from "node:net";
 import { fileURLToPath } from "node:url";
 import { PGlite } from "@electric-sql/pglite";
 import { vector } from "@electric-sql/pglite/vector";
@@ -15,6 +16,7 @@ import {
 import { createServer } from "@memloom/server";
 import { configPath, dataDir, ensureConfig, loadConfigEnv } from "./config.js";
 import { buildEngineDeps } from "./engine-config.js";
+import { openWithFallback, scheduleSnapshots, snapshotsEnabled } from "./snapshots.js";
 
 export const HTTP_PORT = 4319;
 // A distinctive port so it never collides with a local Postgres on 5432. It sits in the
@@ -36,15 +38,28 @@ function maskPgUrl(url: string): string {
   return url.replace(/\/\/([^:@/]+):[^@]+@/, "//$1:***@");
 }
 
+// Something listening on the port counts, even when it is too busy to answer /health in time:
+// a daemon in the middle of a long query still holds the port. Treating it as gone let a second
+// daemon open the store alongside it, which corrupted the WAL.
 async function alreadyServing(httpPort: number): Promise<boolean> {
   try {
     const res = await fetch(`http://127.0.0.1:${httpPort}/health`, {
       signal: AbortSignal.timeout(600),
     });
-    return res.ok;
+    if (res.ok) return true;
   } catch {
-    return false;
+    // Too slow or not there; the port tells which.
   }
+  return new Promise((resolve) => {
+    const socket = createConnection({ host: "127.0.0.1", port: httpPort });
+    const done = (listening: boolean) => {
+      socket.destroy();
+      resolve(listening);
+    };
+    socket.setTimeout(1_000, () => done(false));
+    socket.once("connect", () => done(true));
+    socket.once("error", () => done(false));
+  });
 }
 
 export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promise<void> {
@@ -87,11 +102,16 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promis
       return;
     }
   } else {
-    // waitMs rides out the stale window of a force-killed daemon's leftover lock (15s), so
-    // "kill then serve" works instead of erroring on a lock that's about to expire.
+    // waitMs rides out a daemon that is shutting down and about to let go of the lock.
     release = await acquireDataDirLock(dir, { waitMs: 20_000 });
     try {
-      db = await PGlite.create({ dataDir: dir, extensions: { vector } });
+      ({ db } = await openWithFallback(dir, (d, snapshot) =>
+        PGlite.create({
+          dataDir: d,
+          extensions: { vector },
+          ...(snapshot ? { loadDataDir: snapshot } : {}),
+        }),
+      ));
     } catch (err) {
       await release();
       console.error(
@@ -127,7 +147,10 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promis
     return;
   }
 
+  const stopSnapshots = db && snapshotsEnabled() ? scheduleSnapshots(db) : undefined;
+
   const shutdown = async () => {
+    stopSnapshots?.();
     await pgServer?.stop();
     httpServer.close();
     if (db) await db.close();
