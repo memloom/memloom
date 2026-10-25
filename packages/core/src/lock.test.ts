@@ -1,9 +1,17 @@
 import { spawn } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  utimesSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir, uptime } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { acquireDataDirLock, clearBogusPostmasterPid, lockHolderGone } from "./lock.js";
+import { acquireDataDirLock, clearBogusPostmasterPid, lockHolderGone, reclaim } from "./lock.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
 
 // D1: the embedded store must reject a second opener so it can never corrupt the WAL.
@@ -109,6 +117,16 @@ describe("data-dir lock", () => {
     const won = results.filter((r) => r.status === "fulfilled");
     expect(won).toHaveLength(1);
     await (won[0] as PromiseFulfilledResult<() => Promise<void>>).value();
+  });
+
+  it("leaves the lock alone when the record it claims is already a live holder's", () => {
+    // The slower of two openers found the old holder gone, but by the time it claims the record
+    // the faster one has taken the lock and written its own.
+    const dir = tempDir();
+    leftLock(dir, { pid: process.pid, bootedAt: thisBoot() });
+    reclaim(dir);
+    expect(existsSync(`${dir}.lock`)).toBe(true);
+    expect(JSON.parse(readFileSync(`${dir}.lock-owner.json`, "utf8")).pid).toBe(process.pid);
   });
 
   it("takes over a lock left before a reboot, even if its pid is in use again", async () => {
