@@ -12,9 +12,9 @@ import { chunkMarkdown, chunkOutline } from "./chunker.js";
 import {
   chunkUnits,
   discoverSessions,
+  encodedProjectDirOf,
   hashPrefix,
   parseSession,
-  encodedProjectDirOf,
   projectNameOf,
   type SessionChunk,
   type SessionUnit,
@@ -43,28 +43,6 @@ import { LlmSpendError } from "./openrouter-provider.js";
 import { bindOwner, type OwnedMemloom } from "./owned.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
 import { uploadStoreDir } from "./queue.js";
-import {
-  buildScopeClassifyPrompt,
-  MIN_SCOPE_CONFIDENCE,
-  parseScopeClassification,
-  SCOPE_CLASSIFY_BATCH,
-  type ScopeClassifyItem,
-  type ScopeFolderOption,
-} from "./scope-classify.js";
-import {
-  allScopes,
-  buildScopeTree,
-  ensureScopePath,
-  ensureSystemScopes,
-  expandScopeSelector,
-  normalizeTags,
-  resolveScopePath,
-  SCOPE_ALL,
-  scopeDisplayPath,
-  scopeSlugPath,
-  subtreeIds,
-  wouldCycle,
-} from "./scopes.js";
 import {
   buildRecheckPrompt,
   countDueForRecheck,
@@ -115,6 +93,28 @@ import {
   type SchemaInfo,
   type SchemaKind,
 } from "./schema.js";
+import {
+  buildScopeClassifyPrompt,
+  MIN_SCOPE_CONFIDENCE,
+  parseScopeClassification,
+  SCOPE_CLASSIFY_BATCH,
+  type ScopeClassifyItem,
+  type ScopeFolderOption,
+} from "./scope-classify.js";
+import {
+  allScopes,
+  buildScopeTree,
+  ensureScopePath,
+  ensureSystemScopes,
+  expandScopeSelector,
+  normalizeTags,
+  resolveScopePath,
+  SCOPE_ALL,
+  scopeDisplayPath,
+  scopeSlugPath,
+  subtreeIds,
+  wouldCycle,
+} from "./scopes.js";
 import type { StorageAdapter } from "./storage.js";
 import type {
   AgentMemoryFolderEvent,
@@ -3347,7 +3347,9 @@ export class Memloom implements MemoryEngine {
       moved,
       rows: rowsMoved,
       perFolder: Object.fromEntries(
-        [...perFolder.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([p, s]) => [p, s.size]),
+        [...perFolder.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([p, s]) => [p, s.size]),
       ),
       alreadyFiled: Number(filed?.n ?? 0),
       unmappable,

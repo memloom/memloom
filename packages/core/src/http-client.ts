@@ -139,10 +139,7 @@ export class HttpMemloomClient implements MemoryEngine {
     return this.#post<SaveResult>("/memory/save", body);
   }
 
-  async memories(
-    ownerId?: string,
-    opts?: { scope?: string; tags?: string[] },
-  ): Promise<Memory[]> {
+  async memories(ownerId?: string, opts?: { scope?: string; tags?: string[] }): Promise<Memory[]> {
     this.#owned(ownerId);
     const params = new URLSearchParams();
     if (opts?.scope) params.set("scope", opts.scope);
@@ -207,9 +204,7 @@ export class HttpMemloomClient implements MemoryEngine {
     await this.#post(`/context/documents/${documentId}/scope`, { scope });
   }
 
-  backfillScopes(
-    opts: { dryRun?: boolean; ownerId?: string } = {},
-  ): Promise<ScopeBackfillReport> {
+  backfillScopes(opts: { dryRun?: boolean; ownerId?: string } = {}): Promise<ScopeBackfillReport> {
     this.#owned(opts.ownerId);
     return this.#post<ScopeBackfillReport>("/scopes/backfill", { dryRun: opts.dryRun ?? false });
   }

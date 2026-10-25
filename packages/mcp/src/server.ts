@@ -54,7 +54,7 @@ export function buildServer(memloom: MemoryEngine): McpServer {
       "retrieval (semantic + exact keyword + entity). ALWAYS pass `scope`, the folder for " +
       "the current context (list_scopes shows the tree): a scoped recall searches that " +
       "subtree plus 'uncategorized' and 'global', so cross-cutting preferences still " +
-      "surface while unrelated scopes stay out. Pass \"*\" for a deliberate " +
+      'surface while unrelated scopes stay out. Pass "*" for a deliberate ' +
       "everything-search (cross-scope questions). Exact identifiers like file paths, " +
       "config keys, or error codes make excellent queries. Document results say which file " +
       "and section they came from; every hit shows its scope. `tags` filters to memories " +

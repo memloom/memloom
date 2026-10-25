@@ -9,8 +9,8 @@ import {
   MEMORY_TYPES,
   type Memory,
   type MemoryType,
-  parseScopePath,
   type PossibleContradiction,
+  parseScopePath,
   type ReconcileReport,
   type ScopeNode,
   supportedExtensions,
@@ -69,7 +69,10 @@ function takeFlag(words: string[], name: string): string | undefined {
 function takeTags(words: string[]): string[] | undefined {
   const raw = takeFlag(words, "tags");
   if (raw === undefined) return undefined;
-  const tags = raw.split(",").map((t) => t.trim()).filter((t) => t.length > 0);
+  const tags = raw
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
   return tags.length > 0 ? tags : undefined;
 }
 
@@ -899,7 +902,9 @@ export async function run(argv: readonly string[]): Promise<void> {
         const node = await findScope(ref);
         const parentId = parentRef === "/" ? null : (await findScope(parentRef)).id;
         await engine.moveScope(node.id, parentId);
-        console.log(`moved  ${node.name}  ${parentRef === "/" ? "to the top level" : `under ${parentRef}`}`);
+        console.log(
+          `moved  ${node.name}  ${parentRef === "/" ? "to the top level" : `under ${parentRef}`}`,
+        );
         return;
       }
 
@@ -982,7 +987,9 @@ export async function run(argv: readonly string[]): Promise<void> {
           console.log(`(nothing in ${node.path})`);
           return;
         }
-        console.log(`${rows.length} in ${node.path}; move any with: memloom scopes set <path> <id>`);
+        console.log(
+          `${rows.length} in ${node.path}; move any with: memloom scopes set <path> <id>`,
+        );
         for (const m of rows) {
           const text = m.content.length > 100 ? `${m.content.slice(0, 97)}...` : m.content;
           console.log(`${m.id}  ${text.replace(/\s+/g, " ")}`);
