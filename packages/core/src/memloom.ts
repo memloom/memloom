@@ -21,7 +21,11 @@ import {
   type SessionChunk,
   type SessionUnit,
 } from "./claude-sessions.js";
-import { type ResolverSide, resolveConflictWithContext } from "./conflict-resolver.js";
+import {
+  type ResolverSide,
+  type ResolverVerdict,
+  resolveConflictWithContext,
+} from "./conflict-resolver.js";
 import { type Candidate, classify } from "./dedup.js";
 import { type DistilledMemory, distillChunk } from "./distill.js";
 import type { MemoryEngine } from "./engine.js";
@@ -342,6 +346,44 @@ export function isOwnerId(value: unknown): value is string {
  * memory conflicts the surface exists for. Later passes drain the rest.
  */
 const ENTITY_QUEUE_LIMIT = 50;
+
+/**
+ * How many reconciliation calls are in flight at once. Each call takes seconds and the writes
+ * around it milliseconds, so one at a time left a 6,000-belief sweep running for most of a day.
+ * MEMLOOM_RECONCILE_CONCURRENCY lowers it for an account with tight rate limits.
+ */
+function reconcileConcurrency(): number {
+  return Math.max(1, Math.min(64, Number(process.env.MEMLOOM_RECONCILE_CONCURRENCY) || 16));
+}
+
+/**
+ * Calls `worker` on each item with up to `limit` running at once, handing items out in order.
+ * Once `stop()` is true no new item starts, and the ones running finish. A worker's error stops
+ * the rest the same way and is rethrown after they settle, so nothing is left writing behind a
+ * caller that has already given up.
+ */
+async function runPool<T>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<void>,
+  stop: () => boolean = () => false,
+): Promise<void> {
+  let cursor = 0;
+  let failure: { err: unknown } | null = null;
+  await Promise.all(
+    Array.from({ length: Math.min(limit, items.length) }, async () => {
+      while (!failure && !stop() && cursor < items.length) {
+        const index = cursor++;
+        try {
+          await worker(items[index] as T, index);
+        } catch (err) {
+          failure ??= { err };
+        }
+      }
+    }),
+  );
+  if (failure) throw (failure as { err: unknown }).err;
+}
 
 /** Order-independent key for one entity pair: the dedupe key for "already asked about this". */
 function entityPairKey(a: string, b: string): string {
@@ -5699,6 +5741,13 @@ export class Memloom implements MemoryEngine {
       settled: [],
     };
     const pending = (await this.entityConflicts(owner)).slice(0, limit);
+    // The model calls run in parallel; the folds are applied one at a time, in queue order.
+    const answers: string[] = [];
+    await runPool(pending, reconcileConcurrency(), async (conflict, i) => {
+      const input = arbitrationCase(conflict);
+      if (input)
+        answers[i] = await this.#llm.complete(buildEntityArbiterPrompt(input)).catch(() => "");
+    });
     for (const [i, conflict] of pending.entries()) {
       const input = arbitrationCase(conflict);
       if (!input) continue;
@@ -5713,8 +5762,7 @@ export class Memloom implements MemoryEngine {
           reason,
           pair,
         });
-      const raw = await this.#llm.complete(buildEntityArbiterPrompt(input)).catch(() => "");
-      const verdict = parseEntityVerdict(raw);
+      const verdict = parseEntityVerdict(answers[i] ?? "");
       // No verdict is not a verdict. Leave it pending rather than guessing.
       if (!verdict || verdict.verdict === "unsure") {
         result.unsure++;
@@ -5803,17 +5851,15 @@ export class Memloom implements MemoryEngine {
       }
       const callsBeforePage = result.calls;
 
-      for (const subject of subjects) {
+      // Several calls run at once. Abort and budget are checked before each call starts, so a run
+      // overshoots its budget by at most the calls already in flight.
+      const halt = () => {
         // Nobody is listening any more, so stop spending.
-        if (signal?.aborted) {
-          result.stoppedBy = "aborted";
-          break;
-        }
-        if (budgetUsd != null && result.spent.usd >= budgetUsd) {
-          result.stoppedBy = "budget";
-          break;
-        }
-
+        if (signal?.aborted) result.stoppedBy ??= "aborted";
+        else if (budgetUsd != null && result.spent.usd >= budgetUsd) result.stoppedBy ??= "budget";
+        return result.stoppedBy !== null;
+      };
+      const judge = async (subject: (typeof subjects)[number]) => {
         let raw: string;
         try {
           raw = await this.#llm.complete(buildRecheckPrompt(subject, subject.candidates), {
@@ -5833,7 +5879,7 @@ export class Memloom implements MemoryEngine {
           // without judging one. Anything else is this belief's problem alone, so it is left
           // unstamped and comes back on the next run.
           if (err instanceof LlmSpendError) throw err;
-          continue;
+          return;
         }
         result.calls++;
 
@@ -5891,7 +5937,8 @@ export class Memloom implements MemoryEngine {
           found: result.findings.length,
           spentUsd: result.spent.usd,
         });
-      }
+      };
+      await runPool(subjects, reconcileConcurrency(), judge, halt);
 
       if (result.stoppedBy || budgetUsd == null) break;
       // Every call in the page failed for a reason that was not out-of-credit. Nothing was
@@ -6434,7 +6481,10 @@ export class Memloom implements MemoryEngine {
       keepBoth: 0,
       unsure: 0,
     };
-    for (const [i, conflict] of pending.entries()) {
+    // The model judges several conflicts at once; the resolutions are applied one at a time, in
+    // queue order, so two resolutions touching the same belief never interleave their writes.
+    const verdicts: ResolverVerdict[] = [];
+    await runPool(pending, reconcileConcurrency(), async (conflict, i) => {
       const ids = [conflict.incoming.id, ...conflict.candidates.map((c) => c.id)];
       const { createdOf, excerptOf } = await this.#conflictContext(ids);
       const sideOf = (id: string, content: string): ResolverSide => ({
@@ -6442,12 +6492,14 @@ export class Memloom implements MemoryEngine {
         createdAt: createdOf.get(id) ?? null,
         excerpt: excerptOf.get(id) ?? null,
       });
-
-      const verdict = await resolveConflictWithContext(
+      verdicts[i] = await resolveConflictWithContext(
         this.#llm,
         sideOf(conflict.incoming.id, conflict.incoming.content),
         conflict.candidates.map((c) => ({ ...sideOf(c.id, c.content), relation: c })),
       );
+    });
+    for (const [i, conflict] of pending.entries()) {
+      const verdict = verdicts[i] as ResolverVerdict;
       result.examined++;
 
       // The model's own words go on the decision row, or its reasoning would live only in
