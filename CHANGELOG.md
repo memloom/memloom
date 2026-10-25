@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reconciliation runs its model calls in parallel: 16 at once by default,
+  `MEMLOOM_RECONCILE_CONCURRENCY` to change it. The contradiction re-check on a 6,000-belief store
+  drops from most of a day to under an hour. Entity folds and conflict resolutions are still
+  applied one at a time, in queue order
+
 ## 0.11.0 (2026-10-25)
 
 - The LLM can run on the Anthropic API instead of OpenRouter: set `MEMLOOM_LLM_PROVIDER=anthropic`
