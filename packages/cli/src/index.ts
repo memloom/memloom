@@ -143,13 +143,16 @@ export function formatReconcileReport(report: ReconcileReport): string {
   }
   // The re-check is the only pass that sweeps, so its report says what it cost and what it left.
   if (report.recheck) {
-    const { calls, claimed, verified, remaining } = report.recheck;
+    const { calls, claimed, verified, dismissed, remaining } = report.recheck;
     lines.push("", `contradiction re-check: swept ${calls} beliefs against their 20 nearest`);
     lines.push(`  kept ${verified} of ${claimed} the model claimed`);
     if (claimed > verified) {
       lines.push(
-        `  ${claimed - verified} dropped: no verbatim quote for the clashing claim on both sides`,
+        `  ${claimed - verified} dropped: no verbatim quote on both sides, or a second check said no`,
       );
+    }
+    if (dismissed > 0) {
+      lines.push(`  ${dismissed} dismissed by the second check, counting earlier runs' leftovers`);
     }
     if (remaining > 0) lines.push(`  ${remaining} beliefs left for the next run`);
     if (verified > 0) lines.push("  waiting for you in the conflicts tab");
@@ -221,7 +224,7 @@ export function formatPossibleContradictions(possible: PossibleContradiction[]):
   }
   const lines = [
     `${possible.length} unconfirmed ${possible.length === 1 ? "contradiction" : "contradictions"}. ` +
-      "about 2 in 5 are real, so read both quotes before answering.",
+      "a second check stood behind each one, but read both quotes before answering.",
   ];
   for (const p of possible) {
     const similarity =

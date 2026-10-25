@@ -195,8 +195,8 @@ export interface MemoryEngine {
   /** What one run found and did: the expandable body of a run in the Console. */
   reconcileActions(runId: string, ownerId?: string): Promise<ReconcileAction[]>;
   /**
-   * Unconfirmed contradictions waiting for a yes or no, newest first. The re-check pass that
-   * finds them runs at roughly 40 percent precision, so these are questions, not conflicts.
+   * Unconfirmed contradictions waiting for a yes or no, newest first. Each one passed a second,
+   * narrower check, but a model still made the call, so these are questions, not conflicts.
    */
   possibleContradictions(ownerId?: string, limit?: number): Promise<PossibleContradiction[]>;
   /**

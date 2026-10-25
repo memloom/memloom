@@ -179,8 +179,8 @@ export function buildServer(memloom: MemoryEngine): McpServer {
     "list_possible_contradictions",
     "List UNCONFIRMED possible contradictions: pairs of memories that memloom's consolidation " +
       "pass thinks clash, each with a verbatim quote from both sides and the reason a model gave. " +
-      "These are NOT conflicts and they are NOT facts about the store. The pass runs at roughly " +
-      "40 percent precision, so most of what this returns is wrong. Treat each one as a question " +
+      "These are NOT conflicts and they are NOT facts about the store. Each one passed a second " +
+      "check, but a model still made the call and some are wrong. Treat each one as a question " +
       "for the user: show it, let them decide, and answer it with " +
       "answer_possible_contradiction using the id shown. Do not work through the list on your " +
       "own unless the user asked you to.",
@@ -195,8 +195,8 @@ export function buildServer(memloom: MemoryEngine): McpServer {
     "Answer one finding from list_possible_contradictions. `confirm` turns it into a real " +
       "conflict, which then has to be resolved with resolve_conflict (keep_new, keep_existing, " +
       "keep_both, or merge). `dismiss` records that pair as not a contradiction PERMANENTLY: it " +
-      "is never raised again and there is no undo. Because a finding is only about 40 percent " +
-      "likely to be real, ask the user rather than guessing. A wrong confirm puts noise in a " +
+      "is never raised again and there is no undo. Because a model made the call, ask the " +
+      "user rather than guessing. A wrong confirm puts noise in a " +
       "queue they have to clear; a wrong dismiss loses a real contradiction for good.",
     {
       id: z.string(),
