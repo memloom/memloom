@@ -63,30 +63,22 @@
     {
       "type": "fact",
       "content": "The user is buying a $325,000 house.",
-      "keywords": [
-        "325,000"
-      ]
+      "keywords": ["325,000"]
     },
     {
       "type": "fact",
       "content": "The user was pre-approved for a $350,000 mortgage from Wells Fargo.",
-      "keywords": [
-        "350,000"
-      ]
+      "keywords": ["350,000"]
     },
     {
       "type": "fact",
       "content": "The inspection report found minor roof and plumbing issues; the seller already agreed to a $2,000 credit toward closing costs.",
-      "keywords": [
-        "2,000"
-      ]
+      "keywords": ["2,000"]
     },
     {
       "type": "fact",
       "content": "The user plans to ask the seller to cover an additional 1% of the purchase price ($3,250) toward closing costs.",
-      "keywords": [
-        "3,250"
-      ]
+      "keywords": ["3,250"]
     }
   ],
   "date": "2023/08/11 (Fri) 00:01"

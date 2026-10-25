@@ -52,6 +52,21 @@ describe("ClaudeCliLLM", () => {
     expect(llm.calls).toBe(1);
   });
 
+  it("passes every argument intact: the empty tools value and the spaced system prompt", async () => {
+    const script = fakeCli(
+      "argv",
+      `process.stdout.write(JSON.stringify({ is_error: false, result: JSON.stringify(process.argv.slice(2)) }));`,
+    );
+    const argv = JSON.parse(await provider(script, { model: "haiku" }).complete("hi")) as string[];
+    // A shell would drop "" and split the prompt into words; the CLI would then read the
+    // prompt's words as positional arguments.
+    expect(argv[argv.indexOf("--tools") + 1]).toBe("");
+    const systemPrompt = argv[argv.indexOf("--system-prompt") + 1] ?? "";
+    expect(systemPrompt.startsWith("You are a text-processing function.")).toBe(true);
+    expect(systemPrompt).toContain("no preamble");
+    expect(argv.slice(-2)).toEqual(["--model", "haiku"]);
+  });
+
   it("throws on an is_error envelope instead of returning an empty reply", async () => {
     const script = fakeCli(
       "autherr",

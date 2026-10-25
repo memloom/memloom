@@ -63,33 +63,22 @@
     {
       "type": "fact",
       "content": "The user's daily commute to work takes 45 minutes each way; they listen to audiobooks during it.",
-      "keywords": [
-        "45 minutes"
-      ]
+      "keywords": ["45 minutes"]
     },
     {
       "type": "fact",
       "content": "The user is reading Gone Girl on their Kindle.",
-      "keywords": [
-        "gone girl"
-      ]
+      "keywords": ["gone girl"]
     },
     {
       "type": "fact",
       "content": "The user listens to audiobooks with the Audible app.",
-      "keywords": [
-        "audible"
-      ]
+      "keywords": ["audible"]
     },
     {
       "type": "preference",
       "content": "The user retains more from audiobooks than from e-books and takes notes while listening to non-fiction audiobooks.",
-      "keywords": [
-        [
-          "retain",
-          "retention"
-        ]
-      ]
+      "keywords": [["retain", "retention"]]
     }
   ],
   "date": "2023/05/22 (Mon) 21:18"

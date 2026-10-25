@@ -63,50 +63,32 @@
     {
       "type": "fact",
       "content": "The user gave their sister a yellow dress and matching earrings for her birthday.",
-      "keywords": [
-        "yellow dress"
-      ]
+      "keywords": ["yellow dress"]
     },
     {
       "type": "fact",
       "content": "The user gave their mom a pair of silver hoop earrings with a small pearl in the center.",
-      "keywords": [
-        "hoop"
-      ]
+      "keywords": ["hoop"]
     },
     {
       "type": "fact",
       "content": "The user gave their neighbor Mrs. Johnson groceries and flowers while she recovered from surgery.",
-      "keywords": [
-        "johnson"
-      ]
+      "keywords": ["johnson"]
     },
     {
       "type": "fact",
       "content": "The user brought snacks and drinks (granola bars, nuts, energy drinks) for coworkers at a team-building event.",
-      "keywords": [
-        [
-          "granola",
-          "snacks"
-        ]
-      ]
+      "keywords": [["granola", "snacks"]]
     },
     {
       "type": "fact",
       "content": "The user chipped in on a journal and a set of nice pens as a going-away gift for coworker Rachel.",
-      "keywords": [
-        "rachel"
-      ]
+      "keywords": ["rachel"]
     },
     {
       "type": "fact",
       "content": "The user has also bought gifts for their best friend's baby shower and their brother's new apartment.",
-      "keywords": [
-        [
-          "baby shower",
-          "brother"
-        ]
-      ]
+      "keywords": [["baby shower", "brother"]]
     }
   ],
   "date": "2023/05/24 (Wed) 04:49"

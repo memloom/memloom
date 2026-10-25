@@ -2,19 +2,54 @@
   "id": "coding-05",
   "kind": "agent-session",
   "date": "2026-04-16",
-  "source": { "note": "hand-written; a Python data job, with transient state that should not be stored" },
+  "source": {
+    "note": "hand-written; a Python data job, with transient state that should not be stored"
+  },
   "units": [
-    { "role": "user", "text": "The weather ETL job dies with a MemoryError on the 12 GB parquet dump. It's a pandas script, etl/weather_daily.py. Should I just rent a bigger box?" },
-    { "role": "assistant", "text": "A bigger box works but hides the problem. The general trade-off: pandas is eager and single-threaded, it materialises the whole frame in memory, and a 12 GB parquet file easily becomes 40 GB of pandas objects once strings are decoded. Polars is lazy by default, multi-threaded, and its streaming engine processes a query in batches, so memory stays roughly constant regardless of input size. DuckDB is a third option with similar properties and SQL as the interface. Both of the latter read parquet natively." },
-    { "role": "user", "text": "Let's rewrite it in polars then, I've wanted an excuse. Keep the output identical, the downstream dashboards read daily_weather.parquet." },
-    { "role": "assistant", "text": "Rewrote etl/weather_daily.py with `pl.scan_parquet` and the same group-by. First run still blew up: `sink_parquet` ran the whole plan in memory. The fix was `collect(engine='streaming')` combined with `sink_parquet`; in polars 1.x the streaming engine is opt-in per query, and without it the lazy frame is still materialised at the end. With streaming on, peak memory is 2.1 GB for the 12 GB input." },
-    { "role": "assistant", "text": "Output check: the new daily_weather.parquet has the same 3,652 rows and the same column set as the pandas version; I compared both with a frame-equality assertion including dtypes. One difference I had to handle: polars writes dates as Date, pandas wrote datetime64[ns]; I cast to Datetime to keep the downstream readers unchanged." },
-    { "role": "user", "text": "Kick off the full job now and tell me when it's done, I'm going for lunch." },
-    { "role": "assistant", "text": "Started; it is at 30% after two minutes, so about seven more minutes to go. I will report when it finishes." }
+    {
+      "role": "user",
+      "text": "The weather ETL job dies with a MemoryError on the 12 GB parquet dump. It's a pandas script, etl/weather_daily.py. Should I just rent a bigger box?"
+    },
+    {
+      "role": "assistant",
+      "text": "A bigger box works but hides the problem. The general trade-off: pandas is eager and single-threaded, it materialises the whole frame in memory, and a 12 GB parquet file easily becomes 40 GB of pandas objects once strings are decoded. Polars is lazy by default, multi-threaded, and its streaming engine processes a query in batches, so memory stays roughly constant regardless of input size. DuckDB is a third option with similar properties and SQL as the interface. Both of the latter read parquet natively."
+    },
+    {
+      "role": "user",
+      "text": "Let's rewrite it in polars then, I've wanted an excuse. Keep the output identical, the downstream dashboards read daily_weather.parquet."
+    },
+    {
+      "role": "assistant",
+      "text": "Rewrote etl/weather_daily.py with `pl.scan_parquet` and the same group-by. First run still blew up: `sink_parquet` ran the whole plan in memory. The fix was `collect(engine='streaming')` combined with `sink_parquet`; in polars 1.x the streaming engine is opt-in per query, and without it the lazy frame is still materialised at the end. With streaming on, peak memory is 2.1 GB for the 12 GB input."
+    },
+    {
+      "role": "assistant",
+      "text": "Output check: the new daily_weather.parquet has the same 3,652 rows and the same column set as the pandas version; I compared both with a frame-equality assertion including dtypes. One difference I had to handle: polars writes dates as Date, pandas wrote datetime64[ns]; I cast to Datetime to keep the downstream readers unchanged."
+    },
+    {
+      "role": "user",
+      "text": "Kick off the full job now and tell me when it's done, I'm going for lunch."
+    },
+    {
+      "role": "assistant",
+      "text": "Started; it is at 30% after two minutes, so about seven more minutes to go. I will report when it finishes."
+    }
   ],
   "expected": [
-    { "type": "fact", "content": "The weather ETL job (etl/weather_daily.py) was rewritten from pandas to polars in April 2026 because the pandas version hit MemoryError on a 12 GB parquet input.", "keywords": ["polars"] },
-    { "type": "procedure", "content": "In polars 1.x, sink_parquet on a lazy frame still materialises in memory unless the streaming engine is enabled with collect(engine='streaming'); with it, the 12 GB job peaks at about 2.1 GB.", "keywords": ["streaming"] },
-    { "type": "fact", "content": "Downstream dashboards read daily_weather.parquet, so its schema must stay identical; the date column is cast to Datetime to match the old pandas datetime64 output.", "keywords": [["daily_weather", "datetime"]] }
+    {
+      "type": "fact",
+      "content": "The weather ETL job (etl/weather_daily.py) was rewritten from pandas to polars in April 2026 because the pandas version hit MemoryError on a 12 GB parquet input.",
+      "keywords": ["polars"]
+    },
+    {
+      "type": "procedure",
+      "content": "In polars 1.x, sink_parquet on a lazy frame still materialises in memory unless the streaming engine is enabled with collect(engine='streaming'); with it, the 12 GB job peaks at about 2.1 GB.",
+      "keywords": ["streaming"]
+    },
+    {
+      "type": "fact",
+      "content": "Downstream dashboards read daily_weather.parquet, so its schema must stay identical; the date column is cast to Datetime to match the old pandas datetime64 output.",
+      "keywords": [["daily_weather", "datetime"]]
+    }
   ]
 }

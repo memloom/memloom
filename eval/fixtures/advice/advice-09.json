@@ -63,51 +63,32 @@
     {
       "type": "episode",
       "content": "The user had their bike tuned up on April 20, 2023 because the gears were sticking; the chain was replaced for $25.",
-      "keywords": [
-        [
-          "april 20",
-          "2023-04-20",
-          "20 april"
-        ]
-      ]
+      "keywords": [["april 20", "2023-04-20", "20 april"]]
     },
     {
       "type": "fact",
       "content": "The user had new bike lights installed for $40 at the April 20 tune-up.",
-      "keywords": [
-        [
-          "$40",
-          "40 dollars"
-        ]
-      ]
+      "keywords": [["$40", "40 dollars"]]
     },
     {
       "type": "fact",
       "content": "The user has ridden 347 miles since the start of the year and aims for 1000 miles by the end of summer.",
-      "keywords": [
-        "347"
-      ]
+      "keywords": ["347"]
     },
     {
       "type": "fact",
       "content": "The user commutes to work by bike, about 10 miles round trip.",
-      "keywords": [
-        "10 miles"
-      ]
+      "keywords": ["10 miles"]
     },
     {
       "type": "fact",
       "content": "The user bought a Bell Zephyr helmet on April 10 from the local bike shop downtown.",
-      "keywords": [
-        "zephyr"
-      ]
+      "keywords": ["zephyr"]
     },
     {
       "type": "fact",
       "content": "The user is planning a road trip to the mountains in June.",
-      "keywords": [
-        "june"
-      ]
+      "keywords": ["june"]
     }
   ],
   "date": "2023/05/05 (Fri) 00:33"

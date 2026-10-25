@@ -63,40 +63,27 @@
     {
       "type": "episode",
       "content": "The user attended a production of The Glass Menagerie at their local community theater.",
-      "keywords": [
-        "glass menagerie"
-      ]
+      "keywords": ["glass menagerie"]
     },
     {
       "type": "fact",
       "content": "The user's friend Emily is an aspiring actress; the user plans to encourage her to audition for a role.",
-      "keywords": [
-        "emily"
-      ]
+      "keywords": ["emily"]
     },
     {
       "type": "episode",
       "content": "The user's recent audition for a role in The Crucible did not go well.",
-      "keywords": [
-        "crucible"
-      ]
+      "keywords": ["crucible"]
     },
     {
       "type": "fact",
       "content": "The user wants to take adult acting classes focused on scene study and character development; they struggle with getting into character.",
-      "keywords": [
-        [
-          "acting class",
-          "acting lessons"
-        ]
-      ]
+      "keywords": [["acting class", "acting lessons"]]
     },
     {
       "type": "episode",
       "content": "The user recently tried the new Italian restaurant downtown and thought it was pretty good.",
-      "keywords": [
-        "italian"
-      ]
+      "keywords": ["italian"]
     }
   ],
   "date": "2023/05/26 (Fri) 07:31"

@@ -63,37 +63,27 @@
     {
       "type": "fact",
       "content": "The user plans to major in Economics.",
-      "keywords": [
-        "economics"
-      ]
+      "keywords": ["economics"]
     },
     {
       "type": "fact",
       "content": "In high school the user was on the debate team and took AP courses in economics.",
-      "keywords": [
-        "debate"
-      ]
+      "keywords": ["debate"]
     },
     {
       "type": "fact",
       "content": "The user is weighing a Master's degree in Data Science and is not ready to commit to a full program.",
-      "keywords": [
-        "master"
-      ]
+      "keywords": ["master"]
     },
     {
       "type": "fact",
       "content": "The user has taken online certification courses in Python programming and data visualization and reads books on machine learning and AI.",
-      "keywords": [
-        "python"
-      ]
+      "keywords": ["python"]
     },
     {
       "type": "fact",
       "content": "The user wants to build skills in machine learning and deep learning.",
-      "keywords": [
-        "deep learning"
-      ]
+      "keywords": ["deep learning"]
     }
   ],
   "date": "2023/05/23 (Tue) 16:25"

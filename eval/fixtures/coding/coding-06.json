@@ -4,17 +4,50 @@
   "date": "2026-06-02",
   "source": { "note": "hand-written; an Android music app and a foreground-service gotcha" },
   "units": [
-    { "role": "user", "text": "Playback stops when the screen locks on my Pixel 8 (Android 14). Works fine on the old Samsung on Android 12. The app is the MusicPlayer project, Kotlin, media3." },
-    { "role": "assistant", "text": "Some background. Since Android 8 a foreground service needs a persistent notification; since Android 14 (API 34) every foreground service must also declare a `foregroundServiceType` in the manifest and request the matching permission, and the system kills services that start without one. For media playback the type is `mediaPlayback` with the `FOREGROUND_SERVICE_MEDIA_PLAYBACK` permission. Media3's `MediaSessionService` handles most of this, but only if the manifest entry is complete." },
-    { "role": "assistant", "text": "Checked app/src/main/AndroidManifest.xml: the `PlaybackService` entry has no `android:foregroundServiceType`. Logcat on the Pixel confirms it: `ForegroundServiceStartNotAllowedException` about 10 seconds after the screen locks, which is when the system re-checks the service. Added `android:foregroundServiceType=\"mediaPlayback\"` and the `FOREGROUND_SERVICE_MEDIA_PLAYBACK` permission. Reinstalled on the Pixel: playback now continues through screen lock for the 15-minute test." },
-    { "role": "user", "text": "Nice. Commit it. Imperative mood, no emoji, no 'fix:' prefix, we don't use conventional commits here." },
-    { "role": "assistant", "text": "Committed as \"Declare the mediaPlayback foreground service type for Android 14\". The targetSdk is 34, so this applies to every user on 14 or newer." },
-    { "role": "user", "text": "Also, I want to drop the Samsung from my test devices, it's on Android 12 and I don't think anyone uses the app below 13 anyway. Set minSdk to 33." },
-    { "role": "assistant", "text": "Set `minSdk = 33` in app/build.gradle.kts and removed the two `Build.VERSION.SDK_INT >= 31` guards that are now always true. The build is green." }
+    {
+      "role": "user",
+      "text": "Playback stops when the screen locks on my Pixel 8 (Android 14). Works fine on the old Samsung on Android 12. The app is the MusicPlayer project, Kotlin, media3."
+    },
+    {
+      "role": "assistant",
+      "text": "Some background. Since Android 8 a foreground service needs a persistent notification; since Android 14 (API 34) every foreground service must also declare a `foregroundServiceType` in the manifest and request the matching permission, and the system kills services that start without one. For media playback the type is `mediaPlayback` with the `FOREGROUND_SERVICE_MEDIA_PLAYBACK` permission. Media3's `MediaSessionService` handles most of this, but only if the manifest entry is complete."
+    },
+    {
+      "role": "assistant",
+      "text": "Checked app/src/main/AndroidManifest.xml: the `PlaybackService` entry has no `android:foregroundServiceType`. Logcat on the Pixel confirms it: `ForegroundServiceStartNotAllowedException` about 10 seconds after the screen locks, which is when the system re-checks the service. Added `android:foregroundServiceType=\"mediaPlayback\"` and the `FOREGROUND_SERVICE_MEDIA_PLAYBACK` permission. Reinstalled on the Pixel: playback now continues through screen lock for the 15-minute test."
+    },
+    {
+      "role": "user",
+      "text": "Nice. Commit it. Imperative mood, no emoji, no 'fix:' prefix, we don't use conventional commits here."
+    },
+    {
+      "role": "assistant",
+      "text": "Committed as \"Declare the mediaPlayback foreground service type for Android 14\". The targetSdk is 34, so this applies to every user on 14 or newer."
+    },
+    {
+      "role": "user",
+      "text": "Also, I want to drop the Samsung from my test devices, it's on Android 12 and I don't think anyone uses the app below 13 anyway. Set minSdk to 33."
+    },
+    {
+      "role": "assistant",
+      "text": "Set `minSdk = 33` in app/build.gradle.kts and removed the two `Build.VERSION.SDK_INT >= 31` guards that are now always true. The build is green."
+    }
   ],
   "expected": [
-    { "type": "procedure", "content": "On Android 14 the MusicPlayer PlaybackService must declare foregroundServiceType=\"mediaPlayback\" plus the FOREGROUND_SERVICE_MEDIA_PLAYBACK permission, or the system kills playback about 10 seconds after the screen locks.", "keywords": ["mediaplayback"] },
-    { "type": "preference", "content": "The user writes commit messages in imperative mood, with no emoji and no conventional-commit prefixes.", "keywords": [["imperative", "conventional"]] },
-    { "type": "fact", "content": "MusicPlayer's minSdk was raised to 33 in June 2026; the user dropped the Android 12 Samsung from their test devices and tests on a Pixel 8 on Android 14.", "keywords": [["minsdk", "33"]] }
+    {
+      "type": "procedure",
+      "content": "On Android 14 the MusicPlayer PlaybackService must declare foregroundServiceType=\"mediaPlayback\" plus the FOREGROUND_SERVICE_MEDIA_PLAYBACK permission, or the system kills playback about 10 seconds after the screen locks.",
+      "keywords": ["mediaplayback"]
+    },
+    {
+      "type": "preference",
+      "content": "The user writes commit messages in imperative mood, with no emoji and no conventional-commit prefixes.",
+      "keywords": [["imperative", "conventional"]]
+    },
+    {
+      "type": "fact",
+      "content": "MusicPlayer's minSdk was raised to 33 in June 2026; the user dropped the Android 12 Samsung from their test devices and tests on a Pixel 8 on Android 14.",
+      "keywords": [["minsdk", "33"]]
+    }
   ]
 }

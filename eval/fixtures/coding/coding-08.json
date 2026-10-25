@@ -4,17 +4,50 @@
   "date": "2026-04-03",
   "source": { "note": "hand-written; a Django deploy incident post-mortem" },
   "units": [
-    { "role": "user", "text": "Post-mortem time. Yesterday's 14:10 deploy of shopfront broke checkout for 25 minutes. Stripe webhooks all 400'd. Figure out exactly why and make sure it can't happen again." },
-    { "role": "assistant", "text": "Quick refresher on the mechanism so the fix makes sense: Stripe signs every webhook with a secret specific to the endpoint, and the receiving code verifies the signature header against that secret before trusting the payload. A missing or wrong secret makes verification fail, and the standard response is HTTP 400, which Stripe then retries with backoff for up to three days." },
-    { "role": "assistant", "text": "Found it in the deploy logs and the prod container env. The new release moved settings to django-environ and renamed `STRIPE_WH_SECRET` to `STRIPE_WEBHOOK_SECRET`. The prod environment on the host still had the old name, so `settings.STRIPE_WEBHOOK_SECRET` resolved to an empty string and every signature check failed. Staging worked because its .env had already been regenerated with the new name on March 28. The 25 minutes ended when you set the variable by hand." },
-    { "role": "user", "text": "Yep, I remember. The secret itself lives in the 1Password vault 'shopfront-prod' under the Stripe item, for the record. What's the guard?" },
-    { "role": "assistant", "text": "Two things. First, a startup check: settings.py now fails fast with a clear message if any of the required secrets is empty, so the container would have refused to start instead of serving 400s. Second, I added `python manage.py check --deploy` plus a `scripts/verify-env.sh` step to the deploy checklist in docs/deploy.md; the script diffs the variable names in .env.example against the target host's environment and exits non-zero on any missing name. Ran it against prod: clean now." },
-    { "role": "user", "text": "Good. Write the incident up in docs/incidents/2026-04-02-stripe-webhooks.md, short, and link the checklist." },
-    { "role": "assistant", "text": "Written: timeline (14:10 deploy, 14:12 first 400, 14:35 fixed), cause (renamed env var not present in prod), and the two guards, with a link to docs/deploy.md." }
+    {
+      "role": "user",
+      "text": "Post-mortem time. Yesterday's 14:10 deploy of shopfront broke checkout for 25 minutes. Stripe webhooks all 400'd. Figure out exactly why and make sure it can't happen again."
+    },
+    {
+      "role": "assistant",
+      "text": "Quick refresher on the mechanism so the fix makes sense: Stripe signs every webhook with a secret specific to the endpoint, and the receiving code verifies the signature header against that secret before trusting the payload. A missing or wrong secret makes verification fail, and the standard response is HTTP 400, which Stripe then retries with backoff for up to three days."
+    },
+    {
+      "role": "assistant",
+      "text": "Found it in the deploy logs and the prod container env. The new release moved settings to django-environ and renamed `STRIPE_WH_SECRET` to `STRIPE_WEBHOOK_SECRET`. The prod environment on the host still had the old name, so `settings.STRIPE_WEBHOOK_SECRET` resolved to an empty string and every signature check failed. Staging worked because its .env had already been regenerated with the new name on March 28. The 25 minutes ended when you set the variable by hand."
+    },
+    {
+      "role": "user",
+      "text": "Yep, I remember. The secret itself lives in the 1Password vault 'shopfront-prod' under the Stripe item, for the record. What's the guard?"
+    },
+    {
+      "role": "assistant",
+      "text": "Two things. First, a startup check: settings.py now fails fast with a clear message if any of the required secrets is empty, so the container would have refused to start instead of serving 400s. Second, I added `python manage.py check --deploy` plus a `scripts/verify-env.sh` step to the deploy checklist in docs/deploy.md; the script diffs the variable names in .env.example against the target host's environment and exits non-zero on any missing name. Ran it against prod: clean now."
+    },
+    {
+      "role": "user",
+      "text": "Good. Write the incident up in docs/incidents/2026-04-02-stripe-webhooks.md, short, and link the checklist."
+    },
+    {
+      "role": "assistant",
+      "text": "Written: timeline (14:10 deploy, 14:12 first 400, 14:35 fixed), cause (renamed env var not present in prod), and the two guards, with a link to docs/deploy.md."
+    }
   ],
   "expected": [
-    { "type": "episode", "content": "On April 2, 2026 at 14:10 a shopfront deploy broke checkout for 25 minutes: the release renamed STRIPE_WH_SECRET to STRIPE_WEBHOOK_SECRET and prod still had the old name, so every Stripe webhook signature check failed with 400.", "keywords": ["stripe_webhook_secret"] },
-    { "type": "procedure", "content": "The shopfront deploy checklist (docs/deploy.md) now includes manage.py check --deploy and scripts/verify-env.sh, which diffs .env.example variable names against the target host's environment; settings.py fails fast on empty required secrets.", "keywords": [["verify-env", "check --deploy"]] },
-    { "type": "fact", "content": "The shopfront production Stripe webhook secret lives in the 1Password vault 'shopfront-prod' under the Stripe item.", "keywords": ["1password"] }
+    {
+      "type": "episode",
+      "content": "On April 2, 2026 at 14:10 a shopfront deploy broke checkout for 25 minutes: the release renamed STRIPE_WH_SECRET to STRIPE_WEBHOOK_SECRET and prod still had the old name, so every Stripe webhook signature check failed with 400.",
+      "keywords": ["stripe_webhook_secret"]
+    },
+    {
+      "type": "procedure",
+      "content": "The shopfront deploy checklist (docs/deploy.md) now includes manage.py check --deploy and scripts/verify-env.sh, which diffs .env.example variable names against the target host's environment; settings.py fails fast on empty required secrets.",
+      "keywords": [["verify-env", "check --deploy"]]
+    },
+    {
+      "type": "fact",
+      "content": "The shopfront production Stripe webhook secret lives in the 1Password vault 'shopfront-prod' under the Stripe item.",
+      "keywords": ["1password"]
+    }
   ]
 }

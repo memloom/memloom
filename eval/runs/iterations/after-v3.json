@@ -71,12 +71,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 3,
-      "coverage": [
-        1,
-        0,
-        2,
-        3
-      ],
+      "coverage": [1, 0, 2, 3],
       "extracted": 4,
       "generic": 0,
       "unsupported": 1,
@@ -116,12 +111,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 4,
-      "coverage": [
-        4,
-        3,
-        5,
-        6
-      ],
+      "coverage": [4, 3, 5, 6],
       "extracted": 10,
       "generic": 0,
       "unsupported": 0,
@@ -197,12 +187,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 4,
-      "coverage": [
-        3,
-        5,
-        4,
-        1
-      ],
+      "coverage": [3, 5, 4, 1],
       "extracted": 6,
       "generic": 0,
       "unsupported": 1,
@@ -254,12 +239,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 4,
-      "coverage": [
-        5,
-        2,
-        3,
-        6
-      ],
+      "coverage": [5, 2, 3, 6],
       "extracted": 6,
       "generic": 0,
       "unsupported": 0,
@@ -311,11 +291,7 @@
       "chunks": 1,
       "expected": 3,
       "recalled": 3,
-      "coverage": [
-        1,
-        2,
-        3
-      ],
+      "coverage": [1, 2, 3],
       "extracted": 5,
       "generic": 0,
       "unsupported": 0,
@@ -361,11 +337,7 @@
       "chunks": 1,
       "expected": 3,
       "recalled": 3,
-      "coverage": [
-        2,
-        3,
-        4
-      ],
+      "coverage": [2, 3, 4],
       "extracted": 5,
       "generic": 0,
       "unsupported": 0,
@@ -411,11 +383,7 @@
       "chunks": 1,
       "expected": 3,
       "recalled": 3,
-      "coverage": [
-        1,
-        2,
-        3
-      ],
+      "coverage": [1, 2, 3],
       "extracted": 4,
       "generic": 0,
       "unsupported": 0,
@@ -455,11 +423,7 @@
       "chunks": 1,
       "expected": 3,
       "recalled": 3,
-      "coverage": [
-        3,
-        7,
-        5
-      ],
+      "coverage": [3, 7, 5],
       "extracted": 8,
       "generic": 1,
       "unsupported": 0,
@@ -523,11 +487,7 @@
       "chunks": 1,
       "expected": 3,
       "recalled": 3,
-      "coverage": [
-        2,
-        5,
-        3
-      ],
+      "coverage": [2, 5, 3],
       "extracted": 7,
       "generic": 0,
       "unsupported": 0,
@@ -585,11 +545,7 @@
       "chunks": 1,
       "expected": 3,
       "recalled": 3,
-      "coverage": [
-        1,
-        2,
-        5
-      ],
+      "coverage": [1, 2, 5],
       "extracted": 6,
       "generic": 0,
       "unsupported": 1,
@@ -641,12 +597,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 4,
-      "coverage": [
-        5,
-        2,
-        4,
-        6
-      ],
+      "coverage": [5, 2, 4, 6],
       "extracted": 7,
       "generic": 0,
       "unsupported": 0,
@@ -704,13 +655,7 @@
       "chunks": 1,
       "expected": 5,
       "recalled": 5,
-      "coverage": [
-        3,
-        2,
-        4,
-        5,
-        1
-      ],
+      "coverage": [3, 2, 4, 5, 1],
       "extracted": 5,
       "generic": 0,
       "unsupported": 0,
@@ -756,13 +701,7 @@
       "chunks": 1,
       "expected": 5,
       "recalled": 3,
-      "coverage": [
-        2,
-        1,
-        0,
-        3,
-        0
-      ],
+      "coverage": [2, 1, 0, 3, 0],
       "extracted": 3,
       "generic": 0,
       "unsupported": 0,
@@ -796,12 +735,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 4,
-      "coverage": [
-        4,
-        4,
-        1,
-        1
-      ],
+      "coverage": [4, 4, 1, 1],
       "extracted": 5,
       "generic": 0,
       "unsupported": 0,
@@ -847,14 +781,7 @@
       "chunks": 1,
       "expected": 6,
       "recalled": 5,
-      "coverage": [
-        1,
-        2,
-        3,
-        4,
-        5,
-        0
-      ],
+      "coverage": [1, 2, 3, 4, 5, 0],
       "extracted": 5,
       "generic": 0,
       "unsupported": 0,
@@ -900,13 +827,7 @@
       "chunks": 1,
       "expected": 5,
       "recalled": 5,
-      "coverage": [
-        2,
-        7,
-        5,
-        3,
-        10
-      ],
+      "coverage": [2, 7, 5, 3, 10],
       "extracted": 10,
       "generic": 0,
       "unsupported": 0,
@@ -982,14 +903,7 @@
       "chunks": 1,
       "expected": 6,
       "recalled": 6,
-      "coverage": [
-        3,
-        3,
-        4,
-        5,
-        2,
-        4
-      ],
+      "coverage": [3, 3, 4, 5, 2, 4],
       "extracted": 5,
       "generic": 0,
       "unsupported": 0,
@@ -1035,12 +949,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 4,
-      "coverage": [
-        2,
-        3,
-        5,
-        5
-      ],
+      "coverage": [2, 3, 5, 5],
       "extracted": 6,
       "generic": 0,
       "unsupported": 0,
@@ -1092,14 +1001,7 @@
       "chunks": 1,
       "expected": 6,
       "recalled": 6,
-      "coverage": [
-        2,
-        2,
-        3,
-        5,
-        6,
-        1
-      ],
+      "coverage": [2, 2, 3, 5, 6, 1],
       "extracted": 10,
       "generic": 0,
       "unsupported": 0,
@@ -1175,13 +1077,7 @@
       "chunks": 1,
       "expected": 5,
       "recalled": 3,
-      "coverage": [
-        1,
-        2,
-        0,
-        3,
-        0
-      ],
+      "coverage": [1, 2, 0, 3, 0],
       "extracted": 4,
       "generic": 0,
       "unsupported": 0,
@@ -1221,12 +1117,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 4,
-      "coverage": [
-        1,
-        4,
-        8,
-        3
-      ],
+      "coverage": [1, 4, 8, 3],
       "extracted": 8,
       "generic": 1,
       "unsupported": 0,
@@ -1290,12 +1181,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 4,
-      "coverage": [
-        1,
-        2,
-        3,
-        4
-      ],
+      "coverage": [1, 2, 3, 4],
       "extracted": 5,
       "generic": 0,
       "unsupported": 0,
@@ -1341,12 +1227,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 4,
-      "coverage": [
-        1,
-        2,
-        3,
-        4
-      ],
+      "coverage": [1, 2, 3, 4],
       "extracted": 4,
       "generic": 0,
       "unsupported": 0,
@@ -1386,12 +1267,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 4,
-      "coverage": [
-        1,
-        2,
-        5,
-        4
-      ],
+      "coverage": [1, 2, 5, 4],
       "extracted": 7,
       "generic": 0,
       "unsupported": 1,
@@ -1449,11 +1325,7 @@
       "chunks": 1,
       "expected": 3,
       "recalled": 3,
-      "coverage": [
-        1,
-        5,
-        7
-      ],
+      "coverage": [1, 5, 7],
       "extracted": 7,
       "generic": 0,
       "unsupported": 0,
@@ -1511,11 +1383,7 @@
       "chunks": 1,
       "expected": 3,
       "recalled": 3,
-      "coverage": [
-        3,
-        2,
-        4
-      ],
+      "coverage": [3, 2, 4],
       "extracted": 5,
       "generic": 0,
       "unsupported": 0,
@@ -1561,13 +1429,7 @@
       "chunks": 1,
       "expected": 5,
       "recalled": 5,
-      "coverage": [
-        1,
-        1,
-        2,
-        3,
-        4
-      ],
+      "coverage": [1, 1, 2, 3, 4],
       "extracted": 4,
       "generic": 0,
       "unsupported": 0,
@@ -1607,12 +1469,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 4,
-      "coverage": [
-        1,
-        2,
-        3,
-        4
-      ],
+      "coverage": [1, 2, 3, 4],
       "extracted": 4,
       "generic": 0,
       "unsupported": 0,
@@ -1652,12 +1509,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 1,
-      "coverage": [
-        1,
-        0,
-        0,
-        0
-      ],
+      "coverage": [1, 0, 0, 0],
       "extracted": 1,
       "generic": 0,
       "unsupported": 0,
@@ -1679,12 +1531,7 @@
       "chunks": 1,
       "expected": 4,
       "recalled": 4,
-      "coverage": [
-        1,
-        2,
-        3,
-        4
-      ],
+      "coverage": [1, 2, 3, 4],
       "extracted": 4,
       "generic": 0,
       "unsupported": 0,

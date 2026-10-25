@@ -149,68 +149,72 @@ async function main() {
   );
   const started = performance.now();
 
-  const results = await pool(fixtures, args.concurrency, async (fixture): Promise<FixtureResult> => {
-    const chunks = chunksOf(fixture);
-    const base: FixtureResult = {
-      id: fixture.id,
-      folder: fixture.folder,
-      kind: fixture.kind,
-      chunks: chunks.length,
-      expected: fixture.expected.length,
-      recalled: 0,
-      coverage: [],
-      extracted: 0,
-      generic: 0,
-      unsupported: 0,
-      duplicates: 0,
-      dropped: 0,
-      memories: [],
-    };
-    try {
-      const distilled: DistilledMemory[] = [];
-      for (const chunk of chunks) {
-        const raw = await distiller.complete(buildPrompt(fixture, chunk));
-        const out = parseDistillation(raw, chunk);
-        distilled.push(...out.memories);
-        base.dropped += out.dropped;
-      }
-      const texts = distilled.map((m) => m.content);
-      const memories: MemoryResult[] = distilled.map((m) => ({
-        content: m.content,
-        type: m.memoryType,
-        ...(m.source ? { source: m.source } : {}),
-      }));
-      base.extracted = memories.length;
+  const results = await pool(
+    fixtures,
+    args.concurrency,
+    async (fixture): Promise<FixtureResult> => {
+      const chunks = chunksOf(fixture);
+      const base: FixtureResult = {
+        id: fixture.id,
+        folder: fixture.folder,
+        kind: fixture.kind,
+        chunks: chunks.length,
+        expected: fixture.expected.length,
+        recalled: 0,
+        coverage: [],
+        extracted: 0,
+        generic: 0,
+        unsupported: 0,
+        duplicates: 0,
+        dropped: 0,
+        memories: [],
+      };
+      try {
+        const distilled: DistilledMemory[] = [];
+        for (const chunk of chunks) {
+          const raw = await distiller.complete(buildPrompt(fixture, chunk));
+          const out = parseDistillation(raw, chunk);
+          distilled.push(...out.memories);
+          base.dropped += out.dropped;
+        }
+        const texts = distilled.map((m) => m.content);
+        const memories: MemoryResult[] = distilled.map((m) => ({
+          content: m.content,
+          type: m.memoryType,
+          ...(m.source ? { source: m.source } : {}),
+        }));
+        base.extracted = memories.length;
 
-      if (judge) {
-        const [coverage, grounding, groups] = await Promise.all([
-          judgeRecall(judge, fixture.expected, texts),
-          judgeGrounding(judge, transcriptText(fixture), texts),
-          judgeDuplicates(judge, texts),
-        ]);
-        base.coverage = coverage;
-        grounding.forEach((g, i) => {
-          const m = memories[i];
-          if (m) m.grounding = g;
-        });
-        base.generic = grounding.filter((g) => g === "generic").length;
-        base.unsupported = grounding.filter((g) => g === "unsupported").length;
-        base.duplicates = memories.length - groups.length;
-      } else {
-        base.coverage = fixture.expected.map((e) => (keywordsMatch(e, texts) ? 1 : 0));
+        if (judge) {
+          const [coverage, grounding, groups] = await Promise.all([
+            judgeRecall(judge, fixture.expected, texts),
+            judgeGrounding(judge, transcriptText(fixture), texts),
+            judgeDuplicates(judge, texts),
+          ]);
+          base.coverage = coverage;
+          grounding.forEach((g, i) => {
+            const m = memories[i];
+            if (m) m.grounding = g;
+          });
+          base.generic = grounding.filter((g) => g === "generic").length;
+          base.unsupported = grounding.filter((g) => g === "unsupported").length;
+          base.duplicates = memories.length - groups.length;
+        } else {
+          base.coverage = fixture.expected.map((e) => (keywordsMatch(e, texts) ? 1 : 0));
+        }
+        base.recalled = base.coverage.filter((c) => c > 0).length;
+        base.memories = memories;
+        const line =
+          `${fixture.id}: ${base.recalled}/${base.expected} recalled, ${base.extracted} extracted` +
+          (judge ? `, ${base.generic} generic, ${base.duplicates} dup` : "");
+        console.log(line);
+      } catch (err) {
+        base.error = err instanceof Error ? err.message : String(err);
+        console.log(`${fixture.id}: FAILED ${base.error}`);
       }
-      base.recalled = base.coverage.filter((c) => c > 0).length;
-      base.memories = memories;
-      const line =
-        `${fixture.id}: ${base.recalled}/${base.expected} recalled, ${base.extracted} extracted` +
-        (judge ? `, ${base.generic} generic, ${base.duplicates} dup` : "");
-      console.log(line);
-    } catch (err) {
-      base.error = err instanceof Error ? err.message : String(err);
-      console.log(`${fixture.id}: FAILED ${base.error}`);
-    }
-    return base;
-  });
+      return base;
+    },
+  );
 
   const elapsedS = (performance.now() - started) / 1000;
   const label = args.label ?? `${args.prompt}-${new Date().toISOString().replace(/[:.]/g, "-")}`;

@@ -46,7 +46,10 @@ export interface Aggregate {
   errors: number;
 }
 
-export function aggregate(results: readonly FixtureResult[], folder: Aggregate["folder"]): Aggregate {
+export function aggregate(
+  results: readonly FixtureResult[],
+  folder: Aggregate["folder"],
+): Aggregate {
   const rows = folder === "all" ? results : results.filter((r) => r.folder === folder);
   const sum = (pick: (r: FixtureResult) => number) => rows.reduce((a, r) => a + pick(r), 0);
   return {
@@ -63,9 +66,13 @@ export function aggregate(results: readonly FixtureResult[], folder: Aggregate["
   };
 }
 
-export const pct = (n: number, d: number): string => (d === 0 ? "-" : `${((100 * n) / d).toFixed(0)}%`);
+export const pct = (n: number, d: number): string =>
+  d === 0 ? "-" : `${((100 * n) / d).toFixed(0)}%`;
 
-export function summaryTable(results: readonly FixtureResult[], folders: readonly FixtureKind[]): string {
+export function summaryTable(
+  results: readonly FixtureResult[],
+  folders: readonly FixtureKind[],
+): string {
   const rows = [...folders.map((f) => aggregate(results, f)), aggregate(results, "all")];
   const header =
     "| kind | transcripts | expected | recalled | extracted | advice stored | duplicates | unsupported | dropped by parser |\n" +

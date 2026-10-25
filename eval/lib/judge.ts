@@ -14,7 +14,11 @@ function numbered(prefix: string, items: readonly string[]): string {
 
 /** "3", 3, "M3" and "E3" all mean 3: models echo the label prefix about half the time. */
 function index(value: unknown): number {
-  const n = Number(String(value ?? "").trim().replace(/^[A-Za-z]+/, ""));
+  const n = Number(
+    String(value ?? "")
+      .trim()
+      .replace(/^[A-Za-z]+/, ""),
+  );
   return Number.isInteger(n) ? n : Number.NaN;
 }
 
@@ -37,7 +41,10 @@ export async function judgeRecall(
     "item may cover several expected items.",
     "",
     "EXPECTED:",
-    numbered("E", expected.map((e) => e.content)),
+    numbered(
+      "E",
+      expected.map((e) => e.content),
+    ),
     "",
     "EXTRACTED:",
     numbered("M", memories),
@@ -130,9 +137,7 @@ export async function judgeDuplicates(
   const groups: number[][] = [];
   for (const group of extractJsonArray(raw)) {
     if (!Array.isArray(group)) continue;
-    const members = group
-      .map(index)
-      .filter((n) => n >= 1 && n <= memories.length && !seen.has(n));
+    const members = group.map(index).filter((n) => n >= 1 && n <= memories.length && !seen.has(n));
     if (members.length === 0) continue;
     for (const m of members) seen.add(m);
     groups.push(members);

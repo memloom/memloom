@@ -111,7 +111,10 @@ export class ClaudeCliLLM implements LLMProvider {
             ([key]) => !key.startsWith("CLAUDE") && key !== "ANTHROPIC_BASE_URL",
           ),
         ) as NodeJS.ProcessEnv,
-        shell: process.platform === "win32",
+        // No shell, on any platform: a shell drops the empty `--tools ""` value and splits the
+        // system prompt into loose words. The native installer ships claude.exe, which spawn
+        // finds on PATH directly; an npm .cmd shim needs `command` set to its full path.
+        shell: false,
         windowsHide: true,
       });
       let stdout = "";

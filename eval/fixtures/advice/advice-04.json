@@ -55,30 +55,22 @@
     {
       "type": "fact",
       "content": "The user did a study abroad program at the University of Melbourne.",
-      "keywords": [
-        "melbourne"
-      ]
+      "keywords": ["melbourne"]
     },
     {
       "type": "fact",
       "content": "The user has visited the Great Ocean Road with friends during their study abroad and plans to go again soon; they recommend the Kennett River Koala Walk.",
-      "keywords": [
-        "great ocean road"
-      ]
+      "keywords": ["great ocean road"]
     },
     {
       "type": "fact",
       "content": "The user uses Google Calendar for classes and their part-time job and decided to try Todoist for task management.",
-      "keywords": [
-        "todoist"
-      ]
+      "keywords": ["todoist"]
     },
     {
       "type": "fact",
       "content": "The user is a student balancing assignments with a part-time job.",
-      "keywords": [
-        "part-time"
-      ]
+      "keywords": ["part-time"]
     }
   ],
   "date": "2023/05/23 (Tue) 10:24"

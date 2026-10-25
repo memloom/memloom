@@ -63,47 +63,32 @@
     {
       "type": "fact",
       "content": "The user's grandma gave them a silver necklace on their 18th birthday.",
-      "keywords": [
-        "18th"
-      ]
+      "keywords": ["18th"]
     },
     {
       "type": "episode",
       "content": "The user lost the silver necklace about two months ago at a friend's house during a sleepover and plans to ask the friend about it.",
-      "keywords": [
-        "lost"
-      ]
+      "keywords": ["lost"]
     },
     {
       "type": "fact",
       "content": "The user's parents gave them pearl earrings when they graduated from high school; the user associates them with good luck.",
-      "keywords": [
-        "pearl earrings"
-      ]
+      "keywords": ["pearl earrings"]
     },
     {
       "type": "fact",
       "content": "The user borrowed a gold chain with a tiny diamond cross pendant from their mom.",
-      "keywords": [
-        [
-          "cross pendant",
-          "diamond cross"
-        ]
-      ]
+      "keywords": [["cross pendant", "diamond cross"]]
     },
     {
       "type": "fact",
       "content": "The user is cataloguing their jewelry collection in a spreadsheet with a Provenance/Story column.",
-      "keywords": [
-        "spreadsheet"
-      ]
+      "keywords": ["spreadsheet"]
     },
     {
       "type": "episode",
       "content": "The user took a stats final about three weeks before the session.",
-      "keywords": [
-        "stats final"
-      ]
+      "keywords": ["stats final"]
     }
   ],
   "date": "2023/05/22 (Mon) 16:18"

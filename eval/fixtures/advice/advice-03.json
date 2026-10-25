@@ -63,44 +63,27 @@
     {
       "type": "fact",
       "content": "The user created a Spotify playlist called Summer Vibes, full of chill tracks for relaxing or working out.",
-      "keywords": [
-        "summer vibes"
-      ]
+      "keywords": ["summer vibes"]
     },
     {
       "type": "fact",
       "content": "The user is getting back into playing the guitar and has used Fender Play.",
-      "keywords": [
-        "guitar"
-      ]
+      "keywords": ["guitar"]
     },
     {
       "type": "preference",
       "content": "The user likes ambient and lo-fi music.",
-      "keywords": [
-        [
-          "ambient",
-          "lo-fi",
-          "lofi"
-        ]
-      ]
+      "keywords": [["ambient", "lo-fi", "lofi"]]
     },
     {
       "type": "episode",
       "content": "The user attended a music festival with friends in April 2023 (the month before the session) and saw The Lumineers and The 1975.",
-      "keywords": [
-        [
-          "lumineers",
-          "1975"
-        ]
-      ]
+      "keywords": [["lumineers", "1975"]]
     },
     {
       "type": "preference",
       "content": "The user listens to podcasts and is interested in entrepreneurial stories and business podcasts.",
-      "keywords": [
-        "podcast"
-      ]
+      "keywords": ["podcast"]
     }
   ],
   "date": "2023/05/21 (Sun) 13:13"

@@ -63,40 +63,27 @@
     {
       "type": "fact",
       "content": "The user's dog Max is a Golden Retriever.",
-      "keywords": [
-        "golden retriever"
-      ]
+      "keywords": ["golden retriever"]
     },
     {
       "type": "fact",
       "content": "Max loves peanut butter; the user plans to get him a Kong toy to stuff with peanut butter.",
-      "keywords": [
-        "kong"
-      ]
+      "keywords": ["kong"]
     },
     {
       "type": "procedure",
       "content": "Max gets flea and tick prevention medication every two weeks.",
-      "keywords": [
-        [
-          "flea",
-          "tick"
-        ]
-      ]
+      "keywords": [["flea", "tick"]]
     },
     {
       "type": "fact",
       "content": "The user is looking for a reliable dog walker in their area.",
-      "keywords": [
-        "dog walker"
-      ]
+      "keywords": ["dog walker"]
     },
     {
       "type": "fact",
       "content": "The user decided on a nylon collar from Yellow Dog Design with an engraved name tag for Max.",
-      "keywords": [
-        "yellow dog"
-      ]
+      "keywords": ["yellow dog"]
     }
   ],
   "date": "2023/05/25 (Thu) 23:07"
