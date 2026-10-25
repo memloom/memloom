@@ -41,7 +41,9 @@ Browsing is stricter than recall: a folder listing (`memloom scopes`, the viewer
   `projects/<name>`, derived from the session's working directory. No model involved.
 - **The classifier files the rest**: saves that named no folder are classified against your
   folder tree (names and descriptions) during indexing. Below the confidence floor they stay in
-  `uncategorized`. The classifier never invents folders; only you create them.
+  `uncategorized`. The classifier never invents folders; only you create them. It runs on
+  its own, so it spends from the same daily budget as unattended capture and files at most 200
+  memories per indexing run; a large backlog clears over several runs.
 
 Folder descriptions matter: they are what the classifier reads. A folder described as
 "streaming clips and Twitch moments" collects the right saves; an undescribed folder is just a

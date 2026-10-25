@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Memories and documents live in folders. Every one has exactly one folder and any number of
+  tags. A recall can name a folder and then searches only that subtree, plus `uncategorized` and
+  `global`. Captured Claude Code sessions file under `projects/<name>` from their working
+  directory, and saves that name no folder are filed by a classification pass during indexing,
+  within the daily unattended budget. `memloom scopes` manages folders, `memloom scopes backfill`
+  files an existing store, and the viewer gets a folder sidebar, filters and bulk moves
+- The viewer's graph has a 3D mode
 - Distillation now knows whose memory it is writing. The prompt used to open with "You distill a
   coding-session transcript", and on an advice chat it stored the assistant's advice as the owner's
   beliefs: 197 of 280 memories in the Phase 0 probe were generic recommendations, while "I graduated
