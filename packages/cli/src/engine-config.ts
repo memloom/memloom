@@ -1,5 +1,7 @@
 import type { EmbeddingProvider, LLMProvider } from "@memloom/core";
 import {
+  type AnthropicEffort,
+  AnthropicLLM,
   HashingEmbeddingProvider,
   NullLLMProvider,
   OpenRouterEmbeddings,
@@ -11,7 +13,8 @@ import {
 // vector space or which store it operates on. Reads process.env (populate it with
 // loadConfigEnv() first): presence of OPENROUTER_API_KEY is the cloud/offline switch, and
 // presence of MEMLOOM_PG_URL is the storage-tier switch (external Postgres instead of the
-// embedded PGLite data dir).
+// embedded PGLite data dir). MEMLOOM_LLM_PROVIDER=anthropic moves only the LLM to the Anthropic
+// API; embeddings stay on OpenRouter, since Anthropic has no embeddings endpoint.
 
 export interface EngineDeps {
   embedding: EmbeddingProvider;
@@ -23,6 +26,8 @@ export interface EngineDeps {
   embedProvider: string | undefined;
   llmModel: string | undefined;
   chatModel: string | undefined;
+  /** Who serves the LLM. Embeddings are always OpenRouter's (or offline hashing). */
+  llmProvider: "openrouter" | "anthropic";
   autoIndex: boolean;
 }
 
@@ -41,8 +46,13 @@ export function buildEngineDeps(): EngineDeps {
     ((embedModel ?? "qwen/qwen3-embedding-8b") === "qwen/qwen3-embedding-8b"
       ? "nebius"
       : undefined);
-  const llmModel = process.env.OPENROUTER_LLM_MODEL;
-  const chatModel = process.env.OPENROUTER_CHAT_MODEL;
+  const anthropic = isAnthropic();
+  const llmModel = anthropic
+    ? (process.env.ANTHROPIC_LLM_MODEL ?? "claude-haiku-5-5")
+    : process.env.OPENROUTER_LLM_MODEL;
+  const chatModel = anthropic
+    ? process.env.ANTHROPIC_CHAT_MODEL
+    : process.env.OPENROUTER_CHAT_MODEL;
   // Auto-index needs the LLM, so offline mode never turns it on. Opt out with
   // MEMLOOM_AUTO_INDEX=off (or false/0) when every LLM call should be explicit.
   const autoIndex = !["off", "false", "0"].includes(
@@ -57,13 +67,15 @@ export function buildEngineDeps(): EngineDeps {
         ...(embedProvider ? { provider: embedProvider } : {}),
       })
     : new HashingEmbeddingProvider(1024);
-  const llm: LLMProvider = apiKey
-    ? new OpenRouterLLM({
-        apiKey,
-        ...(llmModel ? { model: llmModel } : {}),
-        ...(chatModel ? { chatModel } : {}),
-      })
-    : new NullLLMProvider();
+  const llm: LLMProvider = anthropic
+    ? anthropicLLM(llmModel, chatModel)
+    : apiKey
+      ? new OpenRouterLLM({
+          apiKey,
+          ...(llmModel ? { model: llmModel } : {}),
+          ...(chatModel ? { chatModel } : {}),
+        })
+      : new NullLLMProvider();
 
   return {
     embedding,
@@ -75,6 +87,38 @@ export function buildEngineDeps(): EngineDeps {
     embedProvider,
     llmModel,
     chatModel,
+    llmProvider: anthropic ? "anthropic" : "openrouter",
     autoIndex,
   };
+}
+
+const EFFORTS: readonly AnthropicEffort[] = ["low", "medium", "high", "xhigh", "max"];
+
+function isAnthropic(): boolean {
+  const provider = (process.env.MEMLOOM_LLM_PROVIDER || "openrouter").trim().toLowerCase();
+  if (provider !== "anthropic" && provider !== "openrouter") {
+    throw new Error(
+      `memloom: MEMLOOM_LLM_PROVIDER is "${provider}"; it takes "openrouter" (the default) or "anthropic".`,
+    );
+  }
+  return provider === "anthropic";
+}
+
+function anthropicLLM(model: string | undefined, chatModel: string | undefined): AnthropicLLM {
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error(
+      "memloom: MEMLOOM_LLM_PROVIDER=anthropic needs ANTHROPIC_API_KEY in your memloom config.",
+    );
+  }
+  const effort = process.env.ANTHROPIC_EFFORT?.trim().toLowerCase();
+  if (effort && !EFFORTS.includes(effort as AnthropicEffort)) {
+    throw new Error(`memloom: ANTHROPIC_EFFORT takes ${EFFORTS.join(", ")}; got "${effort}".`);
+  }
+  return new AnthropicLLM({
+    apiKey,
+    ...(model ? { model } : {}),
+    ...(chatModel ? { chatModel } : {}),
+    ...(effort ? { effort: effort as AnthropicEffort } : {}),
+  });
 }
