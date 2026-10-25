@@ -2,14 +2,14 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { HashingEmbeddingProvider, NullLLMProvider, ScriptedLLMProvider } from "./hashing-provider.js";
+import {
+  HashingEmbeddingProvider,
+  NullLLMProvider,
+  ScriptedLLMProvider,
+} from "./hashing-provider.js";
 import { Memloom } from "./memloom.js";
 import { PgliteAdapter } from "./pglite-adapter.js";
-import {
-  normalizeTags,
-  parseScopePath,
-  scopeSlug,
-} from "./scopes.js";
+import { normalizeTags, parseScopePath, scopeSlug } from "./scopes.js";
 import type { StorageAdapter } from "./storage.js";
 import { truncateAll } from "./test-store.js";
 import type { ScopeNode } from "./types.js";
@@ -26,7 +26,9 @@ afterAll(async () => {
   await storage.close();
 });
 
-async function make(llm: NullLLMProvider | ScriptedLLMProvider = new NullLLMProvider()): Promise<Memloom> {
+async function make(
+  llm: NullLLMProvider | ScriptedLLMProvider = new NullLLMProvider(),
+): Promise<Memloom> {
   await truncateAll(storage);
   const m = new Memloom({ storage, embedding: new HashingEmbeddingProvider(1024), llm });
   await m.init();
@@ -56,9 +58,7 @@ describe("scope helpers", () => {
     expect(normalizeTags(["  AI ", "ai", "Twitch"])).toEqual(["ai", "twitch"]);
     expect(normalizeTags(undefined)).toEqual([]);
     expect(() => normalizeTags(["x".repeat(65)])).toThrow(/longer than/);
-    expect(() => normalizeTags(Array.from({ length: 17 }, (_, i) => `t${i}`))).toThrow(
-      /more than/,
-    );
+    expect(() => normalizeTags(Array.from({ length: 17 }, (_, i) => `t${i}`))).toThrow(/more than/);
   });
 });
 
@@ -156,7 +156,10 @@ describe("scoped writes", () => {
     const m = await make();
     await m.createScope("personal-life");
     await m.createScope("projects");
-    const original = await m.save({ content: "the wifi password is hunter2", scope: "personal-life" });
+    const original = await m.save({
+      content: "the wifi password is hunter2",
+      scope: "personal-life",
+    });
     const dupe = await m.save({ content: "the wifi password is hunter2", scope: "projects" });
     expect(dupe.outcome).toBe("merged");
     expect(dupe.id).toBe(original.id);

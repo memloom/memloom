@@ -21,12 +21,16 @@
     "lint": "biome check .",
     "format": "biome format --write .",
     "test": "vitest run",
-    "release": "pnpm -r publish --access public"
+    "release": "pnpm -r publish --access public",
+    "eval": "tsx eval/run.ts",
+    "eval:compare": "tsx eval/compare.ts",
+    "eval:raw": "tsx eval/raw.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.2.0",
     "@types/node": "^22.10.0",
     "tsup": "^8.5.0",
+    "tsx": "^4.23.15",
     "typescript": "^5.7.3",
     "vitest": "^3.0.0"
   }

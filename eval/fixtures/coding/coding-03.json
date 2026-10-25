@@ -1,0 +1,58 @@
+{
+  "id": "coding-03",
+  "kind": "agent-session",
+  "date": "2026-01-20",
+  "source": { "note": "hand-written; a flaky Go test in a service called pulse" },
+  "units": [
+    {
+      "role": "user",
+      "text": "TestAggregate in internal/metrics fails maybe one run in five on CI, passes locally every time. Can you figure out why? Keep the PR small, I'm on the on-call rotation this week and don't want to review anything big."
+    },
+    {
+      "role": "assistant",
+      "text": "A bit of context on Go maps first: since Go 1.0 the runtime deliberately randomises map iteration order on every range loop, so code that depends on the order works by accident and breaks unpredictably. This is intentional so programs do not come to rely on an unspecified order. It is the most common cause of a test that is flaky without any concurrency involved."
+    },
+    {
+      "role": "assistant",
+      "text": "Ran `go test -run TestAggregate -count=200 ./internal/metrics/`: 37 of 200 failed, so it reproduces locally too, just rarely. The failure diff shows the same series in a different order. In aggregate.go, `Aggregate()` ranges over the `byLabel` map and appends to the result slice, and the test compares against a fixed slice. The ordering comes straight from the map."
+    },
+    {
+      "role": "user",
+      "text": "Right. Fix it in the function, not the test: callers probably want a stable order anyway. Sort by label name."
+    },
+    {
+      "role": "assistant",
+      "text": "Done: `Aggregate()` now collects the keys, sorts them with `slices.Sort`, and builds the result in that order. 200 of 200 runs pass. The diff is 9 lines in aggregate.go and I did not touch the test."
+    },
+    {
+      "role": "user",
+      "text": "Also I noticed the CI job doesn't pass -race. Add it to the go test invocation in the Makefile. I want the race detector on every CI run, always, even if it makes the job slower."
+    },
+    {
+      "role": "assistant",
+      "text": "Added `-race` to the `test` target in the Makefile. The CI run with the race detector takes about 2 minutes 40 seconds instead of 1 minute 10 seconds; no races reported."
+    }
+  ],
+  "expected": [
+    {
+      "type": "procedure",
+      "content": "TestAggregate in pulse's internal/metrics was flaky because Aggregate() ranged over a map and callers compared against a fixed order; fixed by sorting the keys inside Aggregate() rather than in the test.",
+      "keywords": [["sort", "sorted", "sorting"]]
+    },
+    {
+      "type": "preference",
+      "content": "The user wants the Go race detector (-race) on every CI test run, even though it makes CI slower.",
+      "keywords": ["-race"]
+    },
+    {
+      "type": "preference",
+      "content": "The user prefers fixing ordering bugs in the function rather than loosening the test, because callers want a stable order.",
+      "keywords": [["function", "aggregate()"]]
+    },
+    {
+      "type": "episode",
+      "content": "The user was on the on-call rotation the week of January 20, 2026 and asked for small PRs.",
+      "keywords": ["on-call"]
+    }
+  ]
+}

@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- Distillation now knows whose memory it is writing. The prompt used to open with "You distill a
+  coding-session transcript", and on an advice chat it stored the assistant's advice as the owner's
+  beliefs: 197 of 280 memories in the Phase 0 probe were generic recommendations, while "I graduated
+  with a degree in Business Administration" was dropped. The store now belongs to the person
+  labelled `user`; the assistant is a tool they were using, and its explanations, options and
+  recommendations are not memories unless the owner adopted them or they report a verified fact
+  about the owner's own system. Every memory carries a `source` label (`user`, `adopted`,
+  `observed`) and the parser drops anything labelled otherwise
+- The same prompt serves coding sessions, chats and notes the owner wrote or spoke to themselves,
+  with one paragraph of kind-specific guidance each. `distillChunk` takes `{ kind, recordedAt }`;
+  session import passes `agent-session` and the transcript's first timestamp, so relative dates
+  resolve. A chunk with no assistant turn is a note
+- `eval/`: thirty transcripts (ten coding sessions, ten LongMemEval_S advice chats, ten voice-note
+  monologues) with hand-written expected memories, scored for facts recalled, advice wrongly stored,
+  and duplicates. `pnpm eval` runs it; `docs/extraction-teardown.md` records what mem0, supermemory,
+  Letta, cognee and graphiti do and what memloom took from each
+- `ClaudeCliLLM`, a test-and-eval-only provider that shells out to `claude -p`, so the eval runs on
+  a Claude subscription instead of an API key. Not wired into the daemon
+
 ## 0.10.0 (2026-08-13)
 
 - One store can now hold many people's memories apart. An app that serves more than one user calls

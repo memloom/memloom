@@ -19,12 +19,6 @@ import { api, type ContextChunk, type DocumentChunks, type Graph } from "./api";
 import { AddFileCard, AddLinkCard } from "./cards";
 import { GraphControlsPanel } from "./GraphControlsPanel";
 import {
-  cloneGraphConfig,
-  DEFAULT_GRAPH_CONFIG,
-  type GraphNodeKind,
-  type ViewerGraphConfig,
-} from "./graphConfig";
-import {
   flyToNode,
   makeLinkSprite,
   makeNodeObject,
@@ -34,15 +28,21 @@ import {
   zoomCamera,
 } from "./graph3d";
 import {
+  cloneGraphConfig,
+  DEFAULT_GRAPH_CONFIG,
+  type GraphNodeKind,
+  type ViewerGraphConfig,
+} from "./graphConfig";
+import {
   buildGraphData,
   type CachedNodePosition,
-  getAnchorStrength,
   type GraphRegistry,
+  getAnchorStrength,
   isPredicateLink,
   type Link,
   type Node,
-  type Palette,
   PALETTES,
+  type Palette,
   relationColor,
 } from "./graphData";
 import {
@@ -964,54 +964,54 @@ export function GraphView({
             onBackgroundClick={() => setSelected(null)}
           />
         ) : (
-        <ForceGraph2D
-          key={remountKey}
-          ref={fgRef}
-          width={size.width}
-          height={size.height}
-          graphData={graphData}
-          backgroundColor="transparent"
-          cooldownTicks={config.forces.cooldownTicks}
-          onRenderFramePre={handleRenderFramePre}
-          nodeVisibility={nodeVisibility}
-          linkVisibility={linkVisibility}
-          onEngineTick={() => {
-            simActiveRef.current = true;
-            engineReadyRef.current = true;
-          }}
-          onEngineStop={() => {
-            simActiveRef.current = false;
-          }}
-          nodeCanvasObject={nodeCanvasObject}
-          nodePointerAreaPaint={(node: Node, color, ctx) => {
-            const half = Math.max(node.size * 1.6, 9);
-            ctx.fillStyle = color;
-            ctx.fillRect((node.x ?? 0) - half, (node.y ?? 0) - half, half * 2, half * 2);
-          }}
-          linkColor={linkColor}
-          linkWidth={linkWidth}
-          linkCanvasObjectMode={() => "after"}
-          linkCanvasObject={linkCanvasObject}
-          // Predicates are directional facts (subject -> object). Labels without arrows
-          // read half a claim. Structural edges stay arrowless.
-          linkDirectionalArrowLength={(l: Link) =>
-            edgeLabelMode !== "off" && isPredicateLink(l) ? 3.5 : 0
-          }
-          linkDirectionalArrowRelPos={0.82}
-          nodeRelSize={6}
-          minZoom={MIN_ZOOM}
-          maxZoom={MAX_ZOOM}
-          enableNodeDrag
-          onNodeHover={handleHover}
-          onNodeClick={handleClick}
-          onNodeDragEnd={handleNodeDragEnd}
-          onBackgroundClick={() => setSelected(null)}
-          // Continuous redraw stays on: the hover fade and label zoom fade mutate refs
-          // without marking the library's needsRedraw, so idle-pause would freeze them
-          // mid-fade. With the pause-when-hidden effect and viewport culling, the cost is
-          // zero while hidden and viewport-proportional while visible.
-          autoPauseRedraw={false}
-        />
+          <ForceGraph2D
+            key={remountKey}
+            ref={fgRef}
+            width={size.width}
+            height={size.height}
+            graphData={graphData}
+            backgroundColor="transparent"
+            cooldownTicks={config.forces.cooldownTicks}
+            onRenderFramePre={handleRenderFramePre}
+            nodeVisibility={nodeVisibility}
+            linkVisibility={linkVisibility}
+            onEngineTick={() => {
+              simActiveRef.current = true;
+              engineReadyRef.current = true;
+            }}
+            onEngineStop={() => {
+              simActiveRef.current = false;
+            }}
+            nodeCanvasObject={nodeCanvasObject}
+            nodePointerAreaPaint={(node: Node, color, ctx) => {
+              const half = Math.max(node.size * 1.6, 9);
+              ctx.fillStyle = color;
+              ctx.fillRect((node.x ?? 0) - half, (node.y ?? 0) - half, half * 2, half * 2);
+            }}
+            linkColor={linkColor}
+            linkWidth={linkWidth}
+            linkCanvasObjectMode={() => "after"}
+            linkCanvasObject={linkCanvasObject}
+            // Predicates are directional facts (subject -> object). Labels without arrows
+            // read half a claim. Structural edges stay arrowless.
+            linkDirectionalArrowLength={(l: Link) =>
+              edgeLabelMode !== "off" && isPredicateLink(l) ? 3.5 : 0
+            }
+            linkDirectionalArrowRelPos={0.82}
+            nodeRelSize={6}
+            minZoom={MIN_ZOOM}
+            maxZoom={MAX_ZOOM}
+            enableNodeDrag
+            onNodeHover={handleHover}
+            onNodeClick={handleClick}
+            onNodeDragEnd={handleNodeDragEnd}
+            onBackgroundClick={() => setSelected(null)}
+            // Continuous redraw stays on: the hover fade and label zoom fade mutate refs
+            // without marking the library's needsRedraw, so idle-pause would freeze them
+            // mid-fade. With the pause-when-hidden effect and viewport culling, the cost is
+            // zero while hidden and viewport-proportional while visible.
+            autoPauseRedraw={false}
+          />
         )}
         <div className="zoomRail">
           <button
@@ -1110,9 +1110,7 @@ export function GraphView({
               <span className="swatchSquare swatchSmall" style={{ background: pal.chunk }} />
               chunk
             </div>
-            {is3D && (
-              <div className="legendHint">drag rotates, scroll zooms, right-drag pans</div>
-            )}
+            {is3D && <div className="legendHint">drag rotates, scroll zooms, right-drag pans</div>}
           </div>
         </div>
       </div>

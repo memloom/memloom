@@ -841,9 +841,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     try {
       // parseBody has already refused a body owner that disagrees with the header, so either
       // one is the answer when both are there.
-      return c.json(
-        await memloom.save({ ...body.data, ownerId: body.data.ownerId ?? ownerOf(c) }),
-      );
+      return c.json(await memloom.save({ ...body.data, ownerId: body.data.ownerId ?? ownerOf(c) }));
     } catch (err) {
       // An unknown scope or an over-limit tag is the caller's mistake, not a server fault.
       const message = err instanceof Error ? err.message : String(err);

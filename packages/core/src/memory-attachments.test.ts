@@ -110,7 +110,11 @@ describe("attaching a file to a memory", () => {
     const m = await fresh();
     const { id } = await m.save({ content: "two pictures of the same shelf" });
     const one = await m.memoryAttach({ memoryId: id, filename: "IMG_0001.jpg", bytes: bytes("a") });
-    const two = await m.memoryAttach({ memoryId: id, filename: "IMG_0001.jpg", bytes: bytes("bb") });
+    const two = await m.memoryAttach({
+      memoryId: id,
+      filename: "IMG_0001.jpg",
+      bytes: bytes("bb"),
+    });
 
     expect(one.path).not.toBe(two.path);
     expect((await m.memoryAttachments(id)).length).toBe(2);

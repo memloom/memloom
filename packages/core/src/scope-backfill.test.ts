@@ -46,9 +46,9 @@ const COPILOT = "C:/Users/k/AppData/globalStorage/github.copilot-chat/memories/n
 describe("encodedProjectDirOf", () => {
   it("finds the segment after .claude/projects at any depth, both separators", () => {
     expect(encodedProjectDirOf(TRANSCRIPT)).toBe("D--Kostek-Projects-memloom");
-    expect(
-      encodedProjectDirOf("C:\\Users\\k\\.claude\\projects\\D--x-app\\memory\\notes.md"),
-    ).toBe("D--x-app");
+    expect(encodedProjectDirOf("C:\\Users\\k\\.claude\\projects\\D--x-app\\memory\\notes.md")).toBe(
+      "D--x-app",
+    );
     expect(encodedProjectDirOf(COPILOT)).toBe(null);
   });
 });

@@ -91,6 +91,10 @@ export { runBenchmark } from "./benchmark.js";
 // Context connector building blocks
 export type { Chunk, ChunkOptions } from "./chunker.js";
 export { chunkMarkdown, chunkOutline, chunkText } from "./chunker.js";
+// Providers
+// Test and eval only: runs prompts through the Claude Code CLI on a subscription.
+export type { ClaudeCliOptions } from "./claude-cli-provider.js";
+export { ClaudeCliLLM } from "./claude-cli-provider.js";
 // Claude Code session import building blocks
 export type {
   ChunkResult,
@@ -128,8 +132,20 @@ export {
   relabelByAppearance,
   TURN_MERGE_GAP_SECONDS,
 } from "./diarize.js";
-export type { DistilledMemory, DistillOutput } from "./distill.js";
-export { buildDistillPrompt, distillChunk, parseDistillation } from "./distill.js";
+export type {
+  DistilledMemory,
+  DistillOutput,
+  DistillPromptOptions,
+  MemorySource,
+  TranscriptKind,
+} from "./distill.js";
+export {
+  buildDistillPrompt,
+  distillChunk,
+  inferTranscriptKind,
+  MEMORY_SOURCES,
+  parseDistillation,
+} from "./distill.js";
 export type { MemoryEngine } from "./engine.js";
 // Arbitrating an uncertain fold with a model: the prompt and the parser, both pure.
 export type {
@@ -170,7 +186,6 @@ export {
   registerExtractor,
   supportedExtensions,
 } from "./extract.js";
-// Providers
 export {
   HashingEmbeddingProvider,
   NullLLMProvider,
@@ -199,6 +214,7 @@ export {
   Memloom,
   SENTINEL_OWNER,
 } from "./memloom.js";
+export { attachmentStoreDir, mediaTypeOf } from "./memory-attachments.js";
 export type { EvalReport, QueryResult } from "./metrics.js";
 export { evaluate, mean, recallAtK, reciprocalRank } from "./metrics.js";
 // Migrations
@@ -242,7 +258,6 @@ export type {
 export { isChatProvider } from "./providers.js";
 export type { QueueItem, QueueRunner, QueueSnapshot, QueueStatus } from "./queue.js";
 export { IngestQueue, uploadStoreDir } from "./queue.js";
-export { attachmentStoreDir, mediaTypeOf } from "./memory-attachments.js";
 // The contradiction re-check: the retrieval widening, the prompt, and the quote verification.
 // All pure except findRecheckSubjects, which is one indexed query per belief in the window.
 export type { RecheckFinding, RecheckPair, RecheckSubject, RecheckVerdict } from "./recheck.js";

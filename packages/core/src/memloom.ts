@@ -12,9 +12,9 @@ import { chunkMarkdown, chunkOutline } from "./chunker.js";
 import {
   chunkUnits,
   discoverSessions,
+  encodedProjectDirOf,
   hashPrefix,
   parseSession,
-  encodedProjectDirOf,
   projectNameOf,
   type SessionChunk,
   type SessionUnit,
@@ -35,6 +35,12 @@ import {
 import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
 import { NullLLMProvider } from "./hashing-provider.js";
 import { extractUrl, isHttpUrl } from "./link.js";
+import {
+  discardAttachment,
+  mediaTypeOf,
+  newAttachmentId,
+  writeAttachment,
+} from "./memory-attachments.js";
 import { migrate } from "./migrate.js";
 import type { NotionBlockNode } from "./notion.js";
 import { dataSourceTitle, expandsInline, NotionClient, pageTitle } from "./notion.js";
@@ -43,34 +49,6 @@ import { LlmSpendError } from "./openrouter-provider.js";
 import { bindOwner, type OwnedMemloom } from "./owned.js";
 import { type EmbeddingProvider, isChatProvider, type LLMProvider } from "./providers.js";
 import { uploadStoreDir } from "./queue.js";
-import {
-  discardAttachment,
-  mediaTypeOf,
-  newAttachmentId,
-  writeAttachment,
-} from "./memory-attachments.js";
-import {
-  buildScopeClassifyPrompt,
-  MIN_SCOPE_CONFIDENCE,
-  parseScopeClassification,
-  SCOPE_CLASSIFY_BATCH,
-  type ScopeClassifyItem,
-  type ScopeFolderOption,
-} from "./scope-classify.js";
-import {
-  allScopes,
-  buildScopeTree,
-  ensureScopePath,
-  ensureSystemScopes,
-  expandScopeSelector,
-  normalizeTags,
-  resolveScopePath,
-  SCOPE_ALL,
-  scopeDisplayPath,
-  scopeSlugPath,
-  subtreeIds,
-  wouldCycle,
-} from "./scopes.js";
 import {
   buildRecheckPrompt,
   countDueForRecheck,
@@ -121,6 +99,28 @@ import {
   type SchemaInfo,
   type SchemaKind,
 } from "./schema.js";
+import {
+  buildScopeClassifyPrompt,
+  MIN_SCOPE_CONFIDENCE,
+  parseScopeClassification,
+  SCOPE_CLASSIFY_BATCH,
+  type ScopeClassifyItem,
+  type ScopeFolderOption,
+} from "./scope-classify.js";
+import {
+  allScopes,
+  buildScopeTree,
+  ensureScopePath,
+  ensureSystemScopes,
+  expandScopeSelector,
+  normalizeTags,
+  resolveScopePath,
+  SCOPE_ALL,
+  scopeDisplayPath,
+  scopeSlugPath,
+  subtreeIds,
+  wouldCycle,
+} from "./scopes.js";
 import type { StorageAdapter } from "./storage.js";
 import type {
   AgentMemoryFolderEvent,
@@ -2152,7 +2152,12 @@ export class Memloom implements MemoryEngine {
           }
           result.calls.extraction++;
           if (opts.unattended) await this.#bumpUnattendedCalls();
-          const output = await distillChunk(this.#llm, chunk);
+          const output = await distillChunk(this.#llm, chunk, {
+            // A Claude Code transcript: project talk is memory, library lore is not. The
+            // first timestamp lets the model resolve "yesterday" to a date.
+            kind: "agent-session",
+            ...(parsed.startedAt ? { recordedAt: parsed.startedAt.slice(0, 10) } : {}),
+          });
           event.dropped += output.dropped;
           let vectors: number[][] = [];
           if (output.memories.length > 0) {
@@ -3375,7 +3380,9 @@ export class Memloom implements MemoryEngine {
       moved,
       rows: rowsMoved,
       perFolder: Object.fromEntries(
-        [...perFolder.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([p, s]) => [p, s.size]),
+        [...perFolder.entries()]
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([p, s]) => [p, s.size]),
       ),
       alreadyFiled: Number(filed?.n ?? 0),
       unmappable,
@@ -3560,7 +3567,9 @@ export class Memloom implements MemoryEngine {
    * callers can drop it in without rebuilding their result.
    */
   async #withAttachments(rows: Memory[], ownerId: string): Promise<Memory[]> {
-    const roots = [...new Set(rows.filter((r) => (r.kind ?? "memory") === "memory").map((r) => r.rootId))];
+    const roots = [
+      ...new Set(rows.filter((r) => (r.kind ?? "memory") === "memory").map((r) => r.rootId)),
+    ];
     if (roots.length === 0) return rows;
     const found = await this.#storage.query<MemoryAttachmentRow>(
       `SELECT id, owner_id, root_id, media_path, name, media_type, bytes, created_at
