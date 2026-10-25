@@ -30,6 +30,17 @@
   Letta, cognee and graphiti do and what memloom took from each
 - `ClaudeCliLLM`, a test-and-eval-only provider that shells out to `claude -p`, so the eval runs on
   a Claude subscription instead of an API key. Not wired into the daemon
+- Fixed: a store left with a blank `postmaster.pid` by a crash or power loss would not open again.
+  Postgres reads the empty file as a lock it cannot parse and PGLite reports only "PGlite failed
+  to initialize properly", so the daemon exited on every start and the MCP server with it. The
+  daemon now removes a pid file that holds no pid once it has the store lock. One that does hold
+  a pid is left alone, since PGLite already starts past those
+- The MCP server comes up before it reaches the daemon. A daemon that could not start used to
+  take the server down with it, and clients showed only "connection closed". Now the tool call
+  fails with the daemon's error and the next call tries again
+- A daemon started by a client writes its output to `~/.memloom/daemon.log` instead of
+  discarding it, and a start that fails is reported as soon as the daemon exits, with its last
+  lines, instead of after a ten-second wait
 
 ## 0.10.0 (2026-08-13)
 

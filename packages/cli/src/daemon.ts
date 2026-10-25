@@ -90,7 +90,17 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promis
     // waitMs rides out the stale window of a force-killed daemon's leftover lock (15s), so
     // "kill then serve" works instead of erroring on a lock that's about to expire.
     release = await acquireDataDirLock(dir, { waitMs: 20_000 });
-    db = await PGlite.create({ dataDir: dir, extensions: { vector } });
+    try {
+      db = await PGlite.create({ dataDir: dir, extensions: { vector } });
+    } catch (err) {
+      await release();
+      console.error(
+        `memloom: cannot open the store: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      console.error(`  data dir: ${dir}`);
+      process.exitCode = 1;
+      return;
+    }
     storage = PgliteAdapter.fromInstance(db);
   }
 

@@ -30,6 +30,8 @@ wire port will not bind, it says so and serves on without it.
 Config is read from `~/.memloom/config.env` at startup, with real environment variables winning
 over the file, so restart after editing. The terminal logs every request twice, on arrival and on
 completion with status and duration, and warns when a wire client connects and pauses the API.
+When a client starts the daemon for you, that output goes to `~/.memloom/daemon.log` instead,
+and a daemon that fails to start puts its last lines in the client's error.
 
 <Note>
   One command needs the daemon stopped, because it opens the store directly:
