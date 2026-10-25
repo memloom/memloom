@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- `ANTHROPIC_API_KEY` sends the pipeline's completions (dedup, entity extraction, conflict
+  re-checks, distillation) to the Anthropic API, billed to that account, with
+  `ANTHROPIC_LLM_MODEL` picking the model (default `claude-haiku-5-5`). Embeddings and the
+  assistant's chat stay on OpenRouter. Reconciliation prices these runs from token counts, since
+  the API does not report a bill.
 - Memories and documents live in folders. Every one has exactly one folder and any number of
   tags. A recall can name a folder and then searches only that subtree, plus `uncategorized` and
   `global`. Captured Claude Code sessions file under `projects/<name>` from their working

@@ -28,6 +28,8 @@ OPENROUTER_API_KEY=sk-or-...        # the one switch: with it, cloud mode. Witho
 | `OPENROUTER_EMBED_DIMS` | `1024` | Matryoshka truncation from the native 4096 |
 | `OPENROUTER_LLM_MODEL` | `google/gemini-2.5-flash` | The pipeline's classifier and extractors |
 | `OPENROUTER_CHAT_MODEL` | same as above | The assistant. Must support tool calling |
+| `ANTHROPIC_API_KEY` | unset | Send the pipeline's completions to the Anthropic API instead of OpenRouter. Embeddings and chat stay on OpenRouter |
+| `ANTHROPIC_LLM_MODEL` | `claude-haiku-5-5` | The pipeline model when `ANTHROPIC_API_KEY` is set |
 | `MEMLOOM_AUTO_INDEX` | `on` | Background entity extraction after saves and ingests |
 | `MEMLOOM_INDEX_CONCURRENCY` | `6` | Extraction worker pool size |
 | `RECONCILE_ENABLED` | unset | Set to `0` to keep the reports and refuse the repairs |

@@ -162,6 +162,11 @@ export function effectiveCaps(unactionedRuns: number): ReconcileCaps {
 const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   "google/gemini-2.5-flash": { input: 0.3, output: 2.5 },
   "google/gemini-2.5-flash-lite": { input: 0.1, output: 0.4 },
+  // The Anthropic API reports tokens but not a bill, so these are its only dollar figure.
+  // Prompts under 100K tokens; nothing memloom sends comes near that.
+  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
+  "claude-sonnet-5-5": { input: 2, output: 10 },
+  "claude-opus-5-5": { input: 4, output: 20 },
 };
 
 /** ~4 chars per token. Good enough for an order-of-magnitude spend warning, and free. */

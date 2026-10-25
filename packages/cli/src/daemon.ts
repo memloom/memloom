@@ -232,7 +232,7 @@ export async function startDaemon(httpPort = HTTP_PORT, pgPort?: number): Promis
   console.log(`  config     ${configPath()}`);
   if (apiKey) {
     console.log(
-      `  mode       cloud (${embedModel ?? "qwen/qwen3-embedding-8b"} @ ${embedDims ?? 1024} dims${embedProvider ? ` via ${embedProvider}` : ""}, ${llmModel ?? "google/gemini-2.5-flash"}, auto-index ${autoIndex ? "on" : "off"})`,
+      `  mode       cloud (${embedModel ?? "qwen/qwen3-embedding-8b"} @ ${embedDims ?? 1024} dims${embedProvider ? ` via ${embedProvider}` : ""}, ${deps.anthropicModel ? `${deps.anthropicModel} via Anthropic` : (llmModel ?? "google/gemini-2.5-flash")}, auto-index ${autoIndex ? "on" : "off"})`,
     );
   } else {
     console.log(

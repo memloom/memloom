@@ -239,6 +239,8 @@ export type {
   OpenRouterLLMOptions,
 } from "./openrouter-provider.js";
 export { OpenRouterEmbeddings, OpenRouterLLM } from "./openrouter-provider.js";
+export type { AnthropicLLMOptions } from "./anthropic-provider.js";
+export { AnthropicLLM } from "./anthropic-provider.js";
 // The multi-tenant surface: one owner-bound handle per user, from Memloom.forOwner()
 export type { OwnedMemloom } from "./owned.js";
 export type { PdfTextItem } from "./pdf-layout.js";
@@ -254,6 +256,7 @@ export type {
   ChatToolCall,
   EmbeddingProvider,
   LLMProvider,
+  LlmUsage,
 } from "./providers.js";
 export { isChatProvider } from "./providers.js";
 export type { QueueItem, QueueRunner, QueueSnapshot, QueueStatus } from "./queue.js";
