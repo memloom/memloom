@@ -1004,6 +1004,64 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     }
   });
 
+  // A photo, a video or a file hanging off one belief. Bytes as base64 in JSON, the same
+  // shape `/context/attach` uses: a body parser on an otherwise pure-JSON surface is not
+  // worth a third of the transfer on a localhost daemon taking phone photos.
+  app.post(
+    "/memory/:id/attachments",
+    bodyLimit({
+      maxSize: 48 * 1024 * 1024, // base64 inflates 4/3: ~36MB of real file
+      onError: (c) => c.json({ error: "attachment too large (max ~36MB)" }, 413),
+    }),
+    async (c) => {
+      const body = z
+        .object({
+          filename: z.string().min(1),
+          // Strict base64: Buffer.from skips what it cannot read, so a data: URL or garbage
+          // would otherwise be stored as a corrupt file with a 200.
+          bytes: z
+            .string()
+            .min(1)
+            .regex(/^[A-Za-z0-9+/]+={0,2}$/, "bytes must be plain base64 (no data: prefix)"),
+          mediaType: z.string().optional(),
+        })
+        .safeParse(await c.req.json().catch(() => null));
+      if (!body.success) return c.json({ error: body.error.message }, 400);
+      try {
+        return c.json(
+          await memloom.memoryAttach({
+            memoryId: c.req.param("id"),
+            filename: body.data.filename,
+            bytes: new Uint8Array(Buffer.from(body.data.bytes, "base64")),
+            mediaType: body.data.mediaType,
+            ownerId: ownerOf(c),
+          }),
+        );
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return c.json({ error: message }, /no memory/.test(message) ? 404 : 400);
+      }
+    },
+  );
+
+  app.get("/memory/:id/attachments", async (c) => {
+    if (!z.string().uuid().safeParse(c.req.param("id")).success)
+      return c.json({ error: "not a memory id" }, 400);
+    return c.json({
+      attachments: await memloom.memoryAttachments(c.req.param("id"), ownerOf(c)),
+    });
+  });
+
+  app.delete("/memory/attachments/:id", async (c) => {
+    try {
+      await memloom.memoryDetach(c.req.param("id"), ownerOf(c));
+      return c.json({ ok: true });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no attachment/.test(message) ? 404 : 400);
+    }
+  });
+
   // The full text of one recall hit (memory or context chunk): the fetch-the-rest path
   // behind truncated recall passages (MCP read_passage, assistant read_source).
   app.get("/memory/passage/:id", async (c) => {

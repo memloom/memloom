@@ -36,6 +36,15 @@ export interface Memory {
   kind?: "memory" | "context";
   /** Where a context chunk came from; surfaces show this so provenance is always clear. */
   source?: RecallSource;
+  /**
+   * Files hanging off this belief, newest first. Empty for almost every memory.
+   *
+   * Present on `recall` and `memories`, absent (undefined) anywhere the caller did not ask
+   * for them -- the same shape `scopePath` uses. One extra query per batch rather than a
+   * join per row: a field that is empty on 99% of memories should not be paid for on 100%
+   * of them.
+   */
+  attachments?: MemoryAttachment[];
   /** The folder this row lives in. Null reads as 'uncategorized' (legacy rows). */
   scopeId: string | null;
   /** Display path of the folder ("Personal life > People"); null when scopeId is null. */
@@ -692,6 +701,47 @@ export interface SyncTargets {
 }
 
 // ---- Chat attachments (files uploaded into one assistant session's scope) ----
+
+/**
+ * A photo, a video or a file hanging off one belief.
+ *
+ * NOT a `ContextAttachInput`, which is the chat-scoped kind: that one is chunked, embedded,
+ * visible only to the assistant session it was uploaded into, and gone when the chat is. This
+ * one is durable, belongs to a memory rather than a conversation, and is never chunked --
+ * "i also take a picture for more context of what it looks like, not just text."
+ *
+ * Deliberately NOT searchable, and that was the user's call when asked. Nothing describes the
+ * image and nothing embeds it: recall finds the memory by what they WROTE, and the picture
+ * comes back attached to it. A vision pass would make "what did that router look like" work
+ * and would also put a model's guess about a photo into a memory store whose whole promise is
+ * that it holds what you told it.
+ */
+export interface MemoryAttachment {
+  id: string;
+  ownerId: string;
+  /** The belief this hangs off. Survives an edit: see migration 0034. */
+  rootId: string;
+  /** What it was called when it arrived. Shown; never used to open anything. */
+  name: string;
+  /** image/jpeg, video/mp4, application/pdf. Sniffed from the name when not given. */
+  mediaType: string;
+  bytes: number;
+  /** Absolute path in the attachment store. memloom owns this file. */
+  path: string;
+  createdAt: string;
+}
+
+export interface MemoryAttachInput {
+  /** Any version of the belief; the attachment is filed against its lineage. */
+  memoryId: string;
+  /** Filename with extension. Titles the attachment and picks the media type. */
+  filename: string;
+  /** The file itself. Copied into the store, so the caller may delete its own copy. */
+  bytes: Uint8Array;
+  /** Overrides what the filename implies. */
+  mediaType?: string;
+  ownerId?: string;
+}
 
 export interface ContextAttachInput {
   /** Filename with extension: picks the extractor and titles the document. */

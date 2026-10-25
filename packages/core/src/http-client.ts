@@ -23,6 +23,8 @@ import type {
   IndexProgressEvent,
   IndexResult,
   Memory,
+  MemoryAttachInput,
+  MemoryAttachment,
   NotionListedPage,
   NotionScope,
   NotionStatus,
@@ -225,6 +227,35 @@ export class HttpMemloomClient implements MemoryEngine {
   async deleteMemory(memoryId: string, ownerId?: string): Promise<void> {
     this.#owned(ownerId);
     await this.#json(`/memory/${memoryId}`, { method: "DELETE" });
+  }
+
+  /**
+   * The bytes go over as base64, which is the same trade `contextAttach` makes.
+   *
+   * A multipart upload would save a third of the transfer and cost a body parser on a route
+   * that is otherwise pure JSON. This is a daemon on localhost taking phone photos; a
+   * megabyte becoming 1.4 is not the constraint.
+   */
+  async memoryAttach(input: MemoryAttachInput): Promise<MemoryAttachment> {
+    this.#owned(input.ownerId);
+    return this.#post<MemoryAttachment>(`/memory/${input.memoryId}/attachments`, {
+      filename: input.filename,
+      bytes: Buffer.from(input.bytes).toString("base64"),
+      mediaType: input.mediaType,
+    });
+  }
+
+  async memoryAttachments(memoryId: string, ownerId?: string): Promise<MemoryAttachment[]> {
+    this.#owned(ownerId);
+    const { attachments } = await this.#json<{ attachments: MemoryAttachment[] }>(
+      `/memory/${memoryId}/attachments`,
+    );
+    return attachments;
+  }
+
+  async memoryDetach(attachmentId: string, ownerId?: string): Promise<void> {
+    this.#owned(ownerId);
+    await this.#json(`/memory/attachments/${attachmentId}`, { method: "DELETE" });
   }
 
   async passage(id: string, ownerId?: string): Promise<string | null> {

@@ -214,6 +214,7 @@ export {
   Memloom,
   SENTINEL_OWNER,
 } from "./memloom.js";
+export { attachmentStoreDir, mediaTypeOf } from "./memory-attachments.js";
 export type { EvalReport, QueryResult } from "./metrics.js";
 export { evaluate, mean, recallAtK, reciprocalRank } from "./metrics.js";
 // Migrations
@@ -421,6 +422,8 @@ export type {
   IndexRunStatus,
   IndexRunTrigger,
   Memory,
+  MemoryAttachInput,
+  MemoryAttachment,
   MemoryStatus,
   MemoryType,
   NotionItemRef,

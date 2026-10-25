@@ -22,6 +22,8 @@ import type {
   IndexProgressEvent,
   IndexResult,
   Memory,
+  MemoryAttachInput,
+  MemoryAttachment,
   NotionListedPage,
   NotionScope,
   NotionStatus,
@@ -88,6 +90,22 @@ export interface MemoryEngine {
   history(memoryId: string, ownerId?: string): Promise<Memory[]>;
   /** Delete a belief outright: every version, its edges, and pending conflicts naming it. */
   deleteMemory(memoryId: string, ownerId?: string): Promise<void>;
+  /**
+   * Hang a file off a belief: a photo of the thing, not another thing to search.
+   *
+   * Filed against the LINEAGE, so it survives an edit -- `update` appends a version and an
+   * attachment keyed to a version id would vanish the first time the wording was corrected.
+   * The bytes are copied into memloom's own store, so the caller may delete its copy.
+   *
+   * Deliberately not chunked, embedded or described. Recall finds the memory by what was
+   * written and the file comes back with it. `contextAttach` is the other kind: chunked,
+   * scoped to one chat, gone when the chat is.
+   */
+  memoryAttach(input: MemoryAttachInput): Promise<MemoryAttachment>;
+  /** What is attached to one belief, newest first. Any version's id will do. */
+  memoryAttachments(memoryId: string, ownerId?: string): Promise<MemoryAttachment[]>;
+  /** Take one file off and delete it. The memory is untouched. */
+  memoryDetach(attachmentId: string, ownerId?: string): Promise<void>;
   /**
    * The complete text of one recall hit (a memory or a context chunk) by its id: the
    * fetch-the-rest path when a recall surface truncated the passage (PASSAGE_CHARS).

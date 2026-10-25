@@ -37,6 +37,12 @@ import {
 import { type ExtractedFile, extractBytes, extractFile } from "./extract.js";
 import { NullLLMProvider } from "./hashing-provider.js";
 import { extractUrl, isHttpUrl } from "./link.js";
+import {
+  discardAttachment,
+  mediaTypeOf,
+  newAttachmentId,
+  writeAttachment,
+} from "./memory-attachments.js";
 import { migrate } from "./migrate.js";
 import type { NotionBlockNode } from "./notion.js";
 import { dataSourceTitle, expandsInline, NotionClient, pageTitle } from "./notion.js";
@@ -162,6 +168,8 @@ import type {
   IndexRun,
   IndexRunEvent,
   Memory,
+  MemoryAttachInput,
+  MemoryAttachment,
   MemoryType,
   NotionListedPage,
   NotionScope,
@@ -540,6 +548,31 @@ function mapRecallRow(row: RecallRow): Memory {
     };
   }
   return { ...mapRow(row as MemoryRow), rrfScore: Number(row.rrf_score), kind: "memory" };
+}
+
+interface MemoryAttachmentRow {
+  id: string;
+  owner_id: string;
+  root_id: string;
+  media_path: string;
+  name: string;
+  media_type: string;
+  bytes: string | number;
+  created_at: string;
+}
+
+function mapAttachment(row: MemoryAttachmentRow): MemoryAttachment {
+  return {
+    id: row.id,
+    ownerId: row.owner_id,
+    rootId: row.root_id,
+    name: row.name,
+    mediaType: row.media_type,
+    // bigint comes back as a string from node-postgres and as a number from PGLite.
+    bytes: Number(row.bytes),
+    path: row.media_path,
+    createdAt: row.created_at,
+  };
 }
 
 function mapRow(row: MemoryRow): Memory {
@@ -3034,7 +3067,7 @@ export class Memloom implements MemoryEngine {
        ORDER BY created_at DESC`,
       params,
     );
-    return this.#withScopePaths(ownerId, rows.map(mapRow));
+    return this.#withAttachments(await this.#withScopePaths(ownerId, rows.map(mapRow)), ownerId);
   }
 
   /** Fill scopePath from the registry, one query for the whole batch; no-op when unscoped. */
@@ -3064,7 +3097,7 @@ export class Memloom implements MemoryEngine {
        ORDER BY version DESC`,
       [ownerId, row.root_id],
     );
-    return this.#withScopePaths(ownerId, rows.map(mapRow));
+    return this.#withAttachments(await this.#withScopePaths(ownerId, rows.map(mapRow)), ownerId);
   }
 
   // --- the scope registry (PLAN-memory-scopes.md) ---
@@ -3425,6 +3458,7 @@ export class Memloom implements MemoryEngine {
    * their own content copies).
    */
   async deleteMemory(memoryId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    let gone: { media_path: string }[] = [];
     await this.#storage.tx(async (tx) => {
       const [row] = await tx.query<{ root_id: string }>(
         "SELECT root_id FROM memory_objects WHERE id = $1 AND owner_id = $2",
@@ -3458,7 +3492,112 @@ export class Memloom implements MemoryEngine {
         ownerId,
         row.root_id,
       ]);
+      // Attached files go with the belief. Collected inside the transaction and unlinked
+      // after it commits: a filesystem delete cannot be rolled back, so doing it in here
+      // would leave a photo gone and its row alive if anything below failed.
+      gone = await tx.query<{ media_path: string }>(
+        "DELETE FROM memory_attachments WHERE owner_id = $1 AND root_id = $2 RETURNING media_path",
+        [ownerId, row.root_id],
+      );
     });
+    for (const a of gone) await discardAttachment(a.media_path);
+  }
+
+  /**
+   * Hang a file off a belief: the picture of the thing, not another thing to search.
+   *
+   * Filed against the LINEAGE, so it survives every later edit -- `update` appends a version
+   * and stales the old row, and an attachment keyed to a version id would disappear the first
+   * time anybody corrected the wording. See migration 0034.
+   *
+   * The bytes are copied into memloom's own store before the row is written, so a caller that
+   * downloaded the file to a temp path may delete its copy immediately. Written first for the
+   * same reason the delete unlinks last: a row pointing at a file that was never written is
+   * worse than a file with no row, which is only wasted disk.
+   */
+  async memoryAttach(input: MemoryAttachInput): Promise<MemoryAttachment> {
+    const ownerId = input.ownerId ?? SENTINEL_OWNER;
+    const [row] = await this.#storage.query<{ root_id: string }>(
+      "SELECT root_id FROM memory_objects WHERE id = $1 AND owner_id = $2",
+      [input.memoryId, ownerId],
+    );
+    if (!row) throw new Error(`memloom: no memory ${input.memoryId}`);
+
+    const id = newAttachmentId();
+    const mediaType = input.mediaType ?? mediaTypeOf(input.filename);
+    const path = await writeAttachment(id, input.filename, input.bytes);
+    try {
+      const [saved] = await this.#storage.query<MemoryAttachmentRow>(
+        `INSERT INTO memory_attachments (id, owner_id, root_id, media_path, name, media_type, bytes)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING id, owner_id, root_id, media_path, name, media_type, bytes, created_at`,
+        [id, ownerId, row.root_id, path, input.filename, mediaType, input.bytes.byteLength],
+      );
+      return mapAttachment(saved as MemoryAttachmentRow);
+    } catch (err) {
+      // The row did not land, so nothing will ever come looking for these bytes.
+      await discardAttachment(path);
+      throw err;
+    }
+  }
+
+  /** What is attached to one belief, newest first. Any version's id will do. */
+  async memoryAttachments(
+    memoryId: string,
+    ownerId: string = SENTINEL_OWNER,
+  ): Promise<MemoryAttachment[]> {
+    const rows = await this.#storage.query<MemoryAttachmentRow>(
+      `SELECT a.id, a.owner_id, a.root_id, a.media_path, a.name, a.media_type, a.bytes, a.created_at
+         FROM memory_attachments a
+         JOIN memory_objects m ON m.root_id = a.root_id AND m.owner_id = a.owner_id
+        WHERE m.id = $1 AND a.owner_id = $2
+        ORDER BY a.created_at DESC`,
+      [memoryId, ownerId],
+    );
+    return rows.map(mapAttachment);
+  }
+
+  /** Take one file off, and delete it. The memory is untouched. */
+  async memoryDetach(attachmentId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
+    const [row] = await this.#storage.query<{ media_path: string }>(
+      "DELETE FROM memory_attachments WHERE id = $1 AND owner_id = $2 RETURNING media_path",
+      [attachmentId, ownerId],
+    );
+    if (!row) throw new Error(`memloom: no attachment ${attachmentId}`);
+    await discardAttachment(row.media_path);
+  }
+
+  /**
+   * Fill `attachments` on a batch of memories, in one query.
+   *
+   * A batch and not a join, because almost no memory has one: joining on every recall makes
+   * every row pay for a field 99% of them leave empty. Returns the same array, mutated, so
+   * callers can drop it in without rebuilding their result.
+   */
+  async #withAttachments(rows: Memory[], ownerId: string): Promise<Memory[]> {
+    const roots = [
+      ...new Set(rows.filter((r) => (r.kind ?? "memory") === "memory").map((r) => r.rootId)),
+    ];
+    if (roots.length === 0) return rows;
+    const found = await this.#storage.query<MemoryAttachmentRow>(
+      `SELECT id, owner_id, root_id, media_path, name, media_type, bytes, created_at
+         FROM memory_attachments
+        WHERE owner_id = $1 AND root_id = ANY($2::uuid[])
+        ORDER BY created_at DESC`,
+      [ownerId, roots],
+    );
+    if (found.length === 0) return rows;
+    const byRoot = new Map<string, MemoryAttachment[]>();
+    for (const r of found) {
+      const list = byRoot.get(r.root_id) ?? [];
+      list.push(mapAttachment(r));
+      byRoot.set(r.root_id, list);
+    }
+    for (const row of rows) {
+      const list = byRoot.get(row.rootId);
+      if (list) row.attachments = list;
+    }
+    return rows;
   }
 
   /**
@@ -3517,6 +3656,11 @@ export class Memloom implements MemoryEngine {
     if (!isOwnerId(ownerId)) {
       throw new Error(`memloom: deleteOwner needs a uuid owner id, got ${JSON.stringify(ownerId)}`);
     }
+    // Attachment bytes live on disk, outside the tables the sweep below empties.
+    const files = await this.#storage.query<{ media_path: string }>(
+      "SELECT media_path FROM memory_attachments WHERE owner_id = $1",
+      [ownerId],
+    );
     const result = await this.#storage.tx(async (tx) => {
       const owned = await tx.query<{ name: string }>(
         `SELECT c.relname AS name
@@ -3542,6 +3686,7 @@ export class Memloom implements MemoryEngine {
       }
       return { rows, tables };
     });
+    for (const f of files) await discardAttachment(f.media_path);
     // A queued auto-index for an owner who no longer exists would write them a fresh
     // memory_index_runs row: the tenant reappearing seconds after asking to be gone.
     this.#autoIndexPending.delete(ownerId);
@@ -3599,9 +3744,12 @@ export class Memloom implements MemoryEngine {
           tagFilter,
         ],
       );
-      return this.#withScopePaths(
+      return this.#withAttachments(
+        await this.#withScopePaths(
+          owner,
+          rows.map((row) => ({ ...mapRow(row), kind: "memory" as const })),
+        ),
         owner,
-        rows.map((row) => ({ ...mapRow(row), kind: "memory" as const })),
       );
     }
 
@@ -3634,7 +3782,7 @@ export class Memloom implements MemoryEngine {
         tagFilter,
       ],
     );
-    return this.#withScopePaths(owner, rows.map(mapRecallRow));
+    return this.#withAttachments(await this.#withScopePaths(owner, rows.map(mapRecallRow)), owner);
   }
 
   /**
