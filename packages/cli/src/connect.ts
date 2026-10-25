@@ -1,7 +1,10 @@
 import { spawn } from "node:child_process";
+import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { HttpMemloomClient, isOwnerId, type MemoryEngine } from "@memloom/core";
+import { memloomHome } from "./config.js";
 import { HTTP_PORT } from "./daemon.js";
 
 const BASE = `http://127.0.0.1:${HTTP_PORT}`;
@@ -50,19 +53,52 @@ export async function connect(): Promise<MemoryEngine> {
   const owner = ownerFromEnv();
   if (await healthy()) return new HttpMemloomClient(BASE, undefined, owner);
 
+  // The daemon's output goes to a file, not nowhere: when it cannot start, what it printed is
+  // the only explanation, and an MCP client shows nothing but "connection closed".
+  const logPath = daemonLogPath();
+  mkdirSync(memloomHome(), { recursive: true });
+  const logFd = openSync(logPath, "w");
   const binPath = fileURLToPath(new URL("./bin.js", import.meta.url));
   const child = spawn(process.execPath, [binPath, "serve"], {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", logFd, logFd],
     env: process.env,
+    windowsHide: true,
+  });
+  closeSync(logFd);
+  let exited: number | null | undefined;
+  child.on("exit", (code) => {
+    exited = code;
   });
   child.unref();
 
   for (let i = 0; i < 40; i++) {
     await new Promise((r) => setTimeout(r, 250));
     if (await healthy()) return new HttpMemloomClient(BASE, undefined, owner);
+    // Exiting is not always failure: a daemon that lost the race to another one exits 0 and
+    // the winner answers on the next poll.
+    if (exited !== undefined && exited !== 0) break;
   }
+  const output = tail(logPath);
   throw new Error(
-    `memloom: could not reach or start the local server at ${BASE}. Try running \`memloom serve\` manually.`,
+    exited !== undefined && exited !== 0
+      ? `memloom: the local server exited (code ${exited}) before it was ready.` +
+          (output ? `\n${output}` : "") +
+          `\n  log: ${logPath}`
+      : `memloom: could not reach or start the local server at ${BASE}. ` +
+          `Try running \`memloom serve\` manually.\n  log: ${logPath}`,
   );
+}
+
+export function daemonLogPath(): string {
+  return join(memloomHome(), "daemon.log");
+}
+
+// The last lines of the daemon log, enough to carry its error into a client's message.
+function tail(path: string, lines = 8): string {
+  try {
+    return readFileSync(path, "utf8").trimEnd().split("\n").slice(-lines).join("\n");
+  } catch {
+    return "";
+  }
 }

@@ -204,7 +204,7 @@ export {
   normalizeUrl,
 } from "./link.js";
 export type { ReleaseLock } from "./lock.js";
-export { acquireDataDirLock } from "./lock.js";
+export { acquireDataDirLock, clearBogusPostmasterPid } from "./lock.js";
 export type { InitOptions, MemloomConfig } from "./memloom.js";
 // The engine facade + contract
 export {

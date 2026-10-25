@@ -64,3 +64,10 @@ Ask your client:
 
 You should see `save_memory` and `recall_memory` tool calls, and the memory appears in
 `memloom ui` alongside everything saved from the CLI. Full tool list on [Tools](/mcp/tools).
+
+## If tool calls fail
+
+The server answers your client straight away and reaches the daemon on the first tool call. If
+the daemon cannot start, that call fails with the daemon's own error, and the full output is in
+`~/.memloom/daemon.log`. Fix the cause and call the tool again; the client does not need a
+restart. Running `memloom serve` in a terminal shows the same error.
