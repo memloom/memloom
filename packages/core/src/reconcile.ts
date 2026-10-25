@@ -1,3 +1,4 @@
+import { anthropicCostUsd } from "./anthropic-provider.js";
 import { buildDedupPrompt } from "./dedup.js";
 import type { StorageAdapter } from "./storage.js";
 import type { ReconcileActionKind, ReconcileEstimate } from "./types.js";
@@ -155,9 +156,9 @@ export function effectiveCaps(unactionedRuns: number): ReconcileCaps {
 }
 
 /**
- * Hand-maintained, and the only place currency appears. Nothing else in the repo tracks model
- * prices, so this WILL go stale: an unknown model prints tokens and no dollar figure rather than
- * a confident wrong number. USD per million tokens.
+ * Hand-maintained, for OpenRouter models; Claude's rates sit in anthropic-provider.ts. Nothing
+ * else in the repo tracks model prices, so this WILL go stale: an unknown model prints tokens and
+ * no dollar figure rather than a confident wrong number. USD per million tokens.
  */
 const MODEL_PRICES: Record<string, { input: number; output: number }> = {
   "google/gemini-2.5-flash": { input: 0.3, output: 2.5 },
@@ -187,7 +188,8 @@ export function estimateUsd(
   outputTokens: number,
 ): number | null {
   const price = MODEL_PRICES[model];
-  if (!price) return null;
+  // Claude models are priced where their provider is, so the rates live in one table.
+  if (!price) return anthropicCostUsd(model, inputTokens, outputTokens);
   return (inputTokens * price.input + outputTokens * price.output) / 1_000_000;
 }
 

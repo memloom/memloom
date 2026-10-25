@@ -214,6 +214,14 @@ export class AnthropicLLM implements LLMProvider, ChatProvider {
         usd: anthropicCostUsd(this.#model, inputTokens, outputTokens),
       });
     }
+    // A declined request is a failure, not an empty answer: every caller reads empty text as
+    // "no entities" or "no conflict", and the item would be marked done without being judged.
+    if (message.stop_reason === "refusal") {
+      const why = message.stop_details?.category ?? message.stop_details?.explanation;
+      throw new Error(
+        `Anthropic ${this.#model} declined the completion (${why ?? "no reason given"})`,
+      );
+    }
     return textOf(message.content);
   }
 
