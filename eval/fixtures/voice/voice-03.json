@@ -1,0 +1,48 @@
+{
+  "id": "voice-03",
+  "kind": "note",
+  "date": "2026-05-17",
+  "source": {
+    "note": "hand-written; a post-run voice note mixing a result, a body complaint, a decision and an appointment"
+  },
+  "units": [
+    {
+      "role": "user",
+      "text": "Right, just finished. Eight K in forty-two oh five, that's a PR by like a minute and a half, I'm pretty happy with that. Felt good until the last kilometre."
+    },
+    {
+      "role": "user",
+      "text": "The knee though. Left knee, outside, same spot as in March. It's not bad but it's there. I think it's the shoes, the Nikes are at like seven hundred kilometres, so, decision, I'm switching to the Asics for the next few weeks and seeing if it goes away. Not buying new ones yet."
+    },
+    {
+      "role": "user",
+      "text": "And I booked the physio, finally. Doctor Nowak, Tuesday at ten, the clinic on Garbary. Bring the old X-ray from last year, she asked for it last time and I forgot."
+    },
+    {
+      "role": "user",
+      "text": "Um, that's it I think. Oh, remember to log the run in Strava, the watch didn't sync again, it never syncs when I start it before the GPS lock, so, wait for the lock next time."
+    }
+  ],
+  "expected": [
+    {
+      "type": "episode",
+      "content": "On May 17, 2026 the user ran 8 km in 42:05, a personal record by about a minute and a half.",
+      "keywords": [["42:05", "42 minutes", "forty-two"]]
+    },
+    {
+      "type": "fact",
+      "content": "The user has recurring pain on the outside of their left knee (also in March 2026); they are switching from their Nikes, worn about 700 km, to their Asics for a few weeks before buying new shoes.",
+      "keywords": [["asics"]]
+    },
+    {
+      "type": "episode",
+      "content": "The user has a physio appointment with Dr. Nowak on Tuesday, May 19, 2026 at 10:00 at the clinic on Garbary, and must bring last year's X-ray.",
+      "keywords": ["nowak"]
+    },
+    {
+      "type": "procedure",
+      "content": "The user's watch fails to sync to Strava when a run is started before the GPS lock; wait for the lock before starting.",
+      "keywords": [["gps", "strava"]]
+    }
+  ]
+}

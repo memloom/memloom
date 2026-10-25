@@ -126,6 +126,8 @@ export interface ParsedSession {
   prefixHash: string;
   /** Lines that were not valid JSON; skipped, never fatal. */
   malformed: number;
+  /** ISO timestamp of the first line that carries one: when the session happened. */
+  startedAt: string | null;
 }
 
 interface RawContentBlock {
@@ -136,6 +138,7 @@ interface RawContentBlock {
 interface RawLine {
   type?: string;
   sessionId?: string;
+  timestamp?: string;
   isSidechain?: boolean;
   isMeta?: boolean;
   message?: {
@@ -167,6 +170,7 @@ export async function parseSession(path: string, fromLine = 0): Promise<ParsedSe
   const units: SessionUnit[] = [];
   const hash = createHash("sha256");
   let sessionId = "";
+  let startedAt: string | null = null;
   let line = 0;
   let malformed = 0;
 
@@ -188,6 +192,11 @@ export async function parseSession(path: string, fromLine = 0): Promise<ParsedSe
       continue;
     }
     if (!sessionId && typeof parsed.sessionId === "string") sessionId = parsed.sessionId;
+    // The date the prompt resolves "yesterday" against; the first stamped line is close
+    // enough to the session's start for that.
+    if (!startedAt && typeof parsed.timestamp === "string" && parsed.timestamp.trim()) {
+      startedAt = parsed.timestamp;
+    }
     // Summaries duplicate content that also appears in full; sidechains are subagent turns
     // mirrored into the parent file; meta lines are harness bookkeeping.
     if (parsed.type !== "user" && parsed.type !== "assistant") continue;
@@ -207,6 +216,7 @@ export async function parseSession(path: string, fromLine = 0): Promise<ParsedSe
     lineCount: line,
     prefixHash: hash.digest("hex"),
     malformed,
+    startedAt,
   };
 }
 

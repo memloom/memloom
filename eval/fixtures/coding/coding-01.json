@@ -1,0 +1,58 @@
+{
+  "id": "coding-01",
+  "kind": "agent-session",
+  "date": "2026-02-11",
+  "source": { "note": "hand-written; a Claude Code session about a Node engines floor" },
+  "units": [
+    {
+      "role": "user",
+      "text": "CI is red on the node 18 job again. Can we just lower the engines floor to 18 so people on older LTS can install?"
+    },
+    {
+      "role": "assistant",
+      "text": "Before changing anything, a quick note on what the field does. The `engines` entry in package.json is advisory: npm prints a warning when the running Node is outside the range, pnpm refuses by default, and yarn ignores it unless `engine-strict` is set. Semver ranges apply, so `>=18` means 18 and anything newer, while `^18` would mean 18.x only. Lowering the floor is a one-line change, but it is a promise that the code runs there, so let me look at why the 18 job fails first."
+    },
+    {
+      "role": "assistant",
+      "text": "Ran the suite under Node 18.20.4. 211 of 213 tests pass; the two failures are both in packages/core/src/ledger.test.ts and both throw `TypeError: crypto.hash is not a function`. `crypto.hash()` was added in Node 20.12 and 21.7, so this is not a flaky test, it is an API the project uses that 18 does not have. On Node 20.18 all 213 pass."
+    },
+    {
+      "role": "user",
+      "text": "Hm. I don't want a polyfill or a createHash fallback branch, that's the kind of compatibility shim that rots. Let's keep the floor at 20 and make CI stop pretending we support 18."
+    },
+    {
+      "role": "assistant",
+      "text": "Done. Removed the `18` entry from the test matrix in .github/workflows/ci.yml (it now runs 20 and 22), left `engines.node` at `>=20`, and added one line to README under Requirements: \"Node 20 or newer (uses crypto.hash, added in 20.12).\" The 20 and 22 jobs are green on the push."
+    },
+    {
+      "role": "user",
+      "text": "Good. Also while you're in the README, can you make the install section use pnpm? We standardised on pnpm in January and the README still says npm install."
+    },
+    {
+      "role": "assistant",
+      "text": "Updated: the install block now reads `pnpm install` and the scripts section references `pnpm test` and `pnpm build`. I left the npm-based one-liner in the Quick start since it uses `npx` to run the published CLI, which does not depend on the repo's package manager."
+    }
+  ],
+  "expected": [
+    {
+      "type": "fact",
+      "content": "The project requires Node 20 or newer because it uses crypto.hash, which Node 18 lacks; two ledger tests fail on 18 with 'crypto.hash is not a function'.",
+      "keywords": [["crypto.hash", "node 20"]]
+    },
+    {
+      "type": "preference",
+      "content": "The user does not want polyfills or compatibility fallback branches to support older Node versions; they would rather raise the floor.",
+      "keywords": [["polyfill", "shim", "fallback"]]
+    },
+    {
+      "type": "fact",
+      "content": "CI's test matrix runs Node 20 and 22; the Node 18 job was removed in February 2026.",
+      "keywords": [["matrix", "ci"]]
+    },
+    {
+      "type": "fact",
+      "content": "The project standardised on pnpm in January 2026; the README install instructions use pnpm.",
+      "keywords": ["pnpm"]
+    }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "id": "coding-07",
+  "kind": "agent-session",
+  "date": "2026-07-21",
+  "source": { "note": "hand-written; a Rust CLI on Windows, with a shell-startup gotcha" },
+  "units": [
+    {
+      "role": "user",
+      "text": "Starting the Rust rewrite of the token-saver CLI. I'm on Windows, so that's the primary target; Linux and mac can come later. Argument parsing: clap derive or hand-rolled?"
+    },
+    {
+      "role": "assistant",
+      "text": "For context, clap's two styles: the builder API constructs the parser imperatively and is more flexible at runtime, while the derive API generates the parser from a struct with attributes and gives you typed fields, help text from doc comments, and compile-time checking of the schema. Hand-rolled parsing is only worth it for one or two flags. For a CLI with subcommands, derive is the usual choice."
+    },
+    { "role": "user", "text": "Derive. I'd rather have the typed struct than save a dependency." },
+    {
+      "role": "assistant",
+      "text": "Set up with `clap = { version = \"4\", features = [\"derive\"] }` and a `Cli` struct with `Proxy` and `Gain` subcommands. Builds on stable 1.88."
+    },
+    {
+      "role": "user",
+      "text": "The proxy subcommand runs the wrapped command through the shell. It feels slow, like a full second before anything happens."
+    },
+    {
+      "role": "assistant",
+      "text": "Measured it: spawning `powershell -Command` costs about 1.9 seconds on your machine before the wrapped command even starts, because PowerShell loads the user profile (yours imports oh-my-posh and two modules). With `-NoProfile` the spawn drops to about 180 ms. `cmd /C` is around 40 ms but mangles quoting for anything with spaces or unicode. I switched the proxy to `powershell -NoProfile -NonInteractive -Command` and the end-to-end `rtk proxy git status` is now 0.3 s instead of 2.1 s."
+    },
+    {
+      "role": "user",
+      "text": "Great, that's the fix. Note it in the code so I don't 'clean it up' later."
+    },
+    {
+      "role": "assistant",
+      "text": "Added a comment above the spawn explaining the 1.9 s profile load and why -NoProfile stays."
+    }
+  ],
+  "expected": [
+    {
+      "type": "fact",
+      "content": "The user's Rust token-saver CLI targets Windows first; Linux and macOS come later.",
+      "keywords": ["windows"]
+    },
+    {
+      "type": "fact",
+      "content": "The CLI uses clap's derive API for argument parsing because the user prefers the typed struct over saving a dependency.",
+      "keywords": ["clap"]
+    },
+    {
+      "type": "procedure",
+      "content": "Spawning PowerShell for the proxy subcommand must use -NoProfile: the user's profile (oh-my-posh and two modules) adds about 1.9 seconds per spawn, versus about 180 ms without it.",
+      "keywords": ["-noprofile"]
+    }
+  ]
+}
