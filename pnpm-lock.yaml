@@ -129,7 +129,7 @@ importers:
         version: 7.2.4
       unpdf:
         specifier: ^1.6.2
-        version: 1.9.1
+        version: 1.6.2
     devDependencies:
       '@notionhq/client':
         specifier: ^5.23.2
@@ -2378,11 +2378,10 @@ packages:
   unist-util-visit@5.2.0:
     resolution: {integrity: sha512-fpsYs/VVoZxfGY9/j3FQpZmN8wdLJaV1Pt38AaJNZu9uKIHcFU3halCdBveEq1HGKO1OEfJY65w1zvoFV1b3qQ==}
 
-  unpdf@1.9.1:
-    resolution: {integrity: sha512-nO1npM2kNyd4hj1fKzUVU6bvnWjDSxI97eycM/DgzI83dYyW+pNRI9NeMQVEfef8fI3Q06i9lkMeE1HxrQqKoA==}
-    engines: {node: '>=22'}
+  unpdf@1.6.2:
+    resolution: {integrity: sha512-zQ80ySoPuPHOsvIoRp/nJyQt8TOUoTh1+WBCGcBvlddQNgKDLRwm0AY3x8Q35I7+kIiRSgqMx+Ma2pl9McIp7A==}
     peerDependencies:
-      '@napi-rs/canvas': ^0.1.69 || ^1.0.0
+      '@napi-rs/canvas': ^0.1.69
     peerDependenciesMeta:
       '@napi-rs/canvas':
         optional: true
@@ -4846,7 +4845,7 @@ snapshots:
       unist-util-is: 6.0.1
       unist-util-visit-parents: 6.1.0
 
-  unpdf@1.9.1: {}
+  unpdf@1.6.2: {}
 
   unpipe@1.0.0: {}
 
