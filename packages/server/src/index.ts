@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { serve as nodeServe } from "@hono/node-server";
 import {
   AudioError,
+  type BlobMirror,
   CATALOG,
   type ContextProgressEvent,
   detectKind,
@@ -115,6 +116,11 @@ export interface ServerOptions {
   cloudAuth?: CloudAuthOptions;
   /** Extra routes (the hosted MCP endpoint), mounted after every built-in route and behind auth. */
   mount?: (app: Hono) => void;
+  /**
+   * A bucket that keeps a copy of every uploaded recording, for a server whose disk does not
+   * outlive it. Uploads are written there too, and fetched back when the disk has lost them.
+   */
+  blobMirror?: BlobMirror;
 }
 
 // Fire-and-forget OS opener. The daemon runs on the file owner's machine, so "open" means
@@ -1991,6 +1997,8 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         const dir = await mkdtemp(join(uploadStoreDir(), "u-"));
         const file = join(dir, filename);
         await writeFile(file, bytes);
+        // Before queueing: an upload is only accepted once it is somewhere durable.
+        await opts.blobMirror?.put(file);
         const [item] = await queue.add([file], { uploaded: true, ownerId: ownerOf(c) });
         return c.json({ outcome: "queued", title: filename, chunks: 0, queueId: item?.id });
       }
@@ -2266,6 +2274,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     }
     let size: number;
     try {
+      await opts.blobMirror?.ensureLocal(doc.path);
       size = (await stat(doc.path)).size;
     } catch {
       return c.json({ error: `the source file is no longer at ${doc.path}` }, 404);
@@ -2316,6 +2325,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       return c.json({ error: "this document has no playable file on disk" }, 400);
     }
     try {
+      await opts.blobMirror?.ensureLocal(doc.path);
       const wav = await cutSampleWav(doc.path, start, end - start);
       return c.body(new Uint8Array(wav).buffer as ArrayBuffer, 200, {
         "content-type": "audio/wav",

@@ -92,6 +92,8 @@ export { AuthStore, hashToken } from "./auth-store.js";
 export type { BenchCorpus, BenchDoc, BenchQuery } from "./benchmark.js";
 // Retrieval benchmark + metrics
 export { runBenchmark } from "./benchmark.js";
+export type { BlobMirror, S3MirrorConfig } from "./blob-mirror.js";
+export { blobMirrorFromEnv, S3Mirror } from "./blob-mirror.js";
 // Context connector building blocks
 export type { Chunk, ChunkOptions } from "./chunker.js";
 export { chunkMarkdown, chunkOutline, chunkText } from "./chunker.js";

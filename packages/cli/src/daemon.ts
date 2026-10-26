@@ -9,6 +9,7 @@ import type { StorageAdapter } from "@memloom/core";
 import {
   AuthStore,
   acquireDataDirLock,
+  blobMirrorFromEnv,
   EmbeddingFingerprintError,
   isOwnerId,
   Memloom,
@@ -121,6 +122,8 @@ export async function startDaemon(
   loadConfigEnv();
   const hosted = hostedConfig();
   if (hosted?.port) httpPort = hosted.port;
+  // Read before the store is opened, so a half-configured bucket fails without a lock to strand.
+  const blobMirror = blobMirrorFromEnv();
 
   // Fail fast and clearly if a daemon already owns the port, instead of a silent bind error.
   if (await alreadyServing(httpPort)) {
@@ -249,6 +252,7 @@ export async function startDaemon(
       // server has no folders of the user's to watch.
       fileSync: !hosted,
       ...(cloudAuth ? { cloudAuth } : {}),
+      ...(blobMirror ? { blobMirror } : {}),
       ...(extras.mount ? { mount: extras.mount } : {}),
       ...(staticDir ? { staticDir } : {}),
       // Mirrors OpenRouterLLM's own chat-model fallback chain, for the picker's label.
