@@ -58,7 +58,8 @@
               "guides/file-sync",
               "guides/memory-per-person",
               "guides/configuration",
-              "guides/self-hosting"
+              "guides/self-hosting",
+              "guides/hosting"
             ]
           }
         ]

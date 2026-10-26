@@ -1,0 +1,11 @@
+**/node_modules
+**/dist
+packages/cli/viewer
+.git
+.claude
+.gstack
+spike
+docs
+*.log
+.env
+.env.local

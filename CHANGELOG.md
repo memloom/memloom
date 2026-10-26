@@ -68,6 +68,16 @@
 - A daemon started by a client writes its output to `~/.memloom/daemon.log` instead of
   discarding it, and a start that fails is reported as soon as the daemon exits, with its last
   lines, instead of after a ten-second wait
+- memloom can run as a hosted server. `MEMLOOM_PUBLIC_URL` turns on API tokens and an OAuth
+  sign-in that Claude.ai connectors use, and `memloom-mcp --http` serves the API with MCP at
+  `/mcp` in one process. Routes that read the server's own disk are closed when hosted. See
+  [Hosting memloom](docs/guides/hosting.mdx), which deploys it to Fly.io with Neon and R2
+- `memloom token create|list|revoke` manages API tokens for a hosted server
+- Clients follow `MEMLOOM_URL` and `MEMLOOM_TOKEN` to a hosted server instead of starting a local
+  daemon: the CLI, the MCP server, prompt-time recall, and session capture, which uploads the
+  finished transcript
+- With `MEMLOOM_S3_*` set, uploaded recordings are also kept in an S3-compatible bucket such as
+  Cloudflare R2, and fetched back when the local copy is gone
 
 ## 0.10.0 (2026-08-13)
 
