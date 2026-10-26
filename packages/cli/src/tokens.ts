@@ -1,6 +1,8 @@
+import { existsSync } from "node:fs";
 import {
   AuthStore,
   isOwnerId,
+  lockHolderGone,
   migrate,
   PgAdapter,
   PgliteAdapter,
@@ -9,6 +11,7 @@ import {
   storedEmbeddingDims,
 } from "@memloom/core";
 import { dataDir, ensureConfig, loadConfigEnv } from "./config.js";
+import { pgWirePort } from "./daemon.js";
 import { buildEngineDeps } from "./engine-config.js";
 
 // `memloom token`: API tokens for a hosted memloom. Run where the store is reachable: on the
@@ -16,15 +19,30 @@ import { buildEngineDeps } from "./engine-config.js";
 // directly rather than asking the server, because the server only answers callers that
 // already hold a token.
 //
-// On an embedded store that means the daemon must be stopped: the data-dir lock says so.
+// On an embedded store with the daemon running, it goes through the daemon's Postgres wire
+// socket on 127.0.0.1, since the daemon holds the only connection. That is what makes this work
+// from `fly ssh console` on a server whose store is on the machine's own disk.
 
 async function openStore(): Promise<StorageAdapter> {
   ensureConfig();
   loadConfigEnv();
   const deps = buildEngineDeps();
+  const dir = dataDir();
+  // A shell whose home differs from the server's would otherwise make a fresh store here and
+  // print a token the server has never heard of.
+  if (!deps.pgUrl && !existsSync(dir)) {
+    throw new Error(
+      `no store at ${dir}. Run this where the store lives, with the same MEMLOOM_HOME`,
+    );
+  }
+  const daemonHoldsStore = existsSync(`${dir}.lock`) && !lockHolderGone(dir);
   const storage = deps.pgUrl
     ? await PgAdapter.connect(deps.pgUrl)
-    : await PgliteAdapter.open({ dataDir: dataDir() });
+    : daemonHoldsStore
+      ? await PgAdapter.connect(`postgresql://postgres@127.0.0.1:${pgWirePort()}/postgres`, {
+          max: 1,
+        })
+      : await PgliteAdapter.open({ dataDir: dir });
   // The token tables come with the regular migrations; a store a hosted server has never
   // opened may not have them yet.
   await migrate(storage, (await storedEmbeddingDims(storage)) ?? deps.embedDims ?? 1024);

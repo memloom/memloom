@@ -1,6 +1,6 @@
 ---
 title: "Hosting memloom"
-description: "One memory for every tool: memloom on Fly.io, Neon and Cloudflare R2"
+description: "One memory for every tool: memloom on a Fly.io machine with its store on a Fly volume"
 icon: "cloud"
 ---
 
@@ -10,20 +10,26 @@ A hosted memloom is the same server you run on your laptop, reachable from anywh
 Claude Code, Cursor and the memloom CLI all read and write one store, so what one tool learns the
 others can recall.
 
-This guide uses three services, each doing one job:
+This guide runs one Fly.io machine with a volume attached:
 
 | Piece | Service | Holds |
 | --- | --- | --- |
 | Server | Fly.io, one `shared-cpu-1x` machine with 1 GB | memloom itself: the API and MCP at `/mcp` |
-| Database | Neon (Postgres with pgvector) | Memories, documents, the graph, tokens |
-| Recordings | Cloudflare R2 | Uploaded audio and video |
+| Store | A 3 GB Fly volume mounted at `/data` | Memories, documents, the graph, tokens, uploads |
+| Recordings (optional) | Cloudflare R2 | A second copy of uploaded audio and video |
 
-The machine keeps nothing that matters on its own disk. Replace it and it comes back with the
-same memories from Neon and fetches recordings from R2 as they are needed.
+The store is the same embedded folder memloom keeps on a laptop, owned by one process. memloom
+takes its own snapshots of it every six hours, and Fly snapshots the whole volume daily.
 
-Fly bills the machine for every hour it runs, about $7 a month for this size. Neon's and R2's free
-plans cover a personal store. Any host that runs a Docker image and any Postgres with pgvector
-work the same way; only the commands differ.
+Fly bills the machine for every hour it runs, about $7 a month for this size, plus $0.15 per GB
+a month for the volume. Any host that runs a Docker image with a persistent disk works the same
+way; only the commands differ.
+
+<Note>
+  A managed Postgres also works: set `MEMLOOM_PG_URL` and skip the volume. Pick a plan that
+  allows an always-on connection, because memloom's background passes touch the database every
+  few minutes and keep a scale-to-zero database awake.
+</Note>
 
 ***
 
@@ -45,34 +51,33 @@ Setting `MEMLOOM_PUBLIC_URL` turns a daemon into a hosted server:
 ## Deploying
 
 <Steps>
-  <Step title="Create the database" icon="database">
-    Make a Neon project and copy its connection string. memloom creates its schema on first
-    start, so there is nothing to run by hand.
-  </Step>
-  <Step title="Create the bucket" icon="bucket">
-    In Cloudflare, create an R2 bucket and an API token with read and write access to it. You
-    need the account's S3 endpoint, the bucket name, and the token's access key ID and secret.
-  </Step>
-  <Step title="Create the app" icon="rocket">
+  <Step title="Create the app and its volume" icon="rocket">
     From the repo root:
     ```bash
     fly launch --no-deploy        # keeps fly.toml, picks an app name
+    fly volumes create memloom_data --size 3
     ```
     `fly.toml` runs one machine that never stops, because a stopped machine takes seconds to
-    answer the first recall.
+    answer the first recall, and mounts the volume at `/data`.
+  </Step>
+  <Step title="Create the bucket (optional)" icon="bucket">
+    For a copy of recordings off the machine, create a Cloudflare R2 bucket and an API token with
+    read and write access to it. You need the account's S3 endpoint, the bucket name, and the
+    token's access key ID and secret.
   </Step>
   <Step title="Set the secrets" icon="key">
     ```bash
     fly secrets set \
       MEMLOOM_PUBLIC_URL=https://<app>.fly.dev \
       MEMLOOM_LOGIN_PASSWORD='<at least 12 characters>' \
-      MEMLOOM_PG_URL='postgresql://...neon.tech/neondb?sslmode=require' \
       OPENROUTER_API_KEY=sk-or-... \
       MEMLOOM_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com \
       MEMLOOM_S3_BUCKET=memloom \
       MEMLOOM_S3_ACCESS_KEY_ID=... \
       MEMLOOM_S3_SECRET_ACCESS_KEY=...
     ```
+    Leave out the four `MEMLOOM_S3_*` settings without a bucket. Use the same embedding settings
+    as the store you are bringing, or memloom refuses to open it.
   </Step>
   <Step title="Deploy" icon="play">
     `fly deploy`, then `curl https://<app>.fly.dev/health`. Anything else without a token
@@ -81,9 +86,24 @@ Setting `MEMLOOM_PUBLIC_URL` turns a daemon into a hosted server:
 </Steps>
 
 <Warning>
-  A hosted server needs `MEMLOOM_PG_URL`. Without it the store lives on the machine's disk and is
-  gone when the machine is replaced.
+  Without the volume the store lives on the machine's own disk and is gone when the machine is
+  replaced. `fly.toml` mounts it; check `fly volumes list` before you save anything.
 </Warning>
+
+### Bringing your laptop's store
+
+memloom keeps snapshots of the store in `~/.memloom/snapshots`. Copy the newest one to the
+server as `restore.tar.gz` and restart:
+
+```bash
+fly ssh sftp shell
+put ~/.memloom/snapshots/store-<newest>.tar.gz /data/.memloom/restore.tar.gz
+fly machine restart
+```
+
+On start the server loads it in place of the store it has. The store it replaces is kept beside
+it as `data.replaced-<time>`. Memories saved on the laptop after that snapshot are not in it, so
+take the snapshot after your last save, or save those again.
 
 ***
 
@@ -102,11 +122,12 @@ Sign-in is limited to ten wrong passwords per address every 15 minutes.
 Create a token, then give it to the client:
 
 ```bash
-MEMLOOM_PG_URL='postgresql://...neon.tech/...' memloom token create --label laptop
+fly ssh console -C "memloom token create --label laptop"
 ```
 
-`memloom token` opens the database directly, so run it anywhere that can reach Neon. It prints
-the token once.
+`memloom token` reaches the store on the machine itself, through the server's database socket on
+127.0.0.1, which nothing outside the machine can reach. It prints the token once. With
+`MEMLOOM_PG_URL` set, it runs anywhere that can reach that database instead.
 
 ```bash
 claude mcp add --transport http memloom https://<app>.fly.dev/mcp \

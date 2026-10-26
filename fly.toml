@@ -8,6 +8,8 @@ primary_region = "ams"
   dockerfile = "Dockerfile"
 
 [env]
+  # Also set here, not only in the Dockerfile, so `fly ssh console` shells find the same store.
+  MEMLOOM_HOME = "/data/.memloom"
   MEMLOOM_SYNC = "off"
   PORT = "8080"
 
@@ -26,6 +28,12 @@ primary_region = "ams"
     method = "GET"
     path = "/health"
     timeout = "5s"
+
+# The store lives here, the same embedded PGLite folder a laptop uses. Create it once with
+# `fly volumes create memloom_data --size 3`. Fly snapshots volumes daily.
+[mounts]
+  source = "memloom_data"
+  destination = "/data"
 
 [[vm]]
   size = "shared-cpu-1x"

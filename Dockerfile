@@ -17,8 +17,9 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=build /out .
 # `memloom token create` and the other CLI commands work from `fly ssh console`.
+# HOME is the volume fly.toml mounts, so the store, its snapshots and uploads all live there.
 ENV NODE_ENV=production \
-  MEMLOOM_HOME=/data \
+  HOME=/data \
   MEMLOOM_SYNC=off \
   PORT=8080 \
   PATH=/app/node_modules/.bin:$PATH

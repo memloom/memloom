@@ -20,7 +20,12 @@ import {
 import { type CloudAuthOptions, createServer, type ServerOptions } from "@memloom/server";
 import { configPath, dataDir, ensureConfig, loadConfigEnv } from "./config.js";
 import { buildEngineDeps } from "./engine-config.js";
-import { openWithFallback, scheduleSnapshots, snapshotsEnabled } from "./snapshots.js";
+import {
+  openWithFallback,
+  restoreFromDrop,
+  scheduleSnapshots,
+  snapshotsEnabled,
+} from "./snapshots.js";
 
 export const HTTP_PORT = 4319;
 // A distinctive port so it never collides with a local Postgres on 5432. It sits in the
@@ -175,13 +180,14 @@ export async function startDaemon(
     // waitMs rides out a daemon that is shutting down and about to let go of the lock.
     release = await acquireDataDirLock(dir, { waitMs: 20_000 });
     try {
-      ({ db } = await openWithFallback(dir, (d, snapshot) =>
+      const openStore = (d: string, snapshot?: Blob) =>
         PGlite.create({
           dataDir: d,
           extensions: { vector },
           ...(snapshot ? { loadDataDir: snapshot } : {}),
-        }),
-      ));
+        });
+      ({ db } =
+        (await restoreFromDrop(dir, openStore)) ?? (await openWithFallback(dir, openStore)));
     } catch (err) {
       await release();
       console.error(
@@ -262,10 +268,12 @@ export async function startDaemon(
     hostname: hosted ? "0.0.0.0" : "127.0.0.1",
   });
   // The wire socket is a PGLite-only concern: it exists so DB tools can inspect the embedded
-  // store. On an external Postgres, tools connect to the server directly.
+  // store. On an external Postgres, tools connect to the server directly. A hosted server keeps
+  // it too, still on 127.0.0.1 only, so `memloom token` can reach the store from a shell on the
+  // machine. The host forwards only the HTTP port.
   let pgServer: PGLiteSocketServer | undefined;
   let wireError: string | undefined;
-  if (db && !hosted) {
+  if (db) {
     pgServer = new PGLiteSocketServer({ db, port: wirePort, host: "127.0.0.1" });
     // PGLite is single-connection: while a wire client (Drizzle Studio, psql) is attached it holds
     // an exclusive lock, and every HTTP API call silently queues behind it. Warn loudly, because

@@ -71,8 +71,12 @@
 - memloom can run as a hosted server. `MEMLOOM_PUBLIC_URL` turns on API tokens and an OAuth
   sign-in that Claude.ai connectors use, and `memloom-mcp --http` serves the API with MCP at
   `/mcp` in one process. Routes that read the server's own disk are closed when hosted. See
-  [Hosting memloom](docs/guides/hosting.mdx), which deploys it to Fly.io with Neon and R2
-- `memloom token create|list|revoke` manages API tokens for a hosted server
+  [Hosting memloom](docs/guides/hosting.mdx), which deploys it to one Fly.io machine with the store on a Fly volume
+- `memloom token create|list|revoke` manages API tokens for a hosted server. With the daemon
+  running on an embedded store it goes through the daemon's local database socket, so it works
+  from a shell on the server
+- A snapshot copied to `~/.memloom/restore.tar.gz` is loaded in place of the store on the next
+  start, which is how a laptop's store moves to a server. The store it replaces is kept beside it
 - Clients follow `MEMLOOM_URL` and `MEMLOOM_TOKEN` to a hosted server instead of starting a local
   daemon: the CLI, the MCP server, prompt-time recall, and session capture, which uploads the
   finished transcript
