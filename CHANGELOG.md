@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- A Chrome extension in `apps/extension` saves the page you're on, or a link, into a
+  `reading-list` folder with an optional note, so agents can find it later through recall. The
+  daemon accepts requests from that extension's pinned id. `MEMLOOM_EXTENSION_IDS` allows more
 - The contradiction re-check gives every finding a second, pair-by-pair check and lists only the
   ones it stands behind. Rejected findings are recorded as dismissed and never shown, and findings
   already waiting get the check on the next run. The sweep's prompt now asks for contradictions

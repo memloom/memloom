@@ -1,0 +1,61 @@
+---
+title: "Browser extension"
+description: "Save the page you're on so your agents can find it later"
+icon: "puzzle-piece"
+---
+
+## Overview
+
+The extension saves a page to memloom in two clicks. It keeps two things: the page's text, as a
+[context document](/cli/context), and a short memory saying you saved it to study later, with your
+note if you wrote one. An agent asked "what did I want to read about retrieval?" finds the memory
+through `recall_memory`. A question about the topic itself finds the page's text.
+
+It talks to the daemon on `127.0.0.1:4319`, so the daemon has to be running.
+
+<Note>
+  Chrome and other Chromium browsers (Edge, Brave, Arc) only. It isn't in the Web Store yet, so
+  you load it unpacked from the repo.
+</Note>
+
+***
+
+## Install
+
+1. Clone the repo, or pull it if you already have it.
+2. Open `chrome://extensions` and turn on **Developer mode**.
+3. Click **Load unpacked** and pick the `apps/extension` folder.
+
+The manifest pins a public key, so the extension gets the id `ebfjmgjkgcdcmpcgpbgglcdmddfndmnp` on
+every machine. The daemon accepts requests from that id and from no other extension.
+
+***
+
+## Saving
+
+| How | What it sends |
+| --- | --- |
+| Toolbar button, or `Alt+Shift+S` | The page as you see it, a folder and an optional note |
+| Right-click a page, **Save page to memloom** | The page as you see it, into the last folder you used |
+| Right-click a link, **Save link to memloom** | Only the URL. The daemon fetches the page itself |
+
+Saves go to `reading-list` unless you pick another folder, and the extension creates the folder if
+it doesn't exist. After a right-click save, a tick or a `!` shows on the toolbar icon. Hover the
+icon to read the error.
+
+The extension sends the rendered page, so pages behind a login and single-page apps save with
+their real content. For a YouTube video, the parser also tries to pull its captions as a transcript. Saving the
+same page again updates it rather than adding a copy.
+
+***
+
+## Other browsers and builds
+
+A build with a different id, such as one you packed yourself, gets a `403` until you allow it.
+Put its id in `~/.memloom/config.env` and restart the daemon:
+
+```bash
+MEMLOOM_EXTENSION_IDS=abcdefghijklmnopabcdefghijklmnop
+```
+
+Separate several ids with commas.

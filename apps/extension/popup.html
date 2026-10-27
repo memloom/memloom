@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <p id="title" class="title"></p>
+    <p id="url" class="url"></p>
+    <label for="folder">Folder</label>
+    <input id="folder" list="folders" autocomplete="off" />
+    <datalist id="folders"></datalist>
+    <label for="note">Why save it? (optional)</label>
+    <textarea id="note" rows="3" placeholder="e.g. compare with our retrieval code"></textarea>
+    <button id="save" type="button">Save</button>
+    <p id="status" class="status" role="status"></p>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>
