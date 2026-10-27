@@ -87,9 +87,13 @@ export {
   selectModel,
   setupModels,
 } from "./audio-models.js";
+export type { IssuedToken, OAuthClient, TokenKind, TokenRow } from "./auth-store.js";
+export { AuthStore, hashToken } from "./auth-store.js";
 export type { BenchCorpus, BenchDoc, BenchQuery } from "./benchmark.js";
 // Retrieval benchmark + metrics
 export { runBenchmark } from "./benchmark.js";
+export type { BlobMirror, S3MirrorConfig } from "./blob-mirror.js";
+export { blobMirrorFromEnv, S3Mirror } from "./blob-mirror.js";
 // Context connector building blocks
 export type { Chunk, ChunkOptions } from "./chunker.js";
 export { chunkMarkdown, chunkOutline, chunkText } from "./chunker.js";
@@ -206,7 +210,7 @@ export {
   normalizeUrl,
 } from "./link.js";
 export type { ReleaseLock } from "./lock.js";
-export { acquireDataDirLock, clearBogusPostmasterPid } from "./lock.js";
+export { acquireDataDirLock, clearBogusPostmasterPid, lockHolderGone } from "./lock.js";
 export type { InitOptions, MemloomConfig } from "./memloom.js";
 // The engine facade + contract
 export {

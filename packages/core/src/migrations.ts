@@ -1609,5 +1609,34 @@ export function buildMigrations(dims: number): Migration[] {
         ON memory_attachments (owner_id, root_id);
     `,
     },
+    {
+      // Credentials for a hosted memloom, which unlike the loopback daemon has callers it cannot
+      // trust by address. Only hashes are stored: a leaked table is not a leaked token. Every
+      // token names the owner it acts for, which is how a request gets its owner on that tier.
+      //
+      // Clients are OAuth dynamic registrations (Claude.ai, Claude desktop). They live here and
+      // not in memory so a restart does not strand a connector on a client id nobody remembers.
+      id: "0035_auth_tokens",
+      sql: /* sql */ `
+      CREATE TABLE IF NOT EXISTS _memloom_tokens (
+        hash         text PRIMARY KEY,
+        owner_id     uuid NOT NULL,
+        kind         text NOT NULL CHECK (kind IN ('api', 'access', 'refresh')),
+        label        text NOT NULL DEFAULT '',
+        client_id    text,
+        expires_at   timestamptz,
+        last_used_at timestamptz,
+        created_at   timestamptz NOT NULL DEFAULT now()
+      );
+      CREATE INDEX IF NOT EXISTS _memloom_tokens_owner_idx ON _memloom_tokens (owner_id, kind);
+
+      CREATE TABLE IF NOT EXISTS _memloom_oauth_clients (
+        client_id     text PRIMARY KEY,
+        client_name   text NOT NULL DEFAULT '',
+        redirect_uris jsonb NOT NULL,
+        created_at    timestamptz NOT NULL DEFAULT now()
+      );
+    `,
+    },
   ];
 }

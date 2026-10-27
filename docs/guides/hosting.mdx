@@ -1,0 +1,237 @@
+---
+title: "Hosting memloom"
+description: "One memory for every tool: memloom on a Fly.io machine or your own server, with its store on a disk"
+icon: "cloud"
+---
+
+## Overview
+
+A hosted memloom is the same server you run on your laptop, reachable from anywhere. Claude.ai,
+Claude Code, Cursor and the memloom CLI all read and write one store, so what one tool learns the
+others can recall.
+
+This guide runs one Fly.io machine with a volume attached:
+
+| Piece | Service | Holds |
+| --- | --- | --- |
+| Server | Fly.io, one `shared-cpu-1x` machine with 1 GB | memloom itself: the API and MCP at `/mcp` |
+| Store | A 3 GB Fly volume mounted at `/data` | Memories, documents, the graph, tokens, uploads |
+| Recordings (optional) | Cloudflare R2 | A second copy of uploaded audio and video |
+
+The store is the same embedded folder memloom keeps on a laptop, owned by one process. memloom
+takes its own snapshots of it every six hours, and Fly snapshots the whole volume daily.
+
+Fly bills the machine for every hour it runs, about $7 a month for this size, plus $0.15 per GB
+a month for the volume. Any Linux server with Docker and a disk works the same way; see
+[On your own server](#on-your-own-server).
+
+<Note>
+  A managed Postgres also works: set `MEMLOOM_PG_URL` and skip the volume. Pick a plan that
+  allows an always-on connection, because memloom's background passes touch the database every
+  few minutes and keep a scale-to-zero database awake.
+</Note>
+
+***
+
+## What changes when memloom is hosted
+
+Setting `MEMLOOM_PUBLIC_URL` turns a daemon into a hosted server:
+
+- It listens on every interface, on `PORT`, instead of `127.0.0.1:4319`.
+- Every request needs a token. The token decides whose memories it reaches; a header or body
+  naming another owner is refused.
+- Claude.ai can connect with OAuth: it opens a sign-in page that asks for `MEMLOOM_LOGIN_PASSWORD`.
+- Routes that read the server's own disk are closed: adding local files and folders, folder
+  watching, the import streams, and the admin routes. Recordings still arrive by upload.
+- The viewer is not served. Run it locally against your own store.
+- The MCP tools are the same, minus `add_file`, which takes a path on the server's disk.
+
+***
+
+## Deploying
+
+<Steps>
+  <Step title="Create the app and its volume" icon="rocket">
+    From the repo root:
+    ```bash
+    fly launch --no-deploy        # keeps fly.toml, picks an app name
+    fly volumes create memloom_data --size 3
+    ```
+    `fly.toml` runs one machine that never stops, because a stopped machine takes seconds to
+    answer the first recall, and mounts the volume at `/data`.
+  </Step>
+  <Step title="Create the bucket (optional)" icon="bucket">
+    For a copy of recordings off the machine, create a Cloudflare R2 bucket and an API token with
+    read and write access to it. You need the account's S3 endpoint, the bucket name, and the
+    token's access key ID and secret.
+  </Step>
+  <Step title="Set the secrets" icon="key">
+    ```bash
+    fly secrets set \
+      MEMLOOM_PUBLIC_URL=https://<app>.fly.dev \
+      MEMLOOM_LOGIN_PASSWORD='<at least 12 characters>' \
+      OPENROUTER_API_KEY=sk-or-... \
+      MEMLOOM_S3_ENDPOINT=https://<account-id>.r2.cloudflarestorage.com \
+      MEMLOOM_S3_BUCKET=memloom \
+      MEMLOOM_S3_ACCESS_KEY_ID=... \
+      MEMLOOM_S3_SECRET_ACCESS_KEY=...
+    ```
+    Leave out the four `MEMLOOM_S3_*` settings without a bucket. Use the same embedding settings
+    as the store you are bringing, or memloom refuses to open it.
+  </Step>
+  <Step title="Deploy" icon="play">
+    `fly deploy`, then `curl https://<app>.fly.dev/health`. Anything else without a token
+    answers 401.
+  </Step>
+</Steps>
+
+<Warning>
+  Without the volume the store lives on the machine's own disk and is gone when the machine is
+  replaced. `fly.toml` mounts it; check `fly volumes list` before you save anything.
+</Warning>
+
+### Bringing your laptop's store
+
+memloom keeps snapshots of the store in `~/.memloom/snapshots`. Copy the newest one to the
+server as `restore.tar.gz` and restart:
+
+```bash
+fly ssh sftp shell
+put ~/.memloom/snapshots/store-<newest>.tar.gz /data/.memloom/restore.tar.gz
+fly machine restart
+```
+
+On start the server loads it in place of the store it has. The store it replaces is kept beside
+it as `data.replaced-<time>`. Memories saved on the laptop after that snapshot are not in it, so
+take the snapshot after your last save, or save those again.
+
+
+### On your own server
+
+A rented Linux server (a VPS) runs the same image with `compose.yaml` from the repo root. It
+starts memloom and [Caddy](https://caddyserver.com), which gets and renews an HTTPS certificate
+for your domain. The store lives in a Docker volume, laid out as on the Fly volume.
+
+<Steps>
+  <Step title="Point a domain at the server" icon="globe">
+    Add an `A` record, such as `memory.example.com`, with the server's IP address. Open ports 22,
+    80 and 443 and nothing else. Caddy needs 80 and 443 to get its certificate.
+  </Step>
+  <Step title="Write the settings" icon="key">
+    In a clone of the repo on the server, create `.env` beside `compose.yaml`:
+    ```bash
+    MEMLOOM_DOMAIN=memory.example.com
+    MEMLOOM_LOGIN_PASSWORD=<at least 12 characters>
+    OPENROUTER_API_KEY=sk-or-...
+    ```
+    `MEMLOOM_PUBLIC_URL` is set from the domain. The `MEMLOOM_S3_*` settings go here too if you
+    use a bucket. Git ignores `.env`.
+  </Step>
+  <Step title="Start it" icon="play">
+    `docker compose up -d --build`, then `curl https://memory.example.com/health`. Both
+    containers restart after a crash or a reboot.
+  </Step>
+</Steps>
+
+Commands that ran through `fly ssh console` run through `docker compose exec` instead:
+
+```bash
+docker compose exec memloom memloom token create --label laptop
+docker compose cp ~/.memloom/snapshots/store-<newest>.tar.gz memloom:/data/.memloom/restore.tar.gz
+docker compose restart memloom
+```
+
+To update, `git pull` and `docker compose up -d --build`. The store stays in its volume. memloom's
+snapshots sit on the same disk, so turn on your host's backups or set a bucket for recordings.
+
+Other programs on the server, such as an agent of your own, reach memloom at
+`http://memloom:8080` when they join the same compose project, or at your domain from anywhere
+else. Either way they need a token.
+
+***
+
+## Connecting your tools
+
+### Claude.ai
+
+Add a custom connector with the URL `https://<app>.fly.dev/mcp`. Claude.ai registers itself,
+opens the sign-in page, and asks for your login password. After that it refreshes its own access,
+for up to 90 days without use.
+
+Sign-in is limited to ten wrong passwords per address every 15 minutes.
+
+### Claude Code, Cursor and other MCP clients
+
+Create a token, then give it to the client:
+
+```bash
+fly ssh console -C "memloom token create --label laptop"
+```
+
+`memloom token` reaches the store on the machine itself, through the server's database socket on
+127.0.0.1, which nothing outside the machine can reach. It prints the token once. With
+`MEMLOOM_PG_URL` set, it runs anywhere that can reach that database instead.
+
+```bash
+claude mcp add --transport http memloom https://<app>.fly.dev/mcp \
+  --header "Authorization: Bearer mlm_..."
+```
+
+Clients that take a JSON config use the same URL and header.
+
+### The memloom CLI and hooks
+
+Point the CLI at the server instead of a local daemon, in `~/.memloom/config.env` or the
+environment:
+
+```bash
+MEMLOOM_URL=https://<app>.fly.dev
+MEMLOOM_TOKEN=mlm_...
+```
+
+`memloom recall`, `save` and the rest go to the server and no local daemon starts. The Claude
+Code hooks follow the same settings: prompt-time recall asks the server, and a finished session's
+transcript is uploaded so the server can import it.
+
+### Tokens
+
+| Command | Does |
+| --- | --- |
+| `memloom token create [--label <name>]` | Print a new token. Shown once |
+| `memloom token list` | Tokens that still work, with when each was last used |
+| `memloom token revoke <id-prefix>` | Stop one working, at once |
+
+Tokens are stored as hashes, so a lost one cannot be shown again. Revoke it and create another.
+With `MEMLOOM_OWNER_ID` set, a token acts for that person; see
+[memory per person](/guides/memory-per-person).
+
+***
+
+## Recordings
+
+With the four `MEMLOOM_S3_*` settings, every uploaded recording is also written to the bucket.
+The machine keeps a working copy for transcription and playback; a copy it has lost is fetched
+back the first time something asks for it.
+
+Transcription runs on the server, so its models load into the machine's memory. On a 1 GB
+machine, long recordings may need a larger size; `fly scale memory 2048` changes it.
+
+<Note>
+  Deleting a document removes its file from the machine but not yet from the bucket.
+</Note>
+
+***
+
+## Settings
+
+| Setting | For |
+| --- | --- |
+| `MEMLOOM_PUBLIC_URL` | The server's public address. Turns on tokens and sign-in. Must be https except on localhost |
+| `MEMLOOM_LOGIN_PASSWORD` | The Claude.ai sign-in password, at least 12 characters. Unset means no sign-in, tokens only |
+| `PORT` | The port to listen on. Fly sets it from `fly.toml` |
+| `MEMLOOM_S3_ENDPOINT` `MEMLOOM_S3_BUCKET` `MEMLOOM_S3_ACCESS_KEY_ID` `MEMLOOM_S3_SECRET_ACCESS_KEY` | The bucket for recordings. All four or none |
+| `MEMLOOM_S3_REGION` | Default `auto`, which R2 expects. AWS needs the bucket's region |
+| `MEMLOOM_URL` `MEMLOOM_TOKEN` | On a client: use this server instead of a local daemon |
+
+To try hosted mode on your own machine, run `memloom-mcp --http` with
+`MEMLOOM_PUBLIC_URL=http://localhost:8080` and `PORT=8080`.

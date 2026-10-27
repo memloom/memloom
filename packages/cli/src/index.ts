@@ -17,7 +17,7 @@ import {
 } from "@memloom/core";
 import { runAgentMemoryImport } from "./agent-memory.js";
 import { configPath, dataDir, ensureConfig, loadConfigEnv, memloomHome } from "./config.js";
-import { connect } from "./connect.js";
+import { connect, remoteServer, serverBase } from "./connect.js";
 import { pgWirePort, startDaemon } from "./daemon.js";
 import {
   ALL_HOOKS,
@@ -29,6 +29,7 @@ import {
   readNotifyPayload,
   removeHooks,
   SESSION_END_HOOK,
+  uploadSession,
 } from "./hooks.js";
 import { runImport } from "./import.js";
 import {
@@ -40,6 +41,7 @@ import {
 } from "./notion.js";
 import { promptRecall } from "./recall-hook.js";
 import { runReembed } from "./reembed.js";
+import { runToken } from "./tokens.js";
 
 /** "12:30" for a progress line, so a long transcription reads against the recording. */
 function formatClock(seconds: number): string {
@@ -288,6 +290,7 @@ Usage: memloom <command> [args]
                        --rebuild wipes all extracted entities/edges and re-runs from scratch
   reembed [--force]    re-embed the whole store with the currently configured embedding
                        provider (run after switching providers; daemon must be stopped)
+  token create|list|revoke  API tokens for a hosted memloom (run where the store is)
   auto-index [on|off]  show or set background entity extraction after saves/ingests
   conflicts [auto]     list pending conflicts; auto resolves the obvious ones with the LLM
   reconcile                consolidation pass: repair, fold, and ask about the rest,
@@ -1456,7 +1459,17 @@ export async function run(argv: readonly string[]): Promise<void> {
       const [source] = rest;
       if (source !== "claude-code") return;
       const path = await readNotifyPayload(process.stdin);
-      if (path) await notifyDaemon(path);
+      if (!path) return;
+      try {
+        if (remoteServer()) {
+          const { url, headers } = serverBase();
+          await uploadSession(path, url, headers);
+        } else {
+          await notifyDaemon(path);
+        }
+      } catch {
+        // a malformed MEMLOOM_URL must not surface as hook noise either
+      }
       return;
     }
 
@@ -1466,7 +1479,8 @@ export async function run(argv: readonly string[]): Promise<void> {
     case "prompt-recall": {
       if (rest[0] !== "claude-code") return;
       try {
-        const block = await promptRecall(process.stdin);
+        const { url, headers } = serverBase();
+        const block = await promptRecall(process.stdin, url, headers);
         if (block) console.log(block);
       } catch {
         // silence over blocking, always
@@ -1507,6 +1521,10 @@ export async function run(argv: readonly string[]): Promise<void> {
     // No connect(): reembed opens the store directly and must NOT auto-start the daemon.
     case "reembed":
       await runReembed({ force: rest.includes("--force") });
+      return;
+
+    case "token":
+      await runToken(rest);
       return;
 
     case "conflicts": {
@@ -1721,4 +1739,5 @@ export async function run(argv: readonly string[]): Promise<void> {
   }
 }
 
-export { connect } from "./connect.js";
+export { connect, remoteServer } from "./connect.js";
+export { type DaemonExtras, startDaemon } from "./daemon.js";

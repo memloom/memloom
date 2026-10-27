@@ -41,6 +41,8 @@ OPENROUTER_API_KEY=sk-or-...        # the one switch: with it, cloud mode. Witho
 | `MEMLOOM_PG_URL` | unset | Run on a real Postgres instead of the embedded store |
 | `MEMLOOM_SNAPSHOTS` | `on` | Set to `off` to stop the daemon [keeping snapshots](/guides/self-hosting) of the store |
 | `MEMLOOM_OWNER_ID` | unset | Which person a process acts for. Environment only, not this file |
+| `MEMLOOM_URL` `MEMLOOM_TOKEN` | unset | Use a [hosted memloom](/guides/hosting) instead of a local daemon |
+| `MEMLOOM_PUBLIC_URL` | unset | Run as a [hosted server](/guides/hosting), with tokens and sign-in |
 
 The full annotated list, including transcription and diarization, lives in
 `config.env.example` in the repo and in the file `memloom init` writes.

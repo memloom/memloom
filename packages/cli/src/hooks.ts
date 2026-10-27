@@ -1,6 +1,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // Claude Code hook management for `memloom connect claude-code`. This module edits the ONE
@@ -207,6 +208,30 @@ export async function notifyDaemon(path: string, base = "http://127.0.0.1:4319")
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ path }),
       signal: AbortSignal.timeout(1_500),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Send the ended session to a hosted memloom, which cannot read this machine's disk: the
+ * transcript goes by value, under the same project folder and file name notify would use.
+ * Quiet like notifyDaemon, with more time because the body is the whole transcript.
+ */
+export async function uploadSession(
+  path: string,
+  base: string,
+  headers: Record<string, string> = {},
+): Promise<boolean> {
+  try {
+    const content = await readFile(path, "utf8");
+    const res = await fetch(`${base}/import/claude-code/upload`, {
+      method: "POST",
+      headers: { ...headers, "content-type": "application/json" },
+      body: JSON.stringify({ project: basename(dirname(path)), name: basename(path), content }),
+      signal: AbortSignal.timeout(15_000),
     });
     return res.ok;
   } catch {
