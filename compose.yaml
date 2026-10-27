@@ -1,0 +1,37 @@
+# memloom on any Linux server with Docker: the hosted server, plus Caddy in front of it for HTTPS.
+# Settings and secrets go in a .env file beside this one; walkthrough in docs/guides/hosting.mdx.
+
+services:
+  memloom:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MEMLOOM_PUBLIC_URL: https://${MEMLOOM_DOMAIN:?set MEMLOOM_DOMAIN in .env}
+      MEMLOOM_HOME: /data/.memloom
+    # The store, its snapshots and uploads. Same layout as the Fly volume.
+    volumes:
+      - memloom_data:/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/health').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60s
+
+  # Gets and renews a Let's Encrypt certificate for MEMLOOM_DOMAIN on its own. The domain's DNS
+  # must point at this server and ports 80 and 443 must be open before the first start.
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    command: caddy reverse-proxy --from ${MEMLOOM_DOMAIN} --to memloom:8080
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+    depends_on:
+      - memloom
+
+volumes:
+  memloom_data:
+  caddy_data:

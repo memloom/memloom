@@ -1,5 +1,5 @@
 # memloom as a hosted server: the HTTP API plus MCP at /mcp, behind tokens and sign-in.
-# Built for Fly.io (see fly.toml and docs/guides/hosting.mdx), but nothing in it is Fly-specific.
+# Fly.io runs it from fly.toml, any Docker host from compose.yaml; see docs/guides/hosting.mdx.
 
 FROM node:22-slim AS build
 WORKDIR /src

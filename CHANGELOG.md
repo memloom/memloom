@@ -10,6 +10,22 @@
   `MEMLOOM_RECONCILE_CONCURRENCY` to change it. The contradiction re-check on a 6,000-belief store
   drops from most of a day to under an hour. Entity folds and conflict resolutions are still
   applied one at a time, in queue order
+- memloom can run as a hosted server. `MEMLOOM_PUBLIC_URL` turns on API tokens and an OAuth
+  sign-in that Claude.ai connectors use, and `memloom-mcp --http` serves the API with MCP at
+  `/mcp` in one process. Routes that read the server's own disk are closed when hosted. See
+  [Hosting memloom](docs/guides/hosting.mdx), which deploys it to one Fly.io machine with the store
+  on a Fly volume, or to any Linux server with Docker through `compose.yaml`, which adds Caddy for
+  HTTPS
+- `memloom token create|list|revoke` manages API tokens for a hosted server. With the daemon
+  running on an embedded store it goes through the daemon's local database socket, so it works
+  from a shell on the server
+- A snapshot copied to `~/.memloom/restore.tar.gz` is loaded in place of the store on the next
+  start, which is how a laptop's store moves to a server. The store it replaces is kept beside it
+- Clients follow `MEMLOOM_URL` and `MEMLOOM_TOKEN` to a hosted server instead of starting a local
+  daemon: the CLI, the MCP server, prompt-time recall, and session capture, which uploads the
+  finished transcript
+- With `MEMLOOM_S3_*` set, uploaded recordings are also kept in an S3-compatible bucket such as
+  Cloudflare R2, and fetched back when the local copy is gone
 
 ## 0.11.0 (2026-10-25)
 
@@ -68,20 +84,6 @@
 - A daemon started by a client writes its output to `~/.memloom/daemon.log` instead of
   discarding it, and a start that fails is reported as soon as the daemon exits, with its last
   lines, instead of after a ten-second wait
-- memloom can run as a hosted server. `MEMLOOM_PUBLIC_URL` turns on API tokens and an OAuth
-  sign-in that Claude.ai connectors use, and `memloom-mcp --http` serves the API with MCP at
-  `/mcp` in one process. Routes that read the server's own disk are closed when hosted. See
-  [Hosting memloom](docs/guides/hosting.mdx), which deploys it to one Fly.io machine with the store on a Fly volume
-- `memloom token create|list|revoke` manages API tokens for a hosted server. With the daemon
-  running on an embedded store it goes through the daemon's local database socket, so it works
-  from a shell on the server
-- A snapshot copied to `~/.memloom/restore.tar.gz` is loaded in place of the store on the next
-  start, which is how a laptop's store moves to a server. The store it replaces is kept beside it
-- Clients follow `MEMLOOM_URL` and `MEMLOOM_TOKEN` to a hosted server instead of starting a local
-  daemon: the CLI, the MCP server, prompt-time recall, and session capture, which uploads the
-  finished transcript
-- With `MEMLOOM_S3_*` set, uploaded recordings are also kept in an S3-compatible bucket such as
-  Cloudflare R2, and fetched back when the local copy is gone
 
 ## 0.10.0 (2026-08-13)
 
