@@ -1,6 +1,8 @@
 // Everything the extension says to the daemon. The daemon binds 127.0.0.1:4319 and lets this
-// extension's origin through (its id is pinned by the manifest key).
+// extension's origin through: in Chrome by the id the manifest key pins, in Firefox by the
+// profile's UUID once it is in MEMLOOM_EXTENSION_IDS.
 const DAEMON = "http://127.0.0.1:4319";
+export const DAEMON_ORIGINS = { origins: [`${DAEMON}/*`] };
 
 export const DEFAULT_FOLDER = "reading-list";
 
@@ -19,6 +21,12 @@ async function call(path, init = {}) {
     throw new Error("memloom isn't running. Start it with `memloom serve`.");
   }
   const body = await res.json().catch(() => ({}));
+  if (res.status === 403 && location.protocol === "moz-extension:") {
+    throw new Error(
+      `memloom doesn't know this Firefox install yet. Add MEMLOOM_EXTENSION_IDS=${location.host} ` +
+        "to ~/.memloom/config.env and restart the daemon.",
+    );
+  }
   if (!res.ok) throw new Error(body.error ?? `memloom answered HTTP ${res.status}`);
   return body;
 }

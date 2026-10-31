@@ -14,20 +14,44 @@ through `recall_memory`. A question about the topic itself finds the page's text
 It talks to the daemon on `127.0.0.1:4319`, so the daemon has to be running.
 
 <Note>
-  Chrome and other Chromium browsers (Edge, Brave, Arc) only. It isn't in the Web Store yet, so
-  you load it unpacked from the repo.
+  It works in Chrome, the other Chromium browsers (Edge, Brave, Arc) and Firefox 140 or later. It
+  isn't in any extension store yet, so you load it from the repo.
 </Note>
 
 ***
 
 ## Install
 
-1. Clone the repo, or pull it if you already have it.
-2. Open `chrome://extensions` and turn on **Developer mode**.
-3. Click **Load unpacked** and pick the `apps/extension` folder.
+<Tabs>
+  <Tab title="Chrome">
+    1. Clone the repo, or pull it if you already have it.
+    2. Open `chrome://extensions` and turn on **Developer mode**.
+    3. Click **Load unpacked** and pick the `apps/extension` folder.
 
-The manifest pins a public key, so the extension gets the id `ebfjmgjkgcdcmpcgpbgglcdmddfndmnp` on
-every machine. The daemon accepts requests from that id and from no other extension.
+    The manifest pins a public key, so the extension gets the id
+    `ebfjmgjkgcdcmpcgpbgglcdmddfndmnp` on every machine. The daemon accepts that id with no setup.
+  </Tab>
+  <Tab title="Firefox">
+    1. Clone the repo, or pull it if you already have it.
+    2. Open `about:debugging#/runtime/this-firefox`.
+    3. Click **Load Temporary Add-on** and pick `apps/extension/manifest.json`.
+    4. Copy the **Internal UUID** shown under memloom and add it to `~/.memloom/config.env`:
+
+       ```bash
+       MEMLOOM_EXTENSION_IDS=0b9d3a52-7a1e-4c55-9d0e-2f6a1c3b4d5e
+       ```
+
+    5. Restart the daemon.
+    6. Click the memloom icon, then **Save** once, and allow access to `127.0.0.1:4319` when
+       Firefox asks. Firefox installs that permission switched off.
+
+    Firefox gives every install its own UUID, so no manifest can pin it the way Chrome's key does.
+    If you skip step 4, the popup's error names the UUID to add. A temporary add-on is removed
+    when Firefox restarts, so you load it again after each restart.
+  </Tab>
+</Tabs>
+
+The daemon accepts these extensions and refuses every other one.
 
 ***
 
@@ -49,13 +73,14 @@ same page again updates it rather than adding a copy.
 
 ***
 
-## Other browsers and builds
+## Other builds
 
-A build with a different id, such as one you packed yourself, gets a `403` until you allow it.
+A Chrome build with a different id, such as one you packed yourself, gets a `403` until you allow
+it.
 Put its id in `~/.memloom/config.env` and restart the daemon:
 
 ```bash
 MEMLOOM_EXTENSION_IDS=abcdefghijklmnopabcdefghijklmnop
 ```
 
-Separate several ids with commas.
+Separate several ids with commas. A Firefox UUID and a Chrome id can sit in the same list.

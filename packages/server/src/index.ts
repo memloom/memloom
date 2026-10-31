@@ -680,18 +680,21 @@ function audioFailure(c: Context, err: unknown): Response {
 // localhost port. Anything else is a cross-site caller.
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
-// The memloom browser extension (apps/extension). Its manifest pins a public key, so the
-// unpacked build gets this same id on every machine. MEMLOOM_EXTENSION_IDS adds more ids
-// (comma-separated): a Web Store build, a fork, an Edge install. Allowing one id and not
-// every chrome-extension:// origin matters: any installed extension could otherwise read
-// and write the store.
+// The memloom browser extension (apps/extension). In Chrome its manifest pins a public key,
+// so the unpacked build gets this same id on every machine. MEMLOOM_EXTENSION_IDS adds more
+// (comma-separated): a Web Store build, a fork, or a Firefox install, whose origin is a
+// per-profile UUID that no manifest can pin. Allowing named ids and not every extension
+// origin matters: any installed extension could otherwise read and write the store.
 const MEMLOOM_EXTENSION_ID = "ebfjmgjkgcdcmpcgpbgglcdmddfndmnp";
+const FIREFOX_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function extensionOrigins(): Set<string> {
   const ids = [MEMLOOM_EXTENSION_ID, ...(process.env.MEMLOOM_EXTENSION_IDS ?? "").split(",")]
-    .map((id) => id.trim())
+    .map((id) => id.trim().toLowerCase())
     .filter((id) => id.length > 0);
-  return new Set(ids.map((id) => `chrome-extension://${id}`));
+  return new Set(
+    ids.map((id) => (FIREFOX_UUID.test(id) ? `moz-extension://${id}` : `chrome-extension://${id}`)),
+  );
 }
 
 // True when the Host header names the loopback interface. Accepts an optional port and

@@ -973,6 +973,11 @@ describe("server", () => {
       headers: { origin: "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
     });
     expect(other.status).toBe(403);
+
+    const firefox = await server.request("/health", {
+      headers: { origin: "moz-extension://0b9d3a52-7a1e-4c55-9d0e-2f6a1c3b4d5e" },
+    });
+    expect(firefox.status).toBe(403);
   });
 
   it("shutdown endpoint acks then invokes the hook", async () => {

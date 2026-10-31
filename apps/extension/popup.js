@@ -1,4 +1,5 @@
 import {
+  DAEMON_ORIGINS,
   DEFAULT_FOLDER,
   folderPaths,
   isSavable,
@@ -23,6 +24,9 @@ $("folder").value = await lastFolder();
 if (!isSavable(tab?.url)) {
   $("save").disabled = true;
   show("Only http and https pages can be saved.");
+} else if (!(await chrome.permissions.contains(DAEMON_ORIGINS))) {
+  // Firefox installs host permissions unticked. Asking needs a click, so Save asks.
+  show("Click Save once to let the extension reach memloom.");
 } else {
   // The folder list doubles as the "is the daemon up" check, so a stopped daemon shows
   // before the user types a note.
@@ -36,6 +40,13 @@ if (!isSavable(tab?.url)) {
 }
 
 $("save").addEventListener("click", async () => {
+  // Before any await: Firefox only shows the prompt while the click is still being handled.
+  // Chrome grants host permissions at install, so there this resolves true at once.
+  const allowed = await chrome.permissions.request(DAEMON_ORIGINS);
+  if (!allowed) {
+    show("memloom needs access to 127.0.0.1:4319 to save.", "bad");
+    return;
+  }
   const folder = $("folder").value.trim() || DEFAULT_FOLDER;
   $("save").disabled = true;
   show("Saving…");
