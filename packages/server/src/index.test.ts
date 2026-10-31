@@ -962,6 +962,24 @@ describe("server", () => {
     expect(foreign.headers.get("access-control-allow-origin")).toBeNull();
   });
 
+  it("lets the memloom extension in and keeps other extensions out", async () => {
+    const server = await app();
+    const ours = await server.request("/health", {
+      headers: { origin: "chrome-extension://ebfjmgjkgcdcmpcgpbgglcdmddfndmnp" },
+    });
+    expect(ours.status).toBe(200);
+
+    const other = await server.request("/health", {
+      headers: { origin: "chrome-extension://aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+    });
+    expect(other.status).toBe(403);
+
+    const firefox = await server.request("/health", {
+      headers: { origin: "moz-extension://0b9d3a52-7a1e-4c55-9d0e-2f6a1c3b4d5e" },
+    });
+    expect(firefox.status).toBe(403);
+  });
+
   it("shutdown endpoint acks then invokes the hook", async () => {
     await truncateAll(storage);
     const memloom = new Memloom({

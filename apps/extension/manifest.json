@@ -1,0 +1,35 @@
+{
+  "manifest_version": 3,
+  "name": "memloom",
+  "version": "0.1.0",
+  "description": "Save the page you're on to memloom so your agents can find it later.",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4YifMbIm179xHcZrBIuDkbh5vUCeTEzJPBHuYboh1sHNXN94TFHRLDWBBTMpzR9U49N3wGZeggBOv57DQiTI/QINk+m0Y2S25jxkuBFkTxE/IUunEkSNdPsvsgkRK/KsJ1VTyyrdB76KP4xj9qi2SG/Q5blEs/THLa0wsA7xI1KSxG/QpgrtQ1uCdNhMP3XMnWqOEfAgz/UFsbRfZ165XSUJjQqyRs0bv3XLLNH8QrzxJ/PT9eGdKt36miW8i6c5Goj6D2sek6Aq5sV+8W3mHS3VMgSYi9GbUXhMTlYvMxzf7HHZDaufiTkj2nlunGNTJHWiWfLO7KLjTpco94JO4QIDAQAB",
+  "permissions": ["activeTab", "scripting", "contextMenus", "storage"],
+  "host_permissions": ["http://127.0.0.1:4319/*"],
+  "background": {
+    "service_worker": "background.js",
+    "scripts": ["background.js"],
+    "type": "module"
+  },
+  "action": {
+    "default_title": "Save to memloom",
+    "default_popup": "popup.html"
+  },
+  "commands": {
+    "_execute_action": {
+      "suggested_key": {
+        "default": "Alt+Shift+S"
+      },
+      "description": "Open the save popup"
+    }
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "save-for-later@memloom",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": ["none"]
+      }
+    }
+  }
+}

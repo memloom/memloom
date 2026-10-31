@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <p id="title" class="title"></p>
+    <p id="url" class="url"></p>
+    <span class="label" id="folder-label">Folder</span>
+    <div class="picker">
+      <button
+        id="folder"
+        class="picker-button"
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded="false"
+        aria-labelledby="folder-label folder"
+      >
+        <svg class="icon" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M1.5 3.5h4.2l1.5 1.5h7.3v8.5h-13z" />
+        </svg>
+        <span id="folder-text" class="picker-text"></span>
+        <svg class="chevron" viewBox="0 0 16 16" aria-hidden="true">
+          <path d="M4 6l4 4 4-4" />
+        </svg>
+      </button>
+      <div id="folder-panel" class="panel" hidden>
+        <input
+          id="folder-search"
+          class="search"
+          placeholder="Find or create a folder"
+          autocomplete="off"
+          spellcheck="false"
+          role="combobox"
+          aria-controls="folder-list"
+          aria-expanded="true"
+        />
+        <ul id="folder-list" class="list" role="listbox" aria-labelledby="folder-label"></ul>
+      </div>
+    </div>
+    <label class="label" for="note">Why save it? (optional)</label>
+    <textarea id="note" rows="3" placeholder="e.g. compare with our retrieval code"></textarea>
+    <button id="save" class="save" type="button">Save</button>
+    <p id="status" class="status" role="status"></p>
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

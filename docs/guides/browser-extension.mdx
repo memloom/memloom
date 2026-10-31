@@ -1,0 +1,89 @@
+---
+title: "Browser extension"
+description: "Save the page you're on so your agents can find it later"
+icon: "puzzle-piece"
+---
+
+## Overview
+
+The extension saves a page to memloom in two clicks. It keeps two things: the page's text, as a
+[context document](/cli/context), and a short memory saying you saved it to study later, with your
+note if you wrote one. An agent asked "what did I want to read about retrieval?" finds the memory
+through `recall_memory`. A question about the topic itself finds the page's text.
+
+It talks to the daemon on `127.0.0.1:4319`, so the daemon has to be running.
+
+<Note>
+  It works in Chrome, the other Chromium browsers (Edge, Brave, Arc) and Firefox 140 or later. It
+  isn't in any extension store yet, so you load it from the repo.
+</Note>
+
+***
+
+## Install
+
+<Tabs>
+  <Tab title="Chrome">
+    1. Clone the repo, or pull it if you already have it.
+    2. Open `chrome://extensions` and turn on **Developer mode**.
+    3. Click **Load unpacked** and pick the `apps/extension` folder.
+
+    The manifest pins a public key, so the extension gets the id
+    `ebfjmgjkgcdcmpcgpbgglcdmddfndmnp` on every machine. The daemon accepts that id with no setup.
+  </Tab>
+  <Tab title="Firefox">
+    1. Clone the repo, or pull it if you already have it.
+    2. Open `about:debugging#/runtime/this-firefox`.
+    3. Click **Load Temporary Add-on** and pick `apps/extension/manifest.json`.
+    4. Copy the **Internal UUID** shown under memloom and add it to `~/.memloom/config.env`:
+
+       ```bash
+       MEMLOOM_EXTENSION_IDS=0b9d3a52-7a1e-4c55-9d0e-2f6a1c3b4d5e
+       ```
+
+    5. Restart the daemon.
+    6. Click the memloom icon, then **Save** once, and allow access to `127.0.0.1:4319` when
+       Firefox asks. Firefox installs that permission switched off.
+
+    Firefox gives every install its own UUID, so no manifest can pin it the way Chrome's key does.
+    If you skip step 4, the popup's error names the UUID to add. A temporary add-on is removed
+    when Firefox restarts, so you load it again after each restart.
+  </Tab>
+</Tabs>
+
+The daemon accepts these extensions and refuses every other one.
+
+***
+
+## Saving
+
+| How | What it sends |
+| --- | --- |
+| Toolbar button, or `Alt+Shift+S` | The page as you see it, a folder and an optional note |
+| Right-click a page, **Save page to memloom** | The page as you see it, into the last folder you used |
+| Right-click a link, **Save link to memloom** | Only the URL. The daemon fetches the page itself |
+
+Saves go to `reading-list` unless you pick another folder. Type in the folder picker to filter
+the tree, or type a new path such as `reading-list/papers` to create it.
+
+In the viewer, the page shows on the **Documents** tab as a `link`, and the "saved to study later"
+memory with your note shows on the **Memories** tab. Both sit in the folder you picked. After a right-click save, a tick or a `!` shows on the toolbar icon. Hover the
+icon to read the error.
+
+The extension sends the rendered page, so pages behind a login and single-page apps save with
+their real content. For a YouTube video, the parser also tries to pull its captions as a transcript. Saving the
+same page again updates it rather than adding a copy.
+
+***
+
+## Other builds
+
+A Chrome build with a different id, such as one you packed yourself, gets a `403` until you allow
+it.
+Put its id in `~/.memloom/config.env` and restart the daemon:
+
+```bash
+MEMLOOM_EXTENSION_IDS=abcdefghijklmnopabcdefghijklmnop
+```
+
+Separate several ids with commas. A Firefox UUID and a Chrome id can sit in the same list.

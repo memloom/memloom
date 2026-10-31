@@ -69,6 +69,11 @@ const CONFIG_TEMPLATE = `# memloom configuration. The daemon (\`memloom serve\`)
 # where events are least likely to arrive; \`on\` forces it, \`off\` forbids it:
 # MEMLOOM_SYNC_POLL=auto
 
+# The daemon accepts the memloom browser extension (apps/extension) and no other extension.
+# To allow a build with another id (one you packed, or Firefox's Internal UUID from
+# about:debugging), list it here, comma-separated:
+# MEMLOOM_EXTENSION_IDS=abcdefghijklmnopabcdefghijklmnop
+
 # Notion connector: create an internal integration at notion.so/profile/integrations,
 # share your pages with it, and put the token here. Pick pages with \`memloom notion connect\`.
 # NOTION_TOKEN=ntn_...

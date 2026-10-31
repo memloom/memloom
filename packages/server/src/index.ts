@@ -680,6 +680,23 @@ function audioFailure(c: Context, err: unknown): Response {
 // localhost port. Anything else is a cross-site caller.
 const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
 
+// The memloom browser extension (apps/extension). In Chrome its manifest pins a public key,
+// so the unpacked build gets this same id on every machine. MEMLOOM_EXTENSION_IDS adds more
+// (comma-separated): a Web Store build, a fork, or a Firefox install, whose origin is a
+// per-profile UUID that no manifest can pin. Allowing named ids and not every extension
+// origin matters: any installed extension could otherwise read and write the store.
+const MEMLOOM_EXTENSION_ID = "ebfjmgjkgcdcmpcgpbgglcdmddfndmnp";
+const FIREFOX_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function extensionOrigins(): Set<string> {
+  const ids = [MEMLOOM_EXTENSION_ID, ...(process.env.MEMLOOM_EXTENSION_IDS ?? "").split(",")]
+    .map((id) => id.trim().toLowerCase())
+    .filter((id) => id.length > 0);
+  return new Set(
+    ids.map((id) => (FIREFOX_UUID.test(id) ? `moz-extension://${id}` : `chrome-extension://${id}`)),
+  );
+}
+
 // True when the Host header names the loopback interface. Accepts an optional port and
 // bracketed IPv6 (`[::1]:4319`). The daemon only binds 127.0.0.1, so a real same-machine
 // client always sends one of these; a DNS-rebound page sends its attacker hostname instead.
@@ -691,6 +708,8 @@ function isLoopbackHost(host: string): boolean {
 export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   const app = new Hono();
   const defaultOwner = daemonDefaultOwner(opts.defaultOwnerId);
+  const extensions = extensionOrigins();
+  const allowedOrigin = (origin: string) => LOCAL_ORIGIN.test(origin) || extensions.has(origin);
 
   /**
    * The owner this request acts for. Clients bind one owner per connection and send it as a
@@ -706,12 +725,13 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
    */
   const ownerOf = (c: Context): string => c.req.header(OWNER_HEADER)?.toLowerCase() ?? defaultOwner;
 
-  // Browser clients (the viewer in dev, docs playground) run on another localhost port. Allow
-  // only local origins; a permissive `*` would let any public web page drive the daemon.
+  // Browser clients (the viewer in dev, docs playground) run on another localhost port, and
+  // the browser extension on its own origin. Allow only those; a permissive `*` would let any
+  // public web page drive the daemon.
   app.use(
     "*",
     cors({
-      origin: (origin) => (LOCAL_ORIGIN.test(origin) ? origin : null),
+      origin: (origin) => (allowedOrigin(origin) ? origin : null),
     }),
   );
 
@@ -736,14 +756,14 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   //    hostname as Host.
   //  - Origin check: a genuine cross-site request carries a non-local Origin. Same-origin
   //    viewer requests and non-browser clients (CLI, MCP, curl) send no Origin (or a local
-  //    one), so they pass untouched.
+  //    one), so they pass untouched, and so does the pinned browser extension.
   app.use("*", async (c, next) => {
     const host = c.req.header("host");
     if (host && !isLoopbackHost(host)) {
       return c.json({ error: "forbidden: requests must target the loopback interface" }, 403);
     }
     const origin = c.req.header("origin");
-    if (origin && !LOCAL_ORIGIN.test(origin)) {
+    if (origin && !allowedOrigin(origin)) {
       return c.json({ error: "forbidden: cross-origin request rejected" }, 403);
     }
     await next();
