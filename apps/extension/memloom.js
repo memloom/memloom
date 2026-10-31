@@ -21,10 +21,15 @@ async function call(path, init = {}) {
     throw new Error("memloom isn't running. Start it with `memloom serve`.");
   }
   const body = await res.json().catch(() => ({}));
-  if (res.status === 403 && location.protocol === "moz-extension:") {
+  // The daemon's origin gate. Either the daemon predates extension support (it refuses every
+  // extension), or this install's id isn't one it allows.
+  if (res.status === 403 && /cross-origin/.test(body.error ?? "")) {
     throw new Error(
-      `memloom doesn't know this Firefox install yet. Add MEMLOOM_EXTENSION_IDS=${location.host} ` +
-        "to ~/.memloom/config.env and restart the daemon.",
+      location.protocol === "moz-extension:"
+        ? `memloom doesn't know this Firefox install yet. Add MEMLOOM_EXTENSION_IDS=${location.host} ` +
+            "to ~/.memloom/config.env and restart the daemon."
+        : "memloom refused the extension. The daemon is running a version without extension " +
+            "support: update memloom and restart the daemon.",
     );
   }
   if (!res.ok) throw new Error(body.error ?? `memloom answered HTTP ${res.status}`);
