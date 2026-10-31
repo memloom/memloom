@@ -35,17 +35,27 @@ function post(path, body) {
   return call(path, { method: "POST", body: JSON.stringify(body) });
 }
 
-/** Every folder path, depth-first, for the folder picker. */
-export async function folderPaths() {
+/**
+ * The folder tree, flattened depth-first for the folder picker. System folders (global,
+ * uncategorized) are left out: nothing saved for later belongs in them.
+ */
+export async function folders() {
   const { scopes } = await call("/scopes");
   const out = [];
-  const walk = (nodes) => {
+  const walk = (nodes, depth) => {
     for (const node of nodes) {
-      out.push(node.path);
-      walk(node.children);
+      if (node.kind === "system") continue;
+      out.push({
+        path: node.path,
+        name: node.name,
+        depth,
+        memories: node.memories,
+        documents: node.documents,
+      });
+      walk(node.children, depth + 1);
     }
   };
-  walk(scopes);
+  walk(scopes, 0);
   return out;
 }
 

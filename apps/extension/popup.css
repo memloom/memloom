@@ -3,7 +3,10 @@
   --fg: #1c1917;
   --muted: #78716c;
   --border: #d6d3d1;
+  --surface: #ffffff;
+  --hover: #f5f5f4;
   --accent: #d97706;
+  --accent-soft: #fef3c7;
   --bad: #b91c1c;
   --good: #15803d;
 }
@@ -13,6 +16,9 @@
     --fg: #f5f5f4;
     --muted: #a8a29e;
     --border: #44403c;
+    --surface: #1c1917;
+    --hover: #292524;
+    --accent-soft: #3b2a10;
   }
 }
 
@@ -22,6 +28,7 @@ body {
   padding: 12px;
   font: 13px/1.4 system-ui, sans-serif;
   color: var(--fg);
+  background: var(--surface);
 }
 
 .title {
@@ -40,14 +47,15 @@ body {
   white-space: nowrap;
 }
 
-label {
+.label {
   display: block;
   margin: 8px 0 4px;
   color: var(--muted);
 }
 
-input,
-textarea {
+textarea,
+.search,
+.picker-button {
   box-sizing: border-box;
   width: 100%;
   padding: 6px 8px;
@@ -56,10 +64,111 @@ textarea {
   font: inherit;
   color: inherit;
   background: transparent;
+}
+
+textarea {
   resize: vertical;
 }
 
-button {
+textarea:focus,
+.search:focus,
+.picker-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.picker-button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.picker-text {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.icon,
+.chevron {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: var(--muted);
+  stroke-width: 1.4;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+.picker-button[aria-expanded="true"] .chevron {
+  transform: rotate(180deg);
+}
+
+.panel {
+  margin-top: 4px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.list {
+  max-height: 200px;
+  margin: 6px 0 0;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+
+.item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.item.active {
+  background: var(--hover);
+}
+
+.item[aria-selected="true"] {
+  background: var(--accent-soft);
+  font-weight: 600;
+}
+
+.item-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.item-path,
+.item-count {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: normal;
+}
+
+.item-count {
+  flex: none;
+}
+
+.item.create .item-name {
+  color: var(--accent);
+}
+
+.empty {
+  padding: 5px 8px;
+  color: var(--muted);
+}
+
+.save {
   margin-top: 12px;
   width: 100%;
   padding: 8px;
@@ -72,7 +181,7 @@ button {
   cursor: pointer;
 }
 
-button:disabled {
+.save:disabled {
   opacity: 0.5;
   cursor: default;
 }
