@@ -6,7 +6,6 @@ import {
   lastFolder,
   pageHtml,
   rememberFolder,
-  savePage,
 } from "./memloom.js";
 
 const $ = (id) => document.getElementById(id);
@@ -23,6 +22,7 @@ const picker = {
   rows: [],
   active: 0,
   selected: DEFAULT_FOLDER,
+  loaded: false,
 };
 
 function setFolder(path) {
@@ -96,7 +96,9 @@ function renderList() {
   if (picker.rows.length === 0) {
     const li = document.createElement("li");
     li.className = "empty";
-    li.textContent = "No folders yet. Type a name to create one.";
+    li.textContent = picker.loaded
+      ? "No folders yet. Type a name to create one."
+      : "Loading folders…";
     list.append(li);
   }
   list.querySelector(".active")?.scrollIntoView({ block: "nearest" });
@@ -180,9 +182,13 @@ if (!isSavable(tab?.url)) {
   folders()
     .then((all) => {
       picker.all = all;
+      picker.loaded = true;
       if (!$("folder-panel").hidden) renderList();
     })
-    .catch((err) => show(err.message, "bad"));
+    .catch((err) => {
+      picker.loaded = true;
+      show(err.message, "bad");
+    });
 }
 
 $("save").addEventListener("click", async () => {
@@ -195,20 +201,18 @@ $("save").addEventListener("click", async () => {
   }
   const folder = picker.selected || DEFAULT_FOLDER;
   $("save").disabled = true;
-  show("Saving…");
-  try {
-    const saved = await savePage({
+  await rememberFolder(toPath(folder));
+  await chrome.runtime.sendMessage({
+    type: "save",
+    tabId: tab.id,
+    page: {
       url: tab.url,
       title: tab.title,
       html: await pageHtml(tab.id),
       folder,
       note: $("note").value.trim(),
-    });
-    await rememberFolder(toPath(folder));
-    show(saved.outcome === "unchanged" ? "Already saved." : "Saved.", "good");
-    setTimeout(() => window.close(), 1200);
-  } catch (err) {
-    show(err.message, "bad");
-    $("save").disabled = false;
-  }
+    },
+  });
+  show("Saving. The icon shows a tick when it's done.", "good");
+  setTimeout(() => window.close(), 900);
 });

@@ -13,17 +13,45 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-// No popup on a right-click save, so the toolbar badge is the only answer: a tick, or a "!"
-// with the error in the tooltip.
-async function flash(tabId, ok, message) {
-  await chrome.action.setBadgeBackgroundColor({ tabId, color: ok ? "#15803d" : "#b91c1c" });
-  await chrome.action.setBadgeText({ tabId, text: ok ? "✓" : "!" });
-  await chrome.action.setTitle({ tabId, title: message });
+// The toolbar badge carries every save's progress and result: "…" while the daemon works, then
+// a tick, or a "!" with the error in the tooltip. A busy daemon (transcribing, indexing) can
+// take many seconds over a save, and without the "…" a click looks like it did nothing.
+async function badge(tabId, state, message) {
+  const look = {
+    saving: { text: "…", color: "#78716c" },
+    ok: { text: "✓", color: "#15803d" },
+    error: { text: "!", color: "#b91c1c" },
+  }[state];
+  try {
+    await chrome.action.setBadgeBackgroundColor({ tabId, color: look.color });
+    await chrome.action.setBadgeText({ tabId, text: look.text });
+    await chrome.action.setTitle({ tabId, title: message });
+  } catch {
+    // The tab closed mid-save. The save itself carries on.
+    return;
+  }
+  if (state === "saving") return;
   setTimeout(() => {
     chrome.action.setBadgeText({ tabId, text: "" });
     chrome.action.setTitle({ tabId, title: "Save to memloom" });
-  }, 4000);
+  }, 5000);
 }
+
+async function saveInBackground(tabId, page) {
+  await badge(tabId, "saving", "Saving to memloom…");
+  try {
+    const saved = await savePage(page);
+    await badge(tabId, "ok", `Saved "${saved.title}"`);
+  } catch (err) {
+    await badge(tabId, "error", err instanceof Error ? err.message : String(err));
+  }
+}
+
+// The popup hands its save over and closes at once, so a slow daemon never holds it open.
+// An in-flight fetch keeps the service worker alive until the save finishes.
+chrome.runtime.onMessage.addListener((message) => {
+  if (message?.type === "save") void saveInBackground(message.tabId, message.page);
+});
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const tabId = tab?.id;
@@ -31,20 +59,14 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   const linkSave = info.menuItemId === "save-link";
   const url = linkSave ? info.linkUrl : tab.url;
   if (!isSavable(url)) {
-    await flash(tabId, false, "Only http and https pages can be saved");
+    await badge(tabId, "error", "Only http and https pages can be saved");
     return;
   }
-  try {
-    // A link the user hasn't opened has no DOM here, so the daemon fetches it.
-    const html = linkSave ? undefined : await pageHtml(tabId);
-    const saved = await savePage({
-      url,
-      title: linkSave ? undefined : tab.title,
-      html,
-      folder: await lastFolder(),
-    });
-    await flash(tabId, true, `Saved "${saved.title}"`);
-  } catch (err) {
-    await flash(tabId, false, err instanceof Error ? err.message : String(err));
-  }
+  // A link the user hasn't opened has no DOM here, so the daemon fetches it.
+  await saveInBackground(tabId, {
+    url,
+    title: linkSave ? undefined : tab.title,
+    html: linkSave ? undefined : await pageHtml(tabId),
+    folder: await lastFolder(),
+  });
 });
