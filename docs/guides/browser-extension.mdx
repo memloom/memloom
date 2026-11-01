@@ -67,8 +67,9 @@ Saves go to `reading-list` unless you pick another folder. Type in the folder pi
 the tree, or type a new path such as `reading-list/papers` to create it.
 
 In the viewer, the page shows on the **Documents** tab as a `link`, and the "saved to study later"
-memory with your note shows on the **Memories** tab. Both sit in the folder you picked. After a right-click save, a tick or a `!` shows on the toolbar icon. Hover the
-icon to read the error.
+memory with your note shows on the **Memories** tab. Both sit in the folder you picked. Saving runs in the background, so the popup closes right away. While the daemon works, the
+toolbar icon shows `…`, then a tick or a `!`. Hover the icon to read the error. A daemon busy
+transcribing recordings can take several seconds over a save.
 
 The extension sends the rendered page, so pages behind a login and single-page apps save with
 their real content. For a YouTube video, the parser also tries to pull its captions as a transcript. Saving the
