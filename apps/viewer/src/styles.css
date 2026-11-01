@@ -3533,8 +3533,22 @@ select {
 
 input[type="text"],
 textarea,
-select {
+select,
+.chatComposer textarea {
   background: var(--field);
+}
+
+.chatComposer textarea {
+  border-radius: var(--radius-sm);
+}
+
+/* Memory and recall rows sit on silver as raised plates, not recessed wells. */
+.recallItem {
+  border-radius: var(--radius-sm);
+}
+
+[data-theme="light"] .recallItem {
+  background: var(--bg-raised);
 }
 
 input[type="text"]:focus,
