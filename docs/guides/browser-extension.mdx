@@ -11,7 +11,9 @@ The extension saves a page to memloom in two clicks. It keeps two things: the pa
 note if you wrote one. An agent asked "what did I want to read about retrieval?" finds the memory
 through `recall_memory`. A question about the topic itself finds the page's text.
 
-It talks to the daemon on `127.0.0.1:4319`, so the daemon has to be running.
+By default it talks to the daemon on `127.0.0.1:4319`, so the daemon has to be running. To save to
+a hosted memloom instead, set its address and a token in the extension's
+settings.
 
 <Note>
   It works in Chrome, the other Chromium browsers (Edge, Brave, Arc) and Firefox 140 or later. It
@@ -74,6 +76,29 @@ transcribing recordings can take several seconds over a save.
 The extension sends the rendered page, so pages behind a login and single-page apps save with
 their real content. For a YouTube video, the parser also tries to pull its captions as a transcript. Saving the
 same page again updates it rather than adding a copy.
+
+***
+
+## Saving to a hosted memloom
+
+A hosted memloom wants a token on every request. Make one for the extension on the server:
+
+```bash
+docker compose exec memloom memloom token create --label extension
+```
+
+Then open the extension's settings: the **Settings** link at the bottom of the popup, or
+**Extension options** on `chrome://extensions`. Put the server's address, such as
+`https://memloom.example.com`, and the token in, and click **Save and test**. The browser asks
+once for access to that address. The page shows how many folders it found, or why it couldn't
+connect: a wrong address, a missing token, or one the server refused.
+
+**Use this computer** clears both and goes back to the local daemon. The token stays in the
+browser profile's extension storage. Revoke it on the server with `memloom token revoke` if
+that profile is ever lost.
+
+The server allows the same extension ids the daemon does, set the same way with
+`MEMLOOM_EXTENSION_IDS` in its environment.
 
 ***
 

@@ -1,11 +1,12 @@
 import {
-  DAEMON_ORIGINS,
   DEFAULT_FOLDER,
   folders,
   isSavable,
   lastFolder,
+  originsFor,
   pageHtml,
   rememberFolder,
+  settings,
 } from "./memloom.js";
 
 const $ = (id) => document.getElementById(id);
@@ -169,11 +170,15 @@ const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 $("title").textContent = tab?.title ?? "";
 $("url").textContent = tab?.url ?? "";
 setFolder(await lastFolder());
+const { server } = await settings();
+const serverOrigins = originsFor(server);
+
+$("settings").addEventListener("click", () => chrome.runtime.openOptionsPage());
 
 if (!isSavable(tab?.url)) {
   $("save").disabled = true;
   show("Only http and https pages can be saved.");
-} else if (!(await chrome.permissions.contains(DAEMON_ORIGINS))) {
+} else if (!(await chrome.permissions.contains(serverOrigins))) {
   // Firefox installs host permissions unticked. Asking needs a click, so Save asks.
   show("Click Save once to let the extension reach memloom.");
 } else {
@@ -194,9 +199,9 @@ if (!isSavable(tab?.url)) {
 $("save").addEventListener("click", async () => {
   // Before any await: Firefox only shows the prompt while the click is still being handled.
   // Chrome grants host permissions at install, so there this resolves true at once.
-  const allowed = await chrome.permissions.request(DAEMON_ORIGINS);
+  const allowed = await chrome.permissions.request(serverOrigins);
   if (!allowed) {
-    show("memloom needs access to 127.0.0.1:4319 to save.", "bad");
+    show(`memloom needs access to ${new URL(server).host} to save.`, "bad");
     return;
   }
   const folder = picker.selected || DEFAULT_FOLDER;

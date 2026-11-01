@@ -1,6 +1,7 @@
 # memloom browser extension
 
-Saves the page you're on to your local memloom daemon so your agents can find it later. It's
+Saves the page you're on to memloom so your agents can find it later: the local daemon by
+default, or a hosted memloom set in the extension's settings page. It's
 plain JavaScript with no build step.
 
 In Chrome, load it from `chrome://extensions`: turn on Developer mode, click Load unpacked and

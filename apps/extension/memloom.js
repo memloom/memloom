@@ -1,8 +1,8 @@
-// Everything the extension says to the daemon. The daemon binds 127.0.0.1:4319 and lets this
-// extension's origin through: in Chrome by the id the manifest key pins, in Firefox by the
-// profile's UUID once it is in MEMLOOM_EXTENSION_IDS.
-const DAEMON = "http://127.0.0.1:4319";
-export const DAEMON_ORIGINS = { origins: [`${DAEMON}/*`] };
+// Everything the extension says to memloom. By default that's the local daemon, which binds
+// 127.0.0.1:4319 and lets this extension's origin through: in Chrome by the id the manifest key
+// pins, in Firefox by the profile's UUID once it is in MEMLOOM_EXTENSION_IDS. The settings page
+// can point it at a hosted memloom instead, which also wants a bearer token.
+export const DAEMON = "http://127.0.0.1:4319";
 
 export const DEFAULT_FOLDER = "reading-list";
 
@@ -10,17 +10,48 @@ export const DEFAULT_FOLDER = "reading-list";
 // URL instead and the daemon fetches it.
 const MAX_HTML_CHARS = 9_500_000;
 
+/** Where to send requests, and the token a hosted server wants. Empty means the local daemon. */
+export async function settings() {
+  const { server, token } = await chrome.storage.local.get(["server", "token"]);
+  return { server: server || DAEMON, token: token || "" };
+}
+
+export function saveSettings({ server, token }) {
+  return chrome.storage.local.set({ server: server === DAEMON ? "" : server, token });
+}
+
+/** The host permission a server needs, in the shape chrome.permissions takes. */
+export function originsFor(server) {
+  return { origins: [`${new URL(server).origin}/*`] };
+}
+
 async function call(path, init = {}) {
+  const { server, token } = await settings();
+  const local = server === DAEMON;
   let res;
   try {
-    res = await fetch(DAEMON + path, {
+    res = await fetch(server + path, {
       ...init,
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+      },
     });
   } catch {
-    throw new Error("memloom isn't running. Start it with `memloom serve`.");
+    throw new Error(
+      local
+        ? "memloom isn't running. Start it with `memloom serve`."
+        : `Can't reach memloom at ${server}. Check the address in the extension's settings.`,
+    );
   }
   const body = await res.json().catch(() => ({}));
+  if (res.status === 401) {
+    throw new Error(
+      token
+        ? "memloom refused the token. Paste a fresh one in the extension's settings."
+        : "This memloom needs a token. Add one in the extension's settings.",
+    );
+  }
   // The daemon's origin gate. Either the daemon predates extension support (it refuses every
   // extension), or this install's id isn't one it allows.
   if (res.status === 403 && /cross-origin/.test(body.error ?? "")) {
@@ -28,8 +59,10 @@ async function call(path, init = {}) {
       location.protocol === "moz-extension:"
         ? `memloom doesn't know this Firefox install yet. Add MEMLOOM_EXTENSION_IDS=${location.host} ` +
             "to ~/.memloom/config.env and restart the daemon."
-        : "memloom refused the extension. The daemon is running a version without extension " +
-            "support: update memloom and restart the daemon.",
+        : local
+          ? "memloom refused the extension. The daemon is running a version without extension " +
+            "support: update memloom and restart the daemon."
+          : "This memloom server refuses the extension. Update it to a version with extension support.",
     );
   }
   if (!res.ok) throw new Error(body.error ?? `memloom answered HTTP ${res.status}`);
