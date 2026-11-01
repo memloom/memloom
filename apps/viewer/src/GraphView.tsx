@@ -222,7 +222,7 @@ export function GraphView({
   }, [theme]);
 
   // The brand color (hover highlight target) follows the theme via the CSS token.
-  const brandRef = useRef("#f59e0b");
+  const brandRef = useRef("#3b82f6");
   useEffect(() => {
     const read = () => {
       const value = getComputedStyle(document.documentElement).getPropertyValue("--brand").trim();

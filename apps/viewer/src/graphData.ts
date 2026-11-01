@@ -31,7 +31,7 @@ export const PALETTES: Record<"dark" | "light", Palette> = {
     chunk: "#6ee7b7",
     linkBase: "rgba(148, 163, 184, 0.45)",
     mention: "rgba(192, 132, 252, 0.5)",
-    // Version lineage is indigo. Amber is reserved for chrome/identity (DESIGN.md).
+    // Version lineage is indigo. The iPod blue is reserved for chrome/selection (DESIGN.md).
     replaces: "rgba(93, 103, 245, 0.65)",
     distinct: "rgba(45, 212, 191, 0.5)",
     chunkLink: "rgba(52, 211, 153, 0.45)",
@@ -44,14 +44,14 @@ export const PALETTES: Record<"dark" | "light", Palette> = {
     entity: "#9333ea",
     document: "#059669",
     chunk: "#10b981",
-    linkBase: "rgba(120, 113, 108, 0.5)",
+    linkBase: "rgba(108, 114, 124, 0.5)",
     mention: "rgba(147, 51, 234, 0.45)",
     replaces: "rgba(79, 70, 229, 0.7)",
     distinct: "rgba(13, 148, 136, 0.55)",
     chunkLink: "rgba(5, 150, 105, 0.4)",
-    linkDim: "rgba(120, 113, 108, 0.12)",
-    label: "#44403c",
-    selectedStroke: "rgba(28, 25, 23, 0.92)",
+    linkDim: "rgba(108, 114, 124, 0.12)",
+    label: "#3a3d43",
+    selectedStroke: "rgba(23, 24, 27, 0.92)",
   },
 };
 

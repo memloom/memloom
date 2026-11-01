@@ -1,17 +1,32 @@
-/* memloom viewer: dark developer style. Sharp corners everywhere (no border-radius), the
-   graph palette shared with the canvas renderer, monospace for identifiers and data. */
+/* memloom viewer: the iPod theme. Black in dark, brushed silver in light, one glossy blue
+   highlight for whatever is selected (DESIGN.md). Small radii, the graph palette shared
+   with the canvas renderer, monospace for identifiers and data. */
 
 :root {
-  --bg: #0b0f14;
-  --bg-raised: #11161d;
-  --bg-inset: #0d1117;
-  --border: #1f2937;
-  --border-strong: #334155;
-  --text: #e2e8f0;
-  --text-muted: #94a3b8;
-  --text-faint: #64748b;
-  --brand: #f59e0b; /* memloom amber: chrome + identity ONLY, never data (DESIGN.md) */
-  --brand-bright: #fbbf24; /* amber hover/emphasis on dark */
+  --bg: #0c0d0f;
+  --bg-raised: #16171a;
+  --bg-inset: #0f1012;
+  --border: #25272b;
+  --border-strong: #3a3d43;
+  --text: #ececee;
+  --text-muted: #a2a5ac;
+  --text-faint: #6c6f76;
+  --brand: #3b82f6; /* iPod blue: chrome + selection ONLY, never data (DESIGN.md) */
+  --brand-bright: #60a5fa; /* hover/emphasis on dark */
+  --accent: var(--brand);
+  /* The selection bar: a glossy blue strip with white text, like an iPod menu row. */
+  --select-bg: linear-gradient(180deg, #5b9dff 0%, #2f74ea 48%, #1f62d6 52%, #1d5bc8 100%);
+  --select-border: #1650b8;
+  --select-text: #ffffff;
+  /* Chrome surfaces: header and sidebars. Black anodized in dark. */
+  --metal: linear-gradient(180deg, #24262a 0%, #17181b 100%);
+  --metal-grain: none;
+  --metal-side: linear-gradient(90deg, #18191c 0%, #131417 100%);
+  --metal-edge: rgb(255 255 255 / 6%);
+  --field: var(--bg-inset);
+  --wheel: radial-gradient(circle at 50% 35%, #2b2d31 0%, #141518 70%);
+  --radius: 8px;
+  --radius-sm: 5px;
   --memory: #38bdf8; /* memory-node sky (data) */
   --entity: #c084fc; /* entity purple (circles, data) */
   --ok: #34d399; /* documents / success */
@@ -22,19 +37,32 @@
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-/* Light theme: warm stone neutrals with brand-deep amber (DESIGN.md); data colors darken
-   one step for contrast on light surfaces. The graph canvas re-palettes in JS. */
+/* Light theme: brushed silver. Cool aluminium neutrals and a deeper blue; data colors
+   darken one step for contrast on light surfaces. The graph canvas re-palettes in JS. */
 [data-theme="light"] {
-  --bg: #faf9f7;
-  --bg-raised: #ffffff;
-  --bg-inset: #f3f1ec;
-  --border: #e7e2d9;
-  --border-strong: #cfc8bb;
-  --text: #1c1917;
-  --text-muted: #57534e;
-  --text-faint: #a8a29e;
-  --brand: #d97706;
-  --brand-bright: #b45309;
+  --bg: #e6e7ea;
+  --bg-raised: #f4f5f6;
+  --bg-inset: #dadce0;
+  --border: #c4c7cc;
+  --border-strong: #a3a7ae;
+  --text: #17181b;
+  --text-muted: #474a50;
+  --text-faint: #858991;
+  --brand: #1f62d6;
+  --brand-bright: #174fb3;
+  --select-border: #174fb3;
+  /* Brushed aluminium: a vertical sheen with fine horizontal grain on top. */
+  --metal: linear-gradient(180deg, #fbfbfc 0%, #e4e6e9 55%, #cfd2d6 100%);
+  --metal-grain: repeating-linear-gradient(
+    0deg,
+    rgb(255 255 255 / 22%) 0 1px,
+    rgb(0 0 0 / 2.5%) 1px 2px,
+    transparent 2px 3px
+  );
+  --metal-side: linear-gradient(90deg, #eeeff1 0%, #e1e3e6 100%);
+  --metal-edge: rgb(255 255 255 / 85%);
+  --field: #fbfbfc;
+  --wheel: radial-gradient(circle at 50% 35%, #ffffff 0%, #d5d8dc 75%);
   --memory: #0284c7;
   --entity: #9333ea;
   --ok: #059669;
@@ -794,7 +822,7 @@ button {
   font-size: 13px;
 }
 
-/* Secondary buttons brighten to white on hover/focus; amber stays reserved for the one
+/* Secondary buttons brighten to white on hover/focus; blue stays reserved for the one
    primary action per card (btnPrimary keeps its own colors below). */
 .btn:hover:not(:disabled) {
   border-color: var(--text);
@@ -1141,7 +1169,7 @@ textarea {
   color: var(--text);
 }
 
-/* On-state is white: a settings switch is a secondary control, amber would read as a
+/* On-state is white: a settings switch is a secondary control, blue would read as a
    primary action. */
 .autoIndexToggleOn .autoIndexTrack {
   border-color: var(--text);
@@ -3058,13 +3086,13 @@ textarea {
 }
 
 /* Toasts. The library ships a rounded white pill with a drop shadow, which belongs to a different
-   application: this one has square corners, hairline borders and no shadows anywhere. Everything
+   application: this one has its own radius, hairline borders and no drop shadow. Everything
    below is an override of its defaults so a toast reads as part of the same surface, in both
    themes, from the same tokens. */
 .toast {
   background: var(--bg-raised) !important;
   border: 1px solid var(--border-strong);
-  border-radius: 0 !important;
+  border-radius: var(--radius) !important;
   box-shadow: none !important;
   color: var(--text) !important;
   font-family: var(--sans);
@@ -3356,4 +3384,170 @@ textarea {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* ---------- iPod theme layer ---------- */
+/* Last in the file on purpose: these rules restyle the components above without touching
+   their layout. Chrome gets the metal, the selected thing gets the blue bar, and corners
+   round off to the iPod's soft radius. */
+
+.header {
+  background: var(--metal-grain), var(--metal);
+  box-shadow: inset 0 1px 0 var(--metal-edge);
+}
+
+/* Sidebars are tall, so the header's vertical sheen would darken toward the bottom. They
+   get the grain over a flat panel instead, with the sheen running across. */
+.scopeSidebar,
+.chatSidebar {
+  background: var(--metal-grain), var(--metal-side);
+}
+
+.header {
+  border-bottom-color: var(--border-strong);
+}
+
+.wordmark {
+  text-shadow: 0 1px 0 var(--metal-edge);
+}
+
+/* Header tabs become iPod menu items: the active one is a glossy blue pill. */
+.tabs {
+  align-items: center;
+  gap: 4px;
+}
+
+.tab {
+  height: 28px;
+  border-bottom: none;
+  border-radius: var(--radius-sm);
+}
+
+.tab:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.tabActive,
+.tabActive:hover {
+  background: var(--select-bg);
+  color: var(--select-text);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 35%),
+    0 0 0 1px var(--select-border);
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
+}
+
+.tabBadge {
+  border-radius: 999px;
+}
+
+/* The selection bar, shared by every "this one is picked" row. */
+.scopeRowActive,
+.chatSessionRowActive .chatSessionMain,
+.chatSessionRowActive:hover .chatSessionMain,
+.modelRowActive,
+.modelRowActive:hover,
+.inboxRowActive,
+.graphSegmentBtnActive,
+.graphSegmentBtnActive:hover {
+  background: var(--select-bg);
+  color: var(--select-text);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 30%);
+}
+
+.scopeRow {
+  border-radius: var(--radius-sm);
+}
+
+.scopeRowActive .scopeName,
+.scopeRowActive .scopeName:hover,
+.scopeRowActive * {
+  color: var(--select-text);
+}
+
+.inboxRowActive {
+  border-left-color: transparent;
+}
+
+.chipActive {
+  background: var(--select-bg);
+  border-color: var(--select-border);
+  color: var(--select-text);
+}
+
+/* Primary actions read as the iPod's blue; secondary buttons as brushed keys. */
+.btn {
+  border-radius: var(--radius-sm);
+  background: var(--metal-grain), var(--metal);
+  box-shadow: inset 0 1px 0 var(--metal-edge);
+}
+
+.btnPrimary,
+.btnPrimary:hover:not(:disabled) {
+  background: var(--select-bg);
+  border-color: var(--select-border);
+  color: var(--select-text);
+}
+
+.btnPrimary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.chip,
+.themeToggle,
+.graphLauncher,
+.graphIconButton,
+input[type="text"],
+textarea,
+select {
+  border-radius: var(--radius-sm);
+}
+
+.graphSegment {
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+/* The theme toggle is the click wheel's centre button. */
+.themeToggle {
+  border-radius: 50%;
+  background: var(--wheel);
+  box-shadow:
+    inset 0 1px 0 var(--metal-edge),
+    0 1px 2px rgb(0 0 0 / 25%);
+}
+
+.card,
+.modal,
+.legend,
+.graphControlsPanel,
+.emptyState code {
+  border-radius: var(--radius);
+}
+
+.card {
+  box-shadow:
+    inset 0 1px 0 var(--metal-edge),
+    0 1px 2px rgb(0 0 0 / 12%);
+}
+
+input[type="text"],
+textarea,
+select {
+  background: var(--field);
+}
+
+input[type="text"]:focus,
+textarea:focus,
+select:focus,
+.btn:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 30%, transparent);
+}
+
+.graphControlRow input[type="range"]::-webkit-slider-thumb {
+  border-radius: 50%;
+}
+
+.graphControlRow input[type="range"]::-moz-range-thumb {
+  border-radius: 50%;
 }
