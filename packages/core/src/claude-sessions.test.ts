@@ -9,8 +9,39 @@ import {
   discoverSessions,
   hashPrefix,
   parseSession,
+  projectNameOf,
   type SessionUnit,
 } from "./claude-sessions.js";
+
+describe("projectNameOf", () => {
+  it("files a Claude Code worktree under the repo it belongs to", () => {
+    expect(
+      projectNameOf(
+        "D:\\Kostek\\Projects\\sytnyk-pl\\.claude\\worktrees\\competent-bose-9ad489",
+        "x",
+      ),
+    ).toBe("sytnyk-pl");
+    expect(
+      projectNameOf(null, "D--Kostek-Projects-memloom--claude-worktrees-elastic-franklin-ca05a1"),
+    ).toBe("memloom");
+  });
+
+  it("gives a desktop scratch workspace no project", () => {
+    const cwd =
+      "C:\\Users\\k\\AppData\\Roaming\\Claude\\scratch-workspaces\\a\\b\\scratch-2026-10-09-2e47c0";
+    expect(projectNameOf(cwd, "x")).toBeNull();
+    expect(
+      projectNameOf(
+        null,
+        "C--Users-k-AppData-Roaming-Claude-scratch-workspaces-a-b-scratch-2026-10-09-2e47c0",
+      ),
+    ).toBeNull();
+  });
+
+  it("keeps the last segment for an ordinary project", () => {
+    expect(projectNameOf("/home/k/code/memloom", "x")).toBe("memloom");
+  });
+});
 
 // Fixture builder: a fake ~/.claude/projects with controllable mtimes. Freshly written
 // files look "active" to the quiet check, so every fixture is backdated by default.

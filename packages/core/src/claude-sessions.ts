@@ -233,15 +233,27 @@ export async function parseSession(path: string, fromLine = 0): Promise<ParsedSe
  * transcripts that never carried a cwd; its encoding flattens every separator to "-"
  * ("D--Kostek-Projects-memloom"), so the last "-"-separated segment is a best effort that
  * truncates dashed project names. Null when neither yields anything usable.
+ *
+ * Two kinds of directory are not projects. A Claude Code worktree (<repo>/.claude/worktrees/
+ * <random-name>) belongs to the repo it sits in, so it files under the repo's name. A Claude
+ * desktop scratch workspace (.../scratch-workspaces/.../scratch-<date>-<hex>) has no project
+ * at all, so it answers null and the classifier files its memories by content.
  */
 export function projectNameOf(cwd: string | null, encodedDir: string): string | null {
   if (cwd) {
     const segments = cwd.split(/[\\/]+/).filter((s) => s.trim().length > 0);
-    const name = segments[segments.length - 1];
+    if (segments.includes("scratch-workspaces")) return null;
+    const worktree = segments.findIndex(
+      (s, i) => s === ".claude" && segments[i + 1] === "worktrees",
+    );
+    const name = worktree > 0 ? segments[worktree - 1] : segments[segments.length - 1];
     // A bare drive letter ("D:") means the session ran at a drive root, not in a project.
     if (name && !/^[A-Za-z]:$/.test(name)) return name;
   }
-  const tail = encodedDir
+  if (encodedDir.includes("-scratch-workspaces-")) return null;
+  // "/.claude/worktrees/" encodes as "--claude-worktrees-": the repo is what comes before it.
+  const repoDir = encodedDir.split("--claude-worktrees-")[0] ?? encodedDir;
+  const tail = repoDir
     .split("-")
     .filter((s) => s.trim().length > 0)
     .pop();
