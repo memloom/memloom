@@ -3,9 +3,15 @@
   "theme": "mint",
   "name": "memloom docs",
   "colors": {
-    "primary": "#d97706",
-    "light": "#f59e0b",
-    "dark": "#b45309"
+    "primary": "#1f62d6",
+    "light": "#3b82f6",
+    "dark": "#1d5bc8"
+  },
+  "background": {
+    "color": {
+      "light": "#e6e7ea",
+      "dark": "#0c0d0f"
+    }
   },
   "api": {
     "playground": {

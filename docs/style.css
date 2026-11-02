@@ -1,0 +1,122 @@
+/* memloom docs: the iPod theme, matching the viewer (DESIGN.md). Brushed silver in light,
+   black in dark, and one glossy blue bar for whatever is selected: the active page in the
+   sidebar, the active tab, the current heading in the table of contents. Mintlify loads
+   every .css file in this folder on every page. Brand colors and page backgrounds live in
+   docs.json; this file adds the metal, the bar and the soft corners. */
+
+:root {
+  --ipod-select-bg: linear-gradient(180deg, #5b9dff 0%, #2f74ea 48%, #1f62d6 52%, #1d5bc8 100%);
+  --ipod-select-border: #174fb3;
+  --ipod-metal: linear-gradient(180deg, #fbfbfc 0%, #e4e6e9 55%, #cfd2d6 100%);
+  --ipod-metal-grain: repeating-linear-gradient(
+    0deg,
+    rgb(255 255 255 / 22%) 0 1px,
+    rgb(0 0 0 / 2.5%) 1px 2px,
+    transparent 2px 3px
+  );
+  --ipod-metal-edge: rgb(255 255 255 / 85%);
+  --ipod-border: #c4c7cc;
+  --ipod-raised: #f4f5f6;
+  --ipod-field: #fbfbfc;
+}
+
+html.dark {
+  --ipod-select-border: #1650b8;
+  --ipod-metal: linear-gradient(180deg, #24262a 0%, #17181b 100%);
+  --ipod-metal-grain: none;
+  --ipod-metal-edge: rgb(255 255 255 / 6%);
+  --ipod-border: #25272b;
+  --ipod-raised: #16171a;
+  --ipod-field: #0f1012;
+}
+
+/* The header carries the metal: a vertical sheen with fine grain in light, black anodized
+   in dark. */
+#navbar {
+  background: var(--ipod-metal-grain), var(--ipod-metal);
+  box-shadow: inset 0 1px 0 var(--ipod-metal-edge);
+  border-bottom: 1px solid var(--ipod-border);
+}
+
+/* The active page is an iPod menu row: the glossy blue strip with white text. */
+#sidebar-content li[data-active] > a {
+  background: var(--ipod-select-bg) !important;
+  color: #fff !important;
+  border-radius: 5px;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 30%);
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
+}
+
+#sidebar-content li[data-active] > a * {
+  color: #fff !important;
+}
+
+/* Mintlify draws sidebar icons as masked SVGs filled with bg-primary, which would be
+   blue on blue here, so the active row's icon gets a white fill. */
+#sidebar-content li[data-active] > a svg {
+  background-color: #fff !important;
+}
+
+#sidebar-content li:not([data-active]) > a:hover {
+  border-radius: 5px;
+}
+
+/* Top tabs: the active one becomes a blue pill instead of an underline. The tab is an
+   <a> holding the icon, the label and an absolutely positioned underline div. */
+.nav-tabs-item[data-active] {
+  height: 28px;
+  align-self: center;
+  padding: 0 10px;
+  background: var(--ipod-select-bg);
+  border-radius: 5px;
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 35%),
+    0 0 0 1px var(--ipod-select-border);
+  color: #fff !important;
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
+}
+
+.nav-tabs-item[data-active] * {
+  color: #fff !important;
+}
+
+.nav-tabs-item[data-active] > div.absolute {
+  display: none;
+}
+
+/* The search box is a field, so it stays light on silver. */
+#search-bar-entry,
+#search-bar-entry-mobile {
+  background: var(--ipod-field);
+  border: 1px solid var(--ipod-border);
+  border-radius: 5px;
+}
+
+/* Cards and callouts sit on silver as raised plates with the iPod's soft radius. */
+.card {
+  background: var(--ipod-raised);
+  border-color: var(--ipod-border);
+  border-radius: 8px;
+  box-shadow:
+    inset 0 1px 0 var(--ipod-metal-edge),
+    0 1px 2px rgb(0 0 0 / 12%);
+}
+
+.callout {
+  border-radius: 8px;
+}
+
+.code-block,
+pre {
+  border-radius: 8px;
+}
+
+/* Table of contents: the heading in view takes the brand blue. */
+.toc-item[data-active-deepest] a {
+  color: #1f62d6;
+  font-weight: 600;
+}
+
+html.dark .toc-item[data-active-deepest] a {
+  color: #60a5fa;
+}

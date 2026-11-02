@@ -9,8 +9,9 @@ with, and memloom must never read as one of them.
 
 The viewer (`apps/viewer`) left the amber system on 2026-11-01 for an iPod look, because
 Kostek liked it better. The browser extension (`apps/extension`) follows it too, with the same
-tokens in `popup.css` and the system theme picking silver or black. Docs, landing and README
-still follow the amber rules below.
+tokens in `popup.css` and the system theme picking silver or black. On 2026-11-02 the docs
+(`docs/style.css` plus the colors in `docs/docs.json`) and the landing site (memloom-web)
+moved to it as well. The amber sections below are kept for history and for the README.
 
 - **Light is brushed silver, dark is black.** Cool aluminium neutrals in light (`--bg
   #e6e7ea`, `--bg-raised #f4f5f6`), near-black in dark (`--bg #0c0d0f`, `--bg-raised
@@ -34,7 +35,7 @@ the end of the file. The canvas graph's light palette uses cool greys to match.
 
 ## Brand color: amber
 
-The brand color is **amber** on every surface except the viewer (see above).
+The brand color was **amber** on every surface until the iPod theme replaced it (see above).
 
 | Token | Hex | Where |
 | --- | --- | --- |
@@ -96,8 +97,8 @@ Dark, ink-like, low-chroma:
 --text #e2e8f0 · --text-muted #94a3b8 · --text-faint #64748b
 ```
 
-Docs (Mintlify) run their own light/dark themes with the brand-deep/brand-dark ambers as
-primary.
+Docs (Mintlify) run their own light/dark themes with the iPod blues as primary and the
+viewer's silver and black as page backgrounds.
 
 ## Shape & typography
 
