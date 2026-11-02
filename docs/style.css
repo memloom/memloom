@@ -47,10 +47,14 @@ html.dark {
   text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
 }
 
-/* Text and icons go white. Mintlify paints icons as masked SVGs with bg-current, so
-   they follow the color; never clear their background. */
 #sidebar-content li[data-active] > a * {
   color: #fff !important;
+}
+
+/* Mintlify draws sidebar icons as masked SVGs filled with bg-primary, which would be
+   blue on blue here, so the active row's icon gets a white fill. */
+#sidebar-content li[data-active] > a svg {
+  background-color: #fff !important;
 }
 
 #sidebar-content li:not([data-active]) > a:hover {
