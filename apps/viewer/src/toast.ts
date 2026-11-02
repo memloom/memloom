@@ -15,7 +15,13 @@ const BASE = { className: "toast", position: "bottom-right" } as const;
 
 /** Something finished and there is nothing to do about it. */
 export function toastDone(message: string): void {
-  hot.success(message, { ...BASE, className: "toast toastDone", duration: 4000 });
+  hot.success(message, {
+    ...BASE,
+    className: "toast toastDone",
+    duration: 4000,
+    // A white tick on the blue bar; the library draws a green one by default.
+    iconTheme: { primary: "#ffffff", secondary: "#1f62d6" },
+  });
 }
 
 /**
@@ -23,7 +29,12 @@ export function toastDone(message: string): void {
  * is an error they will hit again.
  */
 export function toastFailed(message: string): void {
-  hot.error(message, { ...BASE, className: "toast toastFailed", duration: 8000 });
+  hot.error(message, {
+    ...BASE,
+    className: "toast toastFailed",
+    duration: 8000,
+    iconTheme: { primary: "#ffffff", secondary: "#c81e1e" },
+  });
 }
 
 /** A plain statement of fact: how many, how much, what was skipped. */

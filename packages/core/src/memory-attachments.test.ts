@@ -167,16 +167,42 @@ describe("taking one off", () => {
     await expect(stat(a.path)).rejects.toThrow();
   });
 
-  it("deleting the memory takes its files with it", async () => {
+  it("removing the memory keeps its files for a restore; deleting it forever takes them", async () => {
     // The rule the orchestrator is under too: a deleted belief must not leave a photo of
-    // itself on disk. `deleteMemory` collects the paths inside the transaction and unlinks
-    // after it commits, because a filesystem delete cannot be rolled back.
+    // itself on disk. Removal only moves it to the trash, so the photo waits there with it;
+    // the purge unlinks after its delete commits, because a filesystem delete cannot be
+    // rolled back.
     const m = await fresh();
-    const { id } = await m.save({ content: "the meter reading was 40912 on tuesday" });
-    const a = await m.memoryAttach({ memoryId: id, filename: "meter.jpg", bytes: bytes("photo") });
+    const saved = await m.save({ content: "the meter reading was 40912 on tuesday" });
+    const a = await m.memoryAttach({
+      memoryId: saved.id,
+      filename: "meter.jpg",
+      bytes: bytes("photo"),
+    });
+    const edited = await m.update({ id: saved.id, content: "the meter reading was 40921" });
 
-    await m.deleteMemory(id);
+    await m.deleteMemory(edited.id);
+    expect(await m.memories()).toEqual([]);
+    const [trashed] = await m.listTrash();
+    expect(trashed?.content).toBe("the meter reading was 40921");
+    expect(trashed?.versions).toBe(2);
+    await stat(a.path); // still on disk
+
+    // Restore brings back both versions and the photo, filed against the same lineage.
+    const back = await m.restoreMemory(edited.rootId);
+    expect(back.id).toBe(edited.id);
+    expect((await m.history(back.id)).map((v) => v.content)).toEqual([
+      "the meter reading was 40921",
+      "the meter reading was 40912 on tuesday",
+    ]);
+    expect((await m.memoryAttachments(back.id)).map((x) => x.name)).toEqual(["meter.jpg"]);
+    expect(await m.listTrash()).toEqual([]);
+    expect((await m.recall("meter reading")).map((r) => r.id)).toContain(back.id);
+
+    await m.deleteMemory(back.id);
+    expect(await m.purgeTrash({ rootId: edited.rootId })).toEqual({ purged: 1 });
     await expect(stat(a.path)).rejects.toThrow();
+    await expect(m.restoreMemory(edited.rootId)).rejects.toThrow(/no removed memory/);
   });
 
   it("deleting an owner takes their files with them", async () => {

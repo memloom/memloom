@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>memloom settings</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <span class="wordmark">memloom</span>
+      <span class="bar-label">Settings</span>
+    </header>
+    <main>
+      <p class="title">Where to save</p>
+      <label class="label" for="server">memloom address</label>
+      <input id="server" class="field" type="url" placeholder="http://127.0.0.1:4319" spellcheck="false" />
+      <p class="hint">Leave empty for the memloom on this computer.</p>
+      <label class="label" for="token">Token</label>
+      <input id="token" class="field" type="password" autocomplete="off" spellcheck="false" placeholder="mlm_..." />
+      <p class="hint">
+        Only a hosted memloom needs one. Make it on the server with
+        <code>memloom token create --label extension</code>.
+      </p>
+      <div class="row">
+        <button id="save" class="save" type="button">Save and test</button>
+        <button id="local" class="save secondary" type="button">Use this computer</button>
+      </div>
+      <p id="status" class="status" role="status"></p>
+    </main>
+    <script type="module" src="options.js"></script>
+  </body>
+</html>

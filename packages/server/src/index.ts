@@ -351,7 +351,7 @@ const saveSchema = z.object({
   content: z.string().min(1, "content must be a non-empty string"),
   canonical: z.string().optional(),
   memoryType: z.enum(MEMORY_TYPES).optional(),
-  ownerId: z.string().uuid().optional(),
+  ownerId: z.guid().optional(),
   scope: z.string().min(1).optional(),
   tags: z.array(z.string()).optional(),
 });
@@ -368,7 +368,7 @@ const querySchema = z.object({
 const scopeCreateSchema = z.object({
   path: z.string().min(1, "path must be a non-empty string"),
   description: z.string().optional(),
-  ownerId: z.string().uuid().optional(),
+  ownerId: z.guid().optional(),
 });
 
 const scopeUpdateSchema = z.object({
@@ -377,11 +377,11 @@ const scopeUpdateSchema = z.object({
 });
 
 const scopeMoveSchema = z.object({
-  parentId: z.string().uuid().nullable(),
+  parentId: z.guid().nullable(),
 });
 
 const memoryScopeSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1, "ids must name at least one memory"),
+  ids: z.array(z.guid()).min(1, "ids must name at least one memory"),
   scope: z.string().min(1, "scope must be a non-empty string"),
 });
 
@@ -400,7 +400,7 @@ const updateSchema = z.object({
 
 const contextAddSchema = z.object({
   path: z.string().min(1, "path must be a non-empty string"),
-  ownerId: z.string().uuid().optional(),
+  ownerId: z.guid().optional(),
   scope: z.string().min(1).optional(),
 });
 
@@ -409,7 +409,7 @@ const contextAddSchema = z.object({
 const contextUrlSchema = z.object({
   url: z.string().refine(isHttpUrl, "url must start with http:// or https://"),
   html: z.string().max(10_000_000).optional(),
-  ownerId: z.string().uuid().optional(),
+  ownerId: z.guid().optional(),
   scope: z.string().min(1).optional(),
 });
 
@@ -446,7 +446,7 @@ const entityPatchSchema = z
   });
 
 const entityMergeSchema = z.object({
-  into: z.string().uuid(),
+  into: z.guid(),
 });
 
 const entityResolveSchema = z.object({
@@ -529,7 +529,7 @@ const notionSyncSchema = z.object({
 });
 
 const assistantChatSchema = z.object({
-  sessionId: z.string().uuid().optional(),
+  sessionId: z.guid().optional(),
   message: z.string().min(1, "message must be a non-empty string"),
   // Loosely validated on purpose: OpenRouter is the authority on what exists, and its
   // errors already surface through the SSE error event.
@@ -537,7 +537,7 @@ const assistantChatSchema = z.object({
 });
 
 const assistantAttachSchema = z.object({
-  sessionId: z.string().uuid().optional(),
+  sessionId: z.guid().optional(),
   filename: z.string().min(1, "filename must be a non-empty string").max(255),
   contentBase64: z.string().min(1, "contentBase64 must be a non-empty string"),
 });
@@ -706,6 +706,10 @@ function audioFailure(c: Context, err: unknown): Response {
   throw err;
 }
 
+// A local browser Origin: the viewer served from the daemon, or a dev viewer on another
+// localhost port. Anything else is a cross-site caller.
+const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
+
 // The memloom browser extension (apps/extension). In Chrome its manifest pins a public key,
 // so the unpacked build gets this same id on every machine. MEMLOOM_EXTENSION_IDS adds more
 // (comma-separated): a Web Store build, a fork, or a Firefox install, whose origin is a
@@ -723,10 +727,6 @@ function extensionOrigins(): Set<string> {
   );
 }
 
-// A local browser Origin: the viewer served from the daemon, or a dev viewer on another
-// localhost port. Anything else is a cross-site caller.
-const LOCAL_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/;
-
 // True when the Host header names the loopback interface. Accepts an optional port and
 // bracketed IPv6 (`[::1]:4319`). The daemon only binds 127.0.0.1, so a real same-machine
 // client always sends one of these; a DNS-rebound page sends its attacker hostname instead.
@@ -738,6 +738,12 @@ function isLoopbackHost(host: string): boolean {
 export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   const app = new Hono();
   const defaultOwner = daemonDefaultOwner(opts.defaultOwnerId);
+  // A hosted server is reached by its public name, and its own sign-in page posts back to it, so
+  // that origin joins the local ones. Tokens, not addresses, are its real gate.
+  const publicUrl = opts.cloudAuth ? new URL(opts.cloudAuth.publicUrl) : undefined;
+  const extensions = extensionOrigins();
+  const allowedOrigin = (origin: string) =>
+    LOCAL_ORIGIN.test(origin) || extensions.has(origin) || origin === publicUrl?.origin;
 
   /**
    * The owner this request acts for. Clients bind one owner per connection and send it as a
@@ -753,13 +759,6 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
    */
   const ownerOf = (c: Context): string =>
     authOwner(c) ?? c.req.header(OWNER_HEADER)?.toLowerCase() ?? defaultOwner;
-
-  // A hosted server is reached by its public name, and its own sign-in page posts back to it, so
-  // that origin joins the local ones. Tokens, not addresses, are its real gate.
-  const publicUrl = opts.cloudAuth ? new URL(opts.cloudAuth.publicUrl) : undefined;
-  const extensions = extensionOrigins();
-  const allowedOrigin = (origin: string) =>
-    LOCAL_ORIGIN.test(origin) || extensions.has(origin) || origin === publicUrl?.origin;
 
   // Browser clients (the viewer in dev, docs playground) run on another localhost port, and
   // the browser extension on its own origin. Allow only those; a permissive `*` would let any
@@ -1053,7 +1052,31 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     c.json({ versions: await memloom.history(c.req.param("id"), ownerOf(c)) }),
   );
 
-  // Deletes the whole belief: every version, its edges, and pending conflicts naming it.
+  // The trash. Registered before DELETE /memory/:id, which would otherwise take "trash"
+  // for a memory id.
+  app.get("/memory/trash", async (c) => c.json({ items: await memloom.listTrash(ownerOf(c)) }));
+
+  app.post("/memory/trash/:rootId/restore", async (c) => {
+    try {
+      return c.json(await memloom.restoreMemory(c.req.param("rootId"), ownerOf(c)));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no removed memory/.test(message) ? 404 : 400);
+    }
+  });
+
+  // Delete forever, one belief.
+  app.delete("/memory/trash/:rootId", async (c) =>
+    c.json(await memloom.purgeTrash({ ownerId: ownerOf(c), rootId: c.req.param("rootId") })),
+  );
+
+  // Empty the trash.
+  app.delete("/memory/trash", async (c) =>
+    c.json(await memloom.purgeTrash({ ownerId: ownerOf(c), all: true })),
+  );
+
+  // Moves the whole belief to the trash: every version, its edges and attachments. Pending
+  // conflicts naming it are dropped. Restorable for 30 days from /memory/trash.
   app.delete("/memory/:id", async (c) => {
     try {
       await memloom.deleteMemory(c.req.param("id"), ownerOf(c));
@@ -1105,7 +1128,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   );
 
   app.get("/memory/:id/attachments", async (c) => {
-    if (!z.string().uuid().safeParse(c.req.param("id")).success)
+    if (!z.guid().safeParse(c.req.param("id")).success)
       return c.json({ error: "not a memory id" }, 400);
     return c.json({
       attachments: await memloom.memoryAttachments(c.req.param("id"), ownerOf(c)),
@@ -2681,5 +2704,8 @@ export function serve(memloom: Memloom, port = 4319) {
   // defaultOwnerId is left to createServer, which reads MEMLOOM_OWNER_ID from this process.
   const app = createServer(memloom, { activity });
   startReconcileScheduler(memloom, activity);
+  // Removals and trash listings purge their own owner's expired items; this catches owners
+  // nobody has touched since. Best effort: a failed sweep only delays a deletion.
+  memloom.purgeTrash().catch((err) => console.error("memloom: trash purge failed:", err));
   return nodeServe({ fetch: app.fetch, port, hostname: "127.0.0.1" });
 }

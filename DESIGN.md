@@ -5,9 +5,37 @@ deliberately made thing. The default to avoid: sky-blue accent on slate-dark, ro
 cards, gradient blobs. That's the Tailwind starter look every AI-generated dashboard ships
 with, and memloom must never read as one of them.
 
+## Viewer theme: iPod
+
+The viewer (`apps/viewer`) left the amber system on 2026-11-01 for an iPod look, because
+Kostek liked it better. The browser extension (`apps/extension`) follows it too, with the same
+tokens in `popup.css` and the system theme picking silver or black. On 2026-11-02 the docs
+(`docs/style.css` plus the colors in `docs/docs.json`) and the landing site (memloom-web)
+moved to it as well. The amber sections below are kept for history and for the README.
+
+- **Light is brushed silver, dark is black.** Cool aluminium neutrals in light (`--bg
+  #e6e7ea`, `--bg-raised #f4f5f6`), near-black in dark (`--bg #0c0d0f`, `--bg-raised
+  #16171a`). The header carries the metal: a vertical sheen with a fine horizontal grain in
+  light, black anodized in dark. Sidebars get the grain over a flatter panel, so a tall
+  sidebar doesn't fade toward the bottom.
+- **One glossy blue bar means "selected".** The active tab, the picked folder, chat
+  session, model, inbox row, segment and chip all get the same strip: a split-gloss blue
+  gradient (`#5b9dff` to `#1d5bc8`) with white text, like an iPod menu row. Primary
+  buttons use it too.
+- **The blue stays clear of the data.** Chrome blue is `#3b82f6` in dark and `#1f62d6` in
+  light, deeper than the memory-node sky `#38bdf8`, so a selected row never reads as a
+  memory. The same rule as amber applies: the blue is chrome and selection only, never data.
+- **Soft corners.** 8px on cards, modals, the legend and graph panels; 5px on buttons,
+  inputs, chips and rows. The theme toggle is a round click-wheel button.
+- **Fields stay light.** Inputs sit on `--field` (near-white in light), so they read as
+  writable on silver.
+
+All of it lives in tokens at the top of `styles.css` plus one "iPod theme layer" section at
+the end of the file. The canvas graph's light palette uses cool greys to match.
+
 ## Brand color: amber
 
-The brand color is **amber**, everywhere.
+The brand color was **amber** on every surface until the iPod theme replaced it (see above).
 
 | Token | Hex | Where |
 | --- | --- | --- |
@@ -69,12 +97,12 @@ Dark, ink-like, low-chroma:
 --text #e2e8f0 · --text-muted #94a3b8 · --text-faint #64748b
 ```
 
-Docs (Mintlify) run their own light/dark themes with the brand-deep/brand-dark ambers as
-primary.
+Docs (Mintlify) run their own light/dark themes with the iPod blues as primary and the
+viewer's silver and black as page backgrounds.
 
 ## Shape & typography
 
-- **Sharp corners everywhere.** No border-radius. Panels, buttons, inputs, chips: all square.
+- **Sharp corners everywhere except the viewer.** No border-radius. Panels, buttons, inputs, chips: all square.
   This is the single strongest anti-slop signal in the whole system.
 - **Monospace for anything a machine produced or consumes:** ids, paths, counts, tags, meta
   rows, breadcrumbs, the wordmark. Sans for human prose. If you're unsure, ask "would this
@@ -128,3 +156,5 @@ crafted tool, built around one memorable thing, **the living graph**.
 | --- | --- | --- |
 | 2026-07-12 | Amber brand adopted; conflicts moved to red, lineage to indigo | preservation metaphor, category differentiation, anti-slop |
 | 2026-07-12 | Landing layer: Bricolage display, TUI panes, HUD ticks, lucide icons, filled amber CTA, scan-line reveals | design review: serve "the living graph", fix hero readability as design |
+| 2026-11-01 | Viewer moves to the iPod theme: brushed silver / black, glossy blue selection bar, soft corners | Kostek's call; other surfaces stay amber for now |
+| 2026-11-02 | Browser extension follows the iPod theme: metal title bar, blue selection bar and Save button | Kostek's call, so the popup matches the viewer |

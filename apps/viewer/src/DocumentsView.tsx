@@ -6,9 +6,11 @@ import {
   type ContextRootsResult,
   type DocumentChunks,
   type DocumentSpeaker,
+  type Graph,
   type SpeakerRoster,
 } from "./api";
 import { AddFileCard, AddLinkCard, IngestQueueCard, RecallCard } from "./cards";
+import { FolderMap, FolderViewToggle, useFolderView } from "./FolderMap";
 import { cachedData, prefetch, refetch } from "./prefetch";
 import { flattenScopes, ScopePicker, type ScopeSelection, ScopeTree, useScopes } from "./ScopeTree";
 
@@ -279,7 +281,13 @@ function WatchedFolders({ onChanged }: { onChanged: () => void }) {
   );
 }
 
-export function DocumentsView({ onChanged }: { onChanged: () => void }) {
+export function DocumentsView({
+  onChanged,
+  graph,
+}: {
+  onChanged: () => void;
+  graph: Graph | null;
+}) {
   // Seeded from the prefetch cache: a hover on the tab (or an earlier visit) already
   // fetched the list, so the first render shows documents and revalidates behind them.
   const [docs, setDocs] = useState<ContextDocument[] | null>(() =>
@@ -292,6 +300,7 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
   const [treeVersion, setTreeVersion] = useState(0);
   const [scopesVersion, setScopesVersion] = useState(0);
   const { scopes } = useScopes(scopesVersion);
+  const [view, setView] = useFolderView("documents");
   const [open, setOpen] = useState<Map<string, DocumentChunks>>(new Map());
   const [arming, setArming] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
@@ -429,190 +438,215 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
         refreshKey={treeVersion}
         onChanged={() => setScopesVersion((v) => v + 1)}
       />
-      <div className="panel">
-        <div className="panelInner">
-          <h2 className="sectionTitle">Add a file/folder</h2>
-          <AddFileCard
-            onAdded={() => {
-              load();
-              onChanged();
-              setTreeVersion((v) => v + 1);
-            }}
-          />
+      <div className={`panel ${view === "map" ? "panelMap" : ""}`}>
+        <div className={view === "map" ? "panelMapInner" : "panelInner"}>
+          <FolderViewToggle mode={view} onChange={setView} />
+          {view === "map" ? (
+            scopes ? (
+              <FolderMap
+                scopes={scopes}
+                graph={graph}
+                count="documents"
+                selected={scopeSel}
+                onOpen={(sel) => {
+                  setScopeSel(sel);
+                  setView("list");
+                }}
+              />
+            ) : (
+              <div className="spin">loading…</div>
+            )
+          ) : (
+            <>
+              <h2 className="sectionTitle">Add a file/folder</h2>
+              <AddFileCard
+                onAdded={() => {
+                  load();
+                  onChanged();
+                  setTreeVersion((v) => v + 1);
+                }}
+              />
 
-          <h2 className="sectionTitle">Queue</h2>
-          <IngestQueueCard
-            onChanged={() => {
-              load();
-              onChanged();
-              setTreeVersion((v) => v + 1);
-            }}
-          />
+              <h2 className="sectionTitle">Queue</h2>
+              <IngestQueueCard
+                onChanged={() => {
+                  load();
+                  onChanged();
+                  setTreeVersion((v) => v + 1);
+                }}
+              />
 
-          <h2 className="sectionTitle">Add a link</h2>
-          <AddLinkCard
-            onAdded={() => {
-              load();
-              onChanged();
-              setTreeVersion((v) => v + 1);
-            }}
-          />
+              <h2 className="sectionTitle">Add a link</h2>
+              <AddLinkCard
+                onAdded={() => {
+                  load();
+                  onChanged();
+                  setTreeVersion((v) => v + 1);
+                }}
+              />
 
-          <h2 className="sectionTitle">Recall</h2>
-          <RecallCard only="context" />
+              <h2 className="sectionTitle">Recall</h2>
+              <RecallCard only="context" />
 
-          <WatchedFolders
-            onChanged={() => {
-              load();
-              onChanged();
-            }}
-          />
+              <WatchedFolders
+                onChanged={() => {
+                  load();
+                  onChanged();
+                }}
+              />
 
-          <h2 className="sectionTitle">
-            Documents{docs ? `; ${shown.length}${scopeSel ? ` in ${scopeSel.label}` : ""}` : ""}
-          </h2>
+              <h2 className="sectionTitle">
+                Documents{docs ? `; ${shown.length}${scopeSel ? ` in ${scopeSel.label}` : ""}` : ""}
+              </h2>
 
-          {error && <div className="notice noticeError">{error}</div>}
-          {!docs && !error && <div className="spin">loading…</div>}
+              {error && <div className="notice noticeError">{error}</div>}
+              {!docs && !error && <div className="spin">loading…</div>}
 
-          {docs && docs.length === 0 && (
-            <p style={{ color: "var(--text-faint)" }}>
-              No documents yet. Add a file, a folder, a web page, or a recording above, or run{" "}
-              <code>memloom context add &lt;path or url&gt;</code>. Everything is chunked, embedded,
-              and fused into the same recall as memories.
-            </p>
-          )}
+              {docs && docs.length === 0 && (
+                <p style={{ color: "var(--text-faint)" }}>
+                  No documents yet. Add a file, a folder, a web page, or a recording above, or run{" "}
+                  <code>memloom context add &lt;path or url&gt;</code>. Everything is chunked,
+                  embedded, and fused into the same recall as memories.
+                </p>
+              )}
 
-          {docs && docs.length > 0 && shown.length === 0 && (
-            <p style={{ color: "var(--text-faint)" }}>
-              No documents in {scopeSel?.label ?? "this folder"} yet. Move one here with its folder
-              picker, or clear the folder filter.
-            </p>
-          )}
+              {docs && docs.length > 0 && shown.length === 0 && (
+                <p style={{ color: "var(--text-faint)" }}>
+                  No documents in {scopeSel?.label ?? "this folder"} yet. Move one here with its
+                  folder picker, or clear the folder filter.
+                </p>
+              )}
 
-          {shown.map((d) => {
-            const chunks = open.get(d.id);
-            const url = webUrl(d);
-            const timed = isTimed(d.kind);
-            return (
-              <div key={d.id} className="card">
-                <div className="docHead">
-                  <span className="docTitle">{d.title}</span>
-                  <span className="kindTag">{d.kind}</span>
-                  <span className="scopeTag">{d.scopePath ?? "uncategorized"}</span>
-                  {/* Stated, not warned about. A pipeline that deletes recordings after upload
+              {shown.map((d) => {
+                const chunks = open.get(d.id);
+                const url = webUrl(d);
+                const timed = isTimed(d.kind);
+                return (
+                  <div key={d.id} className="card">
+                    <div className="docHead">
+                      <span className="docTitle">{d.title}</span>
+                      <span className="kindTag">{d.kind}</span>
+                      <span className="scopeTag">{d.scopePath ?? "uncategorized"}</span>
+                      {/* Stated, not warned about. A pipeline that deletes recordings after upload
                     makes this the normal state for a whole folder, so it reads as a fact next
                     to the kind rather than as something gone wrong. */}
-                  {d.missingAt && <span className="kindTag kindTagMuted">file missing</span>}
-                  {d.watchable && d.watching === false && (
-                    <span className="kindTag kindTagMuted">not watching</span>
-                  )}
-                  <span className="docMeta">
-                    {d.chunkCount} {timed ? "passages" : "chunks"}; updated{" "}
-                    {new Date(d.updatedAt).toLocaleString()}
-                  </span>
-                </div>
-                {url ? (
-                  <a className="docPath docPathLink" href={url} target="_blank" rel="noreferrer">
-                    {url}
-                  </a>
-                ) : (
-                  <div className="docPath">{d.path}</div>
-                )}
-                <div className="actions">
-                  <button type="button" className="btn" onClick={() => toggleChunks(d)}>
-                    {chunks ? "Hide chunks" : "Show chunks"}
-                  </button>
-                  {/* A link has no file to hand the OS: open the page it was read from. */}
-                  {url && (
-                    <a className="btn btnLink" href={url} target="_blank" rel="noreferrer">
-                      Open page
-                    </a>
-                  )}
-                  {/* Uploaded docs (browser dialog) have no file on the daemon's disk. */}
-                  {!url && !d.path.startsWith("upload://") && (
-                    <button
-                      type="button"
-                      className="btn"
-                      onClick={() =>
-                        api
-                          .openDocument(d.id)
-                          .catch((err) =>
-                            setError(err instanceof Error ? err.message : String(err)),
-                          )
-                      }
-                    >
-                      Open file
-                    </button>
-                  )}
-                  {/* Only where there is a file to watch. An upload or a web page carries the
+                      {d.missingAt && <span className="kindTag kindTagMuted">file missing</span>}
+                      {d.watchable && d.watching === false && (
+                        <span className="kindTag kindTagMuted">not watching</span>
+                      )}
+                      <span className="docMeta">
+                        {d.chunkCount} {timed ? "passages" : "chunks"}; updated{" "}
+                        {new Date(d.updatedAt).toLocaleString()}
+                      </span>
+                    </div>
+                    {url ? (
+                      <a
+                        className="docPath docPathLink"
+                        href={url}
+                        target="_blank"
+                        rel="noreferrer"
+                      >
+                        {url}
+                      </a>
+                    ) : (
+                      <div className="docPath">{d.path}</div>
+                    )}
+                    <div className="actions">
+                      <button type="button" className="btn" onClick={() => toggleChunks(d)}>
+                        {chunks ? "Hide chunks" : "Show chunks"}
+                      </button>
+                      {/* A link has no file to hand the OS: open the page it was read from. */}
+                      {url && (
+                        <a className="btn btnLink" href={url} target="_blank" rel="noreferrer">
+                          Open page
+                        </a>
+                      )}
+                      {/* Uploaded docs (browser dialog) have no file on the daemon's disk. */}
+                      {!url && !d.path.startsWith("upload://") && (
+                        <button
+                          type="button"
+                          className="btn"
+                          onClick={() =>
+                            api
+                              .openDocument(d.id)
+                              .catch((err) =>
+                                setError(err instanceof Error ? err.message : String(err)),
+                              )
+                          }
+                        >
+                          Open file
+                        </button>
+                      )}
+                      {/* Only where there is a file to watch. An upload or a web page carries the
                     column's default rather than an answer, so offering the control would be
                     offering a switch that does nothing. */}
-                  {d.watchable && (
-                    <button type="button" className="btn" onClick={() => toggleWatch(d)}>
-                      {d.watching === false ? "Watch" : "Stop watching"}
-                    </button>
-                  )}
-                  {/* The picker always shows its placeholder (value stays ""), so it reads as
+                      {d.watchable && (
+                        <button type="button" className="btn" onClick={() => toggleWatch(d)}>
+                          {d.watching === false ? "Watch" : "Stop watching"}
+                        </button>
+                      )}
+                      {/* The picker always shows its placeholder (value stays ""), so it reads as
                     an action, not as the document's current folder; the chip above is that. */}
-                  <ScopePicker
-                    options={scopes ? flattenScopes(scopes) : []}
-                    value=""
-                    onChange={(path) => void moveDoc(d, path)}
-                    placeholder="move to folder…"
-                  />
-                  <button
-                    type="button"
-                    className={`btn btnDanger ${arming === d.id ? "btnDangerArmed" : ""}`}
-                    disabled={busy === d.id}
-                    onClick={() => remove(d.id)}
-                    onBlur={() => setArming((a) => (a === d.id ? null : a))}
-                  >
-                    {arming === d.id ? "Confirm remove" : "Remove"}
-                  </button>
-                </div>
-                {timed && (d.speakers?.speakers.length ?? 0) > 0 && (
-                  <SpeakerPanel
-                    doc={d}
-                    canPlay={!d.path.startsWith("upload://")}
-                    onRoster={onRoster}
-                    onError={setError}
-                  />
-                )}
-                {chunks && (
-                  <div className="chunkList">
-                    {chunks.chunks.map((c) => (
-                      <div key={c.id} className="statement">
-                        {timed && c.headingPath ? (
-                          <div className="chunkTime">
-                            <Clock size={12} strokeWidth={1.75} />
-                            {/* "12:30 - 14:28, Alice": the range never contains a comma, so
+                      <ScopePicker
+                        options={scopes ? flattenScopes(scopes) : []}
+                        value=""
+                        onChange={(path) => void moveDoc(d, path)}
+                        placeholder="move to folder…"
+                      />
+                      <button
+                        type="button"
+                        className={`btn btnDanger ${arming === d.id ? "btnDangerArmed" : ""}`}
+                        disabled={busy === d.id}
+                        onClick={() => remove(d.id)}
+                        onBlur={() => setArming((a) => (a === d.id ? null : a))}
+                      >
+                        {arming === d.id ? "Confirm remove" : "Remove"}
+                      </button>
+                    </div>
+                    {timed && (d.speakers?.speakers.length ?? 0) > 0 && (
+                      <SpeakerPanel
+                        doc={d}
+                        canPlay={!d.path.startsWith("upload://")}
+                        onRoster={onRoster}
+                        onError={setError}
+                      />
+                    )}
+                    {chunks && (
+                      <div className="chunkList">
+                        {chunks.chunks.map((c) => (
+                          <div key={c.id} className="statement">
+                            {timed && c.headingPath ? (
+                              <div className="chunkTime">
+                                <Clock size={12} strokeWidth={1.75} />
+                                {/* "12:30 - 14:28, Alice": the range never contains a comma, so
                               the first ", " splits time from speaker reliably. */}
-                            {c.headingPath.includes(", ") ? (
-                              <>
-                                {c.headingPath.slice(0, c.headingPath.indexOf(", "))}
-                                <span className="chunkSpeaker">
-                                  {c.headingPath.slice(c.headingPath.indexOf(", ") + 2)}
-                                </span>
-                              </>
+                                {c.headingPath.includes(", ") ? (
+                                  <>
+                                    {c.headingPath.slice(0, c.headingPath.indexOf(", "))}
+                                    <span className="chunkSpeaker">
+                                      {c.headingPath.slice(c.headingPath.indexOf(", ") + 2)}
+                                    </span>
+                                  </>
+                                ) : (
+                                  c.headingPath
+                                )}
+                              </div>
                             ) : (
-                              c.headingPath
+                              <div className="chunkCrumb">
+                                {c.headingPath ?? `#${c.chunkIndex + 1}`}
+                                {c.page != null ? `; p. ${c.page}` : ""}
+                              </div>
                             )}
+                            {timed ? stripLeadingCrumb(c.content, c.headingPath) : c.content}
                           </div>
-                        ) : (
-                          <div className="chunkCrumb">
-                            {c.headingPath ?? `#${c.chunkIndex + 1}`}
-                            {c.page != null ? `; p. ${c.page}` : ""}
-                          </div>
-                        )}
-                        {timed ? stripLeadingCrumb(c.content, c.headingPath) : c.content}
+                        ))}
                       </div>
-                    ))}
+                    )}
                   </div>
-                )}
-              </div>
-            );
-          })}
+                );
+              })}
+            </>
+          )}
         </div>
       </div>
     </div>

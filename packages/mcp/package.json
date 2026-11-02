@@ -1,6 +1,6 @@
 {
   "name": "@memloom/mcp",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "type": "module",
   "description": "MCP server for memloom. Gives an AI agent a persistent memory it can search and write to, shared with every other tool on the machine.",
   "license": "Apache-2.0",
@@ -49,7 +49,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "hono": "^4.6.0",
     "memloom": "workspace:*",
-    "zod": "^3.24.0"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@memloom/server": "workspace:*"

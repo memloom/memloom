@@ -475,6 +475,7 @@ export type {
   ScopeNode,
   SpeakerRoster,
   SyncTargets,
+  TrashedMemory,
   UpdateInput,
   UpdateResult,
 } from "./types.js";

@@ -1,7 +1,26 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 (2026-11-02)
 
+- Removing a memory moves it to a trash for 30 days instead of deleting it on the spot. The whole
+  chain goes: every version, its graph edges, import provenance and attachments, and recall, the
+  graph and agents stop seeing it at once. Restore puts all of it back; after 30 days the daemon
+  deletes it and its attachment files for good. New routes: `GET /memory/trash`,
+  `POST /memory/trash/:rootId/restore`, `DELETE /memory/trash/:rootId` and `DELETE /memory/trash`,
+  with `listTrash`, `restoreMemory` and `purgeTrash` on the engine and the HTTP client. The
+  viewer pins "recently removed" to the foot of the folder sidebar
+- The viewer has a new look: brushed silver in light, black in dark, and one glossy blue bar for
+  whatever is selected, primary actions and toasts. Failures show the same bar in red
+- Memories and Documents can show their folders as a map: one hexagon per folder, its area
+  growing with what it holds, with names and counts printed on the big ones. Clicking a folder
+  with subfolders zooms into it; clicking one without opens its memories as a graph
+- The viewer fits a phone: under 768px the folder sidebar becomes a drawer, the tabs scroll
+  sideways and panels use the full width
+- A browser extension in `apps/extension` (Chrome, Chromium browsers and Firefox) saves the page
+  you're on, or a link, into a folder you pick or create, with an optional note, so agents can
+  find it later through recall. The daemon accepts requests from that extension's pinned Chrome
+  id. `MEMLOOM_EXTENSION_IDS` allows more, including a Firefox install's UUID. Its settings page
+  takes another server's address and a token
 - The contradiction re-check gives every finding a second, pair-by-pair check and lists only the
   ones it stands behind. Rejected findings are recorded as dismissed and never shown, and findings
   already waiting get the check on the next run. The sweep's prompt now asks for contradictions

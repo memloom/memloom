@@ -3,9 +3,15 @@
   "theme": "mint",
   "name": "memloom docs",
   "colors": {
-    "primary": "#d97706",
-    "light": "#f59e0b",
-    "dark": "#b45309"
+    "primary": "#1f62d6",
+    "light": "#3b82f6",
+    "dark": "#1d5bc8"
+  },
+  "background": {
+    "color": {
+      "light": "#e6e7ea",
+      "dark": "#0c0d0f"
+    }
   },
   "api": {
     "playground": {
@@ -56,6 +62,7 @@
               "guides/extractors",
               "guides/recordings",
               "guides/file-sync",
+              "guides/browser-extension",
               "guides/memory-per-person",
               "guides/configuration",
               "guides/self-hosting",
@@ -83,6 +90,10 @@
                   "POST /memory/{id}/update",
                   "GET /memory/{id}/history",
                   "DELETE /memory/{id}",
+                  "GET /memory/trash",
+                  "POST /memory/trash/{rootId}/restore",
+                  "DELETE /memory/trash/{rootId}",
+                  "DELETE /memory/trash",
                   "GET /memory/passage/{id}"
                 ]
               },

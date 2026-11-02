@@ -13,6 +13,23 @@ import { cachedData, prefetch, refetch } from "./prefetch";
  * One selected folder, resolved to everything a view needs to filter by. The daemon's
  * scope params take `path`; client-side filters (documents, graph) use the id set.
  */
+/**
+ * The selection a click on this folder makes: the folder plus every descendant. Shared with the
+ * folder map, so a hexagon opens exactly what the same folder in the sidebar would.
+ */
+export function selectionFor(node: ScopeNode, scopes: ScopeNode[]): ScopeSelection {
+  const ids = collectIds(node);
+  const uncategorizedId =
+    scopes.find((n) => n.kind === "system" && n.path === "uncategorized")?.id ?? null;
+  return {
+    id: node.id,
+    path: node.path,
+    label: flattenScopes(scopes).find((o) => o.id === node.id)?.label ?? node.name,
+    ids,
+    includeUnscoped: uncategorizedId !== null && ids.includes(uncategorizedId),
+  };
+}
+
 export interface ScopeSelection {
   id: string;
   /** Addressable slug path ("projects/memloom"), what the daemon's scope params take. */
@@ -114,6 +131,8 @@ export function ScopeTree({
   manage = true,
   refreshKey = 0,
   onChanged,
+  inactive = false,
+  footer,
 }: {
   selected: ScopeSelection | null;
   onSelect: (sel: ScopeSelection | null) => void;
@@ -125,9 +144,17 @@ export function ScopeTree({
   refreshKey?: number;
   /** Fires after any folder mutation here, so parents can refresh their pickers. */
   onChanged?: () => void;
+  /** True while the panel shows something other than a folder, so no row is highlighted. */
+  inactive?: boolean;
+  /** A row pinned to the sidebar's bottom edge, visible however long the tree is. */
+  footer?: ReactNode;
 }) {
   // Internal bumps (a folder was created/renamed here) and external ones share one version.
   const [localVersion, setLocalVersion] = useState(0);
+  // On a phone the sidebar is a drawer behind a button; picking anything closes it.
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the selection changing is the trigger
+  useEffect(() => setDrawerOpen(false), [selected?.id, inactive]);
   const { scopes, error: loadError } = useScopes(refreshKey + localVersion);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
@@ -403,78 +430,101 @@ export function ScopeTree({
   };
 
   return (
-    <aside className="scopeSidebar">
-      <div className="scopeSidebarTitle">folders</div>
-      {(error ?? loadError) && <div className="notice noticeError">{error ?? loadError}</div>}
-      {!scopes && !loadError && <div className="spin">loading…</div>}
-      {scopes && (
-        <>
-          <div className={`scopeRow ${selected === null ? "scopeRowActive" : ""}`}>
-            <span className="scopeChevron" />
-            <button type="button" className="scopeName" onClick={() => onSelect(null)}>
-              all folders
-            </button>
-            <span className="scopeCount">{totals}</span>
-          </div>
-          {scopes.map((n) => renderNode(n))}
-          {manage &&
-            (creatingTop ? (
-              <div className="scopeEditRow">
-                <input
-                  className="scopeInput"
-                  value={draft}
-                  // biome-ignore lint/a11y/noAutofocus: the input appears in response to the user's own click
-                  autoFocus
-                  placeholder="name, or a/nested/path"
-                  onChange={(e) => setDraft(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" && draft.trim()) {
-                      void act(() => api.createScope(draft.trim()));
-                    }
-                    if (e.key === "Escape") setCreatingTop(false);
-                  }}
-                />
+    <>
+      <button
+        type="button"
+        className="scopeDrawerToggle"
+        aria-expanded={drawerOpen}
+        onClick={() => setDrawerOpen(true)}
+      >
+        <span className="scopeDrawerLabel">folders</span>
+        <span className="scopeDrawerCurrent">
+          {inactive ? "recently removed" : (selected?.label ?? "all folders")}
+        </span>
+        <ChevronDown size={14} strokeWidth={1.75} />
+      </button>
+      {drawerOpen && (
+        <button
+          type="button"
+          className="scopeDrawerBackdrop"
+          aria-label="Close folders"
+          onClick={() => setDrawerOpen(false)}
+        />
+      )}
+      <aside className={`scopeSidebar ${drawerOpen ? "scopeSidebarOpen" : ""}`}>
+        <div className="scopeSidebarTitle">folders</div>
+        {(error ?? loadError) && <div className="notice noticeError">{error ?? loadError}</div>}
+        {!scopes && !loadError && <div className="spin">loading…</div>}
+        {scopes && (
+          <>
+            <div className={`scopeRow ${selected === null && !inactive ? "scopeRowActive" : ""}`}>
+              <span className="scopeChevron" />
+              <button type="button" className="scopeName" onClick={() => onSelect(null)}>
+                all folders
+              </button>
+              <span className="scopeCount">{totals}</span>
+            </div>
+            {scopes.map((n) => renderNode(n))}
+            {manage &&
+              (creatingTop ? (
+                <div className="scopeEditRow">
+                  <input
+                    className="scopeInput"
+                    value={draft}
+                    // biome-ignore lint/a11y/noAutofocus: the input appears in response to the user's own click
+                    autoFocus
+                    placeholder="name, or a/nested/path"
+                    onChange={(e) => setDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && draft.trim()) {
+                        void act(() => api.createScope(draft.trim()));
+                      }
+                      if (e.key === "Escape") setCreatingTop(false);
+                    }}
+                  />
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={busy || draft.trim().length === 0}
+                    onClick={() => void act(() => api.createScope(draft.trim()))}
+                  >
+                    create
+                  </button>
+                </div>
+              ) : (
                 <button
                   type="button"
-                  className="btn"
-                  disabled={busy || draft.trim().length === 0}
-                  onClick={() => void act(() => api.createScope(draft.trim()))}
+                  className="metaAction scopeNewTop"
+                  onClick={() => {
+                    setDraft("");
+                    setEditing(null);
+                    setCreatingTop(true);
+                  }}
                 >
-                  create
+                  + new folder
                 </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                className="metaAction scopeNewTop"
-                onClick={() => {
-                  setDraft("");
-                  setEditing(null);
-                  setCreatingTop(true);
-                }}
-              >
-                + new folder
-              </button>
-            ))}
-        </>
-      )}
-      <ConfirmDialog
-        open={confirmDelete !== null}
-        title={`Delete "${confirmDelete?.name ?? ""}"?`}
-        body="The folder is removed from the registry. It is empty, so no memories or documents are touched."
-        confirmLabel="Delete folder"
-        danger
-        onCancel={() => setConfirmDelete(null)}
-        onConfirm={() => {
-          const node = confirmDelete;
-          setConfirmDelete(null);
-          if (!node) return;
-          void act(async () => {
-            await api.deleteScope(node.id);
-            if (selected?.id === node.id) onSelect(null);
-          });
-        }}
-      />
-    </aside>
+              ))}
+          </>
+        )}
+        {footer && <div className="scopeSidebarFoot">{footer}</div>}
+        <ConfirmDialog
+          open={confirmDelete !== null}
+          title={`Delete "${confirmDelete?.name ?? ""}"?`}
+          body="The folder is removed from the registry. It is empty, so no memories or documents are touched."
+          confirmLabel="Delete folder"
+          danger
+          onCancel={() => setConfirmDelete(null)}
+          onConfirm={() => {
+            const node = confirmDelete;
+            setConfirmDelete(null);
+            if (!node) return;
+            void act(async () => {
+              await api.deleteScope(node.id);
+              if (selected?.id === node.id) onSelect(null);
+            });
+          }}
+        />
+      </aside>
+    </>
   );
 }

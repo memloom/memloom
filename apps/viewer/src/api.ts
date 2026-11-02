@@ -5,6 +5,18 @@
 // chunks carry the "context" sentinel instead.
 export type MemoryType = "fact" | "preference" | "episode" | "procedure";
 
+/** A removed memory, restorable until expiresAt (GET /memory/trash). */
+export interface TrashedMemory {
+  rootId: string;
+  content: string;
+  memoryType: string;
+  scopeId: string | null;
+  versions: number;
+  attachments: number;
+  deletedAt: string;
+  expiresAt: string;
+}
+
 export interface Memory {
   id: string;
   status: "active" | "stale";
@@ -998,6 +1010,11 @@ export const api = {
   history: (id: string) =>
     json<{ versions: Memory[] }>(`/memory/${id}/history`).then((r) => r.versions),
   deleteMemory: (id: string) => json<{ ok: boolean }>(`/memory/${id}`, { method: "DELETE" }),
+  trash: () => json<{ items: TrashedMemory[] }>("/memory/trash").then((r) => r.items),
+  restoreMemory: (rootId: string) => post<{ id: string }>(`/memory/trash/${rootId}/restore`),
+  deleteForever: (rootId: string) =>
+    json<{ purged: number }>(`/memory/trash/${rootId}`, { method: "DELETE" }),
+  emptyTrash: () => json<{ purged: number }>("/memory/trash", { method: "DELETE" }),
   index: () => post<{ indexed: number; chunksIndexed: number }>("/memory/index"),
   // The Console's auto-index toggle; `available` is false in offline mode.
   autoIndex: () => json<{ enabled: boolean; available: boolean }>("/memory/auto-index"),

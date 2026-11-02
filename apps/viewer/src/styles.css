@@ -1,17 +1,32 @@
-/* memloom viewer: dark developer style. Sharp corners everywhere (no border-radius), the
-   graph palette shared with the canvas renderer, monospace for identifiers and data. */
+/* memloom viewer: the iPod theme. Black in dark, brushed silver in light, one glossy blue
+   highlight for whatever is selected (DESIGN.md). Small radii, the graph palette shared
+   with the canvas renderer, monospace for identifiers and data. */
 
 :root {
-  --bg: #0b0f14;
-  --bg-raised: #11161d;
-  --bg-inset: #0d1117;
-  --border: #1f2937;
-  --border-strong: #334155;
-  --text: #e2e8f0;
-  --text-muted: #94a3b8;
-  --text-faint: #64748b;
-  --brand: #f59e0b; /* memloom amber: chrome + identity ONLY, never data (DESIGN.md) */
-  --brand-bright: #fbbf24; /* amber hover/emphasis on dark */
+  --bg: #0c0d0f;
+  --bg-raised: #16171a;
+  --bg-inset: #0f1012;
+  --border: #25272b;
+  --border-strong: #3a3d43;
+  --text: #ececee;
+  --text-muted: #a2a5ac;
+  --text-faint: #6c6f76;
+  --brand: #3b82f6; /* iPod blue: chrome + selection ONLY, never data (DESIGN.md) */
+  --brand-bright: #60a5fa; /* hover/emphasis on dark */
+  --accent: var(--brand);
+  /* The selection bar: a glossy blue strip with white text, like an iPod menu row. */
+  --select-bg: linear-gradient(180deg, #5b9dff 0%, #2f74ea 48%, #1f62d6 52%, #1d5bc8 100%);
+  --select-border: #1650b8;
+  --select-text: #ffffff;
+  /* Chrome surfaces: header and sidebars. Black anodized in dark. */
+  --metal: linear-gradient(180deg, #24262a 0%, #17181b 100%);
+  --metal-grain: none;
+  --metal-side: linear-gradient(90deg, #18191c 0%, #131417 100%);
+  --metal-edge: rgb(255 255 255 / 6%);
+  --field: var(--bg-inset);
+  --wheel: radial-gradient(circle at 50% 35%, #2b2d31 0%, #141518 70%);
+  --radius: 8px;
+  --radius-sm: 5px;
   --memory: #38bdf8; /* memory-node sky (data) */
   --entity: #c084fc; /* entity purple (circles, data) */
   --ok: #34d399; /* documents / success */
@@ -22,19 +37,32 @@
   --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
-/* Light theme: warm stone neutrals with brand-deep amber (DESIGN.md); data colors darken
-   one step for contrast on light surfaces. The graph canvas re-palettes in JS. */
+/* Light theme: brushed silver. Cool aluminium neutrals and a deeper blue; data colors
+   darken one step for contrast on light surfaces. The graph canvas re-palettes in JS. */
 [data-theme="light"] {
-  --bg: #faf9f7;
-  --bg-raised: #ffffff;
-  --bg-inset: #f3f1ec;
-  --border: #e7e2d9;
-  --border-strong: #cfc8bb;
-  --text: #1c1917;
-  --text-muted: #57534e;
-  --text-faint: #a8a29e;
-  --brand: #d97706;
-  --brand-bright: #b45309;
+  --bg: #e6e7ea;
+  --bg-raised: #f4f5f6;
+  --bg-inset: #dadce0;
+  --border: #c4c7cc;
+  --border-strong: #a3a7ae;
+  --text: #17181b;
+  --text-muted: #474a50;
+  --text-faint: #858991;
+  --brand: #1f62d6;
+  --brand-bright: #174fb3;
+  --select-border: #174fb3;
+  /* Brushed aluminium: a vertical sheen with fine horizontal grain on top. */
+  --metal: linear-gradient(180deg, #fbfbfc 0%, #e4e6e9 55%, #cfd2d6 100%);
+  --metal-grain: repeating-linear-gradient(
+    0deg,
+    rgb(255 255 255 / 22%) 0 1px,
+    rgb(0 0 0 / 2.5%) 1px 2px,
+    transparent 2px 3px
+  );
+  --metal-side: linear-gradient(90deg, #eeeff1 0%, #e1e3e6 100%);
+  --metal-edge: rgb(255 255 255 / 85%);
+  --field: #fbfbfc;
+  --wheel: radial-gradient(circle at 50% 35%, #ffffff 0%, #d5d8dc 75%);
   --memory: #0284c7;
   --entity: #9333ea;
   --ok: #059669;
@@ -794,7 +822,7 @@ button {
   font-size: 13px;
 }
 
-/* Secondary buttons brighten to white on hover/focus; amber stays reserved for the one
+/* Secondary buttons brighten to white on hover/focus; blue stays reserved for the one
    primary action per card (btnPrimary keeps its own colors below). */
 .btn:hover:not(:disabled) {
   border-color: var(--text);
@@ -1141,7 +1169,7 @@ textarea {
   color: var(--text);
 }
 
-/* On-state is white: a settings switch is a secondary control, amber would read as a
+/* On-state is white: a settings switch is a secondary control, blue would read as a
    primary action. */
 .autoIndexToggleOn .autoIndexTrack {
   border-color: var(--text);
@@ -3058,13 +3086,13 @@ textarea {
 }
 
 /* Toasts. The library ships a rounded white pill with a drop shadow, which belongs to a different
-   application: this one has square corners, hairline borders and no shadows anywhere. Everything
+   application: this one has its own radius, hairline borders and no drop shadow. Everything
    below is an override of its defaults so a toast reads as part of the same surface, in both
    themes, from the same tokens. */
 .toast {
   background: var(--bg-raised) !important;
   border: 1px solid var(--border-strong);
-  border-radius: 0 !important;
+  border-radius: var(--radius) !important;
   box-shadow: none !important;
   color: var(--text) !important;
   font-family: var(--sans);
@@ -3073,17 +3101,25 @@ textarea {
   padding: 10px 12px !important;
 }
 
-/* One coloured edge carries the meaning, the way the run levels and the statement cards do. */
-.toastDone {
-  border-left: 3px solid var(--ok);
+/* A toast reads like the iPod's selected row: the glossy blue bar with white text for anything
+   that worked or is worth saying, and the same bar in red for a failure. */
+.toastDone,
+.toastSaid {
+  background: var(--select-bg) !important;
+  border-color: var(--select-border);
+  color: var(--select-text) !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%) !important;
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
+  font-weight: 600;
 }
 
 .toastFailed {
-  border-left: 3px solid var(--danger);
-}
-
-.toastSaid {
-  border-left: 3px solid var(--memory);
+  background: linear-gradient(180deg, #f87171 0%, #dc2626 48%, #c81e1e 52%, #b91c1c 100%) !important;
+  border-color: #991b1b;
+  color: #ffffff !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 30%) !important;
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
+  font-weight: 600;
 }
 
 /* Confirmation modal. Same surface language as everything else: square, hairline border, no
@@ -3356,4 +3392,584 @@ textarea {
   font-family: var(--mono);
   font-size: 12px;
   color: var(--text-muted);
+}
+
+/* ---------- iPod theme layer ---------- */
+/* Last in the file on purpose: these rules restyle the components above without touching
+   their layout. Chrome gets the metal, the selected thing gets the blue bar, and corners
+   round off to the iPod's soft radius. */
+
+.header {
+  background: var(--metal-grain), var(--metal);
+  box-shadow: inset 0 1px 0 var(--metal-edge);
+}
+
+/* Sidebars are tall, so the header's vertical sheen would darken toward the bottom. They
+   get the grain over a flat panel instead, with the sheen running across. */
+.scopeSidebar,
+.chatSidebar {
+  background: var(--metal-grain), var(--metal-side);
+}
+
+.header {
+  border-bottom-color: var(--border-strong);
+}
+
+.wordmark {
+  text-shadow: 0 1px 0 var(--metal-edge);
+}
+
+/* Header tabs become iPod menu items: the active one is a glossy blue pill. */
+.tabs {
+  align-items: center;
+  gap: 4px;
+}
+
+.tab {
+  height: 28px;
+  border-bottom: none;
+  border-radius: var(--radius-sm);
+}
+
+.tab:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.tabActive,
+.tabActive:hover {
+  background: var(--select-bg);
+  color: var(--select-text);
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 35%),
+    0 0 0 1px var(--select-border);
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
+}
+
+.tabBadge {
+  border-radius: 999px;
+}
+
+/* The selection bar, shared by every "this one is picked" row. */
+.scopeRowActive,
+.chatSessionRowActive .chatSessionMain,
+.chatSessionRowActive:hover .chatSessionMain,
+.modelRowActive,
+.modelRowActive:hover,
+.inboxRowActive,
+.graphSegmentBtnActive,
+.graphSegmentBtnActive:hover {
+  background: var(--select-bg);
+  color: var(--select-text);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 30%);
+}
+
+.scopeRow {
+  border-radius: var(--radius-sm);
+}
+
+.scopeRowActive .scopeName,
+.scopeRowActive .scopeName:hover,
+.scopeRowActive * {
+  color: var(--select-text);
+}
+
+.inboxRowActive {
+  border-left-color: transparent;
+}
+
+.chipActive {
+  background: var(--select-bg);
+  border-color: var(--select-border);
+  color: var(--select-text);
+}
+
+/* Primary actions read as the iPod's blue; secondary buttons as brushed keys. */
+.btn {
+  border-radius: var(--radius-sm);
+  background: var(--metal-grain), var(--metal);
+  box-shadow: inset 0 1px 0 var(--metal-edge);
+}
+
+.btnPrimary,
+.btnPrimary:hover:not(:disabled) {
+  background: var(--select-bg);
+  border-color: var(--select-border);
+  color: var(--select-text);
+}
+
+.btnPrimary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+
+.chip,
+.themeToggle,
+.graphLauncher,
+.graphIconButton,
+input[type="text"],
+textarea,
+select {
+  border-radius: var(--radius-sm);
+}
+
+.graphSegment {
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+/* The theme toggle is the click wheel's centre button. */
+.themeToggle {
+  border-radius: 50%;
+  background: var(--wheel);
+  box-shadow:
+    inset 0 1px 0 var(--metal-edge),
+    0 1px 2px rgb(0 0 0 / 25%);
+}
+
+.card,
+.modal,
+.legend,
+.graphControlsPanel,
+.emptyState code {
+  border-radius: var(--radius);
+}
+
+.card {
+  box-shadow:
+    inset 0 1px 0 var(--metal-edge),
+    0 1px 2px rgb(0 0 0 / 12%);
+}
+
+input[type="text"],
+textarea,
+select,
+.chatComposer textarea {
+  background: var(--field);
+}
+
+.chatComposer textarea {
+  border-radius: var(--radius-sm);
+}
+
+/* Memory and recall rows sit on silver as raised plates, not recessed wells. */
+.recallItem {
+  border-radius: var(--radius-sm);
+}
+
+[data-theme="light"] .recallItem {
+  background: var(--bg-raised);
+}
+
+input[type="text"]:focus,
+textarea:focus,
+select:focus,
+.btn:focus-visible {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 30%, transparent);
+}
+
+.graphControlRow input[type="range"]::-webkit-slider-thumb {
+  border-radius: 50%;
+}
+
+.graphControlRow input[type="range"]::-moz-range-thumb {
+  border-radius: 50%;
+}
+
+/* ---------- Recently removed ---------- */
+/* The trash is a row pinned to the foot of the folder sidebar: sticky, so it stays in view
+   however many folders scroll above it, and pushed down by margin-top: auto when there are
+   few. Its list opens in the main panel, as the same cards dimmed so they never read as
+   live memories. */
+.scopeSidebarFoot {
+  position: sticky;
+  bottom: -12px;
+  margin: auto -12px -12px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--metal-grain), var(--metal-side);
+}
+
+.trashRow {
+  gap: 6px;
+  padding-left: 4px;
+}
+
+.trashIcon {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.scopeRowActive .trashIcon {
+  color: var(--select-text);
+}
+
+.trashHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trashNote {
+  margin: 0 0 12px;
+  color: var(--text-faint);
+}
+
+.trashItem {
+  opacity: 0.85;
+}
+
+.trashItem:hover {
+  opacity: 1;
+}
+
+.trashItem + .trashItem {
+  margin-top: 8px;
+}
+
+.trashEmpty {
+  margin-bottom: 12px;
+}
+
+/* ---------- Folder map ---------- */
+/* Folders as hexagons sized by what they hold, filling the whole panel: no frame, the field
+   is the panel. Plates of the same silver (or black) as the cards, a hairline edge, names and
+   counts on the plates big enough to carry them, and the blue selection bar for the folder
+   that is open. Clicking zooms into the plate; the next level settles in from inside. */
+.panelMap {
+  overflow: hidden;
+}
+
+.panelMapInner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 12px 16px 0;
+}
+
+.folderViewToggle {
+  width: max-content;
+  margin: 0 0 16px auto;
+}
+
+.panelMapInner .folderViewToggle {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  margin: 0;
+  z-index: 3;
+}
+
+.folderViewToggle .graphSegmentBtn {
+  min-width: 56px;
+  padding: 5px 14px;
+  font-size: 12px;
+}
+
+.folderMap {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.folderMapCrumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding-right: 150px;
+  color: var(--text-faint);
+}
+
+.folderMapOpen {
+  margin-left: 12px;
+}
+
+.folderMapStage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.folderMapField {
+  display: block;
+}
+
+/* 420ms here and in the keyframes below matches ZOOM_MS in FolderMap.tsx. */
+.folderMapLayer {
+  transition:
+    transform 420ms ease-in,
+    opacity 420ms ease-in;
+}
+
+.folderMapEnter {
+  animation: folderMapEnter 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+.folderMapBack {
+  animation: folderMapBack 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+@keyframes folderMapEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes folderMapBack {
+  from {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .folderMapLayer,
+  .folderMapEnter,
+  .folderMapBack {
+    animation: none;
+    transition: none;
+  }
+}
+
+.folderMapGraph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.folderHex {
+  cursor: pointer;
+  outline: none;
+}
+
+.folderHex polygon {
+  fill: var(--bg-raised);
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+  transition:
+    fill 120ms ease,
+    stroke 120ms ease;
+}
+
+.folderHexName {
+  fill: var(--text);
+  font-family: var(--sans);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.folderHexCount {
+  fill: var(--text-muted);
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+.folderHex:hover polygon,
+.folderHex:focus-visible polygon {
+  stroke: var(--brand);
+  stroke-width: 2.5;
+}
+
+.folderHexOwn polygon {
+  stroke-dasharray: 5 4;
+}
+
+.folderHexSelected polygon {
+  fill: url(#folderMapSelected);
+  stroke: var(--select-border);
+}
+
+.folderHexSelected .folderHexName,
+.folderHexSelected .folderHexCount {
+  fill: var(--select-text);
+}
+
+/* The hover popup: a raised plate that follows the pointer. */
+.folderMapPopup {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  box-shadow:
+    inset 0 1px 0 var(--metal-edge),
+    0 4px 14px rgb(0 0 0 / 18%);
+  color: var(--text);
+  pointer-events: none;
+}
+
+.folderMapPopup span {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.folderMapPopup .folderMapPopupHint {
+  color: var(--text-faint);
+  font-family: var(--sans);
+}
+
+.folderMapEmpty {
+  color: var(--text-faint);
+}
+
+/* ---------- Phones ---------- */
+/* Under 768px the folder sidebar is a drawer behind a bar at the top of the panel, the tabs
+   scroll sideways instead of overflowing, the store counts in the header give way, and the
+   panels and the folder map use the full width. */
+.scopeDrawerToggle,
+.scopeDrawerBackdrop {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .header {
+    gap: 10px;
+    padding: 0 10px;
+  }
+
+  .wordmark {
+    font-size: 16px;
+  }
+
+  .tabs {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab {
+    flex: none;
+  }
+
+  .headerStats {
+    display: none;
+  }
+
+  .scopeLayout {
+    position: relative;
+    flex-direction: column;
+  }
+
+  .scopeDrawerToggle {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 10px 0;
+    padding: 8px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--metal-grain), var(--metal);
+    box-shadow: inset 0 1px 0 var(--metal-edge);
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .scopeDrawerLabel {
+    color: var(--text-faint);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .scopeDrawerCurrent {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  .scopeDrawerBackdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    border: none;
+    background: rgb(0 0 0 / 35%);
+  }
+
+  .scopeSidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 21;
+    width: min(300px, 85vw);
+    transform: translateX(-105%);
+    transition: transform 220ms ease;
+    box-shadow: 4px 0 18px rgb(0 0 0 / 22%);
+  }
+
+  .scopeSidebarOpen {
+    transform: none;
+  }
+
+  .panel {
+    padding: 12px 10px;
+  }
+
+  .panelMap {
+    padding: 0;
+  }
+
+  .panelMapInner {
+    padding: 8px 10px 0;
+  }
+
+  .panelMapInner .folderViewToggle {
+    top: 8px;
+    right: 10px;
+  }
+
+  .folderMapCrumbs {
+    flex-wrap: wrap;
+    padding-right: 130px;
+  }
+
+  .folderMapOpen {
+    margin-left: 0;
+  }
+
+  .folderMapPopup {
+    max-width: 180px;
+  }
+}
+
+@media (max-width: 767px) and (prefers-reduced-motion: reduce) {
+  .scopeSidebar {
+    transition: none;
+  }
 }
