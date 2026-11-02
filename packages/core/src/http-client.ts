@@ -49,6 +49,7 @@ import type {
   Scope,
   ScopeBackfillReport,
   ScopeNode,
+  TrashedMemory,
   UpdateInput,
   UpdateResult,
 } from "./types.js";
@@ -227,6 +228,29 @@ export class HttpMemloomClient implements MemoryEngine {
   async deleteMemory(memoryId: string, ownerId?: string): Promise<void> {
     this.#owned(ownerId);
     await this.#json(`/memory/${memoryId}`, { method: "DELETE" });
+  }
+
+  async listTrash(ownerId?: string): Promise<TrashedMemory[]> {
+    this.#owned(ownerId);
+    const { items } = await this.#json<{ items: TrashedMemory[] }>("/memory/trash");
+    return items;
+  }
+
+  async restoreMemory(rootId: string, ownerId?: string): Promise<{ id: string }> {
+    this.#owned(ownerId);
+    return this.#json<{ id: string }>(`/memory/trash/${rootId}/restore`, { method: "POST" });
+  }
+
+  async purgeTrash(
+    opts: { ownerId?: string; rootId?: string; all?: boolean } = {},
+  ): Promise<{ purged: number }> {
+    this.#owned(opts.ownerId);
+    if (opts.rootId) {
+      return this.#json<{ purged: number }>(`/memory/trash/${opts.rootId}`, { method: "DELETE" });
+    }
+    // The daemon purges what has expired on its own; only emptying the trash is a request.
+    if (!opts.all) return { purged: 0 };
+    return this.#json<{ purged: number }>("/memory/trash", { method: "DELETE" });
   }
 
   /**

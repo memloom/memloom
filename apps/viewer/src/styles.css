@@ -3101,17 +3101,25 @@ textarea {
   padding: 10px 12px !important;
 }
 
-/* One coloured edge carries the meaning, the way the run levels and the statement cards do. */
-.toastDone {
-  border-left: 3px solid var(--ok);
+/* A toast reads like the iPod's selected row: the glossy blue bar with white text for anything
+   that worked or is worth saying, and the same bar in red for a failure. */
+.toastDone,
+.toastSaid {
+  background: var(--select-bg) !important;
+  border-color: var(--select-border);
+  color: var(--select-text) !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%) !important;
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
+  font-weight: 600;
 }
 
 .toastFailed {
-  border-left: 3px solid var(--danger);
-}
-
-.toastSaid {
-  border-left: 3px solid var(--memory);
+  background: linear-gradient(180deg, #f87171 0%, #dc2626 48%, #c81e1e 52%, #b91c1c 100%) !important;
+  border-color: #991b1b;
+  color: #ffffff !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 30%) !important;
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
+  font-weight: 600;
 }
 
 /* Confirmation modal. Same surface language as everything else: square, hairline border, no
@@ -3564,4 +3572,60 @@ select:focus,
 
 .graphControlRow input[type="range"]::-moz-range-thumb {
   border-radius: 50%;
+}
+
+/* ---------- Recently removed ---------- */
+/* The trash is a row pinned to the foot of the folder sidebar: sticky, so it stays in view
+   however many folders scroll above it, and pushed down by margin-top: auto when there are
+   few. Its list opens in the main panel, as the same cards dimmed so they never read as
+   live memories. */
+.scopeSidebarFoot {
+  position: sticky;
+  bottom: -12px;
+  margin: auto -12px -12px;
+  padding: 8px 12px 12px;
+  border-top: 1px solid var(--border);
+  background: var(--metal-grain), var(--metal-side);
+}
+
+.trashRow {
+  gap: 6px;
+  padding-left: 4px;
+}
+
+.trashIcon {
+  flex: none;
+  color: var(--text-faint);
+}
+
+.scopeRowActive .trashIcon {
+  color: var(--select-text);
+}
+
+.trashHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.trashNote {
+  margin: 0 0 12px;
+  color: var(--text-faint);
+}
+
+.trashItem {
+  opacity: 0.85;
+}
+
+.trashItem:hover {
+  opacity: 1;
+}
+
+.trashItem + .trashItem {
+  margin-top: 8px;
+}
+
+.trashEmpty {
+  margin-bottom: 12px;
 }

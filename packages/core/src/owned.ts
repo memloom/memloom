@@ -18,6 +18,7 @@ import type {
   ResolveDecision,
   SaveInput,
   SaveResult,
+  TrashedMemory,
   UpdateInput,
   UpdateResult,
 } from "./types.js";
@@ -54,6 +55,9 @@ export interface OwnedMemloom {
   history(memoryId: string): Promise<Memory[]>;
   passage(id: string): Promise<string | null>;
   deleteMemory(memoryId: string): Promise<void>;
+  listTrash(): Promise<TrashedMemory[]>;
+  restoreMemory(rootId: string): Promise<{ id: string }>;
+  purgeTrash(opts?: { rootId?: string; all?: boolean }): Promise<{ purged: number }>;
 
   /** Erase this tenant entirely. See Memloom.deleteOwner(). */
   erase(): Promise<DeleteOwnerResult>;
@@ -125,6 +129,18 @@ class BoundMemloom implements OwnedMemloom {
 
   deleteMemory(memoryId: string): Promise<void> {
     return this.#engine.deleteMemory(memoryId, this.ownerId);
+  }
+
+  listTrash(): Promise<TrashedMemory[]> {
+    return this.#engine.listTrash(this.ownerId);
+  }
+
+  restoreMemory(rootId: string): Promise<{ id: string }> {
+    return this.#engine.restoreMemory(rootId, this.ownerId);
+  }
+
+  purgeTrash(opts: { rootId?: string; all?: boolean } = {}): Promise<{ purged: number }> {
+    return this.#engine.purgeTrash({ ...opts, ownerId: this.ownerId });
   }
 
   erase(): Promise<DeleteOwnerResult> {

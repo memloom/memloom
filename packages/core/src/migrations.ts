@@ -1609,5 +1609,34 @@ export function buildMigrations(dims: number): Migration[] {
         ON memory_attachments (owner_id, root_id);
     `,
     },
+    {
+      // Removed memories wait here for 30 days before they are gone for good. The chain moves
+      // out of memory_objects whole, as JSON snapshots of its rows, so no query anywhere else
+      // has to learn to skip a "deleted" flag: recall, the graph and reconcile simply no
+      // longer see it. Restore writes the snapshots back.
+      //
+      // The edges and import provenance the chain had go along, so a restore brings back its
+      // links and where it came from. Attachment rows move too; their files stay in the
+      // attachment store until the purge, which is what makes the restore whole.
+      //
+      // Keyed on the lineage, like attachments: a belief and all its versions leave together.
+      id: "0036_memory_trash",
+      sql: /* sql */ `
+      CREATE TABLE IF NOT EXISTS memory_trash (
+        owner_id     uuid NOT NULL,
+        root_id      uuid NOT NULL,
+        deleted_at   timestamptz NOT NULL DEFAULT now(),
+        content      text NOT NULL,
+        memory_type  text NOT NULL,
+        scope_id     uuid,
+        objects      jsonb NOT NULL,
+        edges        jsonb NOT NULL DEFAULT '[]'::jsonb,
+        provenance   jsonb NOT NULL DEFAULT '[]'::jsonb,
+        attachments  jsonb NOT NULL DEFAULT '[]'::jsonb,
+        PRIMARY KEY (owner_id, root_id)
+      );
+      CREATE INDEX IF NOT EXISTS memory_trash_deleted_idx ON memory_trash (deleted_at);
+    `,
+    },
   ];
 }

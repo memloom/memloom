@@ -48,6 +48,7 @@ import type {
   Scope,
   ScopeBackfillReport,
   ScopeNode,
+  TrashedMemory,
   UpdateInput,
   UpdateResult,
 } from "./types.js";
@@ -88,8 +89,18 @@ export interface MemoryEngine {
   update(input: UpdateInput): Promise<UpdateResult>;
   /** The full version chain of a belief, newest first: pass any version's id. */
   history(memoryId: string, ownerId?: string): Promise<Memory[]>;
-  /** Delete a belief outright: every version, its edges, and pending conflicts naming it. */
+  /** Move a belief to the trash: every version, its edges, provenance and attachments. */
   deleteMemory(memoryId: string, ownerId?: string): Promise<void>;
+  /** Removed beliefs, newest first, each restorable until its expiresAt. */
+  listTrash(ownerId?: string): Promise<TrashedMemory[]>;
+  /** Put a removed belief back as it was. Returns its current version's id. */
+  restoreMemory(rootId: string, ownerId?: string): Promise<{ id: string }>;
+  /** Delete removed beliefs for good: one (rootId), all, or by default the expired ones. */
+  purgeTrash(opts?: {
+    ownerId?: string;
+    rootId?: string;
+    all?: boolean;
+  }): Promise<{ purged: number }>;
   /**
    * Hang a file off a belief: a photo of the thing, not another thing to search.
    *

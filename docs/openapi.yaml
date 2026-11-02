@@ -358,10 +358,12 @@ paths:
 
   /memory/{id}:
     delete:
-      summary: Delete a memory's whole belief
+      summary: Move a memory's whole belief to the trash
       description: |
-        Deletes every version in the lineage, its edges, and any pending conflict that names
-        it. Unlike a resolution's `stale`, this is permanent; there is no revert.
+        Moves every version in the lineage to the trash, with its edges, import provenance and
+        attachments, and drops any pending conflict that names it. Recall, the graph and agents
+        stop seeing it at once. `POST /memory/trash/{rootId}/restore` puts it back for 30 days;
+        after that the daemon deletes it and its attachment files for good.
       operationId: deleteMemory
       parameters:
         - $ref: "#/components/parameters/OwnerHeader"
@@ -376,7 +378,7 @@ paths:
         "404":
           description: No memory with that id.
         "200":
-          description: Deleted.
+          description: Moved to the trash.
           content:
             application/json:
               schema:
@@ -385,6 +387,116 @@ paths:
                   ok:
                     type: boolean
                     example: true
+  /memory/trash:
+    get:
+      summary: List removed memories
+      description: |
+        Removed beliefs, newest removal first. Each stays restorable until `expiresAt`, 30 days
+        after it was removed. Listing purges what has expired first.
+      operationId: listTrash
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+      responses:
+        "200":
+          description: The trash.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        rootId:
+                          type: string
+                          description: The belief's lineage id. Restore and delete forever take this.
+                        content:
+                          type: string
+                          description: The current version's text when it was removed.
+                        memoryType:
+                          type: string
+                        scopeId:
+                          type: string
+                          nullable: true
+                        versions:
+                          type: integer
+                        attachments:
+                          type: integer
+                        deletedAt:
+                          type: string
+                          format: date-time
+                        expiresAt:
+                          type: string
+                          format: date-time
+    delete:
+      summary: Empty the trash
+      description: Deletes every removed belief and its attachment files for good.
+      operationId: emptyTrash
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+      responses:
+        "200":
+          description: Emptied.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  purged:
+                    type: integer
+  /memory/trash/{rootId}/restore:
+    post:
+      summary: Restore a removed memory
+      description: |
+        Puts the belief back as it was: every version, its edges, provenance and attachments.
+        An edge whose other end was deleted in the meantime stays out, and a folder that no
+        longer exists leaves it uncategorized.
+      operationId: restoreMemory
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+        - name: rootId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "404":
+          description: Nothing in the trash with that id.
+        "200":
+          description: Restored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    description: The restored belief's current version id.
+  /memory/trash/{rootId}:
+    delete:
+      summary: Delete a removed memory forever
+      description: Deletes one removed belief and its attachment files for good. There is no revert.
+      operationId: purgeTrashedMemory
+      parameters:
+        - $ref: "#/components/parameters/OwnerHeader"
+        - name: rootId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Deleted, or nothing to delete.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  purged:
+                    type: integer
+                    example: 1
   /memory/passage/{id}:
     get:
       summary: The full text behind a truncated recall result
