@@ -8,7 +8,9 @@ with, and memloom must never read as one of them.
 ## Viewer theme: iPod
 
 The viewer (`apps/viewer`) left the amber system on 2026-11-01 for an iPod look, because
-Kostek liked it better. Docs, landing and README still follow the amber rules below.
+Kostek liked it better. The browser extension (`apps/extension`) follows it too, with the same
+tokens in `popup.css` and the system theme picking silver or black. Docs, landing and README
+still follow the amber rules below.
 
 - **Light is brushed silver, dark is black.** Cool aluminium neutrals in light (`--bg
   #e6e7ea`, `--bg-raised #f4f5f6`), near-black in dark (`--bg #0c0d0f`, `--bg-raised
@@ -154,3 +156,4 @@ crafted tool, built around one memorable thing, **the living graph**.
 | 2026-07-12 | Amber brand adopted; conflicts moved to red, lineage to indigo | preservation metaphor, category differentiation, anti-slop |
 | 2026-07-12 | Landing layer: Bricolage display, TUI panes, HUD ticks, lucide icons, filled amber CTA, scan-line reveals | design review: serve "the living graph", fix hero readability as design |
 | 2026-11-01 | Viewer moves to the iPod theme: brushed silver / black, glossy blue selection bar, soft corners | Kostek's call; other surfaces stay amber for now |
+| 2026-11-02 | Browser extension follows the iPod theme: metal title bar, blue selection bar and Save button | Kostek's call, so the popup matches the viewer |
