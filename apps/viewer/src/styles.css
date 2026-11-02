@@ -3565,3 +3565,57 @@ select:focus,
 .graphControlRow input[type="range"]::-moz-range-thumb {
   border-radius: 50%;
 }
+
+/* ---------- Recently removed ---------- */
+/* The trash at the foot of the Memories list: a quiet disclosure row, then the removed
+   memories as the same cards, dimmed so they never read as live ones. */
+.trash {
+  margin-top: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+
+.trashToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.trashToggle:hover {
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+  color: var(--text);
+}
+
+.trashChevron {
+  width: 1em;
+  color: var(--text-faint);
+}
+
+.trashNote {
+  margin: 8px 0;
+  color: var(--text-faint);
+}
+
+.trashItem {
+  opacity: 0.8;
+}
+
+.trashItem:hover {
+  opacity: 1;
+}
+
+.trashEmpty {
+  margin-top: 8px;
+}
+
+.trashItem + .trashItem {
+  margin-top: 8px;
+}

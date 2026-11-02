@@ -220,6 +220,7 @@ import type {
   SettledEntityPair,
   SpeakerRoster,
   SyncTargets,
+  TrashedMemory,
   UpdateInput,
   UpdateResult,
 } from "./types.js";
@@ -230,6 +231,15 @@ import { folderPrefix, hasDiskPath } from "./walk.js";
 // The fixed owner for the single-user embedded tier. Multi-tenant hosts pass a real
 // ownerId per call; the column exists everywhere so the schema is sync/cloud-ready.
 export const SENTINEL_OWNER = "00000000-0000-0000-0000-000000000000";
+
+/** How long a removed memory stays restorable before the purge deletes it for good. */
+export const TRASH_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** A jsonb value as the text a jsonb parameter takes; drivers hand jsonb back parsed or not. */
+function jsonText(v: unknown): string {
+  return typeof v === "string" ? v : JSON.stringify(v ?? []);
+}
 
 /** The action class a contradiction re-check writes, so its findings are identifiable as its own. */
 const RECHECK_CLASS = "emergent_contradiction";
@@ -3506,56 +3516,249 @@ export class Memloom implements MemoryEngine {
   }
 
   /**
-   * Delete a belief outright: every version in its chain, the edges it participates in, and
-   * any pending conflict that references it. Unlike update(), this is not reversible; the
-   * version history goes with it. Entities the belief mentioned stay in the graph (other
-   * sources may mention them), and resolved conflicts stay as the audit log (they carry
-   * their own content copies).
+   * Move a belief to the trash: every version in its chain, the edges it participates in,
+   * its import provenance and its attachment rows, as snapshots in memory_trash. Nothing
+   * reads the trash but the trash routes, so to recall, the graph and reconcile the belief is
+   * gone at once. restoreMemory() puts it back; after TRASH_DAYS the purge deletes it and its
+   * attachment files for good.
+   *
+   * A pending conflict that references it is dropped rather than kept: it would render as a
+   * ghost nobody can act on, and after a restore the next reconcile can raise it again.
+   * Entities the belief mentioned stay in the graph (other sources may mention them), and
+   * resolved conflicts stay as the audit log (they carry their own content copies).
    */
   async deleteMemory(memoryId: string, ownerId: string = SENTINEL_OWNER): Promise<void> {
-    let gone: { media_path: string }[] = [];
     await this.#storage.tx(async (tx) => {
       const [row] = await tx.query<{ root_id: string }>(
         "SELECT root_id FROM memory_objects WHERE id = $1 AND owner_id = $2",
         [memoryId, ownerId],
       );
       if (!row) throw new Error(`memloom: no memory ${memoryId}`);
-      // Edges the chain appears in (mention, replaces, distinct) and relationships it
-      // stated (source_id) go with it. Runs before the row delete: the subselects need
-      // the chain to still exist.
-      await tx.query(
-        `DELETE FROM memory_edges
-         WHERE owner_id = $2 AND (
-           from_id IN (SELECT id FROM memory_objects WHERE owner_id = $2 AND root_id = $1)
-           OR to_id IN (SELECT id FROM memory_objects WHERE owner_id = $2 AND root_id = $1)
-           OR source_id IN (SELECT id FROM memory_objects WHERE owner_id = $2 AND root_id = $1))`,
+      const chain = "SELECT id FROM memory_objects WHERE owner_id = $2 AND root_id = $1";
+      const [snap] = await tx.query<{
+        objects: unknown;
+        edges: unknown;
+        provenance: unknown;
+        attachments: unknown;
+      }>(
+        `SELECT
+           (SELECT coalesce(jsonb_agg(to_jsonb(o) - 'search_tsv' ORDER BY o.version), '[]'::jsonb)
+              FROM memory_objects o WHERE o.owner_id = $2 AND o.root_id = $1) AS objects,
+           (SELECT coalesce(jsonb_agg(to_jsonb(e)), '[]'::jsonb)
+              FROM memory_edges e
+             WHERE e.owner_id = $2 AND (e.from_id IN (${chain}) OR e.to_id IN (${chain})
+                                        OR e.source_id IN (${chain}))) AS edges,
+           (SELECT coalesce(jsonb_agg(to_jsonb(p)), '[]'::jsonb)
+              FROM import_provenance p WHERE p.memory_id IN (${chain})) AS provenance,
+           (SELECT coalesce(jsonb_agg(to_jsonb(a)), '[]'::jsonb)
+              FROM memory_attachments a WHERE a.owner_id = $2 AND a.root_id = $1) AS attachments`,
         [row.root_id, ownerId],
       );
-      // A pending conflict pointing at a deleted memory would render as a ghost the owner
-      // can no longer act on; drop it whether the memory is the incoming or a candidate side.
+      // The newest active version is what the trash list shows; a fully stale chain falls
+      // back to its newest row.
+      const [current] = await tx.query<{
+        content: string;
+        memory_type: string;
+        scope_id: string | null;
+      }>(
+        `SELECT content, memory_type, scope_id FROM memory_objects
+          WHERE owner_id = $2 AND root_id = $1
+          ORDER BY (status = 'active') DESC, version DESC LIMIT 1`,
+        [row.root_id, ownerId],
+      );
+      // Removing a belief that was restored and removed again replaces the old snapshot.
+      await tx.query(
+        `INSERT INTO memory_trash (owner_id, root_id, content, memory_type, scope_id,
+                                   objects, edges, provenance, attachments)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (owner_id, root_id) DO UPDATE SET
+           deleted_at = now(), content = EXCLUDED.content, memory_type = EXCLUDED.memory_type,
+           scope_id = EXCLUDED.scope_id, objects = EXCLUDED.objects, edges = EXCLUDED.edges,
+           provenance = EXCLUDED.provenance, attachments = EXCLUDED.attachments`,
+        [
+          ownerId,
+          row.root_id,
+          current?.content ?? "",
+          current?.memory_type ?? "fact",
+          current?.scope_id ?? null,
+          jsonText(snap?.objects),
+          jsonText(snap?.edges),
+          jsonText(snap?.provenance),
+          jsonText(snap?.attachments),
+        ],
+      );
+      // Runs before the row delete: the subselects need the chain to still exist.
+      await tx.query(
+        `DELETE FROM memory_edges
+         WHERE owner_id = $2
+           AND (from_id IN (${chain}) OR to_id IN (${chain}) OR source_id IN (${chain}))`,
+        [row.root_id, ownerId],
+      );
       await tx.query(
         `DELETE FROM memory_dedup_decisions
          WHERE owner_id = $2 AND action = 'conflict' AND resolution_action IS NULL
-           AND (incoming_id IN (SELECT id FROM memory_objects WHERE owner_id = $2 AND root_id = $1)
+           AND (incoming_id IN (${chain})
              OR EXISTS (
                SELECT 1 FROM jsonb_array_elements(candidates) AS cand
                JOIN memory_objects mo ON mo.id = (cand.value->>'id')::uuid
                WHERE mo.owner_id = $2 AND mo.root_id = $1))`,
         [row.root_id, ownerId],
       );
+      // import_provenance goes by cascade; its snapshot is already taken.
       await tx.query("DELETE FROM memory_objects WHERE owner_id = $1 AND root_id = $2", [
         ownerId,
         row.root_id,
       ]);
-      // Attached files go with the belief. Collected inside the transaction and unlinked
-      // after it commits: a filesystem delete cannot be rolled back, so doing it in here
-      // would leave a photo gone and its row alive if anything below failed.
-      gone = await tx.query<{ media_path: string }>(
-        "DELETE FROM memory_attachments WHERE owner_id = $1 AND root_id = $2 RETURNING media_path",
-        [ownerId, row.root_id],
-      );
+      // The files stay on disk until the purge, so a restore gets them back.
+      await tx.query("DELETE FROM memory_attachments WHERE owner_id = $1 AND root_id = $2", [
+        ownerId,
+        row.root_id,
+      ]);
     });
-    for (const a of gone) await discardAttachment(a.media_path);
+    await this.purgeTrash({ ownerId });
+  }
+
+  /** The trash, newest removal first. Purges what has expired before it answers. */
+  async listTrash(ownerId: string = SENTINEL_OWNER): Promise<TrashedMemory[]> {
+    await this.purgeTrash({ ownerId });
+    const rows = await this.#storage.query<{
+      root_id: string;
+      content: string;
+      memory_type: string;
+      scope_id: string | null;
+      versions: number;
+      attachments: number;
+      deleted_at: Date | string;
+    }>(
+      `SELECT root_id, content, memory_type, scope_id,
+              jsonb_array_length(objects) AS versions,
+              jsonb_array_length(attachments) AS attachments, deleted_at
+         FROM memory_trash WHERE owner_id = $1 ORDER BY deleted_at DESC`,
+      [ownerId],
+    );
+    return rows.map((r) => {
+      const deleted = new Date(r.deleted_at);
+      return {
+        rootId: r.root_id,
+        content: r.content,
+        memoryType: r.memory_type,
+        scopeId: r.scope_id,
+        versions: Number(r.versions),
+        attachments: Number(r.attachments),
+        deletedAt: deleted.toISOString(),
+        expiresAt: new Date(deleted.getTime() + TRASH_DAYS * DAY_MS).toISOString(),
+      };
+    });
+  }
+
+  /**
+   * Put a removed belief back as it was: every version, its edges, provenance and
+   * attachments. An edge whose other end was deleted in the meantime stays out, and a folder
+   * that no longer exists leaves the belief in none. Returns the current version's id.
+   */
+  async restoreMemory(rootId: string, ownerId: string = SENTINEL_OWNER): Promise<{ id: string }> {
+    const id = await this.#storage.tx(async (tx) => {
+      const [t] = await tx.query<{
+        objects: unknown;
+        edges: unknown;
+        provenance: unknown;
+        attachments: unknown;
+      }>(
+        `DELETE FROM memory_trash WHERE owner_id = $1 AND root_id = $2
+         RETURNING objects, edges, provenance, attachments`,
+        [ownerId, rootId],
+      );
+      if (!t) throw new Error(`memloom: no removed memory ${rootId}`);
+      // The column list comes from the catalog, so a column a later migration adds comes back
+      // too. Generated columns (search_tsv) are left for Postgres to recompute.
+      const cols = await tx.query<{ name: string }>(
+        `SELECT column_name AS name FROM information_schema.columns
+          WHERE table_schema = current_schema() AND table_name = 'memory_objects'
+            AND is_generated = 'NEVER' ORDER BY ordinal_position`,
+      );
+      const list = cols.map((c) => `"${c.name}"`).join(", ");
+      const values = cols
+        .map((c) =>
+          c.name === "scope_id"
+            ? "(SELECT s.id FROM memory_scopes s WHERE s.id = r.scope_id)"
+            : `r."${c.name}"`,
+        )
+        .join(", ");
+      await tx.query(
+        `INSERT INTO memory_objects (${list})
+         SELECT ${values} FROM jsonb_populate_recordset(NULL::memory_objects, $1::jsonb) r`,
+        [jsonText(t.objects)],
+      );
+      // Edges come back only when both ends still exist: a memory or an entity on the far
+      // side may have been deleted while this one sat in the trash.
+      await tx.query(
+        `INSERT INTO memory_edges
+         SELECT r.* FROM jsonb_populate_recordset(NULL::memory_edges, $1::jsonb) r
+          WHERE (EXISTS (SELECT 1 FROM memory_objects WHERE id = r.from_id)
+                 OR EXISTS (SELECT 1 FROM memory_entities WHERE id = r.from_id))
+            AND (EXISTS (SELECT 1 FROM memory_objects WHERE id = r.to_id)
+                 OR EXISTS (SELECT 1 FROM memory_entities WHERE id = r.to_id))
+         ON CONFLICT (id) DO NOTHING`,
+        [jsonText(t.edges)],
+      );
+      await tx.query(
+        `INSERT INTO import_provenance
+         SELECT r.* FROM jsonb_populate_recordset(NULL::import_provenance, $1::jsonb) r
+         ON CONFLICT (memory_id) DO NOTHING`,
+        [jsonText(t.provenance)],
+      );
+      await tx.query(
+        `INSERT INTO memory_attachments
+         SELECT r.* FROM jsonb_populate_recordset(NULL::memory_attachments, $1::jsonb) r
+         ON CONFLICT (id) DO NOTHING`,
+        [jsonText(t.attachments)],
+      );
+      const [cur] = await tx.query<{ id: string }>(
+        `SELECT id FROM memory_objects WHERE owner_id = $1 AND root_id = $2
+          ORDER BY (status = 'active') DESC, version DESC LIMIT 1`,
+        [ownerId, rootId],
+      );
+      return cur?.id ?? rootId;
+    });
+    // Back in memory_objects without an index pass of its own; the scheduled one finds it.
+    this.#scheduleAutoIndex(ownerId);
+    return { id };
+  }
+
+  /**
+   * Delete removed beliefs for good, with their attachment files. By default only what has
+   * been in the trash longer than TRASH_DAYS; with a rootId, that one belief now (delete
+   * forever); with all, the whole trash (empty trash). Without an ownerId it sweeps every
+   * owner, which is what the daemon runs at start.
+   */
+  async purgeTrash(
+    opts: { ownerId?: string; rootId?: string; all?: boolean } = {},
+  ): Promise<{ purged: number }> {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (opts.ownerId) {
+      params.push(opts.ownerId);
+      where.push(`owner_id = $${params.length}`);
+    }
+    if (opts.rootId) {
+      params.push(opts.rootId);
+      where.push(`root_id = $${params.length}`);
+    } else if (!opts.all) {
+      where.push(`deleted_at < now() - interval '${TRASH_DAYS} days'`);
+    }
+    const gone = await this.#storage.query<{ attachments: unknown }>(
+      `DELETE FROM memory_trash ${where.length ? `WHERE ${where.join(" AND ")}` : ""}
+       RETURNING attachments`,
+      params,
+    );
+    // Unlinked after the delete commits: a file delete cannot be rolled back.
+    for (const g of gone) {
+      const files = (
+        typeof g.attachments === "string" ? JSON.parse(g.attachments) : g.attachments
+      ) as { media_path: string }[] | null;
+      for (const a of files ?? []) await discardAttachment(a.media_path);
+    }
+    return { purged: gone.length };
   }
 
   /**
@@ -3712,8 +3915,12 @@ export class Memloom implements MemoryEngine {
       throw new Error(`memloom: deleteOwner needs a uuid owner id, got ${JSON.stringify(ownerId)}`);
     }
     // Attachment bytes live on disk, outside the tables the sweep below empties.
+    // Attachment rows of trashed beliefs live in the trash snapshot; their files are here too.
     const files = await this.#storage.query<{ media_path: string }>(
-      "SELECT media_path FROM memory_attachments WHERE owner_id = $1",
+      `SELECT media_path FROM memory_attachments WHERE owner_id = $1
+       UNION ALL
+       SELECT a->>'media_path' FROM memory_trash, jsonb_array_elements(attachments) a
+        WHERE owner_id = $1`,
       [ownerId],
     );
     const result = await this.#storage.tx(async (tx) => {

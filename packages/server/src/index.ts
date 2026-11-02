@@ -1013,7 +1013,31 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     c.json({ versions: await memloom.history(c.req.param("id"), ownerOf(c)) }),
   );
 
-  // Deletes the whole belief: every version, its edges, and pending conflicts naming it.
+  // The trash. Registered before DELETE /memory/:id, which would otherwise take "trash"
+  // for a memory id.
+  app.get("/memory/trash", async (c) => c.json({ items: await memloom.listTrash(ownerOf(c)) }));
+
+  app.post("/memory/trash/:rootId/restore", async (c) => {
+    try {
+      return c.json(await memloom.restoreMemory(c.req.param("rootId"), ownerOf(c)));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      return c.json({ error: message }, /no removed memory/.test(message) ? 404 : 400);
+    }
+  });
+
+  // Delete forever, one belief.
+  app.delete("/memory/trash/:rootId", async (c) =>
+    c.json(await memloom.purgeTrash({ ownerId: ownerOf(c), rootId: c.req.param("rootId") })),
+  );
+
+  // Empty the trash.
+  app.delete("/memory/trash", async (c) =>
+    c.json(await memloom.purgeTrash({ ownerId: ownerOf(c), all: true })),
+  );
+
+  // Moves the whole belief to the trash: every version, its edges and attachments. Pending
+  // conflicts naming it are dropped. Restorable for 30 days from /memory/trash.
   app.delete("/memory/:id", async (c) => {
     try {
       await memloom.deleteMemory(c.req.param("id"), ownerOf(c));
@@ -2615,5 +2639,8 @@ export function serve(memloom: Memloom, port = 4319) {
   // defaultOwnerId is left to createServer, which reads MEMLOOM_OWNER_ID from this process.
   const app = createServer(memloom, { activity });
   startReconcileScheduler(memloom, activity);
+  // Removals and trash listings purge their own owner's expired items; this catches owners
+  // nobody has touched since. Best effort: a failed sweep only delays a deletion.
+  memloom.purgeTrash().catch((err) => console.error("memloom: trash purge failed:", err));
   return nodeServe({ fetch: app.fetch, port, hostname: "127.0.0.1" });
 }

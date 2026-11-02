@@ -731,6 +731,26 @@ export interface MemoryAttachment {
   createdAt: string;
 }
 
+/**
+ * A removed memory in the trash. It stays restorable for TRASH_DAYS, then the next purge
+ * deletes it and its attachment files for good.
+ */
+export interface TrashedMemory {
+  /** The belief's lineage id: what restore and delete-forever take. */
+  rootId: string;
+  /** The current version's text when it was removed. */
+  content: string;
+  memoryType: string;
+  /** The folder it was in, or null. The folder may be gone by now; restore then files it nowhere. */
+  scopeId: string | null;
+  /** How many versions the chain had. */
+  versions: number;
+  attachments: number;
+  deletedAt: string;
+  /** When the purge deletes it for good. */
+  expiresAt: string;
+}
+
 export interface MemoryAttachInput {
   /** Any version of the belief; the attachment is filed against its lineage. */
   memoryId: string;

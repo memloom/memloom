@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, type Memory, type MemoryType } from "./api";
+import { api, type Memory, type MemoryType, type TrashedMemory } from "./api";
 import { RecallCard, SaveMemoryCard } from "./cards";
 import { cachedData, prefetch, refetch } from "./prefetch";
 import { flattenScopes, ScopePicker, type ScopeSelection, ScopeTree, useScopes } from "./ScopeTree";
@@ -7,8 +7,8 @@ import { toastDone } from "./toast";
 
 // Browse every active memory, newest first. The reading counterpart to the Console's
 // query-driven recall. Each memory can be edited (a manual, human action that appends a new
-// version), its version history expanded, or removed outright (two-step confirm; deletes
-// the whole version chain). The folder sidebar narrows the list to one subtree, and
+// version), its version history expanded, or removed (two-step confirm; the whole version
+// chain moves to Recently removed, restorable for 30 days). The folder sidebar narrows the list to one subtree, and
 // multi-select feeds the bulk "move to folder" action.
 
 const TYPES: MemoryType[] = ["fact", "preference", "episode", "procedure"];
@@ -63,6 +63,7 @@ function MemoryCard({
     setErr(null);
     try {
       await api.deleteMemory(m.id);
+      toastDone("moved to Recently removed");
       onChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -190,6 +191,152 @@ function MemoryCard({
   );
 }
 
+function daysLeft(expiresAt: string): string {
+  const days = Math.max(0, Math.ceil((Date.parse(expiresAt) - Date.now()) / 86_400_000));
+  return days <= 1 ? "deleted for good tomorrow" : `deleted for good in ${days} days`;
+}
+
+// Removed memories, kept 30 days. Collapsed by default: it is where you go after a mistake,
+// not something to read every visit. Restore puts a memory back with its versions, links and
+// attachments; delete forever and empty trash are two-click, like remove.
+function RecentlyRemoved({
+  refreshKey,
+  folderOf,
+  onRestored,
+}: {
+  refreshKey: number;
+  folderOf: (scopeId: string | null) => string;
+  onRestored: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState<TrashedMemory[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [arming, setArming] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    api
+      .trash()
+      .then(setItems)
+      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
+  }, []);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is the trigger
+  useEffect(load, [load, refreshKey]);
+
+  async function act(id: string, run: () => Promise<unknown>, done: string) {
+    setBusy(id);
+    setErr(null);
+    try {
+      await run();
+      toastDone(done);
+      setArming(null);
+      load();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // A second click within the same button confirms; leaving it disarms.
+  function armed(key: string, run: () => void) {
+    if (arming !== key) setArming(key);
+    else run();
+  }
+
+  const count = items?.length ?? 0;
+  return (
+    <div className="trash">
+      <button
+        type="button"
+        className="trashToggle"
+        aria-expanded={open}
+        onClick={() => setOpen(!open)}
+      >
+        <span className="trashChevron" aria-hidden="true">
+          {open ? "▾" : "▸"}
+        </span>
+        Recently removed{items ? `; ${count}` : ""}
+      </button>
+      {open && (
+        <div className="trashBody">
+          <p className="trashNote">
+            Removed memories wait here for 30 days, then they and their attachments are deleted for
+            good. Agents and recall don't see them.
+          </p>
+          {err && <div className="notice noticeError">{err}</div>}
+          {items && count === 0 && <p className="trashNote">Nothing removed.</p>}
+          {items?.map((t) => (
+            <div key={t.rootId} className="recallItem trashItem">
+              <div className="recallTitle">
+                <span className="typeTag">{t.memoryType}</span>
+                {t.content}
+                {t.versions > 1 && <span className="versionTag">{t.versions} versions</span>}
+              </div>
+              <div className="chipLine">
+                <span className="scopeTag">{folderOf(t.scopeId)}</span>
+                {t.attachments > 0 && (
+                  <span className="scopeTag">
+                    {t.attachments} {t.attachments === 1 ? "attachment" : "attachments"}
+                  </span>
+                )}
+              </div>
+              <div className="recallMeta">
+                removed {new Date(t.deletedAt).toLocaleString()}; {daysLeft(t.expiresAt)}
+                <button
+                  type="button"
+                  className="metaAction"
+                  disabled={busy === t.rootId}
+                  onClick={() =>
+                    act(
+                      t.rootId,
+                      async () => {
+                        await api.restoreMemory(t.rootId);
+                        onRestored();
+                      },
+                      "restored",
+                    )
+                  }
+                >
+                  restore
+                </button>
+                <button
+                  type="button"
+                  className="metaAction metaActionDanger"
+                  disabled={busy === t.rootId}
+                  onBlur={() => setArming(null)}
+                  onClick={() =>
+                    armed(t.rootId, () =>
+                      act(t.rootId, () => api.deleteForever(t.rootId), "deleted for good"),
+                    )
+                  }
+                >
+                  {arming === t.rootId ? "confirm delete forever" : "delete forever"}
+                </button>
+              </div>
+            </div>
+          ))}
+          {count > 1 && (
+            <button
+              type="button"
+              className="btn btnGhost trashEmpty"
+              disabled={busy !== null}
+              onBlur={() => setArming(null)}
+              onClick={() =>
+                armed("*", () =>
+                  act("*", () => api.emptyTrash(), `deleted ${count} memories for good`),
+                )
+              }
+            >
+              {arming === "*" ? `confirm: delete all ${count} for good` : "empty trash"}
+            </button>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function MemoriesView() {
   const [scopeSel, setScopeSel] = useState<ScopeSelection | null>(null);
   // The tree refreshes after list mutations here (a move changes the counts), and the
@@ -208,6 +355,7 @@ export function MemoriesView() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [moveTarget, setMoveTarget] = useState("");
   const [moving, setMoving] = useState(false);
+  const [trashVersion, setTrashVersion] = useState(0);
 
   const load = useCallback(() => {
     setMemories(cachedData<Memory[]>(key));
@@ -225,10 +373,16 @@ export function MemoriesView() {
   useEffect(load, [load]);
 
   // A mutation changed rows, so both the list and the sidebar counts are stale.
+  // A removal also lands in Recently removed.
   const changed = useCallback(() => {
     reload();
     setTreeVersion((v) => v + 1);
+    setTrashVersion((v) => v + 1);
   }, [reload]);
+
+  const folderOf = (scopeId: string | null) =>
+    (scopeId && scopes ? flattenScopes(scopes).find((s) => s.id === scopeId)?.path : null) ??
+    "uncategorized";
 
   async function moveSelected() {
     if (selected.size === 0 || moveTarget === "") return;
@@ -384,6 +538,8 @@ export function MemoriesView() {
           {memories && memories.length > 0 && shown.length === 0 && (
             <p style={{ color: "var(--text-faint)" }}>Nothing matches the current filters.</p>
           )}
+
+          <RecentlyRemoved refreshKey={trashVersion} folderOf={folderOf} onRestored={changed} />
         </div>
       </div>
     </div>

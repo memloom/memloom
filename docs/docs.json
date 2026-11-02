@@ -83,6 +83,10 @@
                   "POST /memory/{id}/update",
                   "GET /memory/{id}/history",
                   "DELETE /memory/{id}",
+                  "GET /memory/trash",
+                  "POST /memory/trash/{rootId}/restore",
+                  "DELETE /memory/trash/{rootId}",
+                  "DELETE /memory/trash",
                   "GET /memory/passage/{id}"
                 ]
               },
