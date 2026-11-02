@@ -47,33 +47,37 @@ html.dark {
   text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
 }
 
-#sidebar-content li[data-active] > a *,
-#sidebar-content li[data-active] > a svg {
+/* Text and icons go white. Mintlify paints icons as masked SVGs with bg-current, so
+   they follow the color; never clear their background. */
+#sidebar-content li[data-active] > a * {
   color: #fff !important;
-  background-color: transparent !important;
 }
 
 #sidebar-content li:not([data-active]) > a:hover {
   border-radius: 5px;
 }
 
-/* Top tabs: the active one becomes a blue pill instead of an underline. */
+/* Top tabs: the active one becomes a blue pill instead of an underline. The tab is an
+   <a> holding the icon, the label and an absolutely positioned underline div. */
 .nav-tabs-item[data-active] {
-  color: #fff !important;
-}
-
-.nav-tabs-item[data-active] > div:first-child {
+  height: 28px;
+  align-self: center;
+  padding: 0 10px;
   background: var(--ipod-select-bg);
   border-radius: 5px;
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 35%),
     0 0 0 1px var(--ipod-select-border);
+  color: #fff !important;
   text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
-  padding: 0 10px;
 }
 
 .nav-tabs-item[data-active] * {
   color: #fff !important;
+}
+
+.nav-tabs-item[data-active] > div.absolute {
+  display: none;
 }
 
 /* The search box is a field, so it stays light on silver. */
