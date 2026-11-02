@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+## 0.12.0 (2026-11-02)
+
+- Removing a memory moves it to a trash for 30 days instead of deleting it at once.
+  `DELETE /memory/{id}` now trashes the whole chain (versions, graph edges, provenance,
+  attachments), and recall, the graph and agents stop seeing it right away. Restore brings all of
+  it back, and delete forever and empty trash erase it for good. Anything older than 30 days is
+  purged with its files. New routes: `GET /memory/trash`, `POST /memory/trash/{rootId}/restore`,
+  `DELETE /memory/trash/{rootId}` and `DELETE /memory/trash`. The CLI and MCP have no trash
+  commands yet
+- The viewer has a new look: brushed silver in light mode, black in dark, and a glossy blue bar
+  for whatever is selected. Action pop-ups use the same bar, red for errors. The trash shows as a
+  "Recently removed" row pinned to the bottom of the folder sidebar
+- Memories and Documents can show their folders as a map of hexagons, each sized by how much the
+  folder holds. Clicking a folder zooms into its subfolders, and a folder without subfolders
+  opens its memories as a graph. The list stays the default
+- The viewer works on phones: under 768px the folder sidebar becomes a drawer, the tabs scroll
+  sideways and the map packs to fit the screen
 - A browser extension in `apps/extension` (Chrome, Chromium browsers and Firefox) saves the page
   you're on, or a link, into a `reading-list` folder with an optional note, so agents can find it
   later through recall. The daemon accepts requests from that extension's pinned Chrome id.
