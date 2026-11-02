@@ -3629,3 +3629,90 @@ select:focus,
 .trashEmpty {
   margin-bottom: 12px;
 }
+
+/* ---------- Folder map ---------- */
+/* Folders as hexagons sized by what they hold. Plates of the same silver (or black) as the
+   cards, a hairline edge, and the blue selection bar for the folder that is open. */
+.folderViewToggle {
+  width: max-content;
+  margin: 0 0 16px auto;
+}
+
+.folderViewToggle .graphSegmentBtn {
+  min-width: 56px;
+  padding: 5px 14px;
+  font-size: 12px;
+}
+
+.folderMap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.folderMapCrumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  color: var(--text-faint);
+}
+
+.folderMapOpen {
+  margin-left: auto;
+}
+
+.folderMapField {
+  width: 100%;
+  height: min(70vh, 720px);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-inset);
+}
+
+.folderHex {
+  cursor: pointer;
+  outline: none;
+}
+
+.folderHex polygon {
+  fill: var(--bg-raised);
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+  vector-effect: non-scaling-stroke;
+  transition: fill 120ms ease, stroke 120ms ease;
+}
+
+.folderHex text {
+  fill: var(--text-muted);
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+.folderHex:hover polygon,
+.folderHex:focus-visible polygon {
+  stroke: var(--brand);
+  stroke-width: 2.5;
+}
+
+.folderHexOwn polygon {
+  stroke-dasharray: 4 3;
+}
+
+.folderHexSelected polygon {
+  fill: url(#folderMapSelected);
+  stroke: var(--select-border);
+}
+
+.folderHexSelected text {
+  fill: var(--select-text);
+}
+
+.folderMapHover {
+  min-height: 1.4em;
+  color: var(--text-muted);
+}
+
+.folderMapEmpty {
+  color: var(--text-faint);
+}

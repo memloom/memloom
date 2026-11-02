@@ -2,6 +2,7 @@ import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, type Memory, type MemoryType, type TrashedMemory } from "./api";
 import { RecallCard, SaveMemoryCard } from "./cards";
+import { FolderMap, FolderViewToggle, useFolderView } from "./FolderMap";
 import { cachedData, prefetch, refetch } from "./prefetch";
 import { flattenScopes, ScopePicker, type ScopeSelection, ScopeTree, useScopes } from "./ScopeTree";
 import { toastDone } from "./toast";
@@ -332,6 +333,7 @@ export function MemoriesView() {
   const [moveTarget, setMoveTarget] = useState("");
   const [moving, setMoving] = useState(false);
   const [trashVersion, setTrashVersion] = useState(0);
+  const [view, setView] = useFolderView("memories");
   // The panel shows either the memory list or the trash; the sidebar's pinned row switches.
   const [showTrash, setShowTrash] = useState(false);
   const [trash, setTrash] = useState<TrashedMemory[] | null>(null);
@@ -427,6 +429,7 @@ export function MemoriesView() {
       />
       <div className="panel">
         <div className="panelInner">
+          {!showTrash && <FolderViewToggle mode={view} onChange={setView} />}
           {showTrash ? (
             <RecentlyRemoved
               items={trash}
@@ -435,6 +438,21 @@ export function MemoriesView() {
               onChanged={changed}
               onBack={() => setShowTrash(false)}
             />
+          ) : view === "map" ? (
+            scopes ? (
+              <FolderMap
+                scopes={scopes}
+                count="memories"
+                selected={scopeSel}
+                onOpen={(sel) => {
+                  setScopeSel(sel);
+                  setSelected(new Set());
+                  setView("list");
+                }}
+              />
+            ) : (
+              <div className="spin">loading…</div>
+            )
           ) : (
             <>
               <h2 className="sectionTitle">Save a memory</h2>

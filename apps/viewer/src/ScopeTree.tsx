@@ -13,6 +13,23 @@ import { cachedData, prefetch, refetch } from "./prefetch";
  * One selected folder, resolved to everything a view needs to filter by. The daemon's
  * scope params take `path`; client-side filters (documents, graph) use the id set.
  */
+/**
+ * The selection a click on this folder makes: the folder plus every descendant. Shared with the
+ * folder map, so a hexagon opens exactly what the same folder in the sidebar would.
+ */
+export function selectionFor(node: ScopeNode, scopes: ScopeNode[]): ScopeSelection {
+  const ids = collectIds(node);
+  const uncategorizedId =
+    scopes.find((n) => n.kind === "system" && n.path === "uncategorized")?.id ?? null;
+  return {
+    id: node.id,
+    path: node.path,
+    label: flattenScopes(scopes).find((o) => o.id === node.id)?.label ?? node.name,
+    ids,
+    includeUnscoped: uncategorizedId !== null && ids.includes(uncategorizedId),
+  };
+}
+
 export interface ScopeSelection {
   id: string;
   /** Addressable slug path ("projects/memloom"), what the daemon's scope params take. */
