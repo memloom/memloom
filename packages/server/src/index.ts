@@ -335,7 +335,7 @@ const saveSchema = z.object({
   content: z.string().min(1, "content must be a non-empty string"),
   canonical: z.string().optional(),
   memoryType: z.enum(MEMORY_TYPES).optional(),
-  ownerId: z.string().uuid().optional(),
+  ownerId: z.guid().optional(),
   scope: z.string().min(1).optional(),
   tags: z.array(z.string()).optional(),
 });
@@ -352,7 +352,7 @@ const querySchema = z.object({
 const scopeCreateSchema = z.object({
   path: z.string().min(1, "path must be a non-empty string"),
   description: z.string().optional(),
-  ownerId: z.string().uuid().optional(),
+  ownerId: z.guid().optional(),
 });
 
 const scopeUpdateSchema = z.object({
@@ -361,11 +361,11 @@ const scopeUpdateSchema = z.object({
 });
 
 const scopeMoveSchema = z.object({
-  parentId: z.string().uuid().nullable(),
+  parentId: z.guid().nullable(),
 });
 
 const memoryScopeSchema = z.object({
-  ids: z.array(z.string().uuid()).min(1, "ids must name at least one memory"),
+  ids: z.array(z.guid()).min(1, "ids must name at least one memory"),
   scope: z.string().min(1, "scope must be a non-empty string"),
 });
 
@@ -384,7 +384,7 @@ const updateSchema = z.object({
 
 const contextAddSchema = z.object({
   path: z.string().min(1, "path must be a non-empty string"),
-  ownerId: z.string().uuid().optional(),
+  ownerId: z.guid().optional(),
   scope: z.string().min(1).optional(),
 });
 
@@ -393,7 +393,7 @@ const contextAddSchema = z.object({
 const contextUrlSchema = z.object({
   url: z.string().refine(isHttpUrl, "url must start with http:// or https://"),
   html: z.string().max(10_000_000).optional(),
-  ownerId: z.string().uuid().optional(),
+  ownerId: z.guid().optional(),
   scope: z.string().min(1).optional(),
 });
 
@@ -430,7 +430,7 @@ const entityPatchSchema = z
   });
 
 const entityMergeSchema = z.object({
-  into: z.string().uuid(),
+  into: z.guid(),
 });
 
 const entityResolveSchema = z.object({
@@ -499,7 +499,7 @@ const notionSyncSchema = z.object({
 });
 
 const assistantChatSchema = z.object({
-  sessionId: z.string().uuid().optional(),
+  sessionId: z.guid().optional(),
   message: z.string().min(1, "message must be a non-empty string"),
   // Loosely validated on purpose: OpenRouter is the authority on what exists, and its
   // errors already surface through the SSE error event.
@@ -507,7 +507,7 @@ const assistantChatSchema = z.object({
 });
 
 const assistantAttachSchema = z.object({
-  sessionId: z.string().uuid().optional(),
+  sessionId: z.guid().optional(),
   filename: z.string().min(1, "filename must be a non-empty string").max(255),
   contentBase64: z.string().min(1, "contentBase64 must be a non-empty string"),
 });
@@ -1089,7 +1089,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   );
 
   app.get("/memory/:id/attachments", async (c) => {
-    if (!z.string().uuid().safeParse(c.req.param("id")).success)
+    if (!z.guid().safeParse(c.req.param("id")).success)
       return c.json({ error: "not a memory id" }, 400);
     return c.json({
       attachments: await memloom.memoryAttachments(c.req.param("id"), ownerOf(c)),
