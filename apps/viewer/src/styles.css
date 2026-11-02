@@ -3629,3 +3629,347 @@ select:focus,
 .trashEmpty {
   margin-bottom: 12px;
 }
+
+/* ---------- Folder map ---------- */
+/* Folders as hexagons sized by what they hold, filling the whole panel: no frame, the field
+   is the panel. Plates of the same silver (or black) as the cards, a hairline edge, names and
+   counts on the plates big enough to carry them, and the blue selection bar for the folder
+   that is open. Clicking zooms into the plate; the next level settles in from inside. */
+.panelMap {
+  overflow: hidden;
+}
+
+.panelMapInner {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  box-sizing: border-box;
+  padding: 12px 16px 0;
+}
+
+.folderViewToggle {
+  width: max-content;
+  margin: 0 0 16px auto;
+}
+
+.panelMapInner .folderViewToggle {
+  position: absolute;
+  top: 12px;
+  right: 16px;
+  margin: 0;
+  z-index: 3;
+}
+
+.folderViewToggle .graphSegmentBtn {
+  min-width: 56px;
+  padding: 5px 14px;
+  font-size: 12px;
+}
+
+.folderMap {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.folderMapCrumbs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding-right: 150px;
+  color: var(--text-faint);
+}
+
+.folderMapOpen {
+  margin-left: 12px;
+}
+
+.folderMapStage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.folderMapField {
+  display: block;
+}
+
+/* 420ms here and in the keyframes below matches ZOOM_MS in FolderMap.tsx. */
+.folderMapLayer {
+  transition:
+    transform 420ms ease-in,
+    opacity 420ms ease-in;
+}
+
+.folderMapEnter {
+  animation: folderMapEnter 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+.folderMapBack {
+  animation: folderMapBack 420ms cubic-bezier(0.2, 0.7, 0.2, 1);
+  transform-origin: center;
+  transform-box: fill-box;
+}
+
+@keyframes folderMapEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.55);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes folderMapBack {
+  from {
+    opacity: 0;
+    transform: scale(1.5);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .folderMapLayer,
+  .folderMapEnter,
+  .folderMapBack {
+    animation: none;
+    transition: none;
+  }
+}
+
+.folderMapGraph {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.folderHex {
+  cursor: pointer;
+  outline: none;
+}
+
+.folderHex polygon {
+  fill: var(--bg-raised);
+  stroke: var(--border-strong);
+  stroke-width: 1.5;
+  transition:
+    fill 120ms ease,
+    stroke 120ms ease;
+}
+
+.folderHexName {
+  fill: var(--text);
+  font-family: var(--sans);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.folderHexCount {
+  fill: var(--text-muted);
+  font-family: var(--mono);
+  pointer-events: none;
+}
+
+.folderHex:hover polygon,
+.folderHex:focus-visible polygon {
+  stroke: var(--brand);
+  stroke-width: 2.5;
+}
+
+.folderHexOwn polygon {
+  stroke-dasharray: 5 4;
+}
+
+.folderHexSelected polygon {
+  fill: url(#folderMapSelected);
+  stroke: var(--select-border);
+}
+
+.folderHexSelected .folderHexName,
+.folderHexSelected .folderHexCount {
+  fill: var(--select-text);
+}
+
+/* The hover popup: a raised plate that follows the pointer. */
+.folderMapPopup {
+  position: absolute;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 220px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-raised);
+  box-shadow:
+    inset 0 1px 0 var(--metal-edge),
+    0 4px 14px rgb(0 0 0 / 18%);
+  color: var(--text);
+  pointer-events: none;
+}
+
+.folderMapPopup span {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.folderMapPopup .folderMapPopupHint {
+  color: var(--text-faint);
+  font-family: var(--sans);
+}
+
+.folderMapEmpty {
+  color: var(--text-faint);
+}
+
+/* ---------- Phones ---------- */
+/* Under 768px the folder sidebar is a drawer behind a bar at the top of the panel, the tabs
+   scroll sideways instead of overflowing, the store counts in the header give way, and the
+   panels and the folder map use the full width. */
+.scopeDrawerToggle,
+.scopeDrawerBackdrop {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .header {
+    gap: 10px;
+    padding: 0 10px;
+  }
+
+  .wordmark {
+    font-size: 16px;
+  }
+
+  .tabs {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab {
+    flex: none;
+  }
+
+  .headerStats {
+    display: none;
+  }
+
+  .scopeLayout {
+    position: relative;
+    flex-direction: column;
+  }
+
+  .scopeDrawerToggle {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 10px 0;
+    padding: 8px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--metal-grain), var(--metal);
+    box-shadow: inset 0 1px 0 var(--metal-edge);
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .scopeDrawerLabel {
+    color: var(--text-faint);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .scopeDrawerCurrent {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  .scopeDrawerBackdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    border: none;
+    background: rgb(0 0 0 / 35%);
+  }
+
+  .scopeSidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 21;
+    width: min(300px, 85vw);
+    transform: translateX(-105%);
+    transition: transform 220ms ease;
+    box-shadow: 4px 0 18px rgb(0 0 0 / 22%);
+  }
+
+  .scopeSidebarOpen {
+    transform: none;
+  }
+
+  .panel {
+    padding: 12px 10px;
+  }
+
+  .panelMap {
+    padding: 0;
+  }
+
+  .panelMapInner {
+    padding: 8px 10px 0;
+  }
+
+  .panelMapInner .folderViewToggle {
+    top: 8px;
+    right: 10px;
+  }
+
+  .folderMapCrumbs {
+    flex-wrap: wrap;
+    padding-right: 130px;
+  }
+
+  .folderMapOpen {
+    margin-left: 0;
+  }
+
+  .folderMapPopup {
+    max-width: 180px;
+  }
+}
+
+@media (max-width: 767px) and (prefers-reduced-motion: reduce) {
+  .scopeSidebar {
+    transition: none;
+  }
+}

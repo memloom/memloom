@@ -92,6 +92,31 @@ const POSITION_CACHE_3D = new Map<string, CachedNodePosition>();
 const GRAPH_REGISTRY_2D: GraphRegistry = { nodes: new Map(), links: new Map() };
 const GRAPH_REGISTRY_3D: GraphRegistry = { nodes: new Map(), links: new Map() };
 
+interface GraphCaches {
+  pos2d: Map<string, CachedNodePosition>;
+  pos3d: Map<string, CachedNodePosition>;
+  reg2d: GraphRegistry;
+  reg3d: GraphRegistry;
+}
+
+const TAB_CACHES: GraphCaches = {
+  pos2d: POSITION_CACHE_2D,
+  pos3d: POSITION_CACHE_3D,
+  reg2d: GRAPH_REGISTRY_2D,
+  reg3d: GRAPH_REGISTRY_3D,
+};
+
+// An embedded graph (the folder map's) runs its own simulation, so it keeps its own node
+// objects and positions: sharing the tab's would let one engine move the other's nodes.
+function freshCaches(): GraphCaches {
+  return {
+    pos2d: new Map(),
+    pos3d: new Map(),
+    reg2d: { nodes: new Map(), links: new Map() },
+    reg3d: { nodes: new Map(), links: new Map() },
+  };
+}
+
 // One path per node kind: square (memory, chunk: content is square), circle (entity),
 // diamond (document).
 function traceNode(
@@ -130,6 +155,8 @@ export function GraphView({
   focus,
   onFocusConsumed,
   onChanged,
+  scope,
+  embedded = false,
 }: {
   graph: Graph;
   /** False while another tab is shown: the view stays mounted but its animation pauses. */
@@ -139,7 +166,12 @@ export function GraphView({
   onFocusConsumed?: () => void;
   /** Called after a file is ingested from the docked "+ add" panel, so App refetches. */
   onChanged?: () => void;
+  /** Show only this folder. Set by the folder map, which owns the choice. */
+  scope?: ScopeSelection | null;
+  /** True inside another view: separate layout caches from the Graph tab. */
+  embedded?: boolean;
 }) {
+  const caches = useMemo(() => (embedded ? freshCaches() : TAB_CACHES), [embedded]);
   const wrapRef = useRef<HTMLDivElement | null>(null);
   // react-force-graph's methods surface (zoom, zoomToFit, d3Force, ...). Kept loose.
   // biome-ignore lint/suspicious/noExplicitAny: untyped imperative handle from the lib
@@ -200,7 +232,10 @@ export function GraphView({
   );
   // The folder filter from the controls panel. Held here, not in the panel, so closing
   // the panel does not silently unfilter the canvas.
-  const [scopeSel, setScopeSel] = useState<ScopeSelection | null>(null);
+  const [scopeSel, setScopeSel] = useState<ScopeSelection | null>(scope ?? null);
+  useEffect(() => {
+    if (scope !== undefined) setScopeSel(scope);
+  }, [scope]);
   const [showControls, setShowControls] = useState(false);
   // 2D canvas or 3D scene. Both simulate with d3-force-3d, so the force stack and the
   // controls panel drive either; only the renderer and its camera differ.
@@ -263,11 +298,11 @@ export function GraphView({
         revealSelectedId,
         revealTraverse,
         scopeSel,
-        is3D ? POSITION_CACHE_3D : POSITION_CACHE_2D,
-        is3D ? GRAPH_REGISTRY_3D : GRAPH_REGISTRY_2D,
+        is3D ? caches.pos3d : caches.pos2d,
+        is3D ? caches.reg3d : caches.reg2d,
         is3D,
       ),
-    [graph, expanded, config, revealSelectedId, revealTraverse, scopeSel, is3D],
+    [graph, expanded, config, revealSelectedId, revealTraverse, scopeSel, is3D, caches],
   );
 
   const nodeMapRef = useRef(nodeMap);
@@ -361,7 +396,7 @@ export function GraphView({
 
   // Persist positions so a rebuild (refetch, expand/collapse) never relayouts from scratch.
   useEffect(() => {
-    const cache = modeRef.current === "3d" ? POSITION_CACHE_3D : POSITION_CACHE_2D;
+    const cache = modeRef.current === "3d" ? caches.pos3d : caches.pos2d;
     cache.clear();
     nodeMap.forEach((node, id) => {
       cache.set(id, {
@@ -376,7 +411,7 @@ export function GraphView({
         homeZ: node.homeZ,
       });
     });
-  }, [nodeMap]);
+  }, [nodeMap, caches]);
 
   // Remount when nodes are removed (collapse, doc deletion) so orphaned dots don't
   // linger. 2D only: the 3D data join removes and disposes stale objects itself, and a
@@ -492,6 +527,23 @@ export function GraphView({
     };
   }, [mode]);
 
+  // An embedded graph opens fresh, with no cached layout, so its nodes are still flying apart
+  // at the first fit. Frame it again once the layout has spread, with a margin that suits a
+  // phone as well as a monitor, unless the user has already moved the camera.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a size change refits on purpose
+  useEffect(() => {
+    if (!embedded) return;
+    const pad = Math.min(110, Math.round(size.width * 0.06));
+    const ids = [1500, 4000].map((ms) =>
+      window.setTimeout(() => {
+        if (!hasUserInteractedRef.current) fgRef.current?.zoomToFit?.(600, pad);
+      }, ms),
+    );
+    return () => {
+      for (const id of ids) window.clearTimeout(id);
+    };
+  }, [embedded, mode, size.width]);
+
   // Hover focus fades in/out instead of snapping (a mix-fade animation).
   const ensureHoverAnimation = useCallback(() => {
     if (hoverRef.current.rafId !== null) return;
@@ -568,24 +620,27 @@ export function GraphView({
   );
 
   // Dragging a node re-homes it: the anchor force now holds it where the user put it.
-  const handleNodeDragEnd = useCallback((node: Node) => {
-    const is3DDrag = modeRef.current === "3d";
-    node.homeX = node.x;
-    node.homeY = node.y;
-    if (is3DDrag) node.homeZ = node.z;
-    (is3DDrag ? POSITION_CACHE_3D : POSITION_CACHE_2D).set(node.id, {
-      x: node.x,
-      y: node.y,
-      z: node.z,
-      vx: node.vx,
-      vy: node.vy,
-      vz: node.vz,
-      homeX: node.homeX,
-      homeY: node.homeY,
-      homeZ: node.homeZ,
-    });
-    fgRef.current?.d3ReheatSimulation?.();
-  }, []);
+  const handleNodeDragEnd = useCallback(
+    (node: Node) => {
+      const is3DDrag = modeRef.current === "3d";
+      node.homeX = node.x;
+      node.homeY = node.y;
+      if (is3DDrag) node.homeZ = node.z;
+      (is3DDrag ? caches.pos3d : caches.pos2d).set(node.id, {
+        x: node.x,
+        y: node.y,
+        z: node.z,
+        vx: node.vx,
+        vy: node.vy,
+        vz: node.vz,
+        homeX: node.homeX,
+        homeY: node.homeY,
+        homeZ: node.homeZ,
+      });
+      fgRef.current?.d3ReheatSimulation?.();
+    },
+    [caches],
+  );
 
   // Select a chunk from the side panel's list and pan the canvas to it.
   const selectChunk = useCallback(

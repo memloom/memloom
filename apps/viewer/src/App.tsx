@@ -205,8 +205,8 @@ export function App() {
             }}
           />
         )}
-        {tab === "memories" && <MemoriesView />}
-        {tab === "documents" && <DocumentsView onChanged={refresh} />}
+        {tab === "memories" && <MemoriesView graph={graph} />}
+        {tab === "documents" && <DocumentsView onChanged={refresh} graph={graph} />}
         {tab === "schema" && <SchemaView onChanged={refresh} />}
         {/* One inbox for every kind of "you decide": entity folds, memory conflicts, and the
             unconfirmed pairs reconciliation found. They share a rail so none of them is below the fold. */}
