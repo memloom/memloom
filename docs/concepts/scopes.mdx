@@ -43,7 +43,9 @@ a folder without subfolders to see its memories as a graph.
 - **You say so**: `--scope` on `save`, `recall` and `context add`; the `scope` parameter on the
   MCP tools; the viewer's move actions.
 - **Capture maps mechanically**: a distilled Claude Code session lands in
-  `projects/<name>`, derived from the session's working directory. No model involved.
+  `projects/<name>`, derived from the session's working directory. No model involved. A
+  session in a Claude Code worktree files under the repo's name, and a session in a Claude
+  desktop scratch workspace gets no folder, so the classifier files it by content.
 - **The classifier files the rest**: saves that named no folder are classified against your
   folder tree (names and descriptions) during indexing. Below the confidence floor they stay in
   `uncategorized`. The classifier never invents folders; only you create them. It runs on
