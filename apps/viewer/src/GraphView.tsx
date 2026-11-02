@@ -527,6 +527,23 @@ export function GraphView({
     };
   }, [mode]);
 
+  // An embedded graph opens fresh, with no cached layout, so its nodes are still flying apart
+  // at the first fit. Frame it again once the layout has spread, with a margin that suits a
+  // phone as well as a monitor, unless the user has already moved the camera.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a size change refits on purpose
+  useEffect(() => {
+    if (!embedded) return;
+    const pad = Math.min(110, Math.round(size.width * 0.06));
+    const ids = [1500, 4000].map((ms) =>
+      window.setTimeout(() => {
+        if (!hasUserInteractedRef.current) fgRef.current?.zoomToFit?.(600, pad);
+      }, ms),
+    );
+    return () => {
+      for (const id of ids) window.clearTimeout(id);
+    };
+  }, [embedded, mode, size.width]);
+
   // Hover focus fades in/out instead of snapping (a mix-fade animation).
   const ensureHoverAnimation = useCallback(() => {
     if (hoverRef.current.rafId !== null) return;
