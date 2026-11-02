@@ -65,7 +65,8 @@
               "guides/browser-extension",
               "guides/memory-per-person",
               "guides/configuration",
-              "guides/self-hosting"
+              "guides/self-hosting",
+              "guides/hosting"
             ]
           }
         ]

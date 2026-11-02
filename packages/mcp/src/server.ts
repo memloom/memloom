@@ -23,7 +23,15 @@ import {
 // Wire the tool functions to the MCP protocol. Descriptions tell the calling agent when to
 // reach for each tool and how memloom behaves (dedup + human-in-the-loop conflicts).
 
-export function buildServer(memloom: MemoryEngine): McpServer {
+export interface BuildOptions {
+  /**
+   * The server runs somewhere other than the caller's machine, so a path the caller names means
+   * nothing there. Leaves out add_file, the one tool that reads the server's own disk.
+   */
+  hosted?: boolean;
+}
+
+export function buildServer(memloom: MemoryEngine, opts: BuildOptions = {}): McpServer {
   const server = new McpServer({ name: "memloom", version: "0.1.0" });
 
   server.tool(
@@ -102,20 +110,22 @@ export function buildServer(memloom: MemoryEngine): McpServer {
     async (args) => ({ content: [{ type: "text", text: await addLink(memloom, args) }] }),
   );
 
-  server.tool(
-    "add_file",
-    "Ingest a file from the machine running memloom as a CONTEXT DOCUMENT (source material, " +
-      "citable, chunked), not as a memory. Takes an absolute path. Handles markdown, text, " +
-      "PDF, and audio or video, which is transcribed locally with timestamps so a recalled " +
-      "line cites the moment it was said. Like add_link, documents are versioned by content " +
-      "hash: re-adding an unchanged file is a cheap no-op, and an edited file replaces its " +
-      "own chunks rather than piling up a second copy. Recordings longer than " +
-      `${MAX_INLINE_MEDIA_SECONDS / 60} minutes are REFUSED with an instruction to relay, ` +
-      "because transcribing an hour of audio takes 8 to 11 minutes and no tool call should " +
-      "block that long. Whole folders are a CLI job (memloom context add <folder>).",
-    { path: z.string(), scope: z.string().optional() },
-    async (args) => ({ content: [{ type: "text", text: await addFile(memloom, args) }] }),
-  );
+  if (!opts.hosted) {
+    server.tool(
+      "add_file",
+      "Ingest a file from the machine running memloom as a CONTEXT DOCUMENT (source material, " +
+        "citable, chunked), not as a memory. Takes an absolute path. Handles markdown, text, " +
+        "PDF, and audio or video, which is transcribed locally with timestamps so a recalled " +
+        "line cites the moment it was said. Like add_link, documents are versioned by content " +
+        "hash: re-adding an unchanged file is a cheap no-op, and an edited file replaces its " +
+        "own chunks rather than piling up a second copy. Recordings longer than " +
+        `${MAX_INLINE_MEDIA_SECONDS / 60} minutes are REFUSED with an instruction to relay, ` +
+        "because transcribing an hour of audio takes 8 to 11 minutes and no tool call should " +
+        "block that long. Whole folders are a CLI job (memloom context add <folder>).",
+      { path: z.string(), scope: z.string().optional() },
+      async (args) => ({ content: [{ type: "text", text: await addFile(memloom, args) }] }),
+    );
+  }
 
   server.tool(
     "list_documents",

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { HttpMemloomClient, isOwnerId, type MemoryEngine } from "@memloom/core";
-import { memloomHome } from "./config.js";
+import { configValue, memloomHome } from "./config.js";
 import { HTTP_PORT } from "./daemon.js";
 
 const BASE = `http://127.0.0.1:${HTTP_PORT}`;
@@ -51,6 +51,9 @@ export function ownerFromEnv(): string | undefined {
 // memories.
 export async function connect(): Promise<MemoryEngine> {
   const owner = ownerFromEnv();
+  const remote = remoteServer();
+  // A hosted memloom is someone else's process to run: connect, never auto-start.
+  if (remote) return new HttpMemloomClient(remote.url, undefined, owner, remote.token);
   if (await healthy()) return new HttpMemloomClient(BASE, undefined, owner);
 
   // The daemon's output goes to a file, not nowhere: when it cannot start, what it printed is
@@ -88,6 +91,32 @@ export async function connect(): Promise<MemoryEngine> {
       : `memloom: could not reach or start the local server at ${BASE}. ` +
           `Try running \`memloom serve\` manually.\n  log: ${logPath}`,
   );
+}
+
+/**
+ * A hosted memloom to use instead of the local daemon, from MEMLOOM_URL and MEMLOOM_TOKEN (the
+ * environment, then ~/.memloom/config.env). Undefined when MEMLOOM_URL is unset, which is every
+ * local install.
+ */
+export function remoteServer(): { url: string; token: string | undefined } | undefined {
+  const url = configValue("MEMLOOM_URL");
+  if (!url) return undefined;
+  if (!/^https?:\/\//.test(url)) {
+    throw new Error(
+      `memloom: MEMLOOM_URL must start with http:// or https://, got ${JSON.stringify(url)}.`,
+    );
+  }
+  return { url: url.replace(/\/+$/, ""), token: configValue("MEMLOOM_TOKEN") };
+}
+
+/** Where hooks send requests: the hosted server when one is set, else the local daemon. */
+export function serverBase(): { url: string; headers: Record<string, string> } {
+  const remote = remoteServer();
+  if (!remote) return { url: BASE, headers: {} };
+  return {
+    url: remote.url,
+    headers: remote.token ? { authorization: `Bearer ${remote.token}` } : {},
+  };
 }
 
 export function daemonLogPath(): string {

@@ -126,6 +126,9 @@ load data-only.
 
 ## What stays local
 
-Whichever tier you run, the HTTP API binds to `127.0.0.1`, CORS admits only localhost origins, and
-the only outbound traffic goes to the provider you configured. Self-hosting the database in Docker
+Whichever tier you run, the HTTP API binds to `127.0.0.1` unless memloom is hosted, CORS admits
+only localhost origins, and the only outbound traffic goes to the provider you configured. Self-hosting the database in Docker
 does not expose memloom to the network unless you publish the ports yourself.
+
+To reach memloom from other machines and from Claude.ai, run it as a hosted server with tokens
+and sign-in: see [Hosting memloom](/guides/hosting).

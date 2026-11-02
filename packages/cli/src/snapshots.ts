@@ -145,3 +145,40 @@ export async function openWithFallback(
   renameSync(brokenDir, dir);
   throw firstError;
 }
+
+/** Where to drop a snapshot for the next start to load, in place of the current store. */
+export function restoreDropPath(): string {
+  return join(memloomHome(), "restore.tar.gz");
+}
+
+/**
+ * Load a snapshot someone put at restoreDropPath(), which is how a store moves to a machine
+ * with no shell access to its data folder: copy a laptop snapshot there and restart. The store
+ * it replaces is renamed, not deleted, and the drop file is renamed once loaded so the next
+ * start does not load it again.
+ */
+export async function restoreFromDrop(
+  dir: string,
+  open: (dir: string, snapshot?: Blob) => Promise<PGlite>,
+  log = console.error,
+): Promise<{ db: PGlite } | undefined> {
+  const drop = restoreDropPath();
+  if (!existsSync(drop)) return undefined;
+  const replaced = `${dir}.replaced-${stamp()}`;
+  if (existsSync(dir)) renameSync(dir, replaced);
+  try {
+    const db = await open(dir, new Blob([readFileSync(drop)]));
+    renameSync(drop, join(memloomHome(), `restored-${stamp()}.tar.gz`));
+    log(`memloom: loaded the store from ${drop}`);
+    if (existsSync(replaced)) log(`  the store it replaced is in ${replaced}`);
+    return { db };
+  } catch (err) {
+    // A snapshot that will not load must not cost the store that was there.
+    rmSync(dir, { recursive: true, force: true });
+    if (existsSync(replaced)) renameSync(replaced, dir);
+    log(
+      `memloom: could not load ${drop} (${err instanceof Error ? err.message : String(err)}); starting the existing store`,
+    );
+    return undefined;
+  }
+}

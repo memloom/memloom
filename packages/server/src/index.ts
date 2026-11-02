@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { serve as nodeServe } from "@hono/node-server";
 import {
   AudioError,
+  type BlobMirror,
   CATALOG,
   type ContextProgressEvent,
   detectKind,
@@ -42,6 +43,7 @@ import { bodyLimit } from "hono/body-limit";
 import { cors } from "hono/cors";
 import { stream, streamSSE } from "hono/streaming";
 import { z } from "zod";
+import { authOwner, type CloudAuthOptions, installCloudAuth } from "./cloud-auth.js";
 
 // The local HTTP server: a thin wrapper around @memloom/core so the browser-based viewer (and
 // any HTTP client) can reach the engine. The CLI/MCP route through this when it holds the
@@ -49,6 +51,8 @@ import { z } from "zod";
 // as the hosted public API, so clients can point at local or cloud.
 
 /** When the daemon last served anything: the difference between quiet and asleep. */
+export type { CloudAuthOptions } from "./cloud-auth.js";
+
 export interface DaemonActivity {
   lastRequestAt: number;
 }
@@ -105,6 +109,18 @@ export interface ServerOptions {
    * Defaults to global fetch.
    */
   fetchModels?: typeof fetch;
+  /**
+   * Require a bearer token on every request and serve the OAuth endpoints, for a server on the
+   * internet rather than on loopback. Unset is the local daemon, which trusts its own machine.
+   */
+  cloudAuth?: CloudAuthOptions;
+  /** Extra routes (the hosted MCP endpoint), mounted after every built-in route and behind auth. */
+  mount?: (app: Hono) => void;
+  /**
+   * A bucket that keeps a copy of every uploaded recording, for a server whose disk does not
+   * outlive it. Uploads are written there too, and fetched back when the disk has lost them.
+   */
+  blobMirror?: BlobMirror;
 }
 
 // Fire-and-forget OS opener. The daemon runs on the file owner's machine, so "open" means
@@ -466,6 +482,20 @@ const importNotifySchema = z.object({
   path: z.string().min(1, "path must be a non-empty string").max(4096),
 });
 
+// A session transcript sent by value, for a server that cannot read the client's disk (a hosted
+// memloom). Names are plain file names: the server places the file itself.
+const SAFE_NAME = /^[A-Za-z0-9._-]+$/;
+const importUploadSchema = z.object({
+  project: z.string().min(1).max(255).regex(SAFE_NAME, "project must be a plain directory name"),
+  name: z
+    .string()
+    .min(1)
+    .max(255)
+    .regex(SAFE_NAME, "name must be a plain file name")
+    .refine((n) => n.endsWith(".jsonl"), "name must be a .jsonl session transcript"),
+  content: z.string().max(50_000_000),
+});
+
 const importScopeSchema = z.object({
   scope: z.union([
     z.literal("all"),
@@ -599,7 +629,7 @@ async function parseBody<S extends z.ZodTypeAny>(
   // one is how a write lands on the wrong person, so it is a 400 rather than a precedence
   // rule nobody remembers.
   const bodyOwner = (parsed.data as { ownerId?: unknown } | null)?.ownerId;
-  const headerOwner = c.req.header(OWNER_HEADER);
+  const headerOwner = authOwner(c) ?? c.req.header(OWNER_HEADER);
   if (
     typeof bodyOwner === "string" &&
     headerOwner &&
@@ -708,8 +738,12 @@ function isLoopbackHost(host: string): boolean {
 export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   const app = new Hono();
   const defaultOwner = daemonDefaultOwner(opts.defaultOwnerId);
+  // A hosted server is reached by its public name, and its own sign-in page posts back to it, so
+  // that origin joins the local ones. Tokens, not addresses, are its real gate.
+  const publicUrl = opts.cloudAuth ? new URL(opts.cloudAuth.publicUrl) : undefined;
   const extensions = extensionOrigins();
-  const allowedOrigin = (origin: string) => LOCAL_ORIGIN.test(origin) || extensions.has(origin);
+  const allowedOrigin = (origin: string) =>
+    LOCAL_ORIGIN.test(origin) || extensions.has(origin) || origin === publicUrl?.origin;
 
   /**
    * The owner this request acts for. Clients bind one owner per connection and send it as a
@@ -723,15 +757,18 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
    *
    * Validated once in middleware, so this only reads.
    */
-  const ownerOf = (c: Context): string => c.req.header(OWNER_HEADER)?.toLowerCase() ?? defaultOwner;
+  const ownerOf = (c: Context): string =>
+    authOwner(c) ?? c.req.header(OWNER_HEADER)?.toLowerCase() ?? defaultOwner;
 
   // Browser clients (the viewer in dev, docs playground) run on another localhost port, and
   // the browser extension on its own origin. Allow only those; a permissive `*` would let any
-  // public web page drive the daemon.
+  // public web page drive the daemon. On a hosted server the extension also sends a bearer
+  // token, which the preflight has to let through.
   app.use(
     "*",
     cors({
       origin: (origin) => (allowedOrigin(origin) ? origin : null),
+      allowHeaders: ["Content-Type", "Authorization", OWNER_HEADER],
     }),
   );
 
@@ -759,7 +796,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   //    one), so they pass untouched, and so does the pinned browser extension.
   app.use("*", async (c, next) => {
     const host = c.req.header("host");
-    if (host && !isLoopbackHost(host)) {
+    if (host && !isLoopbackHost(host) && host !== publicUrl?.host) {
       return c.json({ error: "forbidden: requests must target the loopback interface" }, 403);
     }
     const origin = c.req.header("origin");
@@ -768,6 +805,8 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     }
     await next();
   });
+
+  if (opts.cloudAuth) installCloudAuth(app, opts.cloudAuth);
 
   if (opts.log) {
     app.use("*", async (c, next) => {
@@ -1183,6 +1222,24 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     }
     // Fire and forget: the hook must never wait on distillation. handleSessionNotify records
     // every failure in status, so nothing here is silently lost.
+    void memloom.handleSessionNotify(target).catch(() => {});
+    return c.json({ accepted: true }, 202);
+  });
+
+  // The same as notify for a client on another machine: the transcript arrives as content and
+  // is written where notify would have found it, so the import ledger and scope rules apply
+  // unchanged.
+  app.post("/import/claude-code/upload", async (c) => {
+    const body = await parseBody(c, importUploadSchema);
+    if (!body.ok) return body.res;
+    const { project, name, content } = body.data;
+    if (project === "." || project === ".." || name.startsWith(".")) {
+      return c.json({ error: "project and name must be plain names" }, 400);
+    }
+    const dir = join(sessionsRoot, project);
+    await mkdir(dir, { recursive: true });
+    const target = join(dir, name);
+    await writeFile(target, content);
     void memloom.handleSessionNotify(target).catch(() => {});
     return c.json({ accepted: true }, 202);
   });
@@ -1987,6 +2044,8 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
         const dir = await mkdtemp(join(uploadStoreDir(), "u-"));
         const file = join(dir, filename);
         await writeFile(file, bytes);
+        // Before queueing: an upload is only accepted once it is somewhere durable.
+        await opts.blobMirror?.put(file);
         const [item] = await queue.add([file], { uploaded: true, ownerId: ownerOf(c) });
         return c.json({ outcome: "queued", title: filename, chunks: 0, queueId: item?.id });
       }
@@ -2262,6 +2321,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     }
     let size: number;
     try {
+      await opts.blobMirror?.ensureLocal(doc.path);
       size = (await stat(doc.path)).size;
     } catch {
       return c.json({ error: `the source file is no longer at ${doc.path}` }, 404);
@@ -2312,6 +2372,7 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
       return c.json({ error: "this document has no playable file on disk" }, 400);
     }
     try {
+      await opts.blobMirror?.ensureLocal(doc.path);
       const wav = await cutSampleWav(doc.path, start, end - start);
       return c.body(new Uint8Array(wav).buffer as ArrayBuffer, 200, {
         "content-type": "audio/wav",
@@ -2486,9 +2547,13 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
     });
   });
 
+  opts.mount?.(app);
+
   // The viewer bundle, mounted last so every API route wins first. Unknown paths fall back to
-  // index.html (the shell handles them). Standard single-page-app serving.
-  if (opts.staticDir) {
+  // index.html (the shell handles them). Standard single-page-app serving. On a hosted server
+  // only with the password sign-in on: the viewer then rides the session cookie /login sets,
+  // and the token gate in front of this redirects a signed-out page load to /login.
+  if (opts.staticDir && (!opts.cloudAuth || opts.cloudAuth.loginPassword)) {
     const root = resolve(opts.staticDir);
     app.get("*", async (c) => {
       const reqPath = c.req.path === "/" ? "/index.html" : c.req.path;

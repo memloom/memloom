@@ -1,5 +1,6 @@
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { connect } from "memloom";
+import { connect, startDaemon } from "memloom";
+import { mountMcp } from "./http.js";
 import { lazyEngine } from "./lazy-engine.js";
 import { buildServer } from "./server.js";
 
@@ -18,6 +19,12 @@ import { buildServer } from "./server.js";
 // read, and there is no answer to that it could be trusted to get right every time.
 
 async function main() {
+  // `memloom-mcp --http`: the whole hosted server in one process, the daemon with MCP at /mcp.
+  // Set MEMLOOM_PUBLIC_URL to turn on tokens and sign-in; see docs/guides/hosting.mdx.
+  if (process.argv.includes("--http")) {
+    await startDaemon(undefined, undefined, { mount: mountMcp });
+    return;
+  }
   // Connected lazily: if the daemon cannot start, tool calls say why instead of the client
   // reporting a closed connection.
   const server = buildServer(lazyEngine(connect));

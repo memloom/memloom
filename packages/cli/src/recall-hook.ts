@@ -67,12 +67,13 @@ export async function fetchRecall(
   query: string,
   base = "http://127.0.0.1:4319",
   scope?: string,
+  headers: Record<string, string> = {},
 ): Promise<Memory[] | null> {
   try {
     const post = (withScope: boolean) =>
       fetch(`${base}/memory/query`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { ...headers, "content-type": "application/json" },
         body: JSON.stringify({
           query,
           limit: RECALL_LIMIT,
@@ -124,13 +125,17 @@ export function formatRecallBlock(memories: readonly Memory[]): string {
 }
 
 /** The whole hook: read stdin, skip non-prompts, recall, format. Never throws. */
-export async function promptRecall(stdin: NodeJS.ReadableStream, base?: string): Promise<string> {
+export async function promptRecall(
+  stdin: NodeJS.ReadableStream,
+  base?: string,
+  headers?: Record<string, string>,
+): Promise<string> {
   try {
     let raw = "";
     for await (const piece of stdin) raw += piece;
     const payload = parsePromptPayload(raw);
     if (payload === null || shouldSkipPrompt(payload.prompt)) return "";
-    const memories = await fetchRecall(payload.prompt, base, projectScopeOf(payload.cwd));
+    const memories = await fetchRecall(payload.prompt, base, projectScopeOf(payload.cwd), headers);
     if (!memories) return "";
     return formatRecallBlock(memories);
   } catch {
