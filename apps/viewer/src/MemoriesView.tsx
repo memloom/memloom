@@ -1,6 +1,6 @@
 import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { api, type Memory, type MemoryType, type TrashedMemory } from "./api";
+import { api, type Graph, type Memory, type MemoryType, type TrashedMemory } from "./api";
 import { RecallCard, SaveMemoryCard } from "./cards";
 import { FolderMap, FolderViewToggle, useFolderView } from "./FolderMap";
 import { cachedData, prefetch, refetch } from "./prefetch";
@@ -314,7 +314,7 @@ function RecentlyRemoved({
   );
 }
 
-export function MemoriesView() {
+export function MemoriesView({ graph }: { graph: Graph | null }) {
   const [scopeSel, setScopeSel] = useState<ScopeSelection | null>(null);
   // The tree refreshes after list mutations here (a move changes the counts), and the
   // pickers refresh after tree mutations there (a new folder must appear as a target).
@@ -336,6 +336,7 @@ export function MemoriesView() {
   const [view, setView] = useFolderView("memories");
   // The panel shows either the memory list or the trash; the sidebar's pinned row switches.
   const [showTrash, setShowTrash] = useState(false);
+  const mapMode = view === "map" && !showTrash;
   const [trash, setTrash] = useState<TrashedMemory[] | null>(null);
   const [trashError, setTrashError] = useState<string | null>(null);
 
@@ -427,8 +428,8 @@ export function MemoriesView() {
           </div>
         }
       />
-      <div className="panel">
-        <div className="panelInner">
+      <div className={`panel ${mapMode ? "panelMap" : ""}`}>
+        <div className={mapMode ? "panelMapInner" : "panelInner"}>
           {!showTrash && <FolderViewToggle mode={view} onChange={setView} />}
           {showTrash ? (
             <RecentlyRemoved
@@ -442,6 +443,7 @@ export function MemoriesView() {
             scopes ? (
               <FolderMap
                 scopes={scopes}
+                graph={graph}
                 count="memories"
                 selected={scopeSel}
                 onOpen={(sel) => {

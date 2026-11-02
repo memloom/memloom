@@ -6,6 +6,7 @@ import {
   type ContextRootsResult,
   type DocumentChunks,
   type DocumentSpeaker,
+  type Graph,
   type SpeakerRoster,
 } from "./api";
 import { AddFileCard, AddLinkCard, IngestQueueCard, RecallCard } from "./cards";
@@ -280,7 +281,13 @@ function WatchedFolders({ onChanged }: { onChanged: () => void }) {
   );
 }
 
-export function DocumentsView({ onChanged }: { onChanged: () => void }) {
+export function DocumentsView({
+  onChanged,
+  graph,
+}: {
+  onChanged: () => void;
+  graph: Graph | null;
+}) {
   // Seeded from the prefetch cache: a hover on the tab (or an earlier visit) already
   // fetched the list, so the first render shows documents and revalidates behind them.
   const [docs, setDocs] = useState<ContextDocument[] | null>(() =>
@@ -431,13 +438,14 @@ export function DocumentsView({ onChanged }: { onChanged: () => void }) {
         refreshKey={treeVersion}
         onChanged={() => setScopesVersion((v) => v + 1)}
       />
-      <div className="panel">
-        <div className="panelInner">
+      <div className={`panel ${view === "map" ? "panelMap" : ""}`}>
+        <div className={view === "map" ? "panelMapInner" : "panelInner"}>
           <FolderViewToggle mode={view} onChange={setView} />
           {view === "map" ? (
             scopes ? (
               <FolderMap
                 scopes={scopes}
+                graph={graph}
                 count="documents"
                 selected={scopeSel}
                 onOpen={(sel) => {
