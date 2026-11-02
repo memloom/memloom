@@ -1,3 +1,4 @@
+import { Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { api, type Memory, type MemoryType, type TrashedMemory } from "./api";
 import { RecallCard, SaveMemoryCard } from "./cards";
@@ -196,32 +197,26 @@ function daysLeft(expiresAt: string): string {
   return days <= 1 ? "deleted for good tomorrow" : `deleted for good in ${days} days`;
 }
 
-// Removed memories, kept 30 days. Collapsed by default: it is where you go after a mistake,
-// not something to read every visit. Restore puts a memory back with its versions, links and
-// attachments; delete forever and empty trash are two-click, like remove.
+// Removed memories, kept 30 days. Reached from the row pinned to the foot of the folder
+// sidebar, so it is one click away however long the memory list gets. Restore puts a memory
+// back with its versions, links and attachments; delete forever and empty trash are two-click,
+// like remove.
 function RecentlyRemoved({
-  refreshKey,
+  items,
+  error,
   folderOf,
-  onRestored,
+  onChanged,
+  onBack,
 }: {
-  refreshKey: number;
+  items: TrashedMemory[] | null;
+  error: string | null;
   folderOf: (scopeId: string | null) => string;
-  onRestored: () => void;
+  onChanged: () => void;
+  onBack: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [items, setItems] = useState<TrashedMemory[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [arming, setArming] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    api
-      .trash()
-      .then(setItems)
-      .catch((e) => setErr(e instanceof Error ? e.message : String(e)));
-  }, []);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: refreshKey is the trigger
-  useEffect(load, [load, refreshKey]);
 
   async function act(id: string, run: () => Promise<unknown>, done: string) {
     setBusy(id);
@@ -230,7 +225,7 @@ function RecentlyRemoved({
       await run();
       toastDone(done);
       setArming(null);
-      load();
+      onChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
     } finally {
@@ -238,7 +233,7 @@ function RecentlyRemoved({
     }
   }
 
-  // A second click within the same button confirms; leaving it disarms.
+  // A second click on the same button confirms; leaving it disarms.
   function armed(key: string, run: () => void) {
     if (arming !== key) setArming(key);
     else run();
@@ -246,94 +241,75 @@ function RecentlyRemoved({
 
   const count = items?.length ?? 0;
   return (
-    <div className="trash">
-      <button
-        type="button"
-        className="trashToggle"
-        aria-expanded={open}
-        onClick={() => setOpen(!open)}
-      >
-        <span className="trashChevron" aria-hidden="true">
-          {open ? "▾" : "▸"}
-        </span>
-        Recently removed{items ? `; ${count}` : ""}
-      </button>
-      {open && (
-        <div className="trashBody">
-          <p className="trashNote">
-            Removed memories wait here for 30 days, then they and their attachments are deleted for
-            good. Agents and recall don't see them.
-          </p>
-          {err && <div className="notice noticeError">{err}</div>}
-          {items && count === 0 && <p className="trashNote">Nothing removed.</p>}
-          {items?.map((t) => (
-            <div key={t.rootId} className="recallItem trashItem">
-              <div className="recallTitle">
-                <span className="typeTag">{t.memoryType}</span>
-                {t.content}
-                {t.versions > 1 && <span className="versionTag">{t.versions} versions</span>}
-              </div>
-              <div className="chipLine">
-                <span className="scopeTag">{folderOf(t.scopeId)}</span>
-                {t.attachments > 0 && (
-                  <span className="scopeTag">
-                    {t.attachments} {t.attachments === 1 ? "attachment" : "attachments"}
-                  </span>
-                )}
-              </div>
-              <div className="recallMeta">
-                removed {new Date(t.deletedAt).toLocaleString()}; {daysLeft(t.expiresAt)}
-                <button
-                  type="button"
-                  className="metaAction"
-                  disabled={busy === t.rootId}
-                  onClick={() =>
-                    act(
-                      t.rootId,
-                      async () => {
-                        await api.restoreMemory(t.rootId);
-                        onRestored();
-                      },
-                      "restored",
-                    )
-                  }
-                >
-                  restore
-                </button>
-                <button
-                  type="button"
-                  className="metaAction metaActionDanger"
-                  disabled={busy === t.rootId}
-                  onBlur={() => setArming(null)}
-                  onClick={() =>
-                    armed(t.rootId, () =>
-                      act(t.rootId, () => api.deleteForever(t.rootId), "deleted for good"),
-                    )
-                  }
-                >
-                  {arming === t.rootId ? "confirm delete forever" : "delete forever"}
-                </button>
-              </div>
-            </div>
-          ))}
-          {count > 1 && (
+    <>
+      <div className="trashHead">
+        <h2 className="sectionTitle">Recently removed{items ? `; ${count}` : ""}</h2>
+        <button type="button" className="metaAction" onClick={onBack}>
+          back to memories
+        </button>
+      </div>
+      <p className="trashNote">
+        Removed memories wait here for 30 days, then they and their attachments are deleted for
+        good. Agents and recall don't see them.
+      </p>
+      {(err ?? error) && <div className="notice noticeError">{err ?? error}</div>}
+      {!items && !error && <div className="spin">loading…</div>}
+      {items && count === 0 && <p className="trashNote">Nothing removed.</p>}
+      {count > 1 && (
+        <button
+          type="button"
+          className="btn btnGhost trashEmpty"
+          disabled={busy !== null}
+          onBlur={() => setArming(null)}
+          onClick={() =>
+            armed("*", () => act("*", () => api.emptyTrash(), `deleted ${count} memories for good`))
+          }
+        >
+          {arming === "*" ? `confirm: delete all ${count} for good` : "empty trash"}
+        </button>
+      )}
+      {items?.map((t) => (
+        <div key={t.rootId} className="recallItem trashItem">
+          <div className="recallTitle">
+            <span className="typeTag">{t.memoryType}</span>
+            {t.content}
+            {t.versions > 1 && <span className="versionTag">{t.versions} versions</span>}
+          </div>
+          <div className="chipLine">
+            <span className="scopeTag">{folderOf(t.scopeId)}</span>
+            {t.attachments > 0 && (
+              <span className="scopeTag">
+                {t.attachments} {t.attachments === 1 ? "attachment" : "attachments"}
+              </span>
+            )}
+          </div>
+          <div className="recallMeta">
+            removed {new Date(t.deletedAt).toLocaleString()}; {daysLeft(t.expiresAt)}
             <button
               type="button"
-              className="btn btnGhost trashEmpty"
-              disabled={busy !== null}
+              className="metaAction"
+              disabled={busy === t.rootId}
+              onClick={() => act(t.rootId, () => api.restoreMemory(t.rootId), "restored")}
+            >
+              restore
+            </button>
+            <button
+              type="button"
+              className="metaAction metaActionDanger"
+              disabled={busy === t.rootId}
               onBlur={() => setArming(null)}
               onClick={() =>
-                armed("*", () =>
-                  act("*", () => api.emptyTrash(), `deleted ${count} memories for good`),
+                armed(t.rootId, () =>
+                  act(t.rootId, () => api.deleteForever(t.rootId), "deleted for good"),
                 )
               }
             >
-              {arming === "*" ? `confirm: delete all ${count} for good` : "empty trash"}
+              {arming === t.rootId ? "confirm delete forever" : "delete forever"}
             </button>
-          )}
+          </div>
         </div>
-      )}
-    </div>
+      ))}
+    </>
   );
 }
 
@@ -356,6 +332,10 @@ export function MemoriesView() {
   const [moveTarget, setMoveTarget] = useState("");
   const [moving, setMoving] = useState(false);
   const [trashVersion, setTrashVersion] = useState(0);
+  // The panel shows either the memory list or the trash; the sidebar's pinned row switches.
+  const [showTrash, setShowTrash] = useState(false);
+  const [trash, setTrash] = useState<TrashedMemory[] | null>(null);
+  const [trashError, setTrashError] = useState<string | null>(null);
 
   const load = useCallback(() => {
     setMemories(cachedData<Memory[]>(key));
@@ -379,6 +359,18 @@ export function MemoriesView() {
     setTreeVersion((v) => v + 1);
     setTrashVersion((v) => v + 1);
   }, [reload]);
+
+  // Loaded up front, not on opening: the sidebar row shows the count.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: trashVersion is the trigger
+  useEffect(() => {
+    api
+      .trash()
+      .then((items) => {
+        setTrash(items);
+        setTrashError(null);
+      })
+      .catch((err) => setTrashError(err instanceof Error ? err.message : String(err)));
+  }, [trashVersion]);
 
   const folderOf = (scopeId: string | null) =>
     (scopeId && scopes ? flattenScopes(scopes).find((s) => s.id === scopeId)?.path : null) ??
@@ -413,133 +405,156 @@ export function MemoriesView() {
   return (
     <div className="scopeLayout">
       <ScopeTree
-        selected={scopeSel}
+        selected={showTrash ? null : scopeSel}
+        inactive={showTrash}
         onSelect={(sel) => {
+          setShowTrash(false);
           setScopeSel(sel);
           setSelected(new Set());
         }}
         count="memories"
         refreshKey={treeVersion}
         onChanged={() => setScopesVersion((v) => v + 1)}
+        footer={
+          <div className={`scopeRow trashRow ${showTrash ? "scopeRowActive" : ""}`}>
+            <Trash2 className="trashIcon" size={13} strokeWidth={1.75} aria-hidden="true" />
+            <button type="button" className="scopeName" onClick={() => setShowTrash(true)}>
+              recently removed
+            </button>
+            <span className="scopeCount">{trash?.length ?? ""}</span>
+          </div>
+        }
       />
       <div className="panel">
         <div className="panelInner">
-          <h2 className="sectionTitle">Save a memory</h2>
-          <SaveMemoryCard onSaved={changed} />
-
-          <h2 className="sectionTitle">Recall</h2>
-          <RecallCard only="memory" />
-
-          <h2 className="sectionTitle">Memories{memories ? `; ${memories.length} active` : ""}</h2>
-
-          {error && <div className="notice noticeError">{error}</div>}
-          {!memories && !error && <div className="spin">loading…</div>}
-
-          {memories && memories.length === 0 && (
-            <p style={{ color: "var(--text-faint)" }}>
-              {scopeSel
-                ? `No memories in ${scopeSel.label} yet.`
-                : "No memories yet. Save one from the Console tab, or ask your agent to. " +
-                  "Everything it remembers shows up here."}
-            </p>
-          )}
-
-          {memories && memories.length > 0 && (
-            <div className="filterRow">
-              <button
-                type="button"
-                className={`chip ${filter === "all" ? "chipActive" : ""}`}
-                onClick={() => setFilter("all")}
-              >
-                all {memories.length}
-              </button>
-              {TYPES.map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  className={`chip ${filter === t ? "chipActive" : ""}`}
-                  onClick={() => setFilter(filter === t ? "all" : t)}
-                >
-                  {t} {counts.get(t) ?? 0}
-                </button>
-              ))}
-              {/* The active filters, visibly clearable: the folder from the sidebar and the
-                  tag from any card's chip. */}
-              {scopeSel && (
-                <button
-                  type="button"
-                  className="chip chipActive"
-                  title="clear the folder filter"
-                  onClick={() => setScopeSel(null)}
-                >
-                  folder: {scopeSel.label} ×
-                </button>
-              )}
-              {tagFilter && (
-                <button
-                  type="button"
-                  className="chip chipActive"
-                  title="clear the tag filter"
-                  onClick={() => setTagFilter(null)}
-                >
-                  tag: {tagFilter} ×
-                </button>
-              )}
-            </div>
-          )}
-
-          {selected.size > 0 && (
-            <div className="bulkBar">
-              <span className="bulkCount">{selected.size} selected</span>
-              <ScopePicker
-                options={scopes ? flattenScopes(scopes) : []}
-                value={moveTarget}
-                onChange={setMoveTarget}
-                placeholder="move to folder…"
-                disabled={moving}
-              />
-              <button
-                type="button"
-                className="btn btnPrimary"
-                disabled={moving || moveTarget === ""}
-                onClick={moveSelected}
-              >
-                {moving ? "moving…" : "Move"}
-              </button>
-              <button
-                type="button"
-                className="btn btnGhost"
-                disabled={moving}
-                onClick={() => setSelected(new Set())}
-              >
-                clear
-              </button>
-            </div>
-          )}
-
-          {shown.map((m) => (
-            <MemoryCard
-              key={m.id}
-              m={m}
+          {showTrash ? (
+            <RecentlyRemoved
+              items={trash}
+              error={trashError}
+              folderOf={folderOf}
               onChanged={changed}
-              checked={selected.has(m.id)}
-              onToggle={() =>
-                setSelected((prev) => {
-                  const next = new Set(prev);
-                  if (next.has(m.id)) next.delete(m.id);
-                  else next.add(m.id);
-                  return next;
-                })
-              }
-              onTag={(t) => setTagFilter((cur) => (cur === t ? null : t))}
+              onBack={() => setShowTrash(false)}
             />
-          ))}
+          ) : (
+            <>
+              <h2 className="sectionTitle">Save a memory</h2>
+              <SaveMemoryCard onSaved={changed} />
 
-          {memories && memories.length > 0 && shown.length === 0 && (
-            <p style={{ color: "var(--text-faint)" }}>Nothing matches the current filters.</p>
+              <h2 className="sectionTitle">Recall</h2>
+              <RecallCard only="memory" />
+
+              <h2 className="sectionTitle">
+                Memories{memories ? `; ${memories.length} active` : ""}
+              </h2>
+
+              {error && <div className="notice noticeError">{error}</div>}
+              {!memories && !error && <div className="spin">loading…</div>}
+
+              {memories && memories.length === 0 && (
+                <p style={{ color: "var(--text-faint)" }}>
+                  {scopeSel
+                    ? `No memories in ${scopeSel.label} yet.`
+                    : "No memories yet. Save one from the Console tab, or ask your agent to. " +
+                      "Everything it remembers shows up here."}
+                </p>
+              )}
+
+              {memories && memories.length > 0 && (
+                <div className="filterRow">
+                  <button
+                    type="button"
+                    className={`chip ${filter === "all" ? "chipActive" : ""}`}
+                    onClick={() => setFilter("all")}
+                  >
+                    all {memories.length}
+                  </button>
+                  {TYPES.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className={`chip ${filter === t ? "chipActive" : ""}`}
+                      onClick={() => setFilter(filter === t ? "all" : t)}
+                    >
+                      {t} {counts.get(t) ?? 0}
+                    </button>
+                  ))}
+                  {/* The active filters, visibly clearable: the folder from the sidebar and the
+                  tag from any card's chip. */}
+                  {scopeSel && (
+                    <button
+                      type="button"
+                      className="chip chipActive"
+                      title="clear the folder filter"
+                      onClick={() => setScopeSel(null)}
+                    >
+                      folder: {scopeSel.label} ×
+                    </button>
+                  )}
+                  {tagFilter && (
+                    <button
+                      type="button"
+                      className="chip chipActive"
+                      title="clear the tag filter"
+                      onClick={() => setTagFilter(null)}
+                    >
+                      tag: {tagFilter} ×
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {selected.size > 0 && (
+                <div className="bulkBar">
+                  <span className="bulkCount">{selected.size} selected</span>
+                  <ScopePicker
+                    options={scopes ? flattenScopes(scopes) : []}
+                    value={moveTarget}
+                    onChange={setMoveTarget}
+                    placeholder="move to folder…"
+                    disabled={moving}
+                  />
+                  <button
+                    type="button"
+                    className="btn btnPrimary"
+                    disabled={moving || moveTarget === ""}
+                    onClick={moveSelected}
+                  >
+                    {moving ? "moving…" : "Move"}
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btnGhost"
+                    disabled={moving}
+                    onClick={() => setSelected(new Set())}
+                  >
+                    clear
+                  </button>
+                </div>
+              )}
+
+              {shown.map((m) => (
+                <MemoryCard
+                  key={m.id}
+                  m={m}
+                  onChanged={changed}
+                  checked={selected.has(m.id)}
+                  onToggle={() =>
+                    setSelected((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(m.id)) next.delete(m.id);
+                      else next.add(m.id);
+                      return next;
+                    })
+                  }
+                  onTag={(t) => setTagFilter((cur) => (cur === t ? null : t))}
+                />
+              ))}
+
+              {memories && memories.length > 0 && shown.length === 0 && (
+                <p style={{ color: "var(--text-faint)" }}>Nothing matches the current filters.</p>
+              )}
+            </>
           )}
-
-          <RecentlyRemoved refreshKey={trashVersion} folderOf={folderOf} onRestored={changed} />
         </div>
       </div>
     </div>

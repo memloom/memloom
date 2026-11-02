@@ -3567,55 +3567,57 @@ select:focus,
 }
 
 /* ---------- Recently removed ---------- */
-/* The trash at the foot of the Memories list: a quiet disclosure row, then the removed
-   memories as the same cards, dimmed so they never read as live ones. */
-.trash {
-  margin-top: 24px;
+/* The trash is a row pinned to the foot of the folder sidebar: sticky, so it stays in view
+   however many folders scroll above it, and pushed down by margin-top: auto when there are
+   few. Its list opens in the main panel, as the same cards dimmed so they never read as
+   live memories. */
+.scopeSidebarFoot {
+  position: sticky;
+  bottom: -12px;
+  margin: auto -12px -12px;
+  padding: 8px 12px 12px;
   border-top: 1px solid var(--border);
-  padding-top: 12px;
+  background: var(--metal-grain), var(--metal-side);
 }
 
-.trashToggle {
-  display: flex;
-  align-items: center;
+.trashRow {
   gap: 6px;
-  padding: 4px 8px;
-  border: none;
-  border-radius: var(--radius-sm);
-  background: none;
-  color: var(--text-muted);
-  font: inherit;
-  font-weight: 600;
-  cursor: pointer;
+  padding-left: 4px;
 }
 
-.trashToggle:hover {
-  background: color-mix(in srgb, var(--text) 7%, transparent);
-  color: var(--text);
-}
-
-.trashChevron {
-  width: 1em;
+.trashIcon {
+  flex: none;
   color: var(--text-faint);
 }
 
+.scopeRowActive .trashIcon {
+  color: var(--select-text);
+}
+
+.trashHead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
 .trashNote {
-  margin: 8px 0;
+  margin: 0 0 12px;
   color: var(--text-faint);
 }
 
 .trashItem {
-  opacity: 0.8;
+  opacity: 0.85;
 }
 
 .trashItem:hover {
   opacity: 1;
 }
 
-.trashEmpty {
+.trashItem + .trashItem {
   margin-top: 8px;
 }
 
-.trashItem + .trashItem {
-  margin-top: 8px;
+.trashEmpty {
+  margin-bottom: 12px;
 }

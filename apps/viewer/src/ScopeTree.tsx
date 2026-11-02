@@ -114,6 +114,8 @@ export function ScopeTree({
   manage = true,
   refreshKey = 0,
   onChanged,
+  inactive = false,
+  footer,
 }: {
   selected: ScopeSelection | null;
   onSelect: (sel: ScopeSelection | null) => void;
@@ -125,6 +127,10 @@ export function ScopeTree({
   refreshKey?: number;
   /** Fires after any folder mutation here, so parents can refresh their pickers. */
   onChanged?: () => void;
+  /** True while the panel shows something other than a folder, so no row is highlighted. */
+  inactive?: boolean;
+  /** A row pinned to the sidebar's bottom edge, visible however long the tree is. */
+  footer?: ReactNode;
 }) {
   // Internal bumps (a folder was created/renamed here) and external ones share one version.
   const [localVersion, setLocalVersion] = useState(0);
@@ -409,7 +415,7 @@ export function ScopeTree({
       {!scopes && !loadError && <div className="spin">loading…</div>}
       {scopes && (
         <>
-          <div className={`scopeRow ${selected === null ? "scopeRowActive" : ""}`}>
+          <div className={`scopeRow ${selected === null && !inactive ? "scopeRowActive" : ""}`}>
             <span className="scopeChevron" />
             <button type="button" className="scopeName" onClick={() => onSelect(null)}>
               all folders
@@ -458,6 +464,7 @@ export function ScopeTree({
             ))}
         </>
       )}
+      {footer && <div className="scopeSidebarFoot">{footer}</div>}
       <ConfirmDialog
         open={confirmDelete !== null}
         title={`Delete "${confirmDelete?.name ?? ""}"?`}
