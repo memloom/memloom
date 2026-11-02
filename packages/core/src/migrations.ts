@@ -1620,7 +1620,7 @@ export function buildMigrations(dims: number): Migration[] {
       // attachment store until the purge, which is what makes the restore whole.
       //
       // Keyed on the lineage, like attachments: a belief and all its versions leave together.
-      id: "0035_memory_trash",
+      id: "0036_memory_trash",
       sql: /* sql */ `
       CREATE TABLE IF NOT EXISTS memory_trash (
         owner_id     uuid NOT NULL,
