@@ -302,3 +302,47 @@ describe("hosted server OAuth", () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe("viewer sign-in", () => {
+  it("sends a signed-out page load to /login, and the session cookie opens the API", async () => {
+    const { app } = await hosted();
+    const page = await app.request(`${PUBLIC}/`, { headers: { accept: "text/html" } });
+    expect(page.status).toBe(302);
+    expect(page.headers.get("location")).toBe("/login");
+    // An API call is still a plain 401, so clients keep their OAuth discovery.
+    expect((await app.request(`${PUBLIC}/memory/list`)).status).toBe(401);
+
+    const wrong = await app.request(`${PUBLIC}/login`, form({ password: "nope" }));
+    expect(wrong.status).toBe(401);
+    const ok = await app.request(`${PUBLIC}/login`, form({ password: PASSWORD }));
+    expect(ok.status).toBe(303);
+    const cookie = ok.headers.get("set-cookie") ?? "";
+    expect(cookie).toMatch(/memloom_session=ml[a-z]_/);
+    expect(cookie).toMatch(/HttpOnly/i);
+    expect(cookie).toMatch(/SameSite=Strict/i);
+    const session = cookie.split(";")[0] as string;
+
+    expect(
+      (await app.request(`${PUBLIC}/memory/list`, { headers: { cookie: session } })).status,
+    ).toBe(200);
+    // A write on the cookie must come from the server's own pages.
+    const save = (origin?: string) =>
+      app.request(`${PUBLIC}/memory/save`, {
+        method: "POST",
+        headers: {
+          cookie: session,
+          "content-type": "application/json",
+          ...(origin ? { origin } : {}),
+        },
+        body: JSON.stringify({ content: "saved from the phone" }),
+      });
+    expect((await save()).status).toBe(403);
+    expect((await save(PUBLIC)).status).toBe(200);
+
+    const out = await app.request(`${PUBLIC}/logout`, { headers: { cookie: session } });
+    expect(out.status).toBe(303);
+    expect(
+      (await app.request(`${PUBLIC}/memory/list`, { headers: { cookie: session } })).status,
+    ).toBe(401);
+  });
+});

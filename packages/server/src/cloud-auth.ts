@@ -1,6 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { AuthStore } from "@memloom/core";
 import type { Context, Hono } from "hono";
+import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 
 // Authentication for a hosted memloom: one server on the internet, reached by Claude.ai,
 // Claude Code, Cursor and the CLI from anywhere. The loopback daemon trusts its machine and
@@ -32,10 +33,15 @@ const REFRESH_TTL_MS = 90 * 24 * 60 * 60 * 1000;
 const CODE_TTL_MS = 5 * 60 * 1000;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_FAILURES = 10;
+// The viewer's sign-in lasts a month on the device that signed in.
+const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+const SESSION_COOKIE = "memloom_session";
 
 // Paths a caller reaches without a token: discovery, the OAuth endpoints themselves, health.
 const PUBLIC_PATHS = new Set([
   "/health",
+  "/login",
+  "/logout",
   "/authorize",
   "/token",
   "/register",
@@ -105,6 +111,22 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 }
 
+// The viewer's own sign-in: the same password, a session cookie instead of an OAuth code.
+function viewerLoginPage(error?: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sign in to memloom</title>
+<style>body{font:16px system-ui,sans-serif;max-width:22rem;margin:15vh auto;padding:0 1rem;color:#17181b;background:#e6e7ea}
+input[type=password]{width:100%;box-sizing:border-box;padding:.6rem;font:inherit;margin-top:.5rem;border:1px solid #a3a7ae;border-radius:5px;background:#fbfbfc}
+button{width:100%;margin-top:.75rem;padding:.6rem;font:inherit;font-weight:600;color:#fff;border:1px solid #174fb3;border-radius:5px;
+background:linear-gradient(180deg,#5b9dff 0%,#2f74ea 48%,#1f62d6 52%,#1d5bc8 100%);box-shadow:inset 0 1px 0 rgb(255 255 255/35%)}
+.err{color:#b42318}@media(prefers-color-scheme:dark){body{background:#0c0d0f;color:#ececee}input[type=password]{background:#0f1012;border-color:#3a3d43;color:inherit}.err{color:#f97066}}</style></head>
+<body><h1>memloom</h1>
+${error ? `<p class="err">${escapeHtml(error)}</p>` : ""}
+<form method="post" action="/login">
+<label>Password<input type="password" name="password" autocomplete="current-password" autofocus required></label>
+<button type="submit">Sign in</button></form></body></html>`;
+}
+
 function loginPage(params: Record<string, string>, clientName: string, error?: string): string {
   const hidden = Object.entries(params)
     .map(([k, v]) => `<input type="hidden" name="${escapeHtml(k)}" value="${escapeHtml(v)}">`)
@@ -151,11 +173,26 @@ export function installCloudAuth(app: Hono, opts: CloudAuthOptions): void {
       );
     }
     const header = c.req.header("authorization") ?? "";
-    const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+    const bearer = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+    // The viewer signs in once and carries a session cookie instead of a bearer header. The
+    // cookie is SameSite=Strict, so another site's page never sends it; a state-changing request
+    // on it must also name this server as its Origin.
+    const session = bearer ? "" : (getCookie(c, SESSION_COOKIE) ?? "");
+    const token = bearer || session;
     const verified = token ? await store.verify(token) : null;
     if (!verified) {
+      const page = c.req.method === "GET" && (c.req.header("accept") ?? "").includes("text/html");
+      if (page && !bearer && opts.loginPassword) return c.redirect("/login", 302);
       c.header("WWW-Authenticate", `Bearer resource_metadata="${resourceMetadata}"`);
       return c.json({ error: token ? "invalid or expired token" : "missing bearer token" }, 401);
+    }
+    if (session && !["GET", "HEAD", "OPTIONS"].includes(c.req.method)) {
+      if (c.req.header("origin") !== new URL(publicUrl).origin) {
+        return c.json(
+          { error: "forbidden: a signed-in browser request must come from this server" },
+          403,
+        );
+      }
     }
     const sent = c.req.header("x-memloom-owner");
     if (sent && sent.toLowerCase() !== verified.ownerId) {
@@ -267,6 +304,41 @@ export function installCloudAuth(app: Hono, opts: CloudAuthOptions): void {
     const check = await authorizeRequest(params);
     if (!check.ok) return c.text(check.message, 400);
     return c.html(loginPage(params, check.clientName));
+  });
+
+  app.get("/login", (c) =>
+    opts.loginPassword ? c.html(viewerLoginPage()) : c.text("sign-in is not enabled", 404),
+  );
+
+  app.post("/login", async (c) => {
+    if (!opts.loginPassword) return c.text("sign-in is not enabled", 404);
+    const ip = clientIp(c);
+    if (lockedOut(ip)) return c.html(viewerLoginPage("Too many attempts. Try again later."), 429);
+    const form = await c.req.parseBody();
+    const password = typeof form.password === "string" ? form.password : "";
+    if (!samePassword(password, opts.loginPassword)) {
+      failures.get(ip)?.push(now());
+      return c.html(viewerLoginPage("Wrong password."), 401);
+    }
+    const { token } = await store.issue(ownerId, "access", {
+      label: "viewer",
+      ttlMs: SESSION_TTL_MS,
+    });
+    setCookie(c, SESSION_COOKIE, token, {
+      httpOnly: true,
+      secure: publicUrl.startsWith("https:"),
+      sameSite: "Strict",
+      path: "/",
+      maxAge: SESSION_TTL_MS / 1000,
+    });
+    return c.redirect("/", 303);
+  });
+
+  app.get("/logout", async (c) => {
+    const token = getCookie(c, SESSION_COOKIE);
+    if (token) await store.revoke(token);
+    deleteCookie(c, SESSION_COOKIE, { path: "/", secure: publicUrl.startsWith("https:") });
+    return c.redirect("/login", 303);
   });
 
   app.post("/authorize", async (c) => {

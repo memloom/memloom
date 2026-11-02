@@ -2527,9 +2527,10 @@ export function createServer(memloom: Memloom, opts: ServerOptions = {}): Hono {
   opts.mount?.(app);
 
   // The viewer bundle, mounted last so every API route wins first. Unknown paths fall back to
-  // index.html (the shell handles them). Standard single-page-app serving. Not on a hosted
-  // server: a browser cannot attach the bearer token every API call there needs.
-  if (opts.staticDir && !opts.cloudAuth) {
+  // index.html (the shell handles them). Standard single-page-app serving. On a hosted server
+  // only with the password sign-in on: the viewer then rides the session cookie /login sets,
+  // and the token gate in front of this redirects a signed-out page load to /login.
+  if (opts.staticDir && (!opts.cloudAuth || opts.cloudAuth.loginPassword)) {
     const root = resolve(opts.staticDir);
     app.get("*", async (c) => {
       const reqPath = c.req.path === "/" ? "/index.html" : c.req.path;

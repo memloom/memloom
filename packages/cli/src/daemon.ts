@@ -237,7 +237,9 @@ export async function startDaemon(
 
   // The viewer bundle ships inside this package (copied from apps/viewer at build time);
   // when present the daemon serves it at / so `memloom ui` is one process, one port.
-  const viewerDir = fileURLToPath(new URL("../viewer", import.meta.url));
+  // MEMLOOM_VIEWER_DIR points at another build, e.g. one mounted into a hosted container.
+  const viewerDir =
+    process.env.MEMLOOM_VIEWER_DIR?.trim() || fileURLToPath(new URL("../viewer", import.meta.url));
   const staticDir = existsSync(viewerDir) ? viewerDir : undefined;
 
   const cloudAuth: CloudAuthOptions | undefined = hosted
@@ -307,6 +309,8 @@ export async function startDaemon(
   }
   if (staticDir && !hosted) {
     console.log(`  Viewer     http://127.0.0.1:${httpPort}          (\`memloom ui\` opens it)`);
+  } else if (staticDir && hosted?.loginPassword) {
+    console.log(`  Viewer     ${hosted.publicUrl}   (sign in with the login password)`);
   }
   if (db && pgServer) {
     console.log(

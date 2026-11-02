@@ -43,7 +43,9 @@ Setting `MEMLOOM_PUBLIC_URL` turns a daemon into a hosted server:
 - Claude.ai can connect with OAuth: it opens a sign-in page that asks for `MEMLOOM_LOGIN_PASSWORD`.
 - Routes that read the server's own disk are closed: adding local files and folders, folder
   watching, the import streams, and the admin routes. Recordings still arrive by upload.
-- The viewer is not served. Run it locally against your own store.
+- With `MEMLOOM_LOGIN_PASSWORD` set, the viewer is served at the public URL behind the same
+  password: open it, sign in at `/login`, and the browser stays signed in for 30 days. `/logout`
+  ends the session. Without the password the viewer is not served.
 - The MCP tools are the same, minus `add_file`, which takes a path on the server's disk.
 
 ***
@@ -227,7 +229,8 @@ machine, long recordings may need a larger size; `fly scale memory 2048` changes
 | Setting | For |
 | --- | --- |
 | `MEMLOOM_PUBLIC_URL` | The server's public address. Turns on tokens and sign-in. Must be https except on localhost |
-| `MEMLOOM_LOGIN_PASSWORD` | The Claude.ai sign-in password, at least 12 characters. Unset means no sign-in, tokens only |
+| `MEMLOOM_LOGIN_PASSWORD` | The sign-in password for Claude.ai and the viewer, at least 12 characters. Unset means no sign-in and no viewer, tokens only |
+| `MEMLOOM_VIEWER_DIR` | Serve the viewer from this folder instead of the one bundled with the package |
 | `PORT` | The port to listen on. Fly sets it from `fly.toml` |
 | `MEMLOOM_S3_ENDPOINT` `MEMLOOM_S3_BUCKET` `MEMLOOM_S3_ACCESS_KEY_ID` `MEMLOOM_S3_SECRET_ACCESS_KEY` | The bucket for recordings. All four or none |
 | `MEMLOOM_S3_REGION` | Default `auto`, which R2 expects. AWS needs the bucket's region |
