@@ -1,34 +1,101 @@
+/* memloom extension: the viewer's iPod theme (DESIGN.md). Brushed silver in light, black in
+   dark, one glossy blue bar for whatever is selected, soft 5-8px corners. Follows the system
+   theme, since the popup has no toggle of its own. Tokens match apps/viewer/src/styles.css. */
+
 :root {
   color-scheme: light dark;
-  --fg: #1c1917;
-  --muted: #78716c;
-  --border: #d6d3d1;
-  --surface: #ffffff;
-  --hover: #f5f5f4;
-  --accent: #d97706;
-  --accent-soft: #fef3c7;
-  --bad: #b91c1c;
-  --good: #15803d;
+  --bg: #e6e7ea;
+  --bg-raised: #f4f5f6;
+  --border: #c4c7cc;
+  --border-strong: #a3a7ae;
+  --text: #17181b;
+  --text-muted: #474a50;
+  --brand: #1f62d6; /* iPod blue: chrome + selection only */
+  --select-bg: linear-gradient(180deg, #5b9dff 0%, #2f74ea 48%, #1f62d6 52%, #1d5bc8 100%);
+  --select-border: #174fb3;
+  --select-text: #ffffff;
+  --metal: linear-gradient(180deg, #fbfbfc 0%, #e4e6e9 55%, #cfd2d6 100%);
+  --metal-grain: repeating-linear-gradient(
+    0deg,
+    rgb(255 255 255 / 22%) 0 1px,
+    rgb(0 0 0 / 2.5%) 1px 2px,
+    transparent 2px 3px
+  );
+  --metal-edge: rgb(255 255 255 / 85%);
+  --field: #fbfbfc;
+  --ok: #059669;
+  --danger: #dc2626;
+  --radius: 8px;
+  --radius-sm: 5px;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --fg: #f5f5f4;
-    --muted: #a8a29e;
-    --border: #44403c;
-    --surface: #1c1917;
-    --hover: #292524;
-    --accent-soft: #3b2a10;
+    --bg: #0c0d0f;
+    --bg-raised: #16171a;
+    --border: #25272b;
+    --border-strong: #3a3d43;
+    --text: #ececee;
+    --text-muted: #a2a5ac;
+    --brand: #3b82f6;
+    --select-border: #1650b8;
+    --metal: linear-gradient(180deg, #24262a 0%, #17181b 100%);
+    --metal-grain: none;
+    --metal-edge: rgb(255 255 255 / 6%);
+    --field: #0f1012;
+    --ok: #34d399;
+    --danger: #f87171;
   }
 }
 
 body {
   width: 320px;
   margin: 0;
+  font: 13px/1.4 var(--sans);
+  color: var(--text);
+  background: var(--bg);
+}
+
+main {
   padding: 12px;
-  font: 13px/1.4 system-ui, sans-serif;
-  color: var(--fg);
-  background: var(--surface);
+}
+
+/* The title bar: brushed metal with the wordmark, like the iPod's screen header. */
+.bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 34px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-strong);
+  background: var(--metal-grain), var(--metal);
+  box-shadow: inset 0 1px 0 var(--metal-edge);
+}
+
+.wordmark {
+  font-family: "Inter", var(--sans);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  text-shadow: 0 1px 0 var(--metal-edge);
+}
+
+.bar-label {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+/* The page being saved sits on a raised plate. */
+.page {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow:
+    inset 0 1px 0 var(--metal-edge),
+    0 1px 2px rgb(0 0 0 / 12%);
 }
 
 .title {
@@ -40,8 +107,10 @@ body {
 }
 
 .url {
-  margin: 2px 0 10px;
-  color: var(--muted);
+  margin: 2px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -49,8 +118,9 @@ body {
 
 .label {
   display: block;
-  margin: 8px 0 4px;
-  color: var(--muted);
+  margin: 10px 0 4px;
+  font-size: 12px;
+  color: var(--text-muted);
 }
 
 textarea,
@@ -60,11 +130,17 @@ textarea,
   box-sizing: border-box;
   width: 100%;
   padding: 6px 8px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
   font: inherit;
   color: inherit;
-  background: transparent;
+  background: var(--field);
+}
+
+.field,
+.search {
+  font-family: var(--mono);
+  font-size: 12px;
 }
 
 textarea {
@@ -74,9 +150,11 @@ textarea {
 textarea:focus,
 .search:focus,
 .field:focus,
-.picker-button:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
+.picker-button:focus-visible,
+.save:focus-visible,
+.link:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--brand) 30%, transparent);
 }
 
 .picker-button {
@@ -89,6 +167,8 @@ textarea:focus,
 
 .picker-text {
   flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -100,7 +180,7 @@ textarea:focus,
   width: 14px;
   height: 14px;
   fill: none;
-  stroke: var(--muted);
+  stroke: var(--text-muted);
   stroke-width: 1.4;
   stroke-linejoin: round;
   stroke-linecap: round;
@@ -110,11 +190,14 @@ textarea:focus,
   transform: rotate(180deg);
 }
 
+/* The open picker is an iPod menu: a raised list where the picked row is the blue bar. */
 .panel {
   margin-top: 4px;
   padding: 6px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--radius);
+  background: var(--bg-raised);
+  box-shadow: 0 2px 6px rgb(0 0 0 / 15%);
 }
 
 .list {
@@ -130,21 +213,26 @@ textarea:focus,
   align-items: baseline;
   gap: 8px;
   padding: 5px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .item.active {
-  background: var(--hover);
+  background: color-mix(in srgb, var(--text) 8%, transparent);
 }
 
-.item[aria-selected="true"] {
-  background: var(--accent-soft);
-  font-weight: 600;
+.item[aria-selected="true"],
+.item[aria-selected="true"].active {
+  background: var(--select-bg);
+  color: var(--select-text);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 30%);
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
 }
 
 .item-name {
   flex: 1;
+  font-family: var(--mono);
+  font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -152,9 +240,15 @@ textarea:focus,
 
 .item-path,
 .item-count {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: normal;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.item[aria-selected="true"] .item-path,
+.item[aria-selected="true"] .item-count,
+.item[aria-selected="true"] .item-name {
+  color: var(--select-text);
 }
 
 .item-count {
@@ -162,30 +256,45 @@ textarea:focus,
 }
 
 .item.create .item-name {
-  color: var(--accent);
+  color: var(--brand);
 }
 
 .empty {
   padding: 5px 8px;
-  color: var(--muted);
+  color: var(--text-muted);
 }
 
+/* Primary action: the glossy blue bar. Secondary: a brushed key. */
 .save {
   margin-top: 12px;
   width: 100%;
   padding: 8px;
-  border: 0;
-  border-radius: 6px;
+  border: 1px solid var(--select-border);
+  border-radius: var(--radius-sm);
   font: inherit;
   font-weight: 600;
-  color: #fff;
-  background: var(--accent);
+  color: var(--select-text);
+  background: var(--select-bg);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%);
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
   cursor: pointer;
+}
+
+.save:hover:not(:disabled) {
+  filter: brightness(1.08);
 }
 
 .save:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+.save.secondary {
+  border-color: var(--border-strong);
+  color: var(--text);
+  background: var(--metal-grain), var(--metal);
+  box-shadow: inset 0 1px 0 var(--metal-edge);
+  text-shadow: none;
 }
 
 .status {
@@ -194,33 +303,39 @@ textarea:focus,
 }
 
 .status.bad {
-  color: var(--bad);
+  color: var(--danger);
 }
 
 .status.good {
-  color: var(--good);
+  color: var(--ok);
 }
 
 .link {
   display: block;
   margin: 4px 0 0 auto;
-  padding: 0;
+  padding: 2px 4px;
   border: 0;
+  border-radius: var(--radius-sm);
   font: inherit;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--text-muted);
   background: none;
   cursor: pointer;
 }
 
 .link:hover {
-  color: var(--accent);
+  color: var(--brand);
 }
 
 .hint {
   margin: 4px 0 0;
-  color: var(--muted);
+  color: var(--text-muted);
   font-size: 12px;
+}
+
+code {
+  font-family: var(--mono);
+  font-size: 11px;
 }
 
 .row {
@@ -230,9 +345,4 @@ textarea:focus,
 
 .row .save {
   flex: 1;
-}
-
-.save.secondary {
-  color: var(--fg);
-  background: var(--hover);
 }
