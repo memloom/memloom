@@ -45,8 +45,10 @@ function radiusFor(total: number): number {
 
 // Biggest first, each next one on the nearest free spot of a spiral around the centre. A
 // circle of the hexagon's outer radius stands in for it, plus a gap, so neighbours never touch.
+// The spiral is stretched to the stage's shape (tall on a phone, wide on a monitor), so the
+// field fills the screen instead of leaving bands of empty space.
 // Deterministic: the same folders always land in the same places.
-function pack(items: Omit<Cell, "x" | "y">[]): Cell[] {
+function pack(items: Omit<Cell, "x" | "y">[], aspect: number): Cell[] {
   const placed: Cell[] = [];
   const gap = 6;
   for (const item of [...items].sort((a, b) => b.r - a.r)) {
@@ -58,8 +60,8 @@ function pack(items: Omit<Cell, "x" | "y">[]): Cell[] {
     for (let step = 0; step < 20000; step++) {
       const angle = step * 0.35;
       const dist = 2 + step * 0.9;
-      const x = Math.cos(angle) * dist;
-      const y = Math.sin(angle) * dist * 0.8;
+      const x = Math.cos(angle) * dist * Math.min(1, 1 / aspect);
+      const y = Math.sin(angle) * dist * Math.min(1, aspect);
       const free = placed.every((p) => Math.hypot(p.x - x, p.y - y) >= p.r + item.r + gap);
       if (free) {
         spot = { x, y };
@@ -114,6 +116,9 @@ export function FolderMap({
     { kind: "zoom"; x: number; y: number; k: number } | { kind: "enter" | "back" } | null
   >(null);
   const parent = trail.at(-1) ?? null;
+  // Height over width, in coarse steps so a resize repacks only when the shape really changes.
+  const aspect =
+    size.w > 0 ? Math.min(2.5, Math.max(0.4, Math.round((size.h / size.w) * 4) / 4)) : 0.8;
 
   useLayoutEffect(() => {
     const el = stageRef.current;
@@ -141,8 +146,8 @@ export function FolderMap({
     if (parent && parent[count] > 0) {
       items.push({ node: parent, total: parent[count], own: true, r: radiusFor(parent[count]) });
     }
-    return pack(items);
-  }, [parent, scopes, count]);
+    return pack(items, aspect);
+  }, [parent, scopes, count, aspect]);
 
   // Unit space to pixels: centre the packing and scale it to fill the stage.
   const view = useMemo(() => {

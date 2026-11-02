@@ -3834,3 +3834,142 @@ select:focus,
 .folderMapEmpty {
   color: var(--text-faint);
 }
+
+/* ---------- Phones ---------- */
+/* Under 768px the folder sidebar is a drawer behind a bar at the top of the panel, the tabs
+   scroll sideways instead of overflowing, the store counts in the header give way, and the
+   panels and the folder map use the full width. */
+.scopeDrawerToggle,
+.scopeDrawerBackdrop {
+  display: none;
+}
+
+@media (max-width: 767px) {
+  .header {
+    gap: 10px;
+    padding: 0 10px;
+  }
+
+  .wordmark {
+    font-size: 16px;
+  }
+
+  .tabs {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .tabs::-webkit-scrollbar {
+    display: none;
+  }
+
+  .tab {
+    flex: none;
+  }
+
+  .headerStats {
+    display: none;
+  }
+
+  .scopeLayout {
+    position: relative;
+    flex-direction: column;
+  }
+
+  .scopeDrawerToggle {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 10px 0;
+    padding: 8px 12px;
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    background: var(--metal-grain), var(--metal);
+    box-shadow: inset 0 1px 0 var(--metal-edge);
+    color: var(--text);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .scopeDrawerLabel {
+    color: var(--text-faint);
+    font-family: var(--mono);
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .scopeDrawerCurrent {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  .scopeDrawerBackdrop {
+    display: block;
+    position: absolute;
+    inset: 0;
+    z-index: 20;
+    border: none;
+    background: rgb(0 0 0 / 35%);
+  }
+
+  .scopeSidebar {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 21;
+    width: min(300px, 85vw);
+    transform: translateX(-105%);
+    transition: transform 220ms ease;
+    box-shadow: 4px 0 18px rgb(0 0 0 / 22%);
+  }
+
+  .scopeSidebarOpen {
+    transform: none;
+  }
+
+  .panel {
+    padding: 12px 10px;
+  }
+
+  .panelMap {
+    padding: 0;
+  }
+
+  .panelMapInner {
+    padding: 8px 10px 0;
+  }
+
+  .panelMapInner .folderViewToggle {
+    top: 8px;
+    right: 10px;
+  }
+
+  .folderMapCrumbs {
+    flex-wrap: wrap;
+    padding-right: 130px;
+  }
+
+  .folderMapOpen {
+    margin-left: 0;
+  }
+
+  .folderMapPopup {
+    max-width: 180px;
+  }
+}
+
+@media (max-width: 767px) and (prefers-reduced-motion: reduce) {
+  .scopeSidebar {
+    transition: none;
+  }
+}
