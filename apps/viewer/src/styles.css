@@ -3101,17 +3101,25 @@ textarea {
   padding: 10px 12px !important;
 }
 
-/* One coloured edge carries the meaning, the way the run levels and the statement cards do. */
-.toastDone {
-  border-left: 3px solid var(--ok);
+/* A toast reads like the iPod's selected row: the glossy blue bar with white text for anything
+   that worked or is worth saying, and the same bar in red for a failure. */
+.toastDone,
+.toastSaid {
+  background: var(--select-bg) !important;
+  border-color: var(--select-border);
+  color: var(--select-text) !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 35%) !important;
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
+  font-weight: 600;
 }
 
 .toastFailed {
-  border-left: 3px solid var(--danger);
-}
-
-.toastSaid {
-  border-left: 3px solid var(--memory);
+  background: linear-gradient(180deg, #f87171 0%, #dc2626 48%, #c81e1e 52%, #b91c1c 100%) !important;
+  border-color: #991b1b;
+  color: #ffffff !important;
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 30%) !important;
+  text-shadow: 0 -1px 0 rgb(0 0 0 / 25%);
+  font-weight: 600;
 }
 
 /* Confirmation modal. Same surface language as everything else: square, hairline border, no
