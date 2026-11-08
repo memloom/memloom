@@ -201,7 +201,13 @@ export async function startDaemon(
   }
 
   const memloom = apiKey
-    ? new Memloom({ storage, embedding: deps.embedding, llm: deps.llm, autoIndex })
+    ? new Memloom({
+        storage,
+        embedding: deps.embedding,
+        llm: deps.llm,
+        autoIndex,
+        ...(deps.dedupClassifier ? { dedupClassifier: deps.dedupClassifier } : {}),
+      })
     : new Memloom({ storage, embedding: deps.embedding, llm: deps.llm, dedup: false });
   try {
     await memloom.init();
@@ -343,6 +349,7 @@ export async function startDaemon(
     console.log(
       `  mode       cloud (${embedModel ?? "qwen/qwen3-embedding-8b"} @ ${embedDims ?? 1024} dims${embedProvider ? ` via ${embedProvider}` : ""}, ${llmModel ?? "google/gemini-2.5-flash"}${llmProvider === "anthropic" ? " via Anthropic" : ""}, auto-index ${autoIndex ? "on" : "off"})`,
     );
+    console.log(`  dedup      ${deps.dedupLabel}`);
   } else {
     console.log(
       "  mode       OFFLINE, no OPENROUTER_API_KEY (deterministic embeddings, dedup off).",

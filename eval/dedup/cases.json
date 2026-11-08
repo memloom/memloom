@@ -1,0 +1,1225 @@
+[
+  {
+    "id": "deploy-window",
+    "new": "The deploy window for the api service is Friday 15:00 to 17:00 UTC.",
+    "candidates": [
+      {
+        "text": "Deploys to the api service happen on Fridays between 15:00 and 17:00 UTC.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The deploy window for the api service is Friday 16:00 to 18:00 UTC.",
+        "gold": "contradictory",
+        "trap": "changed-time"
+      },
+      {
+        "text": "The web frontend deploys continuously on every merge to main.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      },
+      {
+        "text": "Deploys are frozen during the last week of December.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "dentist",
+    "new": "The user's dentist appointment is on 14 November at 10:30.",
+    "candidates": [
+      {
+        "text": "Dentist appointment: 14 November, 10:30.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's dentist appointment is on 21 November at 10:30.",
+        "gold": "contradictory",
+        "trap": "changed-date"
+      },
+      {
+        "text": "The user's physiotherapy appointment is on 14 November at 15:00.",
+        "gold": "complementary",
+        "trap": "different-event"
+      },
+      {
+        "text": "The user's dentist is Dr. Nowak at the Mokotow clinic.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "rent",
+    "new": "The user's monthly rent is 3,200 PLN, paid on the 10th.",
+    "candidates": [
+      {
+        "text": "Rent is 3,200 PLN a month, due on the 10th.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's monthly rent is 3,400 PLN, paid on the 10th.",
+        "gold": "contradictory",
+        "trap": "changed-number"
+      },
+      {
+        "text": "The user pays the electricity bill quarterly.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "embed-model",
+    "new": "Memloom's embedding model is qwen3-embedding-8b at 1024 dimensions.",
+    "candidates": [
+      {
+        "text": "memloom embeds with qwen/qwen3-embedding-8b, truncated to 1024 dims.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "Memloom's embedding model is qwen3-embedding-8b at 4096 dimensions.",
+        "gold": "contradictory",
+        "trap": "changed-number"
+      },
+      {
+        "text": "memloom's dedup classifier runs on claude-haiku-5-5.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      },
+      {
+        "text": "Embeddings in memloom are served by Nebius through OpenRouter.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "penicillin",
+    "new": "The user is allergic to penicillin.",
+    "candidates": [
+      {
+        "text": "The user has a penicillin allergy.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user is not allergic to any medication.",
+        "gold": "contradictory",
+        "trap": "negation"
+      },
+      {
+        "text": "The user is allergic to cat dander.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "The user is lactose intolerant.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "alice-birthday",
+    "new": "Alice's birthday is on 3 May.",
+    "candidates": [
+      {
+        "text": "Bob's birthday is on 3 May.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "Alice was born on 3 May.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "Alice's birthday is on 5 March.",
+        "gold": "contradictory",
+        "trap": "changed-date"
+      }
+    ]
+  },
+  {
+    "id": "tea",
+    "new": "The user prefers tea over coffee in the morning.",
+    "candidates": [
+      {
+        "text": "In the mornings the user would rather have tea than coffee.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user prefers coffee over tea in the morning.",
+        "gold": "contradictory",
+        "trap": "preference-reversal"
+      },
+      {
+        "text": "The user drinks green tea in the afternoon.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "pnpm",
+    "new": "The project uses pnpm as its package manager.",
+    "candidates": [
+      {
+        "text": "Package management in the project is done with pnpm.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The project uses npm as its package manager.",
+        "gold": "contradictory",
+        "trap": "changed-name"
+      },
+      {
+        "text": "The project uses Biome for linting and formatting.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      },
+      {
+        "text": "The project requires Node 20 or newer.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "ci-migration",
+    "new": "We migrated the CI from CircleCI to GitHub Actions.",
+    "candidates": [
+      {
+        "text": "CI runs on CircleCI.",
+        "gold": "contradictory",
+        "trap": "state-change"
+      },
+      {
+        "text": "CI runs on GitHub Actions.",
+        "gold": "identical",
+        "accept": ["identical", "complementary"],
+        "trap": "added-detail"
+      },
+      {
+        "text": "The CI pipeline runs the test suite on Ubuntu and Windows.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "school-start",
+    "new": "The user's daughter's school starts at 8:00.",
+    "candidates": [
+      {
+        "text": "School starts at 8:00 for the user's daughter.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's daughter's school starts at 8:15.",
+        "gold": "contradictory",
+        "trap": "changed-time"
+      },
+      {
+        "text": "The user's son's school starts at 8:45.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "The user's daughter has swimming practice on Tuesdays.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "farm-ram",
+    "new": "The farm server has 24 GB of RAM.",
+    "candidates": [
+      {
+        "text": "The farm server has 24 GB of memory.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The farm server has 16 GB of RAM.",
+        "gold": "contradictory",
+        "trap": "changed-number"
+      },
+      {
+        "text": "The farm server is an ARM machine running Docker.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      },
+      {
+        "text": "The laptop has 32 GB of RAM.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      }
+    ]
+  },
+  {
+    "id": "lisbon-flight",
+    "new": "The user's flight to Lisbon departs on 2 December at 07:15 from WAW.",
+    "candidates": [
+      {
+        "text": "Flight to Lisbon: 2 December, 07:15, from Warsaw Chopin.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's flight to Lisbon departs on 2 December at 09:15 from WAW.",
+        "gold": "contradictory",
+        "trap": "changed-time"
+      },
+      {
+        "text": "The user's return flight from Lisbon is on 9 December.",
+        "gold": "complementary",
+        "trap": "different-event"
+      },
+      {
+        "text": "The user's hotel in Lisbon is in Alfama.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "no-meat",
+    "new": "The user no longer eats meat.",
+    "candidates": [
+      {
+        "text": "The user is vegetarian.",
+        "gold": "identical",
+        "accept": ["identical", "complementary"],
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user eats chicken most days.",
+        "gold": "contradictory",
+        "trap": "state-change"
+      },
+      {
+        "text": "The user cooks dinner at home most evenings.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "daemon-port",
+    "new": "The memloom daemon listens on port 4319.",
+    "candidates": [
+      {
+        "text": "memloom serve binds to port 4319.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The memloom daemon listens on port 4391.",
+        "gold": "contradictory",
+        "trap": "changed-number"
+      },
+      {
+        "text": "The memloom daemon only accepts requests from localhost by default.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "car-insurance",
+    "new": "The user's car insurance renews on 1 March with PZU.",
+    "candidates": [
+      {
+        "text": "Car insurance with PZU renews every 1 March.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's car insurance renews on 1 March with Warta.",
+        "gold": "contradictory",
+        "trap": "changed-name"
+      },
+      {
+        "text": "The user's home insurance renews on 1 March with PZU.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "The user's car is a 2019 Skoda Octavia.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "standup",
+    "new": "Standup is at 9:30 on weekdays.",
+    "candidates": [
+      {
+        "text": "The team standup happens every weekday at 9:30.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "Standup is at 9:30 on Mondays and Thursdays only.",
+        "gold": "contradictory",
+        "trap": "changed-schedule"
+      },
+      {
+        "text": "The weekly planning meeting is on Monday at 11:00.",
+        "gold": "complementary",
+        "trap": "different-event"
+      }
+    ]
+  },
+  {
+    "id": "saturday-run",
+    "new": "The user runs 5 km every Saturday morning.",
+    "candidates": [
+      {
+        "text": "Every Saturday morning the user goes for a 5 km run.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user runs 10 km every Saturday morning.",
+        "gold": "contradictory",
+        "trap": "changed-number"
+      },
+      {
+        "text": "The user ran a 10 km race on 12 October.",
+        "gold": "complementary",
+        "trap": "different-event"
+      },
+      {
+        "text": "The user does yoga on Wednesday evenings.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "rate-limit",
+    "new": "The API rate limit is 100 requests per minute per key.",
+    "candidates": [
+      {
+        "text": "Each API key may make 100 requests a minute.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The API rate limit is 1000 requests per minute per key.",
+        "gold": "contradictory",
+        "trap": "changed-number"
+      },
+      {
+        "text": "Rate-limited requests get a 429 with a Retry-After header.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      },
+      {
+        "text": "Unauthenticated API calls are limited to 10 requests per second per IP.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      }
+    ]
+  },
+  {
+    "id": "sister-city",
+    "new": "The user's sister Marta lives in Krakow.",
+    "candidates": [
+      {
+        "text": "Marta, the user's sister, lives in Krakow.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's sister Marta lives in Gdansk.",
+        "gold": "contradictory",
+        "trap": "changed-place"
+      },
+      {
+        "text": "The user's brother Piotr lives in Krakow.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "Marta works as a pharmacist.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "postgres-version",
+    "new": "Postgres in production is version 16.",
+    "candidates": [
+      {
+        "text": "Production runs Postgres 16.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "Production runs Postgres 15.",
+        "gold": "contradictory",
+        "trap": "changed-number"
+      },
+      {
+        "text": "The staging database is Postgres 17.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "Production Postgres is hosted on Neon.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "storage-detail",
+    "new": "The project uses Postgres 16 on Neon for storage, with pgvector for embeddings.",
+    "candidates": [
+      {
+        "text": "The project stores its data in Postgres.",
+        "gold": "identical",
+        "accept": ["identical", "complementary"],
+        "trap": "added-detail"
+      },
+      {
+        "text": "The project stores its data in MongoDB.",
+        "gold": "contradictory",
+        "trap": "changed-name"
+      }
+    ]
+  },
+  {
+    "id": "lives-in",
+    "new": "The user lives in Warsaw.",
+    "candidates": [
+      {
+        "text": "The user lives in Warsaw, in Mokotow, with their partner and two kids.",
+        "gold": "complementary",
+        "trap": "dropped-detail"
+      },
+      {
+        "text": "The user lives in Berlin.",
+        "gold": "contradictory",
+        "trap": "changed-place"
+      },
+      {
+        "text": "The user grew up in Lodz.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "backup-job",
+    "new": "The backup job runs nightly.",
+    "candidates": [
+      {
+        "text": "The backup job runs nightly at 02:00 and uploads to Backblaze B2.",
+        "gold": "complementary",
+        "trap": "dropped-detail"
+      },
+      {
+        "text": "The backup job runs weekly on Sundays.",
+        "gold": "contradictory",
+        "trap": "changed-schedule"
+      },
+      {
+        "text": "Backups are kept for 30 days.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "address-as",
+    "new": "The user prefers to be addressed as Sam.",
+    "candidates": [
+      {
+        "text": "Call the user Sam.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user prefers to be addressed as Samuel, never Sam.",
+        "gold": "contradictory",
+        "trap": "preference-reversal"
+      },
+      {
+        "text": "The user's surname is Kowalski.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "gym",
+    "new": "The user's gym membership was cancelled in October.",
+    "candidates": [
+      {
+        "text": "The user has an active gym membership at CityFit.",
+        "gold": "contradictory",
+        "trap": "state-change"
+      },
+      {
+        "text": "The user cancelled their gym membership in October.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user cancelled their Netflix subscription in October.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      }
+    ]
+  },
+  {
+    "id": "signing-key",
+    "new": "Release builds are signed with the key stored in 1Password under 'release-signing'.",
+    "candidates": [
+      {
+        "text": "The release signing key lives in 1Password as 'release-signing'.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "Release builds are signed with a key kept in AWS KMS.",
+        "gold": "contradictory",
+        "trap": "changed-name"
+      },
+      {
+        "text": "Debug builds are not signed.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      }
+    ]
+  },
+  {
+    "id": "peanuts",
+    "new": "The user's son is allergic to peanuts.",
+    "candidates": [
+      {
+        "text": "The user's son has a peanut allergy.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's daughter is allergic to peanuts.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "The user's son has no food allergies.",
+        "gold": "contradictory",
+        "trap": "negation"
+      },
+      {
+        "text": "The user's son is 7 years old.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "grocery-budget",
+    "new": "The weekly grocery budget is 600 PLN.",
+    "candidates": [
+      {
+        "text": "The household spends at most 600 PLN on groceries each week.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The weekly grocery budget is 450 PLN.",
+        "gold": "contradictory",
+        "trap": "changed-number"
+      },
+      {
+        "text": "The monthly restaurant budget is 600 PLN.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "Groceries are bought at Lidl on Saturdays.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "pglite-tests",
+    "new": "The test suite runs on PGLite, no Docker needed.",
+    "candidates": [
+      {
+        "text": "Tests use PGLite instead of a Dockerized Postgres.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The test suite needs Docker to start a Postgres container.",
+        "gold": "contradictory",
+        "trap": "negation"
+      },
+      {
+        "text": "Booting PGLite takes about six seconds.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "passport",
+    "new": "The user's passport expires on 18 August 2029.",
+    "candidates": [
+      {
+        "text": "Passport expiry: 18 August 2029.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's passport expires on 18 August 2028.",
+        "gold": "contradictory",
+        "trap": "changed-date"
+      },
+      {
+        "text": "The user's ID card expires on 18 August 2029.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "The user renewed their passport at the Warsaw office.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "vitamin-d",
+    "new": "The user stopped taking vitamin D in September.",
+    "candidates": [
+      {
+        "text": "The user takes 2000 IU of vitamin D daily.",
+        "gold": "contradictory",
+        "trap": "state-change"
+      },
+      {
+        "text": "The user takes magnesium before bed.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "default-llm",
+    "new": "The default LLM for memloom is google/gemini-2.5-flash.",
+    "candidates": [
+      {
+        "text": "memloom ships with gemini-2.5-flash as its LLM.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The default LLM for memloom is anthropic/claude-haiku-5.5.",
+        "gold": "contradictory",
+        "trap": "changed-name"
+      },
+      {
+        "text": "The default embedding model for memloom is qwen3-embedding-8b.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "The assistant chat model defaults to the LLM model.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "therapist",
+    "new": "The user meets their therapist every other Thursday at 18:00.",
+    "candidates": [
+      {
+        "text": "Therapy sessions are on alternate Thursdays at 6 pm.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user meets their therapist every Thursday at 18:00.",
+        "gold": "contradictory",
+        "trap": "changed-schedule"
+      },
+      {
+        "text": "The user's therapist is called Ewa.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "laptop",
+    "new": "The user's laptop is a ThinkPad X1 Carbon Gen 11.",
+    "candidates": [
+      {
+        "text": "The user works on a ThinkPad X1 Carbon, 11th generation.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's laptop is a MacBook Air M3.",
+        "gold": "contradictory",
+        "trap": "changed-name"
+      },
+      {
+        "text": "The user's work phone is a Pixel 8.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      }
+    ]
+  },
+  {
+    "id": "squash-merge",
+    "new": "Merges to main are squash merges only.",
+    "candidates": [
+      {
+        "text": "PRs are squash-merged into main.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "PRs are merged into main with merge commits to keep history.",
+        "gold": "contradictory",
+        "trap": "changed-name"
+      },
+      {
+        "text": "PRs need one approval before merging.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      },
+      {
+        "text": "Branches are deleted after merge.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "partner-name",
+    "new": "The user's partner's name is Ola.",
+    "candidates": [
+      {
+        "text": "The user's partner is called Ola.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's partner's name is Ana.",
+        "gold": "contradictory",
+        "trap": "changed-name"
+      },
+      {
+        "text": "The user's partner Ola works as an architect.",
+        "gold": "complementary",
+        "trap": "dropped-detail"
+      },
+      {
+        "text": "The user's sister's name is Ola.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      }
+    ]
+  },
+  {
+    "id": "electricity-price",
+    "new": "Electricity costs about 0.95 PLN per kWh at home.",
+    "candidates": [
+      {
+        "text": "The home electricity price is roughly 0.95 PLN/kWh.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "Electricity costs about 1.25 PLN per kWh at home.",
+        "gold": "contradictory",
+        "trap": "changed-number"
+      },
+      {
+        "text": "The user's solar panels produce about 4,500 kWh a year.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "football",
+    "new": "The user's son has football practice on Mondays and Wednesdays at 17:00.",
+    "candidates": [
+      {
+        "text": "Football practice for the user's son: Mon and Wed, 5 pm.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's son has football practice on Tuesdays and Thursdays at 17:00.",
+        "gold": "contradictory",
+        "trap": "changed-schedule"
+      },
+      {
+        "text": "The user's son has a football match on Saturday 16 November.",
+        "gold": "complementary",
+        "trap": "different-event"
+      },
+      {
+        "text": "The user's daughter has piano lessons on Mondays at 17:00.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      }
+    ]
+  },
+  {
+    "id": "auto-resolver",
+    "new": "Conflicts in memloom are resolved by a human unless the auto-resolver is decisive.",
+    "candidates": [
+      {
+        "text": "memloom's auto-resolver answers unsure unless the evidence is decisive, leaving the conflict to a human.",
+        "gold": "identical",
+        "accept": ["identical", "complementary"],
+        "trap": "paraphrase"
+      },
+      {
+        "text": "memloom resolves every conflict automatically, without human review.",
+        "gold": "contradictory",
+        "trap": "negation"
+      },
+      {
+        "text": "Resolved conflicts can be reverted from the Console.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "mortgage",
+    "new": "The user's mortgage rate is fixed at 6.1% until 2028.",
+    "candidates": [
+      {
+        "text": "The mortgage has a fixed 6.1% rate through 2028.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's mortgage rate is fixed at 7.1% until 2028.",
+        "gold": "contradictory",
+        "trap": "changed-number"
+      },
+      {
+        "text": "The user's mortgage rate is variable.",
+        "gold": "contradictory",
+        "trap": "negation"
+      },
+      {
+        "text": "The user's mortgage is with mBank.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "spanish",
+    "new": "The user is learning Spanish.",
+    "candidates": [
+      {
+        "text": "The user is studying Spanish.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user is learning Portuguese.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "The user speaks fluent English and Polish.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "working-hours",
+    "new": "The user's working hours are 9:00 to 17:00.",
+    "candidates": [
+      {
+        "text": "The user works from 9 to 5.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user works from 10:00 to 18:00.",
+        "gold": "contradictory",
+        "trap": "changed-time"
+      },
+      {
+        "text": "The user does not take meetings on Fridays.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "moved-city",
+    "new": "The user moved to Berlin in October.",
+    "candidates": [
+      {
+        "text": "The user lives in Warsaw.",
+        "gold": "contradictory",
+        "trap": "implied-contradiction"
+      },
+      {
+        "text": "The user relocated to Berlin last autumn.",
+        "gold": "identical",
+        "accept": ["identical", "complementary"],
+        "trap": "paraphrase"
+      },
+      {
+        "text": "The user's company has an office in Berlin.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "son-age",
+    "new": "The user's son turned 8 in September.",
+    "candidates": [
+      {
+        "text": "The user's son is 7 years old.",
+        "gold": "contradictory",
+        "trap": "implied-contradiction"
+      },
+      {
+        "text": "The user's son was born in September 2018.",
+        "gold": "complementary",
+        "accept": ["complementary", "identical"],
+        "trap": "implied-agreement"
+      },
+      {
+        "text": "The user's son started second grade in September.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "ram-units",
+    "new": "The farm server has 24,576 MB of memory.",
+    "candidates": [
+      {
+        "text": "The farm server has 24 GB of RAM.",
+        "gold": "identical",
+        "trap": "unit-conversion"
+      },
+      {
+        "text": "The farm server has 32 GB of RAM.",
+        "gold": "contradictory",
+        "trap": "unit-conversion"
+      }
+    ]
+  },
+  {
+    "id": "flight-minutes",
+    "new": "The flight from Warsaw to Lisbon takes about 4 hours.",
+    "candidates": [
+      {
+        "text": "Warsaw to Lisbon is roughly a 240-minute flight.",
+        "gold": "identical",
+        "trap": "unit-conversion"
+      },
+      {
+        "text": "The flight from Warsaw to Lisbon takes about 2 hours.",
+        "gold": "contradictory",
+        "trap": "changed-number"
+      },
+      {
+        "text": "The train from Warsaw to Krakow takes about 2.5 hours.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      }
+    ]
+  },
+  {
+    "id": "office-fridays",
+    "new": "The office is closed on Fridays.",
+    "candidates": [
+      {
+        "text": "The office is open every weekday.",
+        "gold": "contradictory",
+        "trap": "implied-contradiction"
+      },
+      {
+        "text": "The office is open Monday to Thursday.",
+        "gold": "complementary",
+        "accept": ["complementary", "identical"],
+        "trap": "implied-agreement"
+      },
+      {
+        "text": "The office is closed on public holidays.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "polish-allergy",
+    "new": "Użytkownik jest uczulony na penicylinę.",
+    "candidates": [
+      {
+        "text": "The user is allergic to penicillin.",
+        "gold": "identical",
+        "trap": "cross-language"
+      },
+      {
+        "text": "The user is allergic to amoxicillin.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "The user has no drug allergies.",
+        "gold": "contradictory",
+        "trap": "cross-language"
+      }
+    ]
+  },
+  {
+    "id": "polish-meeting",
+    "new": "Spotkanie z księgową jest w czwartek o 14:00.",
+    "candidates": [
+      {
+        "text": "The meeting with the accountant is on Thursday at 14:00.",
+        "gold": "identical",
+        "trap": "cross-language"
+      },
+      {
+        "text": "The meeting with the accountant is on Thursday at 16:00.",
+        "gold": "contradictory",
+        "trap": "cross-language"
+      },
+      {
+        "text": "The accountant needs the VAT invoices by the 20th.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "music-taste",
+    "new": "The user likes jazz.",
+    "candidates": [
+      {
+        "text": "The user likes rock music.",
+        "gold": "complementary",
+        "trap": "different-subject"
+      },
+      {
+        "text": "The user dislikes jazz.",
+        "gold": "contradictory",
+        "trap": "preference-reversal"
+      },
+      {
+        "text": "The user enjoys listening to jazz.",
+        "gold": "identical",
+        "trap": "paraphrase"
+      }
+    ]
+  },
+  {
+    "id": "early-december",
+    "new": "The Lisbon trip is in early December.",
+    "candidates": [
+      {
+        "text": "The Lisbon trip starts on 2 December.",
+        "gold": "complementary",
+        "accept": ["complementary", "identical"],
+        "trap": "granularity"
+      },
+      {
+        "text": "The Lisbon trip is in late January.",
+        "gold": "contradictory",
+        "trap": "changed-date"
+      }
+    ]
+  },
+  {
+    "id": "agent-gotcha",
+    "new": "In this repo, the rtk hook rewrites Bash commands and can hide lint failures: biome run through the Bash tool reported clean while CI failed, so lint must be checked through PowerShell or CI.",
+    "candidates": [
+      {
+        "text": "The rtk hook masks biome lint output when run via the Bash tool; verify lint via PowerShell or CI instead.",
+        "gold": "identical",
+        "trap": "long-paraphrase"
+      },
+      {
+        "text": "Running biome through the Bash tool reports lint results reliably, the same as CI.",
+        "gold": "contradictory",
+        "trap": "negation"
+      },
+      {
+        "text": "The repo uses Biome for both linting and formatting, configured in biome.json.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "agent-decision",
+    "new": "We decided to keep PGLite as the default store and only use external Postgres when MEMLOOM_PG_URL is set, because most users run memloom on a laptop.",
+    "candidates": [
+      {
+        "text": "memloom defaults to an embedded PGLite store; setting MEMLOOM_PG_URL switches to an external Postgres.",
+        "gold": "identical",
+        "accept": ["identical", "complementary"],
+        "trap": "added-detail"
+      },
+      {
+        "text": "memloom requires an external Postgres server; there is no embedded store.",
+        "gold": "contradictory",
+        "trap": "negation"
+      },
+      {
+        "text": "External Postgres needs the pgvector extension installed.",
+        "gold": "complementary",
+        "trap": "same-topic"
+      }
+    ]
+  },
+  {
+    "id": "budget-change",
+    "new": "Starting in November the weekly grocery budget goes up to 700 PLN.",
+    "candidates": [
+      {
+        "text": "The weekly grocery budget is 600 PLN.",
+        "gold": "contradictory",
+        "trap": "state-change"
+      },
+      {
+        "text": "The weekly grocery budget was 600 PLN until the end of October.",
+        "gold": "complementary",
+        "trap": "time-scoped"
+      }
+    ]
+  }
+]

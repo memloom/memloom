@@ -1,8 +1,12 @@
-import type { EmbeddingProvider, LLMProvider } from "@memloom/core";
+import type { DedupClassifier, EmbeddingProvider, LLMProvider } from "@memloom/core";
 import {
   type AnthropicEffort,
   AnthropicLLM,
+  DEFAULT_JEV_MODEL,
+  DEFAULT_JEV_THRESHOLD,
   HashingEmbeddingProvider,
+  JevDedupClassifier,
+  LlmDedupClassifier,
   NullLLMProvider,
   OpenRouterEmbeddings,
   OpenRouterLLM,
@@ -15,6 +19,8 @@ import {
 // presence of MEMLOOM_PG_URL is the storage-tier switch (external Postgres instead of the
 // embedded PGLite data dir). MEMLOOM_LLM_PROVIDER=anthropic moves only the LLM to the Anthropic
 // API; embeddings stay on OpenRouter, since Anthropic has no embeddings endpoint.
+// MEMLOOM_DEDUP_PROVIDER=jev moves only the dedup label to TypeSafe's Jev decision model on
+// OpenRouter, with the LLM as its fallback when Jev is unsure.
 
 export interface EngineDeps {
   embedding: EmbeddingProvider;
@@ -28,6 +34,10 @@ export interface EngineDeps {
   chatModel: string | undefined;
   /** Who serves the LLM. Embeddings are always OpenRouter's (or offline hashing). */
   llmProvider: "openrouter" | "anthropic";
+  /** Who labels dedup candidates. Undefined means Memloom's default, the LLM classifier. */
+  dedupClassifier: DedupClassifier | undefined;
+  /** One line for the daemon banner, e.g. "jev (typesafe/jev-1.14 >= 0.9, fallback llm)". */
+  dedupLabel: string;
   autoIndex: boolean;
 }
 
@@ -76,6 +86,7 @@ export function buildEngineDeps(): EngineDeps {
           ...(chatModel ? { chatModel } : {}),
         })
       : new NullLLMProvider();
+  const dedup = dedupConfig(apiKey, llm);
 
   return {
     embedding,
@@ -88,7 +99,50 @@ export function buildEngineDeps(): EngineDeps {
     llmModel,
     chatModel,
     llmProvider: anthropic ? "anthropic" : "openrouter",
+    dedupClassifier: dedup.classifier,
+    dedupLabel: dedup.label,
     autoIndex,
+  };
+}
+
+function dedupConfig(
+  apiKey: string | undefined,
+  llm: LLMProvider,
+): { classifier: DedupClassifier | undefined; label: string } {
+  const provider = (process.env.MEMLOOM_DEDUP_PROVIDER || "llm").trim().toLowerCase();
+  if (provider !== "llm" && provider !== "jev") {
+    throw new Error(
+      `memloom: MEMLOOM_DEDUP_PROVIDER is "${provider}"; it takes "llm" (the default) or "jev".`,
+    );
+  }
+  if (provider === "llm") return { classifier: undefined, label: "llm" };
+  if (!apiKey) {
+    throw new Error(
+      "memloom: MEMLOOM_DEDUP_PROVIDER=jev needs OPENROUTER_API_KEY in your memloom config.",
+    );
+  }
+  const model = process.env.MEMLOOM_DEDUP_JEV_MODEL?.trim() || DEFAULT_JEV_MODEL;
+  const rawThreshold = process.env.MEMLOOM_DEDUP_JEV_THRESHOLD?.trim();
+  const threshold = rawThreshold ? Number(rawThreshold) : DEFAULT_JEV_THRESHOLD;
+  if (!(threshold > 0 && threshold <= 1)) {
+    throw new Error(
+      `memloom: MEMLOOM_DEDUP_JEV_THRESHOLD takes a number above 0 and at most 1; got "${rawThreshold}".`,
+    );
+  }
+  const fallback = (process.env.MEMLOOM_DEDUP_JEV_FALLBACK || "llm").trim().toLowerCase();
+  if (fallback !== "llm" && fallback !== "conflict") {
+    throw new Error(
+      `memloom: MEMLOOM_DEDUP_JEV_FALLBACK is "${fallback}"; it takes "llm" (the default) or "conflict".`,
+    );
+  }
+  return {
+    classifier: new JevDedupClassifier({
+      apiKey,
+      model,
+      threshold,
+      fallback: fallback === "llm" ? new LlmDedupClassifier(llm) : null,
+    }),
+    label: `jev (${model} at ${threshold}, unsure goes to ${fallback === "llm" ? "the LLM" : "a human"})`,
   };
 }
 

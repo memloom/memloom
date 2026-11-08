@@ -1,0 +1,3591 @@
+{
+  "args": {
+    "llm": "anthropic:anthropic/claude-haiku-5.5",
+    "jevModel": "typesafe/jev-1.14",
+    "threshold": 0.8,
+    "label": "haiku-vs-jev-t080",
+    "concurrency": 4,
+    "maxUsd": 0.5
+  },
+  "ranAt": "2026-11-08T13:57:51.351Z",
+  "cost": {
+    "llmUsd": 0.0078296,
+    "llmIn": 17806,
+    "llmOut": 12098,
+    "jevUsd": 0.001813476,
+    "jevIn": 43178,
+    "jevOut": 8436,
+    "fallbackUsd": 0.0012898,
+    "fallbackCalls": 14
+  },
+  "timings": [
+    {
+      "id": "deploy-window",
+      "pairs": 4,
+      "llmMs": 1911,
+      "jevMs": 309,
+      "gatedMs": 309,
+      "jevUsd": 0.00003969,
+      "jevInputTokens": 945,
+      "fellBack": false
+    },
+    {
+      "id": "dentist",
+      "pairs": 4,
+      "llmMs": 1610,
+      "jevMs": 316,
+      "gatedMs": 316,
+      "jevUsd": 0.000039396,
+      "jevInputTokens": 938,
+      "fellBack": false
+    },
+    {
+      "id": "rent",
+      "pairs": 3,
+      "llmMs": 1553,
+      "jevMs": 255,
+      "gatedMs": 265,
+      "jevUsd": 0.000032466,
+      "jevInputTokens": 773,
+      "fellBack": false
+    },
+    {
+      "id": "embed-model",
+      "pairs": 4,
+      "llmMs": 1889,
+      "jevMs": 240,
+      "gatedMs": 240,
+      "jevUsd": 0.00004011,
+      "jevInputTokens": 955,
+      "fellBack": false
+    },
+    {
+      "id": "penicillin",
+      "pairs": 4,
+      "llmMs": 1494,
+      "jevMs": 237,
+      "gatedMs": 237,
+      "jevUsd": 0.000037422,
+      "jevInputTokens": 891,
+      "fellBack": false
+    },
+    {
+      "id": "alice-birthday",
+      "pairs": 3,
+      "llmMs": 1313,
+      "jevMs": 246,
+      "gatedMs": 246,
+      "jevUsd": 0.000030912,
+      "jevInputTokens": 736,
+      "fellBack": false
+    },
+    {
+      "id": "tea",
+      "pairs": 3,
+      "llmMs": 1317,
+      "jevMs": 225,
+      "gatedMs": 225,
+      "jevUsd": 0.000031164,
+      "jevInputTokens": 742,
+      "fellBack": false
+    },
+    {
+      "id": "pnpm",
+      "pairs": 4,
+      "llmMs": 1354,
+      "jevMs": 265,
+      "gatedMs": 265,
+      "jevUsd": 0.000037674,
+      "jevInputTokens": 897,
+      "fellBack": false
+    },
+    {
+      "id": "ci-migration",
+      "pairs": 3,
+      "llmMs": 1286,
+      "jevMs": 228,
+      "gatedMs": 1854,
+      "jevUsd": 0.00003108,
+      "jevInputTokens": 740,
+      "fellBack": true
+    },
+    {
+      "id": "school-start",
+      "pairs": 4,
+      "llmMs": 1332,
+      "jevMs": 224,
+      "gatedMs": 225,
+      "jevUsd": 0.000038346,
+      "jevInputTokens": 913,
+      "fellBack": false
+    },
+    {
+      "id": "farm-ram",
+      "pairs": 4,
+      "llmMs": 1332,
+      "jevMs": 219,
+      "gatedMs": 219,
+      "jevUsd": 0.000037758,
+      "jevInputTokens": 899,
+      "fellBack": false
+    },
+    {
+      "id": "lisbon-flight",
+      "pairs": 4,
+      "llmMs": 1635,
+      "jevMs": 238,
+      "gatedMs": 238,
+      "jevUsd": 0.000039312,
+      "jevInputTokens": 936,
+      "fellBack": false
+    },
+    {
+      "id": "no-meat",
+      "pairs": 3,
+      "llmMs": 1487,
+      "jevMs": 226,
+      "gatedMs": 226,
+      "jevUsd": 0.000030618,
+      "jevInputTokens": 729,
+      "fellBack": false
+    },
+    {
+      "id": "daemon-port",
+      "pairs": 3,
+      "llmMs": 1615,
+      "jevMs": 229,
+      "gatedMs": 1117,
+      "jevUsd": 0.000031542,
+      "jevInputTokens": 751,
+      "fellBack": true
+    },
+    {
+      "id": "car-insurance",
+      "pairs": 4,
+      "llmMs": 1626,
+      "jevMs": 234,
+      "gatedMs": 234,
+      "jevUsd": 0.000038598,
+      "jevInputTokens": 919,
+      "fellBack": false
+    },
+    {
+      "id": "standup",
+      "pairs": 3,
+      "llmMs": 1412,
+      "jevMs": 221,
+      "gatedMs": 221,
+      "jevUsd": 0.000031878,
+      "jevInputTokens": 759,
+      "fellBack": false
+    },
+    {
+      "id": "saturday-run",
+      "pairs": 4,
+      "llmMs": 1452,
+      "jevMs": 243,
+      "gatedMs": 243,
+      "jevUsd": 0.000037926,
+      "jevInputTokens": 903,
+      "fellBack": false
+    },
+    {
+      "id": "rate-limit",
+      "pairs": 4,
+      "llmMs": 1738,
+      "jevMs": 225,
+      "gatedMs": 225,
+      "jevUsd": 0.000038892,
+      "jevInputTokens": 926,
+      "fellBack": false
+    },
+    {
+      "id": "sister-city",
+      "pairs": 4,
+      "llmMs": 1480,
+      "jevMs": 253,
+      "gatedMs": 253,
+      "jevUsd": 0.000037842,
+      "jevInputTokens": 901,
+      "fellBack": false
+    },
+    {
+      "id": "postgres-version",
+      "pairs": 4,
+      "llmMs": 1332,
+      "jevMs": 214,
+      "gatedMs": 215,
+      "jevUsd": 0.00003738,
+      "jevInputTokens": 890,
+      "fellBack": false
+    },
+    {
+      "id": "storage-detail",
+      "pairs": 2,
+      "llmMs": 1409,
+      "jevMs": 211,
+      "gatedMs": 1226,
+      "jevUsd": 0.00002499,
+      "jevInputTokens": 595,
+      "fellBack": true
+    },
+    {
+      "id": "lives-in",
+      "pairs": 3,
+      "llmMs": 1475,
+      "jevMs": 227,
+      "gatedMs": 1594,
+      "jevUsd": 0.000031038,
+      "jevInputTokens": 739,
+      "fellBack": true
+    },
+    {
+      "id": "backup-job",
+      "pairs": 3,
+      "llmMs": 1537,
+      "jevMs": 198,
+      "gatedMs": 1451,
+      "jevUsd": 0.000031416,
+      "jevInputTokens": 748,
+      "fellBack": true
+    },
+    {
+      "id": "address-as",
+      "pairs": 3,
+      "llmMs": 1378,
+      "jevMs": 197,
+      "gatedMs": 197,
+      "jevUsd": 0.000030912,
+      "jevInputTokens": 736,
+      "fellBack": false
+    },
+    {
+      "id": "gym",
+      "pairs": 3,
+      "llmMs": 1313,
+      "jevMs": 280,
+      "gatedMs": 280,
+      "jevUsd": 0.00003108,
+      "jevInputTokens": 740,
+      "fellBack": false
+    },
+    {
+      "id": "signing-key",
+      "pairs": 3,
+      "llmMs": 2207,
+      "jevMs": 201,
+      "gatedMs": 201,
+      "jevUsd": 0.00003171,
+      "jevInputTokens": 755,
+      "fellBack": false
+    },
+    {
+      "id": "peanuts",
+      "pairs": 4,
+      "llmMs": 1195,
+      "jevMs": 227,
+      "gatedMs": 228,
+      "jevUsd": 0.000037464,
+      "jevInputTokens": 892,
+      "fellBack": false
+    },
+    {
+      "id": "grocery-budget",
+      "pairs": 4,
+      "llmMs": 1569,
+      "jevMs": 204,
+      "gatedMs": 1110,
+      "jevUsd": 0.00003801,
+      "jevInputTokens": 905,
+      "fellBack": true
+    },
+    {
+      "id": "pglite-tests",
+      "pairs": 3,
+      "llmMs": 1399,
+      "jevMs": 232,
+      "gatedMs": 232,
+      "jevUsd": 0.000031542,
+      "jevInputTokens": 751,
+      "fellBack": false
+    },
+    {
+      "id": "passport",
+      "pairs": 4,
+      "llmMs": 1880,
+      "jevMs": 191,
+      "gatedMs": 191,
+      "jevUsd": 0.000038598,
+      "jevInputTokens": 919,
+      "fellBack": false
+    },
+    {
+      "id": "vitamin-d",
+      "pairs": 2,
+      "llmMs": 1047,
+      "jevMs": 228,
+      "gatedMs": 1247,
+      "jevUsd": 0.000024612,
+      "jevInputTokens": 586,
+      "fellBack": true
+    },
+    {
+      "id": "default-llm",
+      "pairs": 4,
+      "llmMs": 1573,
+      "jevMs": 232,
+      "gatedMs": 232,
+      "jevUsd": 0.000039186,
+      "jevInputTokens": 933,
+      "fellBack": false
+    },
+    {
+      "id": "therapist",
+      "pairs": 3,
+      "llmMs": 1392,
+      "jevMs": 197,
+      "gatedMs": 197,
+      "jevUsd": 0.00003171,
+      "jevInputTokens": 755,
+      "fellBack": false
+    },
+    {
+      "id": "laptop",
+      "pairs": 3,
+      "llmMs": 1301,
+      "jevMs": 218,
+      "gatedMs": 218,
+      "jevUsd": 0.00003192,
+      "jevInputTokens": 760,
+      "fellBack": false
+    },
+    {
+      "id": "squash-merge",
+      "pairs": 4,
+      "llmMs": 1854,
+      "jevMs": 237,
+      "gatedMs": 237,
+      "jevUsd": 0.000037548,
+      "jevInputTokens": 894,
+      "fellBack": false
+    },
+    {
+      "id": "partner-name",
+      "pairs": 4,
+      "llmMs": 1589,
+      "jevMs": 225,
+      "gatedMs": 1056,
+      "jevUsd": 0.000037422,
+      "jevInputTokens": 891,
+      "fellBack": true
+    },
+    {
+      "id": "electricity-price",
+      "pairs": 3,
+      "llmMs": 1289,
+      "jevMs": 225,
+      "gatedMs": 225,
+      "jevUsd": 0.000032256,
+      "jevInputTokens": 768,
+      "fellBack": false
+    },
+    {
+      "id": "football",
+      "pairs": 4,
+      "llmMs": 1662,
+      "jevMs": 233,
+      "gatedMs": 233,
+      "jevUsd": 0.000039354,
+      "jevInputTokens": 937,
+      "fellBack": false
+    },
+    {
+      "id": "auto-resolver",
+      "pairs": 3,
+      "llmMs": 2411,
+      "jevMs": 221,
+      "gatedMs": 221,
+      "jevUsd": 0.000032004,
+      "jevInputTokens": 762,
+      "fellBack": false
+    },
+    {
+      "id": "mortgage",
+      "pairs": 4,
+      "llmMs": 1977,
+      "jevMs": 212,
+      "gatedMs": 212,
+      "jevUsd": 0.000038682,
+      "jevInputTokens": 921,
+      "fellBack": false
+    },
+    {
+      "id": "spanish",
+      "pairs": 3,
+      "llmMs": 1236,
+      "jevMs": 222,
+      "gatedMs": 222,
+      "jevUsd": 0.000030534,
+      "jevInputTokens": 727,
+      "fellBack": false
+    },
+    {
+      "id": "working-hours",
+      "pairs": 3,
+      "llmMs": 1315,
+      "jevMs": 207,
+      "gatedMs": 207,
+      "jevUsd": 0.000031794,
+      "jevInputTokens": 757,
+      "fellBack": false
+    },
+    {
+      "id": "moved-city",
+      "pairs": 3,
+      "llmMs": 2393,
+      "jevMs": 217,
+      "gatedMs": 217,
+      "jevUsd": 0.000030786,
+      "jevInputTokens": 733,
+      "fellBack": false
+    },
+    {
+      "id": "son-age",
+      "pairs": 3,
+      "llmMs": 2406,
+      "jevMs": 242,
+      "gatedMs": 2082,
+      "jevUsd": 0.00003129,
+      "jevInputTokens": 745,
+      "fellBack": true
+    },
+    {
+      "id": "ram-units",
+      "pairs": 2,
+      "llmMs": 1639,
+      "jevMs": 337,
+      "gatedMs": 1308,
+      "jevUsd": 0.000024906,
+      "jevInputTokens": 593,
+      "fellBack": true
+    },
+    {
+      "id": "flight-minutes",
+      "pairs": 3,
+      "llmMs": 1262,
+      "jevMs": 224,
+      "gatedMs": 224,
+      "jevUsd": 0.00003171,
+      "jevInputTokens": 755,
+      "fellBack": false
+    },
+    {
+      "id": "office-fridays",
+      "pairs": 3,
+      "llmMs": 1427,
+      "jevMs": 290,
+      "gatedMs": 1597,
+      "jevUsd": 0.000030702,
+      "jevInputTokens": 731,
+      "fellBack": true
+    },
+    {
+      "id": "polish-allergy",
+      "pairs": 3,
+      "llmMs": 1476,
+      "jevMs": 209,
+      "gatedMs": 209,
+      "jevUsd": 0.000031248,
+      "jevInputTokens": 744,
+      "fellBack": false
+    },
+    {
+      "id": "polish-meeting",
+      "pairs": 3,
+      "llmMs": 1600,
+      "jevMs": 210,
+      "gatedMs": 210,
+      "jevUsd": 0.000032214,
+      "jevInputTokens": 767,
+      "fellBack": false
+    },
+    {
+      "id": "music-taste",
+      "pairs": 3,
+      "llmMs": 1099,
+      "jevMs": 215,
+      "gatedMs": 215,
+      "jevUsd": 0.000030408,
+      "jevInputTokens": 724,
+      "fellBack": false
+    },
+    {
+      "id": "early-december",
+      "pairs": 2,
+      "llmMs": 1635,
+      "jevMs": 216,
+      "gatedMs": 1878,
+      "jevUsd": 0.000024402,
+      "jevInputTokens": 581,
+      "fellBack": true
+    },
+    {
+      "id": "agent-gotcha",
+      "pairs": 3,
+      "llmMs": 1555,
+      "jevMs": 232,
+      "gatedMs": 232,
+      "jevUsd": 0.000033726,
+      "jevInputTokens": 803,
+      "fellBack": false
+    },
+    {
+      "id": "agent-decision",
+      "pairs": 3,
+      "llmMs": 1555,
+      "jevMs": 206,
+      "gatedMs": 1308,
+      "jevUsd": 0.000033138,
+      "jevInputTokens": 789,
+      "fellBack": true
+    },
+    {
+      "id": "budget-change",
+      "pairs": 2,
+      "llmMs": 1357,
+      "jevMs": 271,
+      "gatedMs": 1338,
+      "jevUsd": 0.000025158,
+      "jevInputTokens": 599,
+      "fellBack": true
+    }
+  ],
+  "pairs": [
+    {
+      "id": "deploy-window#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0.99,
+        "complementary": 0.01,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "deploy-window#2",
+      "trap": "changed-time",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "deploy-window#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "deploy-window#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "dentist#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "dentist#2",
+      "trap": "changed-date",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "dentist#3",
+      "trap": "different-event",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "dentist#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "rent#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "rent#2",
+      "trap": "changed-number",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "rent#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "embed-model#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.83,
+      "jevConfidence": 0.74,
+      "jevProbabilities": {
+        "identical": 0.83,
+        "complementary": 0.11,
+        "contradictory": 0.06
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "embed-model#2",
+      "trap": "changed-number",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "embed-model#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "embed-model#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.98,
+      "jevConfidence": 0.97,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.98,
+        "contradictory": 0.02
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "penicillin#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "penicillin#2",
+      "trap": "negation",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "penicillin#3",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "penicillin#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "alice-birthday#1",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.9,
+      "jevConfidence": 0.85,
+      "jevProbabilities": {
+        "identical": 0.07,
+        "complementary": 0.9,
+        "contradictory": 0.03
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "alice-birthday#2",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.98,
+      "jevConfidence": 0.97,
+      "jevProbabilities": {
+        "identical": 0.98,
+        "complementary": 0.02,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "alice-birthday#3",
+      "trap": "changed-date",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "tea#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "tea#2",
+      "trap": "preference-reversal",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "tea#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "pnpm#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "pnpm#2",
+      "trap": "changed-name",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "pnpm#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "pnpm#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "ci-migration#1",
+      "trap": "state-change",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.82,
+      "jevConfidence": 0.73,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.18,
+        "contradictory": 0.82
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "ci-migration#2",
+      "trap": "added-detail",
+      "gold": "identical",
+      "accept": ["identical", "complementary"],
+      "llm": "identical",
+      "jevRaw": "complementary",
+      "jevProbability": 0.57,
+      "jevConfidence": 0.35,
+      "jevProbabilities": {
+        "identical": 0.39,
+        "complementary": 0.57,
+        "contradictory": 0.04
+      },
+      "gated": "identical",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "ci-migration#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "school-start#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "school-start#2",
+      "trap": "changed-time",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "school-start#3",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "school-start#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "farm-ram#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.97,
+      "jevConfidence": 0.96,
+      "jevProbabilities": {
+        "identical": 0.97,
+        "complementary": 0.03,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "farm-ram#2",
+      "trap": "changed-number",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "farm-ram#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "farm-ram#4",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "lisbon-flight#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "lisbon-flight#2",
+      "trap": "changed-time",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "lisbon-flight#3",
+      "trap": "different-event",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "lisbon-flight#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "no-meat#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical", "complementary"],
+      "llm": "complementary",
+      "jevRaw": "identical",
+      "jevProbability": 0.8,
+      "jevConfidence": 0.7,
+      "jevProbabilities": {
+        "identical": 0.8,
+        "complementary": 0.19,
+        "contradictory": 0.01
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "no-meat#2",
+      "trap": "state-change",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.01,
+        "contradictory": 0.99
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "no-meat#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "daemon-port#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "complementary",
+      "jevRaw": "identical",
+      "jevProbability": 0.68,
+      "jevConfidence": 0.52,
+      "jevProbabilities": {
+        "identical": 0.68,
+        "complementary": 0.3,
+        "contradictory": 0.02
+      },
+      "gated": "identical",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "daemon-port#2",
+      "trap": "changed-number",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.01,
+        "contradictory": 0.99
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "daemon-port#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "car-insurance#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.94,
+      "jevConfidence": 0.91,
+      "jevProbabilities": {
+        "identical": 0.94,
+        "complementary": 0.06,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "car-insurance#2",
+      "trap": "changed-name",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.98,
+      "jevConfidence": 0.97,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.02,
+        "contradictory": 0.98
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "car-insurance#3",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.98,
+      "jevConfidence": 0.97,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.98,
+        "contradictory": 0.02
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "car-insurance#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "standup#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0.99,
+        "complementary": 0.01,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "standup#2",
+      "trap": "changed-schedule",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.96,
+      "jevConfidence": 0.94,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.04,
+        "contradictory": 0.96
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "standup#3",
+      "trap": "different-event",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "saturday-run#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "saturday-run#2",
+      "trap": "changed-number",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.01,
+        "contradictory": 0.99
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "saturday-run#3",
+      "trap": "different-event",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.95,
+      "jevConfidence": 0.92,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.95,
+        "contradictory": 0.05
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "saturday-run#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "rate-limit#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "rate-limit#2",
+      "trap": "changed-number",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "rate-limit#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "rate-limit#4",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "sister-city#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "sister-city#2",
+      "trap": "changed-place",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.01,
+        "contradictory": 0.99
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "sister-city#3",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "sister-city#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "postgres-version#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "postgres-version#2",
+      "trap": "changed-number",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "postgres-version#3",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "postgres-version#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "storage-detail#1",
+      "trap": "added-detail",
+      "gold": "identical",
+      "accept": ["identical", "complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.76,
+      "jevConfidence": 0.64,
+      "jevProbabilities": {
+        "identical": 0.23,
+        "complementary": 0.76,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "storage-detail#2",
+      "trap": "changed-name",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.01,
+        "contradictory": 0.99
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "lives-in#1",
+      "trap": "dropped-detail",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "identical",
+      "jevProbability": 0.55,
+      "jevConfidence": 0.33,
+      "jevProbabilities": {
+        "identical": 0.55,
+        "complementary": 0.45,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "lives-in#2",
+      "trap": "changed-place",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.01,
+        "contradictory": 0.99
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "lives-in#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "backup-job#1",
+      "trap": "dropped-detail",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.67,
+      "jevConfidence": 0.5,
+      "jevProbabilities": {
+        "identical": 0.31,
+        "complementary": 0.67,
+        "contradictory": 0.02
+      },
+      "gated": "complementary",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "backup-job#2",
+      "trap": "changed-schedule",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.97,
+      "jevConfidence": 0.96,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.03,
+        "contradictory": 0.97
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "backup-job#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "address-as#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0.99,
+        "complementary": 0.01,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "address-as#2",
+      "trap": "preference-reversal",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.01,
+        "contradictory": 0.99
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "address-as#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "gym#1",
+      "trap": "state-change",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.98,
+      "jevConfidence": 0.97,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.02,
+        "contradictory": 0.98
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "gym#2",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.98,
+      "jevConfidence": 0.97,
+      "jevProbabilities": {
+        "identical": 0.98,
+        "complementary": 0.02,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "gym#3",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "signing-key#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0.99,
+        "complementary": 0.01,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "signing-key#2",
+      "trap": "changed-name",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.01,
+        "contradictory": 0.99
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "signing-key#3",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "peanuts#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "peanuts#2",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.87,
+      "jevConfidence": 0.8,
+      "jevProbabilities": {
+        "identical": 0.01,
+        "complementary": 0.87,
+        "contradictory": 0.12
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "peanuts#3",
+      "trap": "negation",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "peanuts#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "grocery-budget#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.62,
+      "jevConfidence": 0.43,
+      "jevProbabilities": {
+        "identical": 0.62,
+        "complementary": 0.33,
+        "contradictory": 0.05
+      },
+      "gated": "identical",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "grocery-budget#2",
+      "trap": "changed-number",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "grocery-budget#3",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "grocery-budget#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "pglite-tests#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.8,
+      "jevConfidence": 0.7,
+      "jevProbabilities": {
+        "identical": 0.8,
+        "complementary": 0.2,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "pglite-tests#2",
+      "trap": "negation",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "pglite-tests#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "passport#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "passport#2",
+      "trap": "changed-date",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "passport#3",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.93,
+      "jevConfidence": 0.89,
+      "jevProbabilities": {
+        "identical": 0.02,
+        "complementary": 0.93,
+        "contradictory": 0.05
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "passport#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "vitamin-d#1",
+      "trap": "state-change",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.74,
+      "jevConfidence": 0.61,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.26,
+        "contradictory": 0.74
+      },
+      "gated": "contradictory",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "vitamin-d#2",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "default-llm#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.98,
+      "jevConfidence": 0.97,
+      "jevProbabilities": {
+        "identical": 0.98,
+        "complementary": 0.02,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "default-llm#2",
+      "trap": "changed-name",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "default-llm#3",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "default-llm#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.97,
+      "jevConfidence": 0.96,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.97,
+        "contradictory": 0.03
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "therapist#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "therapist#2",
+      "trap": "changed-schedule",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "therapist#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "laptop#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0.99,
+        "complementary": 0.01,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "laptop#2",
+      "trap": "changed-name",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.98,
+      "jevConfidence": 0.97,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.02,
+        "contradictory": 0.98
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "laptop#3",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "squash-merge#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "complementary",
+      "jevRaw": "identical",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0.99,
+        "complementary": 0.01,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "squash-merge#2",
+      "trap": "changed-name",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "squash-merge#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "squash-merge#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "partner-name#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "partner-name#2",
+      "trap": "changed-name",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.01,
+        "contradictory": 0.99
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "partner-name#3",
+      "trap": "dropped-detail",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.91,
+      "jevConfidence": 0.86,
+      "jevProbabilities": {
+        "identical": 0.08,
+        "complementary": 0.91,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "partner-name#4",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.74,
+      "jevConfidence": 0.61,
+      "jevProbabilities": {
+        "identical": 0.01,
+        "complementary": 0.74,
+        "contradictory": 0.25
+      },
+      "gated": "complementary",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "electricity-price#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "electricity-price#2",
+      "trap": "changed-number",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "electricity-price#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "football#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "football#2",
+      "trap": "changed-schedule",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.91,
+      "jevConfidence": 0.86,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.09,
+        "contradictory": 0.91
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "football#3",
+      "trap": "different-event",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "football#4",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.98,
+      "jevConfidence": 0.97,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.98,
+        "contradictory": 0.02
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "auto-resolver#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical", "complementary"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.96,
+      "jevConfidence": 0.94,
+      "jevProbabilities": {
+        "identical": 0.96,
+        "complementary": 0.03,
+        "contradictory": 0.01
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "auto-resolver#2",
+      "trap": "negation",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "auto-resolver#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "mortgage#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 1,
+        "complementary": 0,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "mortgage#2",
+      "trap": "changed-number",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "mortgage#3",
+      "trap": "negation",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "mortgage#4",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "spanish#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.84,
+      "jevConfidence": 0.76,
+      "jevProbabilities": {
+        "identical": 0.84,
+        "complementary": 0.16,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "spanish#2",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.84,
+      "jevConfidence": 0.76,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.84,
+        "contradictory": 0.16
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "spanish#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "working-hours#1",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.96,
+      "jevConfidence": 0.94,
+      "jevProbabilities": {
+        "identical": 0.96,
+        "complementary": 0.02,
+        "contradictory": 0.02
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "working-hours#2",
+      "trap": "changed-time",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.01,
+        "contradictory": 0.99
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "working-hours#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "moved-city#1",
+      "trap": "implied-contradiction",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.95,
+      "jevConfidence": 0.92,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.05,
+        "contradictory": 0.95
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "moved-city#2",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical", "complementary"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.86,
+      "jevConfidence": 0.79,
+      "jevProbabilities": {
+        "identical": 0.86,
+        "complementary": 0.14,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "moved-city#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "son-age#1",
+      "trap": "implied-contradiction",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.83,
+      "jevConfidence": 0.74,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.17,
+        "contradictory": 0.83
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "son-age#2",
+      "trap": "implied-agreement",
+      "gold": "complementary",
+      "accept": ["complementary", "identical"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.59,
+      "jevConfidence": 0.38,
+      "jevProbabilities": {
+        "identical": 0.17,
+        "complementary": 0.59,
+        "contradictory": 0.24
+      },
+      "gated": "complementary",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "son-age#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.87,
+      "jevConfidence": 0.8,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.87,
+        "contradictory": 0.13
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "ram-units#1",
+      "trap": "unit-conversion",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.76,
+      "jevConfidence": 0.64,
+      "jevProbabilities": {
+        "identical": 0.22,
+        "complementary": 0.02,
+        "contradictory": 0.76
+      },
+      "gated": "identical",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "ram-units#2",
+      "trap": "unit-conversion",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.98,
+      "jevConfidence": 0.97,
+      "jevProbabilities": {
+        "identical": 0.01,
+        "complementary": 0.01,
+        "contradictory": 0.98
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "flight-minutes#1",
+      "trap": "unit-conversion",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0.99,
+        "complementary": 0.01,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "flight-minutes#2",
+      "trap": "changed-number",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "flight-minutes#3",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "office-fridays#1",
+      "trap": "implied-contradiction",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.97,
+      "jevConfidence": 0.96,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.03,
+        "contradictory": 0.97
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "office-fridays#2",
+      "trap": "implied-agreement",
+      "gold": "complementary",
+      "accept": ["complementary", "identical"],
+      "llm": "complementary",
+      "jevRaw": "identical",
+      "jevProbability": 0.51,
+      "jevConfidence": 0.26,
+      "jevProbabilities": {
+        "identical": 0.51,
+        "complementary": 0.47,
+        "contradictory": 0.02
+      },
+      "gated": "complementary",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "office-fridays#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.98,
+      "jevConfidence": 0.97,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.98,
+        "contradictory": 0.02
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "polish-allergy#1",
+      "trap": "cross-language",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0.99,
+        "complementary": 0.01,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "polish-allergy#2",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.92,
+      "jevConfidence": 0.88,
+      "jevProbabilities": {
+        "identical": 0.03,
+        "complementary": 0.92,
+        "contradictory": 0.05
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "polish-allergy#3",
+      "trap": "cross-language",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "polish-meeting#1",
+      "trap": "cross-language",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0.99,
+        "complementary": 0.01,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "polish-meeting#2",
+      "trap": "cross-language",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "polish-meeting#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "music-taste#1",
+      "trap": "different-subject",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "music-taste#2",
+      "trap": "preference-reversal",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.01,
+        "contradictory": 0.99
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "music-taste#3",
+      "trap": "paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.92,
+      "jevConfidence": 0.88,
+      "jevProbabilities": {
+        "identical": 0.92,
+        "complementary": 0.08,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "early-december#1",
+      "trap": "granularity",
+      "gold": "complementary",
+      "accept": ["complementary", "identical"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.65,
+      "jevConfidence": 0.48,
+      "jevProbabilities": {
+        "identical": 0.33,
+        "complementary": 0.65,
+        "contradictory": 0.02
+      },
+      "gated": "complementary",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "early-december#2",
+      "trap": "changed-date",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "agent-gotcha#1",
+      "trap": "long-paraphrase",
+      "gold": "identical",
+      "accept": ["identical"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.96,
+      "jevConfidence": 0.94,
+      "jevProbabilities": {
+        "identical": 0.96,
+        "complementary": 0.03,
+        "contradictory": 0.01
+      },
+      "gated": "identical",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "agent-gotcha#2",
+      "trap": "negation",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "agent-gotcha#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.99,
+      "jevConfidence": 0.98,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0.99,
+        "contradictory": 0.01
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "agent-decision#1",
+      "trap": "added-detail",
+      "gold": "identical",
+      "accept": ["identical", "complementary"],
+      "llm": "identical",
+      "jevRaw": "identical",
+      "jevProbability": 0.79,
+      "jevConfidence": 0.68,
+      "jevProbabilities": {
+        "identical": 0.79,
+        "complementary": 0.21,
+        "contradictory": 0
+      },
+      "gated": "identical",
+      "gatedBy": "fallback"
+    },
+    {
+      "id": "agent-decision#2",
+      "trap": "negation",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 0,
+        "contradictory": 1
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "agent-decision#3",
+      "trap": "same-topic",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 1,
+      "jevConfidence": 1,
+      "jevProbabilities": {
+        "identical": 0,
+        "complementary": 1,
+        "contradictory": 0
+      },
+      "gated": "complementary",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "budget-change#1",
+      "trap": "state-change",
+      "gold": "contradictory",
+      "accept": ["contradictory"],
+      "llm": "contradictory",
+      "jevRaw": "contradictory",
+      "jevProbability": 0.83,
+      "jevConfidence": 0.74,
+      "jevProbabilities": {
+        "identical": 0.01,
+        "complementary": 0.16,
+        "contradictory": 0.83
+      },
+      "gated": "contradictory",
+      "gatedBy": "jev"
+    },
+    {
+      "id": "budget-change#2",
+      "trap": "time-scoped",
+      "gold": "complementary",
+      "accept": ["complementary"],
+      "llm": "complementary",
+      "jevRaw": "complementary",
+      "jevProbability": 0.67,
+      "jevConfidence": 0.5,
+      "jevProbabilities": {
+        "identical": 0.31,
+        "complementary": 0.67,
+        "contradictory": 0.02
+      },
+      "gated": "complementary",
+      "gatedBy": "fallback"
+    }
+  ]
+}

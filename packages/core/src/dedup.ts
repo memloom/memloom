@@ -84,3 +84,30 @@ export async function classify(
   const raw = await llm.complete(buildDedupPrompt(incoming, candidates));
   return parseClassifications(raw, candidates);
 }
+
+export interface DedupIncoming {
+  canonical?: string | null;
+  content: string;
+}
+
+/**
+ * Who labels the candidates on save. The LLM classifier is the default; JevDedupClassifier
+ * (jev-dedup.ts) asks a decision model instead and falls back to the LLM when unsure. A
+ * candidate the classifier returns no label for is treated as complementary by the caller.
+ */
+export interface DedupClassifier {
+  classify(incoming: DedupIncoming, candidates: readonly Candidate[]): Promise<Classification[]>;
+}
+
+/** The prompt-and-parse classifier on memloom's configured LLM. */
+export class LlmDedupClassifier implements DedupClassifier {
+  readonly #llm: LLMProvider;
+
+  constructor(llm: LLMProvider) {
+    this.#llm = llm;
+  }
+
+  classify(incoming: DedupIncoming, candidates: readonly Candidate[]): Promise<Classification[]> {
+    return classify(this.#llm, incoming, candidates);
+  }
+}

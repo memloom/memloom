@@ -26,7 +26,7 @@ import {
   type ResolverVerdict,
   resolveConflictWithContext,
 } from "./conflict-resolver.js";
-import { type Candidate, classify } from "./dedup.js";
+import { type Candidate, type DedupClassifier, LlmDedupClassifier } from "./dedup.js";
 import { type DistilledMemory, distillChunk } from "./distill.js";
 import type { MemoryEngine } from "./engine.js";
 import { type ExtractionContext, entityNameKey, extractGraph, isMathDense } from "./entities.js";
@@ -529,6 +529,11 @@ export interface MemloomConfig {
   llm: LLMProvider;
   /** Run the belief pipeline (dedup + conflict detection) on save. Default true. */
   dedup?: boolean;
+  /**
+   * Who labels dedup candidates on save. Default: the prompt-and-parse classifier on `llm`.
+   * JevDedupClassifier puts a decision model in front of it (MEMLOOM_DEDUP_PROVIDER=jev).
+   */
+  dedupClassifier?: DedupClassifier;
   /** Fetch used by the Notion connector; tests inject a fake. Default globalThis.fetch. */
   notionFetch?: typeof globalThis.fetch;
   /**
@@ -721,6 +726,7 @@ export class Memloom implements MemoryEngine {
   readonly #embedding: EmbeddingProvider;
   readonly #llm: LLMProvider;
   readonly #dedup: boolean;
+  readonly #dedupClassifier: DedupClassifier;
   readonly #notionFetch: typeof globalThis.fetch;
   // Dedup classifier calls made since construction; the import path reads the delta so its
   // cost line reports classifier spend exactly, not an estimate.
@@ -744,6 +750,7 @@ export class Memloom implements MemoryEngine {
     this.#embedding = config.embedding;
     this.#llm = config.llm;
     this.#dedup = config.dedup ?? true;
+    this.#dedupClassifier = config.dedupClassifier ?? new LlmDedupClassifier(config.llm);
     this.#notionFetch = config.notionFetch ?? globalThis.fetch;
     this.#autoIndex = config.autoIndex ?? false;
     this.#autoIndexCapable = config.autoIndex !== undefined;
@@ -3046,8 +3053,7 @@ export class Memloom implements MemoryEngine {
     }
 
     this.#classifyCalls++;
-    const classifications = await classify(
-      this.#llm,
+    const classifications = await this.#dedupClassifier.classify(
       { canonical: input.canonical, content: input.content },
       candidates,
     );
