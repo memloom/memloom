@@ -123,6 +123,15 @@ export {
   projectNameOf,
   QUIET_MS,
 } from "./claude-sessions.js";
+// Dedup classifiers: the LLM prompt-and-parse default, and Jev on OpenRouter's Decisions API
+export type {
+  Candidate as DedupCandidate,
+  Classification as DedupClassification,
+  DedupClassifier,
+  DedupIncoming,
+  Relation as DedupRelation,
+} from "./dedup.js";
+export { LlmDedupClassifier } from "./dedup.js";
 // Speaker diarization (pyannote segmentation + WeSpeaker embeddings under sherpa-onnx, local)
 export type { DiarizeResult, SpeakerTurn } from "./diarize.js";
 export {
@@ -199,6 +208,12 @@ export {
 } from "./hashing-provider.js";
 export type { FetchLike, HttpResponse } from "./http-client.js";
 export { HttpMemloomClient, OWNER_HEADER } from "./http-client.js";
+export type { JevAnswer, JevDecision, JevDedupOptions } from "./jev-dedup.js";
+export {
+  DEFAULT_JEV_MODEL,
+  DEFAULT_JEV_THRESHOLD,
+  JevDedupClassifier,
+} from "./jev-dedup.js";
 // Web link ingestion (fetch + defuddle on linkedom, all in-process)
 export type { ExtractedLink, ExtractedPage, ExtractUrlOptions, FetchedPage } from "./link.js";
 export {

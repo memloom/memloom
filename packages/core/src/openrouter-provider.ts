@@ -68,7 +68,18 @@ export class LlmSpendError extends Error {
   }
 }
 
-async function postJson(url: string, apiKey: string, body: unknown, what: string) {
+/**
+ * POST a JSON body to an OpenRouter endpoint with the shared retry, timeout and spend-error
+ * handling. Exported for the Decisions API client (jev-dedup.ts), which lives outside /api/v1.
+ * `fetchImpl` lets a caller inject a fake; it defaults to the global fetch.
+ */
+export async function postJson(
+  url: string,
+  apiKey: string,
+  body: unknown,
+  what: string,
+  fetchImpl: typeof globalThis.fetch = globalThis.fetch,
+) {
   for (let attempt = 1; ; attempt++) {
     let res: {
       ok: boolean;
@@ -78,7 +89,7 @@ async function postJson(url: string, apiKey: string, body: unknown, what: string
       json(): Promise<unknown>;
     };
     try {
-      res = await fetch(url, {
+      res = await fetchImpl(url, {
         method: "POST",
         headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
         body: JSON.stringify(body),

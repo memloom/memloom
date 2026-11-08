@@ -40,6 +40,16 @@ const CONFIG_TEMPLATE = `# memloom configuration. The daemon (\`memloom serve\`)
 # Effort for the pipeline's calls (low, medium, high, xhigh, max). Thinking bills as output:
 # ANTHROPIC_EFFORT=low
 
+# Label dedup candidates (identical, complementary, contradictory) with TypeSafe's Jev decision
+# model on OpenRouter instead of the LLM. Jev answers with probabilities, costs about a quarter
+# of Haiku per judgment and answers in about 250 ms. Answers below the threshold go to the LLM,
+# and if that fails too the pair becomes a conflict for you to decide. Uses OPENROUTER_API_KEY.
+# MEMLOOM_DEDUP_PROVIDER=jev
+# MEMLOOM_DEDUP_JEV_MODEL=typesafe/jev-1.14
+# MEMLOOM_DEDUP_JEV_THRESHOLD=0.9
+# Where unsure answers go: llm (the default) or conflict (never call the LLM for dedup):
+# MEMLOOM_DEDUP_JEV_FALLBACK=llm
+
 # Preferred OpenRouter host for embeddings (latency varies a lot between hosts of the same
 # model; nebius is the fast one for the default model and is used automatically):
 # OPENROUTER_EMBED_PROVIDER=nebius

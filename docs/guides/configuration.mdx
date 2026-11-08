@@ -33,6 +33,10 @@ OPENROUTER_API_KEY=sk-or-...        # the one switch: with it, cloud mode. Witho
 | `ANTHROPIC_LLM_MODEL` | `claude-haiku-5-5` | The pipeline's model on the Anthropic API |
 | `ANTHROPIC_CHAT_MODEL` | same as above | The assistant's model on the Anthropic API |
 | `ANTHROPIC_EFFORT` | `low` | Thinking effort for pipeline calls. Thinking is billed as output |
+| `MEMLOOM_DEDUP_PROVIDER` | `llm` | `jev` labels dedup candidates with TypeSafe's Jev decision model on OpenRouter. See [dedup with Jev](#dedup-with-jev) |
+| `MEMLOOM_DEDUP_JEV_MODEL` | `typesafe/jev-1.14` | The decision model. A new model needs a new threshold |
+| `MEMLOOM_DEDUP_JEV_THRESHOLD` | `0.9` | The probability Jev must give a label before memloom acts on it |
+| `MEMLOOM_DEDUP_JEV_FALLBACK` | `llm` | Where answers below the threshold go: `llm`, or `conflict` to file them for you |
 | `MEMLOOM_AUTO_INDEX` | `on` | Background entity extraction after saves and ingests |
 | `MEMLOOM_INDEX_CONCURRENCY` | `6` | Extraction worker pool size |
 | `MEMLOOM_RECONCILE_CONCURRENCY` | `16` | Model calls reconciliation runs at once. Lower it if the provider returns rate-limit errors |
@@ -102,6 +106,27 @@ a different fingerprint is refused.
 Changing model is a migration, not a dead end: stop the daemon and run
 [`memloom reembed`](/cli/graph), which recomputes every vector and stamps the new fingerprint. The
 LLM model can be changed freely, since it never touches the vector space.
+
+***
+
+## Dedup with Jev
+
+Every save that lands near existing memories asks a model one question per neighbour: is it the
+same fact (`identical`, which versions the old memory away), can both be true (`complementary`),
+or can they not both be true (`contradictory`, which files a conflict). By default the LLM
+answers. `MEMLOOM_DEDUP_PROVIDER=jev` asks [Jev](https://openrouter.ai/typesafe/jev-1.14), a
+decision model on OpenRouter that returns a probability for each label instead of text. It runs
+on the same `OPENROUTER_API_KEY` as embeddings.
+
+memloom acts on Jev's label only when its probability reaches `MEMLOOM_DEDUP_JEV_THRESHOLD`.
+Anything less, a refusal, or a failed request goes to the LLM. If the LLM fails too, or
+`MEMLOOM_DEDUP_JEV_FALLBACK=conflict`, the pair becomes a conflict for you to decide, so a save
+never fails and never merges on a guess.
+
+On the dedup eval (`eval/dedup/` in the repo, 178 labelled judgments), Jev at 0.9 with the LLM
+fallback matched every label in three runs. It answered in about 250 ms against 1.5 s for Claude
+Haiku 5.5, and cost about half as much per judgment, fallback calls included. Rerun the eval before changing
+the model or the threshold: probabilities differ between model versions.
 
 ***
 
